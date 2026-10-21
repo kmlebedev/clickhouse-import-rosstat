@@ -6,7 +6,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/grafana/grafana-foundation-sdk/go/common"
 	"github.com/grafana/grafana-foundation-sdk/go/dashboard"
+	"github.com/grafana/grafana-foundation-sdk/go/timeseries"
 	"github.com/grafana/grafana-foundation-sdk/go/units"
 )
 
@@ -33,18 +35,18 @@ func builtKeyRatePublications(t *testing.T) dashboard.Dashboard {
 	return d
 }
 
-// TestKeyRatePublicationsHasTwentyEightPanels фиксирует состав дашборда: ряды 21 (панели 1–5),
-// 22 (панели 6–10), 23 (панели 11–14 и 25–28 — долговой контур ОФЗ), 24 (панели 15–19) и 34
-// (панели 29–33 — внешние условия, сбережения, разрыв выпуска, автономные факторы) —
-// 28 панелей, полный контракт спеки §5.
-func TestKeyRatePublicationsHasTwentyEightPanels(t *testing.T) {
-	if panels := panelsOf(builtKeyRatePublications(t)); len(panels) != 28 {
-		t.Fatalf("панелей %d, ожидалось 28", len(panels))
+// TestKeyRatePublicationsHasTwentyNinePanels фиксирует состав дашборда: ряды 21 (панели 1–5),
+// 22 (панели 6–10 и 35 — кредиты банков, опережающий срез М2), 23 (панели 11–14 и 25–28 —
+// долговой контур ОФЗ), 24 (панели 15–19) и 34 (панели 29–33 — внешние условия, сбережения,
+// разрыв выпуска, автономные факторы) — 29 панелей, полный контракт спеки §5.
+func TestKeyRatePublicationsHasTwentyNinePanels(t *testing.T) {
+	if panels := panelsOf(builtKeyRatePublications(t)); len(panels) != 29 {
+		t.Fatalf("панелей %d, ожидалось 29", len(panels))
 	}
 }
 
-// TestKeyRatePublicationsRowTitles: id рядов не совпадают ни с панелями 1..19 и 25..33, ни между
-// собой — нулевой или совпавший id Grafana перезапишет своим, и артефакт разойдётся с кодом.
+// TestKeyRatePublicationsRowTitles: id рядов не совпадают ни с панелями 1..19, 25..33 и 35, ни
+// между собой — нулевой или совпавший id Grafana перезапишет своим, и артефакт разойдётся с кодом.
 func TestKeyRatePublicationsRowTitles(t *testing.T) {
 	var ids []uint32
 	var titles []string
@@ -637,27 +639,27 @@ func TestKeyRateSignalRowUsesTableQueries(t *testing.T) {
 }
 
 // TestKeyRateSpecConventions фиксирует конвенции спеки §4/§7 одним проходом: id панелей
-// 1..19 и 25..33 без пропусков и повторов, непустой Description у каждой, ширина 24 у панелей
-// 5, 10 и 33 и 12 у остальных, FINAL в панельных запросах не пишется (FINAL уже внутри витрин,
+// 1..19, 25..33 и 35 без пропусков и повторов, непустой Description у каждой, ширина 24 у панелей
+// 5, 10, 33 и 35 и 12 у остальных, FINAL в панельных запросах не пишется (FINAL уже внутри витрин,
 // спека §2), а LIMIT — только у таблиц 12/16/17/18/19: на timeseries это анти-паттерн спеки §6.
 func TestKeyRateSpecConventions(t *testing.T) {
 	tablePanels := map[uint32]bool{12: true, 16: true, 17: true, 18: true, 19: true}
-	seen := make(map[uint32]bool, 28)
+	seen := make(map[uint32]bool, 29)
 	for _, p := range panelsOf(builtKeyRatePublications(t)) {
 		if p.Id == nil {
 			t.Fatalf("панель %q: не задан id", panelTitle(p))
 		}
 		id := *p.Id
-		allowed := (id >= 1 && id <= 19) || (id >= 25 && id <= 33)
+		allowed := (id >= 1 && id <= 19) || (id >= 25 && id <= 33) || id == 35
 		if !allowed || seen[id] {
-			t.Fatalf("панель %q: id %d вне 1..19/25..33 или повторяется", panelTitle(p), id)
+			t.Fatalf("панель %q: id %d вне 1..19/25..33/35 или повторяется", panelTitle(p), id)
 		}
 		seen[id] = true
 		if p.Description == nil || strings.TrimSpace(*p.Description) == "" {
 			t.Fatalf("панель %d: пустой Description (спека §4 — описание у каждой панели)", id)
 		}
 		wantSpan := uint32(12)
-		if id == 5 || id == 10 || id == 33 {
+		if id == 5 || id == 10 || id == 33 || id == 35 {
 			wantSpan = 24
 		}
 		if p.GridPos == nil || p.GridPos.W != wantSpan {
@@ -676,8 +678,80 @@ func TestKeyRateSpecConventions(t *testing.T) {
 			}
 		}
 	}
-	if len(seen) != 28 {
-		t.Fatalf("панелей %d, ожидалось 28 (id 1..19 и 25..33 без пропусков)", len(seen))
+	if len(seen) != 29 {
+		t.Fatalf("панелей %d, ожидалось 29 (id 1..19, 25..33 и 35 без пропусков)", len(seen))
+	}
+}
+
+// TestKeyRateBankLoansPanel: панель 35 — кредиты банков как опережающий срез М2. Сумма кредитов
+// ЮЛ и ФЛ (gross) по каждому банку считается в SQL ДО темпа; customer_loans (netto) не читается;
+// М2 SA — пунктирный референс. Единица — доля: иначе 11,9 % напечатались бы как «0.12».
+func TestKeyRateBankLoansPanel(t *testing.T) {
+	panel := panelByID(t, builtKeyRatePublications(t), 35)
+	if got := panelTitle(panel); got != "Кредиты банков (Сбер, ВТБ) — опережающий срез М2, г/г" {
+		t.Fatalf("панель 35: заголовок %q", got)
+	}
+	if len(panel.Targets) != 3 {
+		t.Fatalf("панель 35: %d запросов, ожидалось 3 (Сбер, ВТБ, М2)", len(panel.Targets))
+	}
+	for refID, bank := range map[string]string{"A": "SBER", "B": "VTBR"} {
+		query := targetByRefID(t, panel, refID)
+		for _, want := range []string{
+			"FROM v_bank_loan_portfolio_forward",
+			"bank = '" + bank + "'",
+			"metric IN ('loans_corporations', 'loans_individuals')",
+			"lagInFrame(sum(value_bln_rub), 12)",
+			"$__timeFilter(time)",
+			"ORDER BY time",
+		} {
+			if !strings.Contains(query.RawSql, want) {
+				t.Fatalf("панель 35: запрос %s не содержит %q: %s", refID, want, query.RawSql)
+			}
+		}
+		if strings.Contains(query.RawSql, "customer_loans") {
+			t.Fatalf("панель 35: запрос %s читает customer_loans (netto): %s", refID, query.RawSql)
+		}
+	}
+	m2 := targetByRefID(t, panel, "C")
+	for _, want := range []string{"FROM v_cbr_macro", "series = 'М2 SA'", "$__timeFilter(time)"} {
+		if !strings.Contains(m2.RawSql, want) {
+			t.Fatalf("панель 35: запрос C не содержит %q: %s", want, m2.RawSql)
+		}
+	}
+	if got := overridePropByRefID(panel, "C", "custom.lineStyle"); got == nil {
+		t.Fatalf("панель 35: у М2 нет пунктира — референс не отличён от рядов банков")
+	}
+	if unit := panel.FieldConfig.Defaults.Unit; unit == nil || *unit != units.PercentUnit {
+		t.Fatalf("панель 35: unit %v, ожидался %q", unit, units.PercentUnit)
+	}
+	for _, want := range []string{"gross", "netto", "опережающ", "разрыв источника"} {
+		if !strings.Contains(optionalString(panel.Description), want) {
+			t.Fatalf("Description панели 35 не содержит %q: %s", want, optionalString(panel.Description))
+		}
+	}
+}
+
+// TestKeyRateTimeseriesInterpolationSmooth: все графики дашборда используют сглаженную
+// интерполяцию — Grafana по умолчанию рисует ломаную linear. Проверка идёт по Type: у табличных
+// панелей custom-конфига timeseries нет, и требовать от них lineInterpolation нельзя.
+func TestKeyRateTimeseriesInterpolationSmooth(t *testing.T) {
+	timeseriesPanels := 0
+	for _, p := range panelsOf(builtKeyRatePublications(t)) {
+		if p.Type != "timeseries" {
+			continue
+		}
+		timeseriesPanels++
+		custom, ok := p.FieldConfig.Defaults.Custom.(*timeseries.FieldConfig)
+		if !ok || custom == nil || custom.LineInterpolation == nil {
+			t.Fatalf("панель %q: не задана lineInterpolation (ожидался smooth)", panelTitle(p))
+		}
+		if *custom.LineInterpolation != common.LineInterpolationSmooth {
+			t.Fatalf("панель %q: lineInterpolation %q, ожидался %q",
+				panelTitle(p), *custom.LineInterpolation, common.LineInterpolationSmooth)
+		}
+	}
+	if timeseriesPanels != 24 {
+		t.Fatalf("графиков %d, ожидалось 24 (29 панелей минус 5 таблиц)", timeseriesPanels)
 	}
 }
 
