@@ -99,7 +99,7 @@
 - `v_key_rate_dashboard` (23 индикатора, 6 контуров), `v_series_catalog`, `system.tables`.
 - `v_cbr_macro`, `v_rosstat_macro`, `v_cbr_survey`, `v_minfin_budget`, `v_cbr_bop`, `v_moex_market`, `v_ofz_stress`, `v_bank_loan_portfolio_forward`, `v_cbr_form101`, `v_cbr_publication_calendar`, `v_series_publication`, `v_point_in_time`.
 - [KEY_RATE_CHANNELS.md](../KEY_RATE_CHANNELS.md) §3/§8; [KEY_RATE_PUBLICATIONS.md](../KEY_RATE_PUBLICATIONS.md) §3/§6/§11; [ROADMAP_KEY_RATE.md](../ROADMAP_KEY_RATE.md) фазы 1–4.
-- Статья 21.10: [2026-10-21-key-rate.md](../publications/2026-10-21-key-rate.md).
+- Статья 21.10: [issue #191](https://github.com/kmlebedev/clickhouse-import-rosstat/issues/191) (файл статьи в main ещё не закоммичен; ссылка на файл появится вместе с ним).
 
 ---
 

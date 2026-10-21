@@ -15,8 +15,12 @@ import (
 const KeyRatePublicationsUID = "key-rate-publications"
 
 // firstKeyRateRowID — id первого ряда (21): нулевой или совпавший с панелью id Grafana трактует
-// как «не задан» и заменит своим, поэтому ряды нумеруются вне диапазона панелей 1..19.
+// как «не задан» и заменит своим, поэтому ряды нумеруются вне диапазона панелей 1..33.
 const firstKeyRateRowID = 21
+
+// channelRowID — id пятого ряда (34): он идёт после панелей 29–33, поэтому не может взять
+// следующий по порядку id 25 — тот уже занят панелью долгового контура ОФЗ.
+const channelRowID = 34
 
 // krMacroValueTemplate — срез витрины v_cbr_macro «дата + значение» по коду ряда: так читаются
 // ключевая ставка (панель 1) и инфляционные ожидания (панель 5) — форма одна, различаются только
@@ -294,6 +298,79 @@ ORDER BY date_msk DESC
 LIMIT 15
 `
 
+// krBrentSQL — Brent панели 29: фронт-месяц фьючерса MOEX BR (settle), а не спот. Ряд непрерывен
+// по контрактам, но на роллах возможен разрыв — поэтому линия, а не интерполяция; оговорка
+// «не спот» обязательна в Description панели.
+const krBrentSQL = `SELECT date AS time, value AS "Brent (фронт-месяц), USD/барр."
+FROM v_moex_market
+WHERE series = 'brent_front' AND $__timeFilter(date)
+ORDER BY date
+`
+
+// krBopSeriesTemplate — срез v_cbr_bop по источнику и коду ряда: у двух выгрузок платёжного
+// баланса одинаковые имена рядов, но разные единицы (млн и млрд USD), поэтому source входит
+// в запрос наравне с series. Первый %s — выражение значения, второй — алиас, далее source и series.
+const krBopSeriesTemplate = `SELECT date AS time, %s AS %s
+FROM v_cbr_bop
+WHERE source = '%s' AND series = '%s' AND $__timeFilter(date)
+ORDER BY date
+`
+
+// krBopSeriesSQL собирает запрос платёжного баланса по шаблону.
+func krBopSeriesSQL(valueExpr, alias, source, series string) string {
+	return fmt.Sprintf(krBopSeriesTemplate, valueExpr, alias, source, series)
+}
+
+// krSurveySeriesTemplate — срез v_cbr_survey по коду ряда: панель 32 читает балансовые индексы
+// и загрузку мощностей одной формой. %s по порядку: алиас серии, код ряда.
+const krSurveySeriesTemplate = `SELECT date AS time, value AS %s
+FROM v_cbr_survey
+WHERE series = '%s' AND $__timeFilter(date)
+ORDER BY date
+`
+
+// krSurveySeriesSQL собирает запрос мониторинга предприятий по шаблону.
+func krSurveySeriesSQL(series, alias string) string {
+	return fmt.Sprintf(krSurveySeriesTemplate, alias, series)
+}
+
+// krCcybSeriesTemplate — срез v_cbr_ccyb_indicators по коду АЦН-индикатора: панель 33 читает
+// кредитные гэпы (п.п.) и темпы роста кредита (%). %s по порядку: алиас серии, код ряда.
+const krCcybSeriesTemplate = `SELECT date AS time, value AS %s
+FROM v_cbr_ccyb_indicators
+WHERE series = '%s' AND $__timeFilter(date)
+ORDER BY date
+`
+
+// krCcybSeriesSQL собирает запрос АЦН-индикаторов по шаблону.
+func krCcybSeriesSQL(series, alias string) string {
+	return fmt.Sprintf(krCcybSeriesTemplate, alias, series)
+}
+
+// krDepositsLevelSQL — уровень депозитов населения панели 31: витрина хранит млн руб., панель
+// показывает млрд (÷1000), чтобы ось не была шестизначной. Канон канала сбережений —
+// «Депозиты населения» = ФЛ + ИП (KEY_RATE_CHANNELS §8.1), а не ряд физлиц.
+const krDepositsLevelSQL = `SELECT date AS time, value / 1000 AS "Депозиты населения, млрд руб."
+FROM v_cbr_macro
+WHERE series = 'Депозиты населения' AND $__timeFilter(date)
+ORDER BY date
+`
+
+// krDepositsInflowSQL — месячный приток депозитов панели 31: разность с предыдущим месяцем.
+// lagInFrame с третьим аргументом NULL оставляет первую точку пустой, а не считает её как
+// value − 0 (иначе на графике был бы ложный выброс). Фильтр времени — СНАРУЖИ подзапроса:
+// иначе окно обрезало бы ряд и первый приток окна стал бы ложным.
+const krDepositsInflowSQL = `SELECT time, chg AS "Приток за месяц, млрд руб."
+FROM (
+    SELECT date AS time,
+           (value - lagInFrame(value, 1, NULL) OVER (ORDER BY date)) / 1000 AS chg
+    FROM v_cbr_macro
+    WHERE series = 'Депозиты населения'
+)
+WHERE $__timeFilter(time)
+ORDER BY time
+`
+
 // krPanelDefaults — общие визуальные конвенции дашборда (выведены из UI-экспорта): палитра classic,
 // легенда снизу таблицей с calcs (последнее/среднее/максимум), tooltip по одной серии, линия
 // шириной 1 без заливки, градиента и соединения разрывов (spanNulls false — разрыв недельного
@@ -367,8 +444,9 @@ func krZeroThresholds() *dashboard.ThresholdsConfigBuilder {
 
 // NewKeyRatePublications собирает дашборд «Ключевая ставка — публикации». Собраны ряды 21 «Ставка
 // и инфляция» (панели 1–5), 22 «Деньги, кредит, бюджет, труд» (панели 6–10), 23 «Рыночный контур»
-// (панели 11–14) и 24 «Сигнал, консенсус, календарь» (панели 15–19) — полный контракт спеки §5.
-// Порядок вызовов WithRow/WithPanel задаёт и порядок сетки, и нумерацию панелей 1..19.
+// (панели 11–14 и 25–28), 24 «Сигнал, консенсус, календарь» (панели 15–19) и 34 «Остальные каналы
+// решения» (панели 29–33) — полный контракт спеки §5. Порядок вызовов WithRow/WithPanel задаёт
+// и порядок сетки, и нумерацию панелей.
 func NewKeyRatePublications() *dashboard.DashboardBuilder {
 	return dashboard.NewDashboardBuilder("Ключевая ставка — публикации").
 		Uid(KeyRatePublicationsUID).
@@ -402,7 +480,13 @@ func NewKeyRatePublications() *dashboard.DashboardBuilder {
 		WithPanel(krMpSummaryPanel()).
 		WithPanel(krMpChannelsPanel()).
 		WithPanel(krEventsCalendarPanel()).
-		WithPanel(krNewsFeedPanel())
+		WithPanel(krNewsFeedPanel()).
+		WithRow(dashboard.NewRowBuilder("Остальные каналы решения").Id(channelRowID)).
+		WithPanel(krExternalFxPanel()).
+		WithPanel(krExternalBopPanel()).
+		WithPanel(krSavingsPanel()).
+		WithPanel(krOutputGapPanel()).
+		WithPanel(krAutonomousFactorsPanel())
 }
 
 // krRatePanel — панель 1: ключевая ставка линией и точки решений ЦБ. Ставка — уровень на дату,
@@ -855,4 +939,115 @@ func krNewsFeedPanel() *table.PanelBuilder {
 			"в фиде источника, один сюжет может занимать несколько строк.").
 		Datasource(datasourceRef()).
 		WithTarget(tableQuery("A", krNewsFeedSQL))
+}
+
+// krExternalFxPanel — панель 29: внешние условия — курс ЦБ и Brent. Единицы разные (руб. за 1 USD
+// и USD/барр.), поэтому у Brent своя правая ось; «фронт-месяц, не спот» — обязательная оговорка,
+// иначе settle фьючерса прочли бы как спотовую цену.
+func krExternalFxPanel() *timeseries.PanelBuilder {
+	return krPanelDefaults(timeseries.NewPanelBuilder()).
+		Id(29).
+		Title("Внешние условия: курс ЦБ и Brent").
+		Span(spanHalf).
+		Description("Курс ЦБ (v_cbr_macro, series = 'cbr_currency_usd') — руб. за 1 USD, левая ось; "+
+			"Brent — фронт-месяц фьючерса MOEX BR (v_moex_market, series = 'brent_front', settle) — "+
+			"USD/барр., правая ось. Brent — НЕ спот и не back-adjusted: на роллах возможен разрыв, "+
+			"поэтому линия не интерполируется. Курс — официальный, не биржевой.").
+		WithTarget(timeseriesQuery("A", krMacroValueSQL("cbr_currency_usd", `"Курс USD/RUB, руб. за 1 USD"`))).
+		WithTarget(timeseriesQuery("B", krBrentSQL)).
+		Unit(units.Rubles).
+		OverrideByQuery("B", []dashboard.DynamicConfigValue{
+			{Id: "unit", Value: units.Dollars},
+			axisPlacementRightProp(),
+		})
+}
+
+// krExternalBopPanel — панель 30: счёт текущих операций. Стандартная презентация ЦБ (млн USD)
+// приведена к млрд USD и нарисована линией; месячная оценка (уже млрд USD) — точками, потому что
+// источник публикует только последние месяцы. Смешивать единицы нельзя: пересчёт в SQL — ÷1000.
+func krExternalBopPanel() *timeseries.PanelBuilder {
+	return krPanelDefaults(timeseries.NewPanelBuilder()).
+		Id(30).
+		Title("Внешние условия: счёт текущих операций").
+		Span(spanHalf).
+		Description("Счёт текущих операций платёжного баланса (v_cbr_bop): линия — стандартная "+
+			"презентация ЦБ (source = 'cbr_bop_standard', млн USD → млрд USD делением на 1000, "+
+			"кварталы с 1994); точки — месячная оценка (source = 'cbr_bop_est', млрд USD), публикуются "+
+			"только последние месяцы. Это две выгрузки одного показателя: стандартная — для сверки, "+
+			"месячная — свежая оценка; ноль — значение, а не пропуск.").
+		WithTarget(timeseriesQuery("A", krBopSeriesSQL("value / 1000",
+			`"Счёт текущих операций (квартал), млрд USD"`, "cbr_bop_standard", "Счет текущих операций (квартал)"))).
+		WithTarget(timeseriesQuery("B", krBopSeriesSQL("value",
+			`"Счёт текущих операций (месяц), млрд USD"`, "cbr_bop_est", "Счет текущих операций (месяц)"))).
+		Unit(units.Dollars).
+		OverrideByQuery("B", pointsOnlyProps())
+}
+
+// krSavingsPanel — панель 31: сберегательное поведение — депозиты населения. Канон канала
+// («Депозиты населения» = ФЛ + ИП) берётся из KEY_RATE_CHANNELS §8.1; уровень и приток — одна
+// серия, поэтому две шкалы: абсолютный уровень и месячное изменение. Первая точка притока NULL
+// (lagInFrame с NULL), а не value − 0.
+func krSavingsPanel() *timeseries.PanelBuilder {
+	return krPanelDefaults(timeseries.NewPanelBuilder()).
+		Id(31).
+		Title("Сбережения: депозиты населения").
+		Span(spanHalf).
+		Description("«Депозиты населения» (v_cbr_macro) = депозиты ФЛ + ИП — канон канала сбережений "+
+			"(KEY_RATE_CHANNELS §8.1). Левая ось — уровень (млрд руб.), правая — месячный приток "+
+			"(value − предыдущий месяц, млрд руб.; первая точка NULL, а не выброс). Уровни ФЛ и ИП "+
+			"по отдельности с уровнем населения не смешиваются.").
+		WithTarget(timeseriesQuery("A", krDepositsLevelSQL)).
+		WithTarget(timeseriesQuery("B", krDepositsInflowSQL)).
+		Unit(units.Rubles).
+		OverrideByQuery("B", []dashboard.DynamicConfigValue{axisPlacementRightProp()})
+}
+
+// krOutputGapPanel — панель 32: разрыв выпуска/перегрев. ИБК (общий и промышленный) — балансовые
+// индексы SA в пунктах, загрузка мощностей — % (правая ось). Это прокси: ЦБ числовым рядом
+// разрыв выпуска не публикует, поэтому панель не выдаёт её за сам разрыв.
+func krOutputGapPanel() *timeseries.PanelBuilder {
+	return krPanelDefaults(timeseries.NewPanelBuilder()).
+		Id(32).
+		Title("Разрыв выпуска: бизнес-климат, ИБК и загрузка").
+		Span(spanHalf).
+		Description("ИБК Банка России (v_cbr_survey, series = 'business_climate_sa') и ИБК "+
+			"промышленности ('industry_total_ibk_sa') — балансовые индексы SA в пунктах (левая ось); "+
+			"загрузка производственных мощностей ('capacity_utilization_sa', %) — правая ось. "+
+			"Это ПРОКСИ разрыва выпуска, а не сам разрыв: ЦБ числовым рядом его не публикует "+
+			"(KEY_RATE_CHANNELS §8).").
+		WithTarget(timeseriesQuery("A", krSurveySeriesSQL("business_climate_sa", `"Бизнес-климат (ИБК, SA), пункты"`))).
+		WithTarget(timeseriesQuery("B", krSurveySeriesSQL("industry_total_ibk_sa", `"ИБК — промышленность (SA), пункты"`))).
+		WithTarget(timeseriesQuery("C", krSurveySeriesSQL("capacity_utilization_sa", `"Загрузка мощностей (SA), %"`))).
+		Unit(units.Short).
+		OverrideByQuery("C", []dashboard.DynamicConfigValue{
+			{Id: "unit", Value: units.Percent},
+			axisPlacementRightProp(),
+		})
+}
+
+// krAutonomousFactorsPanel — панель 33: автономные (немонетарные) факторы — АЦН-индикаторы ЦБ.
+// Гэпы — п.п., темпы роста кредита — % (правая ось). Край ряда 2024-07/2024-10 — свойство
+// публикации: после него NULL, а не ноль, и об этом сказано в Description.
+func krAutonomousFactorsPanel() *timeseries.PanelBuilder {
+	return krPanelDefaults(timeseries.NewPanelBuilder()).
+		Id(33).
+		Title("Автономные факторы: кредитные гэпы и рост кредита").
+		Span(24).
+		Description("АЦН-индикаторы ЦБ (v_cbr_ccyb_indicators): кредитные гэпы broad и ФЛ (п.п., "+
+			"левая ось) и годовые темпы прироста кредитов ФЛ и ЮЛ в рублях (%, правая ось). Ряд "+
+			"источника заканчивается 2024-07 у гэпов и 2024-10 у темпов: после — NULL, НЕ ноль. "+
+			"Это отставание публикации, а не отсутствие данных в контуре.").
+		WithTarget(timeseriesQuery("A", krCcybSeriesSQL("credit_gap_broad", `"Кредитный гэп (широкий), п.п."`))).
+		WithTarget(timeseriesQuery("B", krCcybSeriesSQL("credit_gap_hh", `"Кредитный гэп (ФЛ), п.п."`))).
+		WithTarget(timeseriesQuery("C", krCcybSeriesSQL("hh_yoy", `"Кредиты ФЛ, г/г, %"`))).
+		WithTarget(timeseriesQuery("D", krCcybSeriesSQL("nfo_rub_yoy", `"Кредиты ЮЛ в рублях, г/г, %"`))).
+		Unit(units.Short).
+		OverrideByQuery("C", []dashboard.DynamicConfigValue{
+			{Id: "unit", Value: units.Percent},
+			axisPlacementRightProp(),
+		}).
+		OverrideByQuery("D", []dashboard.DynamicConfigValue{
+			{Id: "unit", Value: units.Percent},
+			axisPlacementRightProp(),
+		})
 }
