@@ -212,7 +212,7 @@ var cbrIndicatorsCpdNames = []string{"Все товары и услуги", "Б�
 
 var cbrIndicatorsCpdSeriesMeta = namedSeriesMeta(cbrIndicatorsCpdNames, seriesTemplate{Unit: "% к предыдущему месяцу", Frequency: "M", Origin: "cbr.ru/Content/Document/File/108632/indicators_cpd.xlsx (ссылка со страницы cbr.ru/statistics/ddkp/aipd), лист «Лист1»", Description: "Месячный прирост цен в процентах к предыдущему месяцу, сезонно очищенный, по данным ЦБ; значение — уже посчитанный темп, а не индекс. Годовой темп = (произведение (1 + value/100) за 12 месяцев − 1) × 100%. «Все товары и услуги» — общий ИПЦ, «Базовый ИПЦ» — базовая инфляция ЦБ. Дата — последний день месяца.", Label: "строка"})
 
-var cbrInflExpNames = []string{"наблюдаемая инфляция", "ожидаемая инфляция"}
+var cbrInflExpNames = []string{inflExpObservedName, inflExpExpectedName}
 
 var cbrInflExpSeriesMeta = namedSeriesMeta(cbrInflExpNames, seriesTemplate{Unit: "% годовых", Frequency: "M", Origin: "cbr.ru/analytics/dkp/inflationary_expectations, файл Infl_exp_ГГ-ММ.xlsx (ссылка со страницы), лист «Данные для графиков», таблица «Прямые оценки годовой инфляции: медианные значения»", Description: "Медианные прямые оценки годовой инфляции по опросу населения, % годовых. «наблюдаемая инфляция» — оценка роста цен за последние 12 месяцев; «ожидаемая инфляция» — ожидание на следующие 12 месяцев. Дата — 14-е число месяца опроса (в таблице 1-е число + 13 дней).", Label: "строка"})
 
