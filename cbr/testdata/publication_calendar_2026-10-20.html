@@ -1,0 +1,4316 @@
+
+<!DOCTYPE html>
+<html>
+<head>
+    
+
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+<meta name="format-detection" content="telephone=no" />
+<meta name="zoom:lang" content="ru" />
+<title>График публикаций | Банк России</title>
+
+
+
+    <meta property="og:image" content="/common/images/share-1.jpg" />
+
+    
+
+
+            <link rel="stylesheet" type="text/css" href="/common/libs/jquery-ui/jquery-ui.min.css?v=v478607061" media="all">
+
+            <!--[if IE 9]><link rel="stylesheet" type="text/css" href="/common/style/main-ie9.css?v=v1337212920" media="all"><![endif]-->
+
+            <!--[if gt IE 9]><!--><link rel="stylesheet" type="text/css" href="/common/style/main.min.css?v=v1337212920" media="all"><!--<![endif]-->
+
+
+        <script type="text/javascript" src="/common/libs/jquery-3.7.1.min.js?v=v735956814"></script>
+
+
+
+        <script type="text/javascript" src="/common/libs/jquery-ui/jquery-ui.min.js?v=v478607061"></script>
+
+        <script type="text/javascript" src="/common/libs/jquery.inputmask.min.js?v=v478607061"></script>
+
+
+        <script type="text/javascript" src="/common/scripts/vendor.js?v=v4270970564"></script>
+
+        <script type="text/javascript" src="/common/libs/jquery.floatThead.min.js?v=v478607061"></script>
+
+
+
+
+
+
+
+
+        <script type="text/javascript" src="/common/libs/popper.js?v=v478607061"></script>
+
+        <script type="text/javascript" src="/common/libs/tippy.js?v=v478607061"></script>
+
+        <script type="text/javascript" src="/common/scripts/main.min.js?v=v1337212920"></script>
+
+
+        <script type="text/javascript" src="/common/libs/localization-ru.js?v=v712023859"></script>
+        <script type="text/javascript" src="/js/jquery.ui.autocomplete-ru.js?v=v1043438991"></script>
+
+        <script type="text/javascript" src="/js/jquery.cookie.min.js?v=v4260771145"></script>
+
+        <script type="text/javascript" src="/js/site.js?v=v2848633841"></script>
+
+
+
+<link href="/Modules/Migration/Content/migration-ui.css?v=v3116962712" rel="stylesheet" type="text/css" />
+
+
+<script src="/Modules/Queries/Scripts/queries-ui.js?v=v713109731" type="text/javascript"></script>
+    <script type="text/javascript">
+        $(function () {
+            var $menu = $('[data-menu]'),
+                $menuItemBtn = $menu.find('[data-menu-item-btn]'),
+                $menuShow = $('[data-menu-show]'),
+                $menuClose = $('[data-menu-close]');
+            var config = $menu.data('config');
+
+            $menuShow.on('click.cms_loadwholesite mouseenter.cms_loadwholesite', function (event) {
+                loadWholeSite();
+            });
+
+            var xhr = null;
+            function loadWholeSite() {
+                if (xhr === null) {
+                    $('.menu_wrap .networks-circle').html($('.networks-circle.footer_networks').html());
+                    $('.menu_wrap .header_search').html($('.header .offsetMenu .header_search').html());
+
+                    $('[data-cms-wholesite-placeholder]').addClass('with-centered-loader').empty();
+                    xhr = $.ajax(config.url, {
+                        dataType: "html",
+                        method: "get",
+                        success: function (html) {
+                            $('[data-cms-wholesite-placeholder]').replaceWith(html);
+
+                            $menu.find('.menu_tab[data-tabs-tab]').each(function () {
+                                var tab = $(this).data('tabs-tab');
+                                $(this).toggle($menu.find('[data-tabs-content="' + tab + '"]').length != 0);
+                            });
+
+                            $menu.trigger('new-html');
+
+                            for (var i in config.catalogPath) {
+                                $menu.find('li[data-catalog-id="' + config.catalogPath[i] + '"]')
+                                    .addClass("_active");
+                                $menu.find('li[data-catalog-id="' + config.catalogPath[i] + '"]')
+                                    .closest('[data-tabs-content]')
+                                    .trigger('open-anchor');
+                            }
+
+                            $menuShow.off('click.cms_loadwholesite mouseenter.cms_loadwholesite');
+                        },
+                        error: function () {
+                            $('[data-cms-wholesite-placeholder]').removeClass('with-centered-loader')
+                                .append('<div class="menu_content offset-md-1">' +
+                                    '<span class="group-error field-validation-error">Не удалось загрузить карту сайта. <a href="#">Попробуйте еще раз.</a></span>' +
+                                    '</div>')
+                                .find('a')
+                                .on('click', function () { loadWholeSite(); });
+                        },
+                        complete: function () {
+                            xhr = null;
+                        }
+                    });
+                }
+            }
+        });
+    </script>
+
+
+<script>
+    if (window.localStorage) {
+        if (localStorage.getItem('vision-impaired'))
+            document.getElementsByTagName('html')[0].className += ' vision-impaired';
+    }
+</script>
+<script>
+    document.documentElement.style.setProperty('--scrollbar-width', '17px');
+    setTimeout(function () {
+        
+        var div = document.createElement('div');
+
+        div.style.overflowY = 'scroll';
+        div.style.width = '50px';
+        div.style.height = '50px';
+
+        
+        div.style.visibility = 'hidden';
+
+        document.body.appendChild(div);
+        var scrollWidth = Math.max(div.offsetWidth - div.clientWidth, 0.15); 
+        document.body.removeChild(div);
+        
+        document.documentElement.style.setProperty('--scrollbar-width', scrollWidth + 'px');
+    }, 0);
+</script>
+
+
+
+
+    
+</head>
+<body class="page-v3 page-v3-inside">
+
+
+<!-- Yandex.Metrika counter -->
+<script type="text/javascript" >
+    (function(m,e,t,r,i,k,a){m[i]=m[i]||function(){(m[i].a=m[i].a||[]).push(arguments)};
+    m[i].l=1*new Date();
+    for (var j = 0; j < document.scripts.length; j++) {if (document.scripts[j].src === r) { return; }}
+    k=e.createElement(t),a=e.getElementsByTagName(t)[0],k.async=1,k.src=r,a.parentNode.insertBefore(k,a)})
+    (window, document, "script", "https://mc.yandex.ru/metrika/tag.js", "ym");
+
+    ym(5774506, "init", {
+        clickmap:true,
+        trackLinks:true,
+        accurateTrackBounce:true,
+        webvisor:true
+    });
+</script>
+<noscript><div><img src="https://mc.yandex.ru/watch/5774506" style="position:absolute; left:-9999px;" alt="" /></div></noscript>    
+<!-- /Yandex.Metrika counter -->
+        
+    
+
+    <div class="header-print">
+    <div class="offsetMenu">
+        <div class="header-print_inner">
+            <img class="header-print_logo" alt="cbr" src="/common/images/logo.svg">
+            <ul class="header-print_contacts">
+<li>107016, Москва, ул. Неглинная, д.&nbsp;12, к. В, Банк России</li>
+<li><nobr class="phone">8 800 300-30-00</nobr></li>
+<li>www.cbr.ru</li>
+</ul>
+
+        </div>
+    </div>
+</div>
+
+    <header class="header" id="header">
+        <div class="top-line" data-top-line="">
+            <div class="header_burger-big"></div>
+            <div class="offsetMenu">
+                <div class="col-md-23 header_margin-left">
+                    <div class="top-line_inner header_inner">
+                        
+
+<div class="row">
+    <div class="col-xl-4 col-md-6">
+        <div class="header_left pr-0">
+                <div class="header_menu" data-menu-show=""></div>
+            <a class="header_logo" href="/"></a>
+                <a class="header_search_btn d-flex d-md-none" href="#" data-search-form-show="" aria-label="Поиск по сайту"><div class="header_search_icon"></div></a>
+            <a class="d-flex d-md-none" href="#" data-tooltip="" data-tooltip-content="Версия для слабовидящих" data-tooltip-class="mobile-hide"><div class="header_visual-impaired_item"></div></a>
+        </div>
+    </div>
+    <div class="col-xl-17 col-md-13 offset-md-1 header_block">
+        <div class="d-none d-md-block">
+            <div class="header_right">
+                <div class="networks header_link header_networks"><a class="header_appeal-link" href="/contactBR/" data-tooltip="" data-tooltip-content="Обратиться в Банк России" data-tooltip-class="mobile-hide"></a></div>
+                <div class="networks header_networks header_visual-impaired header_visual-impaired_inner"><a href="#" data-tooltip="" data-tooltip-content="Версия для слабовидящих" data-tooltip-class="mobile-hide" aria-label="Версия для слабовидящих"><div class="header_visual-impaired_item"></div></a></div>
+                <div class="header_lang header_lang_inner header_networks">
+    <a href="/Localization/SwitchLanguage?url=%2Fcalendar%2F&amp;from=ru-RU&amp;to=en-CB"><!--noindex-->EN<!--/noindex--></a>
+</div>
+                    <div class="header_networks header_search header_search_inner">
+                        <a class="header_search_btn" href="#" data-search-form-show="" aria-label="Поиск по сайту"><div class="header_search_icon"></div><span aria-hidden="true">Поиск по сайту</span></a>
+                    </div>
+            </div>
+        </div>
+    </div>
+</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="offsetMenu">
+            <div class="col-md-23 offset-md-1 header_margin-left">
+                <div class="header_inner">
+                    
+<div class="row">
+    <div class="col-xl-5 col-md-6">
+        <div class="header_left pr-0">
+            <div class="header_menu" data-menu-show=""></div>
+            <a class="header_logo" href="/"></a>
+            <a class="header_search_btn d-flex d-md-none" href="#" data-search-form-show="" aria-label="Поиск по сайту">
+                <div class="header_search_icon"></div>
+            </a>
+            <a class="d-flex d-md-none" href="#" data-tooltip data-tooltip-content="Версия для слабовидящих" data-tooltip-class="mobile-hide">
+                <div class="header_visual-impaired_item"></div>
+            </a>
+        </div>
+    </div>
+    <div class="col-xl-17 col-md-13 offset-md-1 header_block justify-content-end">
+        <div class="d-none d-md-block">
+            <div class="header_right">
+                <div class="networks header_link header_networks"><a class="header_appeal-link" href="/contactBR/" data-tooltip="" data-tooltip-content="Обратиться в Банк России" data-tooltip-class="mobile-hide"></a></div>
+                <div class="networks header_networks header_visual-impaired header_visual-impaired_inner">
+                    <a href="#" data-tooltip data-tooltip-content="Версия для слабовидящих" data-tooltip-class="mobile-hide" aria-label="Версия для слабовидящих">
+                        <div class="header_visual-impaired_item"></div>
+                    </a>
+                </div>
+                <div class="header_lang header_lang_inner header_networks">
+    <a href="/Localization/SwitchLanguage?url=%2Fcalendar%2F&amp;from=ru-RU&amp;to=en-CB"><!--noindex-->EN<!--/noindex--></a>
+</div>
+                <div class="header_networks header_search header_search_inner">
+                    <a class="header_search_btn" href="#" data-search-form-show="" aria-label="Поиск по сайту">
+                        <div class="header_search_icon"></div><span aria-hidden="true">Поиск по сайту</span>
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+                </div>
+            </div>
+        </div>
+    </header>
+    <form action="/search/" method="get" class="search-form" data-search-form=""
+      data-api-url="/Content/SearchSuggest/Suggest"
+      data-api-top-url="">
+    <div class="offsetMenu">
+        <div class="col-md-23 offset-md-1">
+            <div class="search-form_inner">
+                <div class="search-form_title">Что вы хотите найти?<img class="search-form_title-close" src="/common/images/icons/menu-close-dark-grey.svg"></div>
+                <div class="search-form_content">
+                    <div class="search-form_block">
+                        <div class="search-form_icon"></div>
+                        <div class="search-form_field">
+                            <input name="text" type="text" autocomplete="off" placeholder="Начните писать" data-search-form-input="" />
+                        </div>
+                    </div>
+                    <div class="search-form_clear" data-search-form-clear-btn=""><img src="/common/images/icons/menu-close-gray.svg"></div>
+                    <div class="search-form_btn">
+                        <button class="b-btn _blue" data-search-form-btn="">Искать</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</form>
+
+
+<div class="menu_wrap" data-menu="" data-config="{&quot;catalogPath&quot;:[22457],&quot;url&quot;:&quot;/Catalog/SiteMap/GetWholeSiteHtml?blockId=59191&quot;}">
+    <div class="offsetMenu">
+        <div class="header_menu _close menu_close d-none d-md-block" data-menu-close=""></div>
+        <div class="header_inner top-line_inner d-block d-md-none">
+            <div class="row">
+                <div class="col-xl-5 col-md-9">
+                    <div class="header_left pr-0">
+                        <div class="header_menu _close" role="button" tabindex="0" aria-label="Закрыть меню" data-menu-close=""></div>
+                        <a class="header_logo" href="/"></a>
+                        <a class="header_search_btn" href="#" data-search-form-show="data-search-form-show" aria-label="Поиск по сайту"><div class="header_search_icon"></div></a>
+                        <a href="#" data-tooltip="data-tooltip" data-tooltip-content="Версия для слабовидящих" data-tooltip-class="mobile-hide"><div class="header_visual-impaired_item"></div></a>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="menu row" data-tabs="data-tabs">
+            <div class="menu_quick col-md-7">
+                <div role="tablist" class="menu_quick_tabs">
+    <a role="tab" id="menu_tab_Activity" aria-controls="menu_content_Activity" aria-selected="true" class="menu_tab _active" href="#" data-tabs-tab="Activity">Деятельность</a>
+    <a role="tab" id="menu_tab_FinancialMarkets" aria-controls="menu_content_FinancialMarkets" aria-selected="false" class="menu_tab" href="#" data-tabs-tab="FinancialMarkets">Финансовые рынки</a>
+    <a role="tab" id="menu_tab_Documents" aria-controls="menu_content_Documents" aria-selected="false" class="menu_tab" href="#" data-tabs-tab="Documents">Документы и данные</a>
+    <a role="tab" id="menu_tab_AboutBank" aria-controls="menu_content_AboutBank" aria-selected="false" class="menu_tab" href="#" data-tabs-tab="AboutBank">О Банке России</a>
+    <a role="tab" id="menu_tab_Services" aria-controls="menu_content_Services" aria-selected="false" class="menu_tab" href="#" data-tabs-tab="Services">Сервисы</a>
+</div>
+<div class="menu_quick_links">
+    <div class="inner_links"><a href="/support_measures/" title="Меры зашиты финансового рынка" style="color:red">Меры защиты финансового рынка</a>
+  </div>
+<div class="phones"><a class="menu_phone_val" href="tel:+74993003000">
+<div class="plus">+</div>7 499 300-30-00</a><a class="menu_phone_val" href="tel:88003003000">8 800 300-30-00</a><a class="menu_phone_val" href="tel:300">300</a><span>Бесплатно для звонков с мобильных телефонов</span></div>
+<div class="inner_links">
+  <a href="/news/" title="Новости">Новости</a>
+  <a href="/rbr/" title="Решения Банка России">Решения Банка России</a>
+  <a href="/contacts/" title="Контактная информация">Контактная информация</a>
+  <a href="/sitemap" title="Карта сайта">Карта сайта</a>
+  <a href="/about/" title="О сайте">О сайте</a>
+  </div>
+<div class="networks-circle">
+  <a class="networks-circle_item _vk" href="https://vk.com/cbr_official" title="ВКонтакте"></a>
+  <a class="networks-circle_item _yt" href="https://www.youtube.com/user/BankofRussia" title="Youtube"></a>
+  <a class="networks-circle_item _tg" href="https://telegram.me/centralbank_russia" title="Telegram"></a>
+  <a class="networks-circle_item _ydzen" href="https://zen.yandex.ru/id/622372d6a565892091994ea9" title="Яндекс Дзен"></a>
+  <a class="networks-circle_item _ok" href="https://ok.ru/group/68858679787580" title="Одноклассники"></a>
+  <a class="networks-circle_item _rt" href="https://rutube.ru/channel/23873201/" title="RUTUBE"></a>
+  <a class="networks-circle_item _max" href="https://max.ru/cbr_official" title="Макс"></a>
+</div>
+</div>
+            </div>
+            <div class="d-md-none link-above">
+                <div class="header_right">
+                    <div class="header_link"><a href="/contactBR/">Обратиться в&nbsp;Банк России</a></div>
+                    <div class="header_lang">
+            <div class="header_lang_item _active"><span><!--noindex-->RU<!--/noindex--></span></div>
+            <div class="header_lang_item"><a href="/Localization/SwitchLanguage?url=%2Fcalendar%2F&amp;from=ru-RU&amp;to=en-CB"><!--noindex-->EN<!--/noindex--></a></div>
+</div>
+                </div>
+<div class="header_right"><div class="header_link"><a href="/about_br/">О Банке России</a></div></div>
+<div class="header_right"><div class="header_link"><a href="/finorg/">Проверить участника финансового рынка</a></div></div>
+<div class="header_right"><div class="header_link"><a href="/beware/">Осторожно: мошенники!</a></div></div>            </div>
+            <div class="menu_content_container col-md" data-cms-wholesite-placeholder="">
+            </div>
+        </div>
+    </div>
+</div>
+
+    <main id="content">
+        <div class="offsetMenu ">
+            <div class="container-fluid">
+                <div class="col-md-23 offset-md-1">
+                    
+                    <!--index-->
+<h1><span class="referenceable">График публикаций</span>
+</h1>
+                                        
+
+
+
+
+
+
+                                                                                <h2>В&nbsp;календарях публикаций официальной статистической и&nbsp;аналитической информации могут происходить изменения. Следите за&nbsp;обновлениями.</h2>
+
+
+
+
+<div id="tab" class="tabs_wrap " data-tabs="">
+    <div role="tablist" class="tabs">
+
+    <a role="tab" id="tab_tab_t1" aria-controls="tab_content_t1" aria-selected="true" 
+       class="tab _active" href="#t1" data-text="Календарь публикации официальной статистической информации"
+       
+
+  data-tabs-tab="t1"   >
+        Календарь публикации официальной статистической информации
+    </a>
+    <a role="tab" id="tab_tab_t2" aria-controls="tab_content_t2" aria-selected="false" 
+       class="tab" href="#t2" data-text="Календарь публикации официальной аналитической информации"
+       
+
+  data-tabs-tab="t2"   >
+        Календарь публикации официальной аналитической информации
+    </a>
+            </div>
+
+                    <div role="tabpanel" id="tab_content_t1" aria-labelledby="tab_tab_t1" data-tabs-content="t1">
+                        
+
+
+<div class="dropdown">
+<a aria-controls="DropDown_content" aria-expanded="false" class="dropdown_title referenceable" data-zone-code="/block145909/zone" id="a_145909" role="button" tabindex="0">Данные с ежедневной периодичностью распространения</a>
+
+    <div id="DropDown_content" role="region" aria-labelledby="a_145909" class="dropdown_content">
+<table class="data">
+<tbody>
+<tr>
+<th>Дата</th>
+<th>Показатели</th>
+<th>Время публикации</th>
+</tr>
+<tr>
+<td>ежедневно по&nbsp;рабочим дням</td>
+<td><a href="/hd_base/ostat_base/">Сведения об&nbsp;остатках средств кредитных организаций на&nbsp;корреспондентских счетах в&nbsp;Банке России по&nbsp;Российской Федерации и&nbsp;Московскому региону</a></td>
+<td>до&nbsp;10:00</td>
+</tr>
+<tr>
+<td>ежедневно по&nbsp;рабочим дням</td>
+<td><a href="/hd_base/ruonia/"> Ставка RUONIA</a></td>
+<td>до&nbsp;15:00</td>
+</tr>
+<tr>
+<td><span>ежедневно по&nbsp;рабочим дням</span></td>
+<td><a href="/hd_base/ruonia/sv_ruonia/">Индекс и&nbsp;срочная версия RUONIA</a></td>
+<td><span>до&nbsp;16:00</span></td>
+</tr>
+<tr>
+<td>ежедневно по&nbsp;рабочим дням</td>
+<td><a href="/hd_base/mkr/mkr_base/">Ставки MIACR, MIACR-IG и&nbsp;MIACR-B*</a></td>
+<td>до&nbsp;16:30</td>
+</tr>
+<tr>
+<td>ежедневно по&nbsp;рабочим дням</td>
+<td><a href="/hd_base/ImpliedRateCNY/">Вмененная ставка валютного свопа овернайт в&nbsp;юанях</a></td>
+<td>до&nbsp;17:30</td>
+</tr>
+<tr>
+<td>в&nbsp;день установления Советом директоров Банка России</td>
+<td><a href="/oper_br/iro/#a_35860file">Ключевая ставка*</a></td>
+<td>13:30</td>
+</tr>
+<tr>
+<td>ежедневно по&nbsp;рабочим дням</td>
+<td><a href="/currency_base/">Официальные курсы иностранных валют по&nbsp;отношению к&nbsp;рублю*</a></td>
+<td>&nbsp;</td>
+</tr>
+<tr>
+<td>ежедневно по&nbsp;рабочим дням</td>
+<td><a href="/hd_base/metall/metall_base_new/"> Учетные цены на&nbsp;аффинированные драгоценные металлы</a></td>
+<td>&nbsp;</td>
+</tr>
+<tr>
+<td>в&nbsp;день проведения операций</td>
+<td><a href="/hd_base/lombard/"> Ставки по&nbsp;итогам ломбардного кредитного аукциона</a></td>
+<td>&nbsp;</td>
+</tr>
+<tr>
+<td>после завершения аукциона</td>
+<td><a href="/hd_base/repo/"> Ставка по&nbsp;итогам аукциона прямого РЕПО</a></td>
+<td>&nbsp;</td>
+</tr>
+<tr>
+<td>ежедневно по&nbsp;рабочим дням</td>
+<td><a href="/hd_base/deposit_base/"> Фиксированные процентные ставки по&nbsp;депозитным операциям Банка России</a></td>
+<td>&nbsp;</td>
+</tr>
+</tbody>
+</table>
+<p class="table-caption">* Данные, распространяемые Банком России в&nbsp;соответствии с&nbsp;требованиями Специального стандарта Международного валютного фонда на&nbsp;распространение данных (ССРД&nbsp;МВФ).</p>    </div>
+</div>
+
+
+
+<div class="dropdown">
+<a aria-controls="DropDown2_content" aria-expanded="false" class="dropdown_title referenceable" data-zone-code="/block145910/zone" id="a_145910" role="button" tabindex="0">Данные с еженедельной периодичностью распространения</a>
+
+    <div id="DropDown2_content" role="region" aria-labelledby="a_145910" class="dropdown_content">
+<table class="data">
+<tbody>
+<tr>
+<th>Дата</th>
+<th>Показатели</th>
+<th>Время публикации</th>
+</tr>
+<tr>
+<td>еженедельно, по&nbsp;четвергам</td>
+<td><a href="/hd_base/mrrf/mrrf_7d/"> Международные резервы по&nbsp;состоянию на&nbsp;конец пятницы предыдущей недели*</a></td>
+<td>16:00</td>
+</tr>
+<tr>
+<td>еженедельно, по&nbsp;пятницам</td>
+<td><a href="/hd_base/mb_nd/mb_nd_weekly/"> Денежная база в&nbsp;узком определении по&nbsp;состоянию на&nbsp;конец пятницы предыдущей недели </a></td>
+<td>11:00</td>
+</tr>
+</tbody>
+</table>
+<p class="table-caption">* Данные, распространяемые Банком России в&nbsp;соответствии с&nbsp;требованиями Специального стандарта Международного валютного фонда на&nbsp;распространение данных (ССРД&nbsp;МВФ).</p>    </div>
+</div>
+
+
+<script type="text/javascript">
+<!--
+    var UniDbQuery_Data = {};
+// -->
+</script>
+
+        <!--noindex-->
+<div class="block-part">
+<form action="/calendar/" data-auto-submit="true" method="get"><input id="UniDbQuery_Posted" name="UniDbQuery.Posted" type="hidden" value="True" />        <div class="request_block" id="UniDbQuery_form">
+
+
+
+
+    <div class="filters_wrapper">
+        <div class="filters">
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        <div class="filter"
+             data-filter="select"
+             data-default-value="2026">
+                <div class="filter_placeholder">Год</div>
+            <button class="filter_title" type="button" data-filter-title data-tooltip>2026</button>
+            <div class="filter_content" data-filter-content>
+                <div class="filter_content_top">
+                    <div class="filter_content_close" data-filter-close></div>
+                </div>
+                <div class="filter-select">
+
+                        <div class="filter-select_option">
+                            <input type="radio" name="UniDbQuery.year" id="UniDbQuery_year_1"
+                                   
+                                   value="2026"
+                                   checked />
+                            <label for="UniDbQuery_year_1">2026</label>
+                        </div>
+                        <div class="filter-select_option">
+                            <input type="radio" name="UniDbQuery.year" id="UniDbQuery_year_2"
+                                   
+                                   value="2027"
+                                    />
+                            <label for="UniDbQuery_year_2">2027</label>
+                        </div>
+                </div>
+            </div>
+        </div>
+        <div class="filter"
+             data-filter="select"
+             data-default-value="2">
+                <div class="filter_placeholder">На</div>
+            <button class="filter_title" type="button" data-filter-title data-tooltip>2</button>
+            <div class="filter_content" data-filter-content>
+                <div class="filter_content_top">
+                    <div class="filter_content_close" data-filter-close></div>
+                </div>
+                <div class="filter-select">
+
+                        <div class="filter-select_option">
+                            <input type="radio" name="UniDbQuery.period" id="UniDbQuery_period_1"
+                                   
+                                   value="1"
+                                    />
+                            <label for="UniDbQuery_period_1">1 месяц</label>
+                        </div>
+                        <div class="filter-select_option">
+                            <input type="radio" name="UniDbQuery.period" id="UniDbQuery_period_2"
+                                   
+                                   value="2"
+                                   checked />
+                            <label for="UniDbQuery_period_2">3 месяца</label>
+                        </div>
+                        <div class="filter-select_option">
+                            <input type="radio" name="UniDbQuery.period" id="UniDbQuery_period_3"
+                                   
+                                   value="3"
+                                    />
+                            <label for="UniDbQuery_period_3">6 месяцев</label>
+                        </div>
+                        <div class="filter-select_option">
+                            <input type="radio" name="UniDbQuery.period" id="UniDbQuery_period_4"
+                                   
+                                   value="4"
+                                    />
+                            <label for="UniDbQuery_period_4">12 месяцев</label>
+                        </div>
+                </div>
+            </div>
+        </div>
+        <div class="filter"
+             data-filter="select"
+             data-default-value="-1">
+                <div class="filter_placeholder">Тема</div>
+            <button class="filter_title" type="button" data-filter-title data-tooltip>-1</button>
+            <div class="filter_content" data-filter-content>
+                <div class="filter_content_top">
+                    <div class="filter_content_close" data-filter-close></div>
+                </div>
+                <div class="filter-select">
+
+                        <div class="filter-select_option">
+                            <input type="radio" name="UniDbQuery.pID" id="UniDbQuery_pID_1"
+                                   
+                                   value="-1"
+                                   checked />
+                            <label for="UniDbQuery_pID_1">Все темы</label>
+                        </div>
+                        <div class="filter-select_option">
+                            <input type="radio" name="UniDbQuery.pID" id="UniDbQuery_pID_2"
+                                   
+                                   value="3211"
+                                    />
+                            <label for="UniDbQuery_pID_2">Денежно-кредитная и финансовая статистика</label>
+                        </div>
+                        <div class="filter-select_option">
+                            <input type="radio" name="UniDbQuery.pID" id="UniDbQuery_pID_3"
+                                   
+                                   value="3212"
+                                    />
+                            <label for="UniDbQuery_pID_3">Показатели некредитных финансовых организаций</label>
+                        </div>
+                        <div class="filter-select_option">
+                            <input type="radio" name="UniDbQuery.pID" id="UniDbQuery_pID_4"
+                                   
+                                   value="3213"
+                                    />
+                            <label for="UniDbQuery_pID_4">Показатели финансового рынка</label>
+                        </div>
+                        <div class="filter-select_option">
+                            <input type="radio" name="UniDbQuery.pID" id="UniDbQuery_pID_5"
+                                   
+                                   value="3214"
+                                    />
+                            <label for="UniDbQuery_pID_5">Показатель сбережений сектора &#171;Домашние хозяйства&#187;</label>
+                        </div>
+                        <div class="filter-select_option">
+                            <input type="radio" name="UniDbQuery.pID" id="UniDbQuery_pID_6"
+                                   
+                                   value="3215"
+                                    />
+                            <label for="UniDbQuery_pID_6">Статистика банковского сектора</label>
+                        </div>
+                        <div class="filter-select_option">
+                            <input type="radio" name="UniDbQuery.pID" id="UniDbQuery_pID_7"
+                                   
+                                   value="3216"
+                                    />
+                            <label for="UniDbQuery_pID_7">Статистика внешнего сектора</label>
+                        </div>
+                        <div class="filter-select_option">
+                            <input type="radio" name="UniDbQuery.pID" id="UniDbQuery_pID_8"
+                                   
+                                   value="3217"
+                                    />
+                            <label for="UniDbQuery_pID_8">Статистика по ценным бумагам</label>
+                        </div>
+                        <div class="filter-select_option">
+                            <input type="radio" name="UniDbQuery.pID" id="UniDbQuery_pID_9"
+                                   
+                                   value="3218"
+                                    />
+                            <label for="UniDbQuery_pID_9">Финансовые счета и балансы финансовых активов и обязательств системы национальных счетов Российской Федерации</label>
+                        </div>
+                </div>
+            </div>
+        </div>
+    <div class="filter filter-switch" data-filter="switch" data-tooltip>
+        <input type="checkbox" name="UniDbQuery.SSRD" id="UniDbQuery_SSRD"
+               value="true"
+                />
+        <label class="filter_title" for="UniDbQuery_SSRD">
+            <div class="filter-switch_text">Данные распространяемые в соответствии с ССРД МВФ</div>
+            <span class="filter-switch_icon"></span>
+        </label>
+    </div>
+
+        </div>
+    </div>
+
+
+
+
+
+
+
+        </div>
+</form></div>        <!--/noindex-->
+<div class="row request_block"><a href="/Queries/FileSource/105732/vCalendar.ics?inline=True" class="btn _with-icon"><div class="image"><img src="/common/images/icons/arr-load_down.svg"></div>
+		Скачать календарь
+	  </a></div>
+<div class="table-wrapper">
+  <div class="table">
+    <table class="data">
+      <thead>
+        <tr>
+          <th>Дата публикации</th>
+          <th>Время публикации</th>
+          <th>Информация - показатель / период наблюдения</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>20.10.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/macro_itm/external_sector/ets/#a_164781">Экспорт отдельных видов услуг по видам экономической деятельности резидентов Российской Федерации</a><br>II квартал 2026 г.</td>
+        </tr>
+        <tr>
+          <td>20.10.2026</td>
+          <td>16:00</td>
+          <td><a href="/statistics/macro_itm/external_sector/ir/#a_164876">Оценка предстоящих изменений международных резервов и другой ликвидности в иностранной валюте органов денежно-кредитного регулирования Российской Федерации*</a><br>01.10.2026</td>
+        </tr>
+        <tr>
+          <td>20.10.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/macro_itm/dkfs/#a_54697">Обзор центрального банка</a><br>01.10.2026</td>
+        </tr>
+        <tr>
+          <td>20.10.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/macro_itm/dkfs/#a_54698">Обзор кредитных организаций</a><br>01.10.2026</td>
+        </tr>
+        <tr>
+          <td>20.10.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/macro_itm/dkfs/#a_54699">Обзор банковской системы</a><br>01.10.2026</td>
+        </tr>
+        <tr>
+          <td>20.10.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/macro_itm/external_sector/ets/#a_164782">Импорт отдельных видов услуг по видам экономической деятельности резидентов Российской Федерации</a><br>II квартал 2026 г.</td>
+        </tr>
+        <tr>
+          <td>20.10.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/macro_itm/dkfs/#a_128613file">Денежные агрегаты</a><br>01.10.2026</td>
+        </tr>
+        <tr>
+          <td>20.10.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/ms/">Денежная масса М2 (национальное определение)</a><br>01.10.2026</td>
+        </tr>
+        <tr>
+          <td>20.10.2026</td>
+          <td> — </td>
+          <td><a href="http://cbr.ru/statistics/macro_itm/dkfs/#a_178979">Баланс кредитных организаций</a><br>01.10.2026</td>
+        </tr>
+        <tr>
+          <td>22.10.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/macro_itm/external_sector/ir/#a_164878">Показатели достаточности международных резервов Российской Федерации</a><br>01.07.2026</td>
+        </tr>
+        <tr>
+          <td>22.10.2026</td>
+          <td>16:00</td>
+          <td><a href="/hd_base/mrrf/mrrf_7d/">Общий объем международных резервных активов, по состоянию на конец рабочей недели*</a><br>еженедельные значения</td>
+        </tr>
+        <tr>
+          <td>22.10.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/ssrd/data/">Обзор банковской системы (в соответствии с требованиями ССРД МВФ)*</a><br>01.10.2026</td>
+        </tr>
+        <tr>
+          <td>22.10.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/macro_itm/sec_st/">Выпущенные на внутреннем рынке долговые ценные бумаги по типам процентных ставок и видам базового показателя</a><br>01.10.2026</td>
+        </tr>
+        <tr>
+          <td>22.10.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/macro_itm/sec_st/#a_185207">Выпущенные на внутреннем рынке долговые ценные бумаги по типам долгового инструмента</a><br>01.10.2026</td>
+        </tr>
+        <tr>
+          <td>22.10.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/macro_itm/sec_st/#a_186747">Выпущенные на внутреннем рынке долговые ценные бумаги по видам экономической деятельности эмитентов</a><br>01.10.2026</td>
+        </tr>
+        <tr>
+          <td>22.10.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/macro_itm/sec_st/#a_54955">Выпущенные на внутреннем рынке долговые ценные бумаги</a><br>01.10.2026</td>
+        </tr>
+        <tr>
+          <td>22.10.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/macro_itm/sec_st/#a_186746">Акции российских эмитентов, обращающиеся на внутреннем рынке, по видам экономической деятельности эмитентов</a><br>01.10.2026</td>
+        </tr>
+        <tr>
+          <td>22.10.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/macro_itm/sec_st/#a_132057">Акции российских эмитентов, обращающиеся на внутреннем рынке</a><br>01.10.2026</td>
+        </tr>
+        <tr>
+          <td>23.10.2026</td>
+          <td>11:00</td>
+          <td><a href="http://cbr.ru/hd_base/mb_nd/mb_nd_weekly/">Денежная база в узком определении (Еженедельные значения)</a><br>еженедельные значения</td>
+        </tr>
+        <tr>
+          <td>29.10.2026</td>
+          <td>16:00</td>
+          <td><a href="/hd_base/mrrf/mrrf_7d/">Общий объем международных резервных активов, по состоянию на конец рабочей недели*</a><br>еженедельные значения</td>
+        </tr>
+        <tr>
+          <td>29.10.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/macro_itm/external_sector/pofi/#a_164863">Доля инвестиций нерезидентов в объеме выпусков облигаций федерального займа</a><br>01.10.2026</td>
+        </tr>
+        <tr>
+          <td>29.10.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/macro_itm/sec_st/#a_149409">Выпущенные на внутреннем рынке долговые ценные бумаги, включенные в сектор устойчивого развития </a><br>01.10.2026</td>
+        </tr>
+        <tr>
+          <td>30.10.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/bank_sector/sors/#a_63140">Сведения о размещенных средствах (информация о кредитах, предоставленных физическим лицам)</a><br>01.10.2026</td>
+        </tr>
+        <tr>
+          <td>30.10.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/bank_sector/sors/#a_63099">Сведения о привлеченных средствах (информация о средствах организаций, банковских депозитах (вкладах) и других привлеченных средствах юридических и физических лиц, бюджетных средствах на счетах, открытых в кредитных организациях)</a><br>01.10.2026</td>
+        </tr>
+        <tr>
+          <td>30.10.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/bank_sector/mortgage/">Показатели рынка жилищного (ипотечного жилищного) кредитования</a><br>01.10.2026</td>
+        </tr>
+        <tr>
+          <td>30.10.2026</td>
+          <td>11:00</td>
+          <td><a href="http://cbr.ru/hd_base/mb_nd/mb_nd_weekly/">Денежная база в узком определении (Еженедельные значения)</a><br>еженедельные значения</td>
+        </tr>
+        <tr>
+          <td>02.11.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/macro_itm/external_sector/er/#a_172664">Номинальные курсы иностранных валют к рублю (ежемесячные данные)</a><br>Октябрь 2026 г.</td>
+        </tr>
+        <tr>
+          <td>06.11.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/macro_itm/households/#a_133181">Финансовые активы и обязательства сектора «Домашние хозяйства» по отдельным финансовым инструментам</a><br>01.10.2026</td>
+        </tr>
+        <tr>
+          <td>06.11.2026</td>
+          <td> — </td>
+          <td><a href="/hd_base/mkr/mkr_monthes/">Среднемесячные фактические ставки по кредитам, предоставленным московскими банками в рублях и долларах США (MIACR, MIACR-IG, MIACR-B, MIACR USD)</a><br>Октябрь 2026 г.</td>
+        </tr>
+        <tr>
+          <td>06.11.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/macro_itm/households/#a_133183">Операции сектора «Домашние хозяйства» с финансовыми активами и обязательствами по отдельным финансовым инструментам</a><br>01.10.2026</td>
+        </tr>
+        <tr>
+          <td>06.11.2026</td>
+          <td>16:00</td>
+          <td><a href="/hd_base/mrrf/mrrf_7d/">Общий объем международных резервных активов, по состоянию на конец рабочей недели*</a><br>еженедельные значения</td>
+        </tr>
+        <tr>
+          <td>06.11.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/macro_itm/dkfs/#a_54742">Долг организаций и домашних хозяйств по банковским кредитам и выпущенным долговым ценным бумагам</a><br>01.10.2026</td>
+        </tr>
+        <tr>
+          <td>06.11.2026</td>
+          <td>11:00</td>
+          <td><a href="http://cbr.ru/hd_base/mb_nd/mb_nd_weekly/">Денежная база в узком определении (Еженедельные значения)</a><br>еженедельные значения</td>
+        </tr>
+        <tr>
+          <td>06.11.2026</td>
+          <td> — </td>
+          <td><a href="/hd_base/mb_nd/">Денежная база в узком определении</a><br>01.11.2026</td>
+        </tr>
+        <tr>
+          <td>09.11.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/bank_sector/int_rat/">Средневзвешенные процентные ставки по кредитам и депозитам и структура кредитов и депозитов по срочности (информация по кредитам, предоставленным нефинансовым организациям)</a><br>Сентябрь 2026 г.</td>
+        </tr>
+        <tr>
+          <td>09.11.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/bank_sector/sors/#a_63140">Сведения о размещенных средствах (информация о кредитах, предоставленных юридическим лицам и индивидуальным предпринимателям; субъектам малого и среднего предпринимательства)</a><br>01.10.2026</td>
+        </tr>
+        <tr>
+          <td>09.11.2026</td>
+          <td>16:00</td>
+          <td><a href="/hd_base/mrrf/">Международные резервы Российской Федерации (по состоянию на начало отчетной даты)</a><br>01.11.2026</td>
+        </tr>
+        <tr>
+          <td>09.11.2026</td>
+          <td>16:00</td>
+          <td><a href="/statistics/ssrd/data/">Международные резервные активы (по состоянию на конец периода) (в соответствии с требованиями ССРД МВФ)*</a><br>Октябрь 2026 г.</td>
+        </tr>
+        <tr>
+          <td>09.11.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/bank_sector/sors/">Краткий комментарий «Кредитование юридических лиц и индивидуальных предпринимателей»</a><br>01.10.2026</td>
+        </tr>
+        <tr>
+          <td>09.11.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/bank_sector/mortgage/mortgage_lending_market/">Информационный бюллетень «Сведения о рынке ипотечного жилищного кредитования в России»</a><br>01.10.2026</td>
+        </tr>
+        <tr>
+          <td>10.11.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/bank_sector/int_rat/">Средневзвешенные процентные ставки по кредитам и депозитам и структура кредитов и депозитов по срочности (информация по кредитам, предоставленным физическим лицам; депозитам физических лиц и нефинансовых организаций)</a><br>Сентябрь 2026 г.</td>
+        </tr>
+        <tr>
+          <td>10.11.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/bank_sector/int_rat/#a_132292page">Сведения о средних арифметических процентных ставках по вкладам физических лиц в рублях, долларах США и евро</a><br>Сентябрь 2026 г.</td>
+        </tr>
+        <tr>
+          <td>10.11.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/rsci/activity_uk_if/#a_11831">Основные показатели деятельности паевых инвестиционных фондов</a><br>Сентябрь 2026 г.</td>
+        </tr>
+        <tr>
+          <td>10.11.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/bank_sector/int_rat/#a_131105">Краткий комментарий «Процентные ставки по кредитным и депозитным операциям кредитных организаций в рублях»</a><br>Сентябрь 2026 г.</td>
+        </tr>
+        <tr>
+          <td>10.11.2026</td>
+          <td> — </td>
+          <td><a href="http://cbr.ru/statistics/RSCI/activity_uk_if/stat_pif_aif/">Динамические ряды основных показателей деятельности паевых инвестиционных фондов и акционерных инвестиционных фондов</a><br>Сентябрь 2026 г.</td>
+        </tr>
+        <tr>
+          <td>11.11.2026</td>
+          <td>16:00</td>
+          <td><a href="/statistics/macro_itm/external_sector/etg/#a_164734">Внешняя торговля Российской Федерации товарами (по методологии платежного баланса)*</a><br>Сентябрь 2026 г.</td>
+        </tr>
+        <tr>
+          <td>12.11.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/reporting/org/#a_87664page">Перечень организаций финансового сектора</a><br>01.11.2026</td>
+        </tr>
+        <tr>
+          <td>12.11.2026</td>
+          <td>16:00</td>
+          <td><a href="/hd_base/mrrf/mrrf_7d/">Общий объем международных резервных активов, по состоянию на конец рабочей недели*</a><br>еженедельные значения</td>
+        </tr>
+        <tr>
+          <td>13.11.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/ssrd/data/">Обзор центрального банка (в соответствии с требованиями ССРД МВФ)*</a><br>01.11.2026</td>
+        </tr>
+        <tr>
+          <td>13.11.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/macro_itm/external_sector/ed/#a_164714">Краткосрочный внешний долг Российской Федерации по остаточному сроку до погашения</a><br>01.07.2026</td>
+        </tr>
+        <tr>
+          <td>13.11.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/macro_itm/external_sector/pofi/#a_164864">Доля инвестиций нерезидентов в объеме выпусков облигаций внешних облигационных займов Российской Федерации</a><br>01.10.2026</td>
+        </tr>
+        <tr>
+          <td>13.11.2026</td>
+          <td> — </td>
+          <td><a href="http://cbr.ru/statistics/rcb/iis_stat/#t3">Динамические ряды основных показателей сегмента индивидуальных инвестиционных счетов (ИИС)</a><br>III квартал 2026 г.</td>
+        </tr>
+        <tr>
+          <td>13.11.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/macro_itm/dkfs/#a_54689">Денежная база в широком определении</a><br>01.11.2026</td>
+        </tr>
+        <tr>
+          <td>13.11.2026</td>
+          <td>11:00</td>
+          <td><a href="http://cbr.ru/hd_base/mb_nd/mb_nd_weekly/">Денежная база в узком определении (Еженедельные значения)</a><br>еженедельные значения</td>
+        </tr>
+        <tr>
+          <td>16.11.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/bank_sector/int_rat/#a_112227">Статистический бюллетень «Кредитование субъектов малого и среднего предпринимательства»</a><br>Сентябрь 2026 г.</td>
+        </tr>
+        <tr>
+          <td>16.11.2026</td>
+          <td>16:00</td>
+          <td><a href="/statistics/macro_itm/external_sector/pb/bop-eval/">Платежный баланс – оценка</a><br>Январь-сентябрь 2026 г.</td>
+        </tr>
+        <tr>
+          <td>16.11.2026</td>
+          <td>16:00</td>
+          <td><a href="/statistics/macro_itm/external_sector/pb/#a_164648">Оценка платежного баланса Российской Федерации</a><br>Январь-сентябрь 2026 г.</td>
+        </tr>
+        <tr>
+          <td>16.11.2026</td>
+          <td>16:00</td>
+          <td><a href="/statistics/macro_itm/external_sector/ed/#a_164710">Оценка внешнего долга Российской Федерации</a><br>01.10.2026</td>
+        </tr>
+        <tr>
+          <td>16.11.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/finr/#a_73585">Основные показатели рынка акций*</a><br>Октябрь 2026 г.</td>
+        </tr>
+        <tr>
+          <td>16.11.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/macro_itm/external_sector/pb/#a_84865">Информационно-аналитический комментарий «Оценка платежного баланса Российской Федерации»</a><br>III квартал 2026 г.</td>
+        </tr>
+        <tr>
+          <td>16.11.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/macro_itm/sec_st/#a_54954">Долговые ценные бумаги в собственности российских банков, переданные по сделкам РЕПО с Банком России</a><br>01.11.2026</td>
+        </tr>
+        <tr>
+          <td>16.11.2026</td>
+          <td>16:00</td>
+          <td><a href="/statistics/macro_itm/external_sector/ets/#a_164778">Внешняя торговля Российской Федерации услугами по месяцам</a><br>Сентябрь 2026 г.</td>
+        </tr>
+        <tr>
+          <td>16.11.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/macro_itm/external_sector/etg/#a_164736">Валютная структура расчетов за поставки товаров и оказание услуг по внешнеторговым контрактам по географическим зонам и валютам государств в соответствии с Распоряжением Правительства РФ от 05.03.2022 № 430-р</a><br>Сентябрь 2026 г.</td>
+        </tr>
+        <tr>
+          <td>17.11.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/bank_sector/mortgage/#a_63031">Сведения о досрочном погашении и рефинансировании ипотечных жилищных кредитов</a><br>III квартал 2026 г.</td>
+        </tr>
+        <tr>
+          <td>17.11.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/finr/#a_73692">Показатели среднего дневного оборота рынка межбанковских кредитов (депозитов) и операций РЕПО</a><br>Октябрь 2026 г.</td>
+        </tr>
+        <tr>
+          <td>17.11.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/macro_itm/external_sector/er/#a_172664">Основные производные показатели динамики обменного курса рубля</a><br>Октябрь 2026 г.</td>
+        </tr>
+        <tr>
+          <td>19.11.2026</td>
+          <td>16:00</td>
+          <td><a href="/hd_base/mrrf/mrrf_7d/">Общий объем международных резервных активов, по состоянию на конец рабочей недели*</a><br>еженедельные значения</td>
+        </tr>
+        <tr>
+          <td>20.11.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/insurance/#a_84758">Сведения об основных показателях деятельности страховщика</a><br>Январь-сентябрь 2026 г.</td>
+        </tr>
+        <tr>
+          <td>20.11.2026</td>
+          <td>16:00</td>
+          <td><a href="/statistics/macro_itm/external_sector/ir/#a_164876">Оценка предстоящих изменений международных резервов и другой ликвидности в иностранной валюте органов денежно-кредитного регулирования Российской Федерации*</a><br>01.11.2026</td>
+        </tr>
+        <tr>
+          <td>20.11.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/macro_itm/dkfs/#a_54697">Обзор центрального банка</a><br>01.11.2026</td>
+        </tr>
+        <tr>
+          <td>20.11.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/macro_itm/dkfs/#a_54698">Обзор кредитных организаций</a><br>01.11.2026</td>
+        </tr>
+        <tr>
+          <td>20.11.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/macro_itm/dkfs/#a_54699">Обзор банковской системы</a><br>01.11.2026</td>
+        </tr>
+        <tr>
+          <td>20.11.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/macro_itm/external_sector/iip/#a_164692">Международная инвестиционная позиция Российской Федерации в национальной и иностранной валютах</a><br>01.07.2026</td>
+        </tr>
+        <tr>
+          <td>20.11.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/macro_itm/dkfs/#a_128613file">Денежные агрегаты</a><br>01.11.2026</td>
+        </tr>
+        <tr>
+          <td>20.11.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/ms/">Денежная масса М2 (национальное определение)</a><br>01.11.2026</td>
+        </tr>
+        <tr>
+          <td>20.11.2026</td>
+          <td>11:00</td>
+          <td><a href="http://cbr.ru/hd_base/mb_nd/mb_nd_weekly/">Денежная база в узком определении (Еженедельные значения)</a><br>еженедельные значения</td>
+        </tr>
+        <tr>
+          <td>20.11.2026</td>
+          <td> — </td>
+          <td><a href="http://cbr.ru/statistics/macro_itm/dkfs/#a_178979">Баланс кредитных организаций</a><br>01.11.2026</td>
+        </tr>
+        <tr>
+          <td>24.11.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/ssrd/data/">Обзор банковской системы (в соответствии с требованиями ССРД МВФ)*</a><br>01.11.2026</td>
+        </tr>
+        <tr>
+          <td>24.11.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/macro_itm/sec_st/">Выпущенные на внутреннем рынке долговые ценные бумаги по типам процентных ставок и видам базового показателя</a><br>01.11.2026</td>
+        </tr>
+        <tr>
+          <td>24.11.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/macro_itm/sec_st/#a_185207">Выпущенные на внутреннем рынке долговые ценные бумаги по типам долгового инструмента</a><br>01.11.2026</td>
+        </tr>
+        <tr>
+          <td>24.11.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/macro_itm/sec_st/#a_186747">Выпущенные на внутреннем рынке долговые ценные бумаги по видам экономической деятельности эмитентов</a><br>01.11.2026</td>
+        </tr>
+        <tr>
+          <td>24.11.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/macro_itm/sec_st/#a_54955">Выпущенные на внутреннем рынке долговые ценные бумаги</a><br>01.11.2026</td>
+        </tr>
+        <tr>
+          <td>24.11.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/macro_itm/sec_st/#a_186746">Акции российских эмитентов, обращающиеся на внутреннем рынке, по видам экономической деятельности эмитентов</a><br>01.11.2026</td>
+        </tr>
+        <tr>
+          <td>24.11.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/macro_itm/sec_st/#a_132057">Акции российских эмитентов, обращающиеся на внутреннем рынке</a><br>01.11.2026</td>
+        </tr>
+        <tr>
+          <td>26.11.2026</td>
+          <td>16:00</td>
+          <td><a href="/hd_base/mrrf/mrrf_7d/">Общий объем международных резервных активов, по состоянию на конец рабочей недели*</a><br>еженедельные значения</td>
+        </tr>
+        <tr>
+          <td>26.11.2026</td>
+          <td> — </td>
+          <td><a href="http://cbr.ru/statistics/rcb/broker_stat/#a_156473file">Динамические ряды основных показателей деятельности брокеров</a><br>III квартал 2026 г.</td>
+        </tr>
+        <tr>
+          <td>27.11.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/RSCI/#a_161699">Основные показатели бухгалтерского баланса и отчета о финансовых результатах управляющих компаний</a><br>III квартал 2026 г.</td>
+        </tr>
+        <tr>
+          <td>27.11.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/macro_itm/external_sector/pofi/#a_164863">Доля инвестиций нерезидентов в объеме выпусков облигаций федерального займа</a><br>01.11.2026</td>
+        </tr>
+        <tr>
+          <td>27.11.2026</td>
+          <td> — </td>
+          <td><a href="http://cbr.ru/statistics/RSCI/uk_stat/#a_156330file">Динамические ряды основных показателей деятельности управляющих компаний</a><br>III квартал 2026 г.</td>
+        </tr>
+        <tr>
+          <td>27.11.2026</td>
+          <td> — </td>
+          <td><a href="http://cbr.ru/statistics/RSCI/du_stat/#a_156398file">Динамические ряды основных показателей деятельности доверительных управляющих</a><br>III квартал 2026 г.</td>
+        </tr>
+        <tr>
+          <td>27.11.2026</td>
+          <td>11:00</td>
+          <td><a href="http://cbr.ru/hd_base/mb_nd/mb_nd_weekly/">Денежная база в узком определении (Еженедельные значения)</a><br>еженедельные значения</td>
+        </tr>
+        <tr>
+          <td>27.11.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/macro_itm/sec_st/#a_149409">Выпущенные на внутреннем рынке долговые ценные бумаги, включенные в сектор устойчивого развития </a><br>01.11.2026</td>
+        </tr>
+        <tr>
+          <td>30.11.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/macro_itm/fafbs/">Финансовые счета и балансы финансовых активов и обязательств системы национальных счетов Российской Федерации</a><br>01.07.2026</td>
+        </tr>
+        <tr>
+          <td>30.11.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/bank_sector/sors/#a_63140">Сведения о размещенных средствах (информация о кредитах, предоставленных физическим лицам)</a><br>01.11.2026</td>
+        </tr>
+        <tr>
+          <td>30.11.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/bank_sector/sors/#a_63099">Сведения о привлеченных средствах (информация о средствах организаций, банковских депозитах (вкладах) и других привлеченных средствах юридических и физических лиц, бюджетных средствах на счетах, открытых в кредитных организациях)</a><br>01.11.2026</td>
+        </tr>
+        <tr>
+          <td>30.11.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/bank_sector/mortgage/">Показатели рынка жилищного (ипотечного жилищного) кредитования</a><br>01.11.2026</td>
+        </tr>
+        <tr>
+          <td>30.11.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/RSCI/#a_41191">Основные показатели деятельности негосударственных пенсионных фондов, осуществляющих деятельность по обязательному пенсионному страхованию</a><br>III квартал 2026 г.</td>
+        </tr>
+        <tr>
+          <td>30.11.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/RSCI/#a_41191">Основные показатели деятельности негосударственных пенсионных фондов, осуществляющих деятельность по негосударственному пенсионному обеспечению</a><br>III квартал 2026 г.</td>
+        </tr>
+        <tr>
+          <td>01.12.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/macro_itm/external_sector/er/#a_172664">Номинальные курсы иностранных валют к рублю (ежемесячные данные)</a><br>Ноябрь 2026 г.</td>
+        </tr>
+        <tr>
+          <td>02.12.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/macro_itm/dkfs/#a_54704">Обзор финансового сектора</a><br>01.07.2026</td>
+        </tr>
+        <tr>
+          <td>02.12.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/macro_itm/dkfs/#a_54701">Обзор других финансовых организаций</a><br>01.07.2026</td>
+        </tr>
+        <tr>
+          <td>03.12.2026</td>
+          <td>16:00</td>
+          <td><a href="/hd_base/mrrf/mrrf_7d/">Общий объем международных резервных активов, по состоянию на конец рабочей недели*</a><br>еженедельные значения</td>
+        </tr>
+        <tr>
+          <td>04.12.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/macro_itm/households/#a_133181">Финансовые активы и обязательства сектора «Домашние хозяйства» по отдельным финансовым инструментам</a><br>01.11.2026</td>
+        </tr>
+        <tr>
+          <td>04.12.2026</td>
+          <td> — </td>
+          <td><a href="/hd_base/mkr/mkr_monthes/">Среднемесячные фактические ставки по кредитам, предоставленным московскими банками в рублях и долларах США (MIACR, MIACR-IG, MIACR-B, MIACR USD)</a><br>Ноябрь 2026 г.</td>
+        </tr>
+        <tr>
+          <td>04.12.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/macro_itm/households/#a_133183">Операции сектора «Домашние хозяйства» с финансовыми активами и обязательствами по отдельным финансовым инструментам</a><br>01.11.2026</td>
+        </tr>
+        <tr>
+          <td>04.12.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/macro_itm/dkfs/#a_54742">Долг организаций и домашних хозяйств по банковским кредитам и выпущенным долговым ценным бумагам</a><br>01.11.2026</td>
+        </tr>
+        <tr>
+          <td>04.12.2026</td>
+          <td>11:00</td>
+          <td><a href="http://cbr.ru/hd_base/mb_nd/mb_nd_weekly/">Денежная база в узком определении (Еженедельные значения)</a><br>еженедельные значения</td>
+        </tr>
+        <tr>
+          <td>04.12.2026</td>
+          <td> — </td>
+          <td><a href="/hd_base/mb_nd/">Денежная база в узком определении</a><br>01.12.2026</td>
+        </tr>
+        <tr>
+          <td>07.12.2026</td>
+          <td>16:00</td>
+          <td><a href="/hd_base/mrrf/">Международные резервы Российской Федерации (по состоянию на начало отчетной даты)</a><br>01.12.2026</td>
+        </tr>
+        <tr>
+          <td>07.12.2026</td>
+          <td>16:00</td>
+          <td><a href="/statistics/ssrd/data/">Международные резервные активы (по состоянию на конец периода) (в соответствии с требованиями ССРД МВФ)*</a><br>Ноябрь 2026 г.</td>
+        </tr>
+        <tr>
+          <td>07.12.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/bank_sector/mortgage/mortgage_lending_market/">Информационный бюллетень «Сведения о рынке ипотечного жилищного кредитования в России»</a><br>01.11.2026</td>
+        </tr>
+        <tr>
+          <td>07.12.2026</td>
+          <td> — </td>
+          <td><a href="/securities_market/statistic/">Динамические ряды основных показателей деятельности профессиональных участников рынка ценных бумаг</a><br>III квартал 2026 г.</td>
+        </tr>
+        <tr>
+          <td>08.12.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/bank_sector/int_rat/">Средневзвешенные процентные ставки по кредитам и депозитам и структура кредитов и депозитов по срочности (информация по кредитам, предоставленным физическим лицам; депозитам физических лиц и нефинансовых организаций)</a><br>Октябрь 2026 г.</td>
+        </tr>
+        <tr>
+          <td>08.12.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/bank_sector/int_rat/#a_132292page">Сведения о средних арифметических процентных ставках по вкладам физических лиц в рублях, долларах США и евро</a><br>Октябрь 2026 г.</td>
+        </tr>
+        <tr>
+          <td>09.12.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/bank_sector/int_rat/">Средневзвешенные процентные ставки по кредитам и депозитам и структура кредитов и депозитов по срочности (информация по кредитам, предоставленным нефинансовым организациям)</a><br>Октябрь 2026 г.</td>
+        </tr>
+        <tr>
+          <td>09.12.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/bank_sector/sors/#a_63140">Сведения о размещенных средствах (информация о кредитах, предоставленных юридическим лицам и индивидуальным предпринимателям; субъектам малого и среднего предпринимательства)</a><br>01.11.2026</td>
+        </tr>
+        <tr>
+          <td>09.12.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/bank_sector/int_rat/#a_131105">Краткий комментарий «Процентные ставки по кредитным и депозитным операциям кредитных организаций в рублях»</a><br>Октябрь 2026 г.</td>
+        </tr>
+        <tr>
+          <td>09.12.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/bank_sector/sors/">Краткий комментарий «Кредитование юридических лиц и индивидуальных предпринимателей»</a><br>01.11.2026</td>
+        </tr>
+        <tr>
+          <td>10.12.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/reporting/org/#a_87664page">Перечень организаций финансового сектора</a><br>01.12.2026</td>
+        </tr>
+        <tr>
+          <td>10.12.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/rsci/activity_uk_if/#a_11831">Основные показатели деятельности паевых инвестиционных фондов</a><br>Октябрь 2026 г.</td>
+        </tr>
+        <tr>
+          <td>10.12.2026</td>
+          <td>16:00</td>
+          <td><a href="/hd_base/mrrf/mrrf_7d/">Общий объем международных резервных активов, по состоянию на конец рабочей недели*</a><br>еженедельные значения</td>
+        </tr>
+        <tr>
+          <td>10.12.2026</td>
+          <td> — </td>
+          <td><a href="http://cbr.ru/statistics/RSCI/activity_uk_if/stat_pif_aif/">Динамические ряды основных показателей деятельности паевых инвестиционных фондов и акционерных инвестиционных фондов</a><br>Октябрь 2026 г.</td>
+        </tr>
+        <tr>
+          <td>11.12.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/macro_itm/external_sector/er/#a_172664">Основные производные показатели динамики обменного курса рубля</a><br>Ноябрь 2026 г.</td>
+        </tr>
+        <tr>
+          <td>11.12.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/ssrd/data/">Обзор центрального банка (в соответствии с требованиями ССРД МВФ)*</a><br>01.12.2026</td>
+        </tr>
+        <tr>
+          <td>11.12.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/macro_itm/dkfs/#a_54689">Денежная база в широком определении</a><br>01.12.2026</td>
+        </tr>
+        <tr>
+          <td>11.12.2026</td>
+          <td>11:00</td>
+          <td><a href="http://cbr.ru/hd_base/mb_nd/mb_nd_weekly/">Денежная база в узком определении (Еженедельные значения)</a><br>еженедельные значения</td>
+        </tr>
+        <tr>
+          <td>11.12.2026</td>
+          <td>16:00</td>
+          <td><a href="/statistics/macro_itm/external_sector/etg/#a_164734">Внешняя торговля Российской Федерации товарами (по методологии платежного баланса)*</a><br>Октябрь 2026 г.</td>
+        </tr>
+        <tr>
+          <td>14.12.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/finr/#a_73585">Основные показатели рынка акций*</a><br>Ноябрь 2026 г.</td>
+        </tr>
+        <tr>
+          <td>15.12.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/finr/#a_73692">Показатели среднего дневного оборота рынка межбанковских кредитов (депозитов) и операций РЕПО</a><br>Ноябрь 2026 г.</td>
+        </tr>
+        <tr>
+          <td>15.12.2026</td>
+          <td>16:00</td>
+          <td><a href="/statistics/macro_itm/external_sector/pb/bop-eval/">Платежный баланс – оценка</a><br>Январь-октябрь 2026 г.</td>
+        </tr>
+        <tr>
+          <td>15.12.2026</td>
+          <td>16:00</td>
+          <td><a href="/statistics/macro_itm/external_sector/pb/#a_164648">Оценка платежного баланса Российской Федерации</a><br>Январь-октябрь 2026 г.</td>
+        </tr>
+        <tr>
+          <td>15.12.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/macro_itm/sec_st/#a_54954">Долговые ценные бумаги в собственности российских банков, переданные по сделкам РЕПО с Банком России</a><br>01.12.2026</td>
+        </tr>
+        <tr>
+          <td>15.12.2026</td>
+          <td>16:00</td>
+          <td><a href="/statistics/macro_itm/external_sector/ets/#a_164778">Внешняя торговля Российской Федерации услугами по месяцам</a><br>Октябрь 2026 г.</td>
+        </tr>
+        <tr>
+          <td>15.12.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/macro_itm/external_sector/etg/#a_164736">Валютная структура расчетов за поставки товаров и оказание услуг по внешнеторговым контрактам по географическим зонам и валютам государств в соответствии с Распоряжением Правительства РФ от 05.03.2022 № 430-р</a><br>Октябрь 2026 г.</td>
+        </tr>
+        <tr>
+          <td>16.12.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/bank_sector/int_rat/#a_112227">Статистический бюллетень «Кредитование субъектов малого и среднего предпринимательства»</a><br>Октябрь 2026 г.</td>
+        </tr>
+        <tr>
+          <td>17.12.2026</td>
+          <td>16:00</td>
+          <td><a href="/hd_base/mrrf/mrrf_7d/">Общий объем международных резервных активов, по состоянию на конец рабочей недели*</a><br>еженедельные значения</td>
+        </tr>
+        <tr>
+          <td>18.12.2026</td>
+          <td>16:00</td>
+          <td><a href="/statistics/macro_itm/external_sector/ir/#a_164876">Оценка предстоящих изменений международных резервов и другой ликвидности в иностранной валюте органов денежно-кредитного регулирования Российской Федерации*</a><br>01.12.2026</td>
+        </tr>
+        <tr>
+          <td>18.12.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/macro_itm/dkfs/#a_54697">Обзор центрального банка</a><br>01.12.2026</td>
+        </tr>
+        <tr>
+          <td>18.12.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/macro_itm/dkfs/#a_54698">Обзор кредитных организаций</a><br>01.12.2026</td>
+        </tr>
+        <tr>
+          <td>18.12.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/macro_itm/dkfs/#a_54699">Обзор банковской системы</a><br>01.12.2026</td>
+        </tr>
+        <tr>
+          <td>18.12.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/macro_itm/dkfs/#a_128613file">Денежные агрегаты</a><br>01.12.2026</td>
+        </tr>
+        <tr>
+          <td>18.12.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/ms/">Денежная масса М2 (национальное определение)</a><br>01.12.2026</td>
+        </tr>
+        <tr>
+          <td>18.12.2026</td>
+          <td>11:00</td>
+          <td><a href="http://cbr.ru/hd_base/mb_nd/mb_nd_weekly/">Денежная база в узком определении (Еженедельные значения)</a><br>еженедельные значения</td>
+        </tr>
+        <tr>
+          <td>18.12.2026</td>
+          <td> — </td>
+          <td><a href="http://cbr.ru/statistics/macro_itm/dkfs/#a_178979">Баланс кредитных организаций</a><br>01.12.2026</td>
+        </tr>
+        <tr>
+          <td>22.12.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/ssrd/data/">Обзор банковской системы (в соответствии с требованиями ССРД МВФ)*</a><br>01.12.2026</td>
+        </tr>
+        <tr>
+          <td>23.12.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/macro_itm/sec_st/">Выпущенные на внутреннем рынке долговые ценные бумаги по типам процентных ставок и видам базового показателя</a><br>01.12.2026</td>
+        </tr>
+        <tr>
+          <td>23.12.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/macro_itm/sec_st/#a_185207">Выпущенные на внутреннем рынке долговые ценные бумаги по типам долгового инструмента</a><br>01.12.2026</td>
+        </tr>
+        <tr>
+          <td>23.12.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/macro_itm/sec_st/#a_186747">Выпущенные на внутреннем рынке долговые ценные бумаги по видам экономической деятельности эмитентов</a><br>01.12.2026</td>
+        </tr>
+        <tr>
+          <td>23.12.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/macro_itm/sec_st/#a_54955">Выпущенные на внутреннем рынке долговые ценные бумаги</a><br>01.12.2026</td>
+        </tr>
+        <tr>
+          <td>23.12.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/macro_itm/sec_st/#a_186746">Акции российских эмитентов, обращающиеся на внутреннем рынке, по видам экономической деятельности эмитентов</a><br>01.12.2026</td>
+        </tr>
+        <tr>
+          <td>23.12.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/macro_itm/sec_st/#a_132057">Акции российских эмитентов, обращающиеся на внутреннем рынке</a><br>01.12.2026</td>
+        </tr>
+        <tr>
+          <td>24.12.2026</td>
+          <td>16:00</td>
+          <td><a href="/hd_base/mrrf/mrrf_7d/">Общий объем международных резервных активов, по состоянию на конец рабочей недели*</a><br>еженедельные значения</td>
+        </tr>
+        <tr>
+          <td>25.12.2026</td>
+          <td>11:00</td>
+          <td><a href="http://cbr.ru/hd_base/mb_nd/mb_nd_weekly/">Денежная база в узком определении (Еженедельные значения)</a><br>еженедельные значения</td>
+        </tr>
+        <tr>
+          <td>29.12.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/macro_itm/external_sector/pofi/#a_164863">Доля инвестиций нерезидентов в объеме выпусков облигаций федерального займа</a><br>01.12.2026</td>
+        </tr>
+        <tr>
+          <td>29.12.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/macro_itm/sec_st/#a_149409">Выпущенные на внутреннем рынке долговые ценные бумаги, включенные в сектор устойчивого развития </a><br>01.12.2026</td>
+        </tr>
+        <tr>
+          <td>30.12.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/macro_itm/households/#a_123870">Финансовые активы и обязательства сектора «Домашние хозяйства»</a><br>01.10.2026</td>
+        </tr>
+        <tr>
+          <td>30.12.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/dopbalance_table/">Счет текущих операций платежного баланса Российской Федерации с сезонной корректировкой</a><br>III квартал 2026 г.</td>
+        </tr>
+        <tr>
+          <td>30.12.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/bank_sector/sors/#a_63140">Сведения о размещенных средствах (информация о кредитах, предоставленных физическим лицам)</a><br>01.12.2026</td>
+        </tr>
+        <tr>
+          <td>30.12.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/bank_sector/sors/#a_63099">Сведения о привлеченных средствах (информация о средствах организаций, банковских депозитах (вкладах) и других привлеченных средствах юридических и физических лиц, бюджетных средствах на счетах, открытых в кредитных организациях)</a><br>01.12.2026</td>
+        </tr>
+        <tr>
+          <td>30.12.2026</td>
+          <td> — </td>
+          <td><a href="/vfs/statistics/data_standard/ifs.xlsx">Показатели финансовой устойчивости в части показателей депозитных организаций*</a><br>III квартал 2026 г.</td>
+        </tr>
+        <tr>
+          <td>30.12.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/bank_sector/mortgage/">Показатели рынка жилищного (ипотечного жилищного) кредитования</a><br>01.12.2026</td>
+        </tr>
+        <tr>
+          <td>30.12.2026</td>
+          <td>16:00</td>
+          <td><a href="/statistics/macro_itm/external_sector/pb/p_balance/">Платежный баланс, международная инвестиционная позиция и внешний долг Российской Федерации</a><br>III квартал 2026 г.</td>
+        </tr>
+        <tr>
+          <td>30.12.2026</td>
+          <td>16:00</td>
+          <td><a href="/statistics/macro_itm/external_sector/pb/#a_164649">Платежный баланс Российской Федерации. Аналитическое представление</a><br>III квартал 2026 г.</td>
+        </tr>
+        <tr>
+          <td>30.12.2026</td>
+          <td>16:00</td>
+          <td><a href="/statistics/macro_itm/external_sector/pb/#a_164651">Платежный баланс Российской Федерации. Cтандартные компоненты*</a><br>III квартал 2026 г.</td>
+        </tr>
+        <tr>
+          <td>30.12.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/dops_table/">Основные агрегаты счета текущих операций платежного баланса Российской Федерации с сезонной корректировкой</a><br>III квартал 2026 г.</td>
+        </tr>
+        <tr>
+          <td>30.12.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/macro_itm/households/#a_123871">Операции сектора «Домашние хозяйства» с финансовыми активами и обязательствами</a><br>01.10.2026</td>
+        </tr>
+        <tr>
+          <td>30.12.2026</td>
+          <td>16:00</td>
+          <td><a href="/statistics/macro_itm/external_sector/iip/#a_164691">Международная инвестиционная позиция Российской Федерации. Стандартные компоненты (по состоянию на дату)*</a><br>01.10.2026</td>
+        </tr>
+        <tr>
+          <td>30.12.2026</td>
+          <td>16:00</td>
+          <td><a href="/statistics/macro_itm/external_sector/iip/#a_164690">Международная инвестиционная позиция Российской Федерации. Основные агрегаты</a><br>III квартал 2026 г.</td>
+        </tr>
+        <tr>
+          <td>30.12.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/dops/">Динамика отдельных показателей счета текущих операций с сезонной корректировкой</a><br>III квартал 2026 г.</td>
+        </tr>
+        <tr>
+          <td>30.12.2026</td>
+          <td> — </td>
+          <td><a href="/statistics/macro_itm/external_sector/ets/#a_164776">Внешняя торговля Российской Федерации услугами в структуре расширенной классификации услуг (по методологии платежного баланса)</a><br>III квартал 2026 г.</td>
+        </tr>
+        <tr>
+          <td>30.12.2026</td>
+          <td>16:00</td>
+          <td><a href="/statistics/macro_itm/external_sector/ed/#a_164713">Внешний долг Российской Федерации по срокам погашения и финансовым инструментам*</a><br>01.10.2026</td>
+        </tr>
+        <tr>
+          <td>30.12.2026</td>
+          <td>16:00</td>
+          <td><a href="/statistics/macro_itm/external_sector/ed/#a_164712">Внешний долг Российской Федерации в национальной и иностранной валютах</a><br>01.10.2026</td>
+        </tr>
+        <tr>
+          <td>30.12.2026</td>
+          <td>16:00</td>
+          <td><a href="/statistics/macro_itm/external_sector/ed/#a_164711">Внешний долг Российской Федерации</a><br>01.10.2026</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="table-caption">* Распространяется в соответствии с ССРД МВФ.</div>
+</div>
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_left_icon"></div>
+                    </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/Content/Document/Page/103549" id="a_103549page">                        <span class="document-regular_name_visible">Данные с ежедневной и еженедельной периодичностью распространения</span>
+</a>
+                                    </div>
+                
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+
+
+                    </div>
+                    <div role="tabpanel" id="tab_content_t2" aria-labelledby="tab_tab_t2" data-tabs-content="t2" class="hide">
+                        <div class="dropdown"><a id="dropdown_title_1" aria-expanded="true" aria-controls="DropDown1_content" role="button" tabindex="0" class="dropdown_title _active">
+		Календарь публикации на октябрь 2026 года</a><div id="DropDown1_content" role="region" class="dropdown_content" aria-labelledby="dropdown_title_1">
+    <div class="table-wrapper">
+      <div class="table">
+        <table class="data">
+          <tr>
+            <th>№</th>
+            <th>Название публикации</th>
+            <th>Дата публикации</th>
+          </tr>
+          <tr>
+            <td>1</td>
+            <td><a href="/ec_research/mb/#a_62316">Новостной индекс деловой активности</a></td>
+            <td>02.10.2026</td>
+          </tr>
+          <tr>
+            <td>2</td>
+            <td><a href="/analytics/finflows/#a_107637">Мониторинг отраслевых финансовых потоков</a></td>
+            <td>08.10.2026</td>
+          </tr>
+          <tr>
+            <td>3</td>
+            <td><a href="/analytics/finstab/orfr/#a_50194">Обзор рисков финансовых рынков</a></td>
+            <td>08.10.2026</td>
+          </tr>
+          <tr>
+            <td>4</td>
+            <td><a href="/analytics/dkp/likvid/#a_17329">Денежно-кредитные условия и трансмиссия ДКП</a></td>
+            <td>09.10.2026</td>
+          </tr>
+          <tr>
+            <td>5</td>
+            <td><a href="/ec_research/mb/#a_16761">Оценка трендовой инфляции</a></td>
+            <td>14.10.2026</td>
+          </tr>
+          <tr>
+            <td>6</td>
+            <td><a href="/analytics/dkp/dinamic/#a_17327">Инфляция в России</a></td>
+            <td>14.10.2026</td>
+          </tr>
+          <tr>
+            <td>7</td>
+            <td><a href="/ec_research/mb/#a_16760">О чем говорят тренды</a></td>
+            <td>14.10.2026</td>
+          </tr>
+          <tr>
+            <td>8</td>
+            <td><a href="/analytics/dkp/reg_review/#a_118418">Региональная экономика: комментарии ГУ</a></td>
+            <td>14.10.2026</td>
+          </tr>
+          <tr>
+            <td>9</td>
+            <td><a href="/analytics/dkp/monitoring/#a_136157">Мониторинг предприятий</a></td>
+            <td>14.10.2026</td>
+          </tr>
+          <tr>
+            <td>10</td>
+            <td><a href="/statistics/ddkp/#a_120880page">Макроэкономический опрос Банка России</a></td>
+            <td>14.10.2026</td>
+          </tr>
+          <tr>
+            <td>11</td>
+            <td><a href="/analytics/dkp/regInflation/">Информационно-аналитические комментарии об инфляции в регионах</a></td>
+            <td>16.10.2026</td>
+          </tr>
+          <tr>
+            <td>12</td>
+            <td><a href="/analytics/dkp/inflationary_expectations/#a_62825">Оперативная справка по результатам исследования «Измерение инфляционных ожиданий и потребительских настроений на основе опросов населения»</a></td>
+            <td>21.10.2026</td>
+          </tr>
+          <tr>
+            <td>13</td>
+            <td><a href="/analytics/bank_sector/develop/#a_48876">О развитии банковского сектора Российской Федерации</a></td>
+            <td>26.10.2026</td>
+          </tr>
+          <tr>
+            <td>14</td>
+            <td><a href="/statistics/macro_itm/dkfs/#a_177308">Денежные агрегаты и кредит экономике</a></td>
+            <td>27.10.2026</td>
+          </tr>
+          <tr>
+            <td>15</td>
+            <td><a href="/about_br/publ/ondkp/">Основные направления единой государственной денежно-кредитной политики на 2027 год и период 2028 и 2029 годов</a></td>
+            <td>28.10.2026</td>
+          </tr>
+          <tr>
+            <td>16</td>
+            <td><a href="/analytics/microfinance/#a_128268">Тенденции на рынке ломбардов</a></td>
+            <td>28.10.2026</td>
+          </tr>
+          <tr>
+            <td>17</td>
+            <td><a href="/analytics/dkp/inflationary_expectations/#a_102610">Инфляционные ожидания и потребительские настроения</a></td>
+            <td>28.10.2026</td>
+          </tr>
+          <tr>
+            <td>18</td>
+            <td><a href="/statistics/cash_circulation/#a_77526">Данные о поддельных денежных знаках, выявленных в банковской системе</a></td>
+            <td>28.10.2026</td>
+          </tr>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="dropdown"><a id="dropdown_title_2" aria-expanded="false" aria-controls="DropDown2_content" role="button" tabindex="0" class="dropdown_title">
+		Календарь публикации на сентябрь 2026 года</a><div id="DropDown2_content" role="region" class="dropdown_content" aria-labelledby="dropdown_title_2">
+    <div class="table-wrapper">
+      <div class="table">
+        <table class="data">
+          <tr>
+            <th>№</th>
+            <th>Название публикации</th>
+            <th>Дата публикации</th>
+          </tr>
+          <tr>
+            <td>1</td>
+            <td><a href="/ec_research/mb/#a_16760">О чем говорят тренды</a></td>
+            <td>01.09.2026</td>
+          </tr>
+          <tr>
+            <td>2</td>
+            <td><a href="/analytics/bank_sector/analytical_review_bs/#a_123445">Аналитический обзор «Банковский сектор»</a></td>
+            <td>02.09.2026</td>
+          </tr>
+          <tr>
+            <td>3</td>
+            <td><a href="/statistics/ddkp/#a_120880page">Макроэкономический опрос Банка России</a></td>
+            <td>02.09.2026</td>
+          </tr>
+          <tr>
+            <td>4</td>
+            <td><a href="/ec_research/mb/#a_62316">Новостной индекс деловой активности</a></td>
+            <td>02.09.2026</td>
+          </tr>
+          <tr>
+            <td>5</td>
+            <td><a href="/analytics/dkp/reg_review/#a_118418">Региональная экономика: комментарии ГУ</a></td>
+            <td>02.09.2026</td>
+          </tr>
+          <tr>
+            <td>6</td>
+            <td><a href="/analytics/microfinance/#a_103884">Тенденции микрофинансового рынка</a></td>
+            <td>03.09.2026</td>
+          </tr>
+          <tr>
+            <td>7</td>
+            <td><a href="/analytics/dkp/monitoring/#a_136157">Оперативная справка по результатам мониторинга предприятий</a></td>
+            <td>10.09.2026</td>
+          </tr>
+          <tr>
+            <td>8</td>
+            <td><a href="/analytics/finflows/#a_107637">Мониторинг отраслевых финансовых потоков</a></td>
+            <td>14.09.2026</td>
+          </tr>
+          <tr>
+            <td>9</td>
+            <td><a href="/analytics/finstab/orfr/#a_50194">Обзор рисков финансовых рынков</a></td>
+            <td>14.09.2026</td>
+          </tr>
+          <tr>
+            <td>10</td>
+            <td><a href="/analytics/dkp/likvid/#a_17329">Денежно-кредитные условия и трансмиссия ДКП</a></td>
+            <td>15.09.2026</td>
+          </tr>
+          <tr>
+            <td>11</td>
+            <td><a href="/analytics/dkp/monitoring/#a_136157">Мониторинг предприятий</a></td>
+            <td>15.09.2026</td>
+          </tr>
+          <tr>
+            <td>12</td>
+            <td><a href="/analytics/dkp/dinamic/#a_17327">Инфляция в России</a></td>
+            <td>16.09.2026</td>
+          </tr>
+          <tr>
+            <td>13</td>
+            <td><a href="/ec_research/mb/#a_16761">Оценка трендовой инфляции</a></td>
+            <td>16.09.2026</td>
+          </tr>
+          <tr>
+            <td>14</td>
+            <td><a href="/analytics/dkp/regInflation/">Информационно-аналитические комментарии об инфляции в регионах</a></td>
+            <td>18.09.2026</td>
+          </tr>
+          <tr>
+            <td>15</td>
+            <td><a href="/analytics/bank_sector/develop/#a_48876">О развитии банковского сектора Российской Федерации</a></td>
+            <td>22.09.2026</td>
+          </tr>
+          <tr>
+            <td>16</td>
+            <td><a href="/analytics/dkp/inflationary_expectations/#a_62825">Оперативная справка по результатам исследования «Измерение инфляционных ожиданий и потребительских настроений на основе опросов населения»</a></td>
+            <td>22.09.2026</td>
+          </tr>
+          <tr>
+            <td>17</td>
+            <td><a href="/analytics/microfinance/reveiw_mfo/#a_84043">Обзор ключевых показателей микрофинансовых институтов</a></td>
+            <td>23.09.2026</td>
+          </tr>
+          <tr>
+            <td>18</td>
+            <td><a href="/dkp/mp_dec/#t3">Резюме обсуждения ключевой ставки</a></td>
+            <td>23.09.2026</td>
+          </tr>
+          <tr>
+            <td>19</td>
+            <td><a href="/statistics/macro_itm/dkfs/#a_177308">Денежные агрегаты и кредит экономике</a></td>
+            <td>24.09.2026</td>
+          </tr>
+          <tr>
+            <td>20</td>
+            <td><a href="/analytics/dkp/inflationary_expectations/#a_102610">Инфляционные ожидания и потребительские настроения</a></td>
+            <td>29.09.2026</td>
+          </tr>
+          <tr>
+            <td>21</td>
+            <td><a href="/about_br/publ/ondkp/">Основные направления единой государственной денежно-кредитной политики на 2027 год и период 2028 и 2029 годов (второй проект)</a></td>
+            <td>30.09.2026</td>
+          </tr>
+          <tr>
+            <td>22</td>
+            <td><a href="/analytics/podft/#a_83365">Структура подозрительных операций и отрасли экономики, формировавшие спрос на теневые финансовые услуги</a></td>
+            <td>30.09.2026</td>
+          </tr>
+          <tr>
+            <td>23</td>
+            <td><a href="/analytics/finstab/">Рынок производных финансовых инструментов</a></td>
+            <td>30.09.2026</td>
+          </tr>
+          <tr>
+            <td>24</td>
+            <td><a href="/analytics/microfinance/#a_103881">Тенденции на рынке МФО предпринимательского финансирования</a></td>
+            <td>30.09.2026</td>
+          </tr>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="dropdown"><a id="dropdown_title_3" aria-expanded="false" aria-controls="DropDown3_content" role="button" tabindex="0" class="dropdown_title">
+		Календарь публикации на август 2026 года</a><div id="DropDown3_content" role="region" class="dropdown_content" aria-labelledby="dropdown_title_3">
+    <div class="table-wrapper">
+      <div class="table">
+        <table class="data">
+          <tr>
+            <th>№</th>
+            <th>Название публикации</th>
+            <th>Дата публикации</th>
+          </tr>
+          <tr>
+            <td>1</td>
+            <td><a href="/ec_research/mb/#a_62316">Новостной индекс деловой активности</a></td>
+            <td>04.08.2026</td>
+          </tr>
+          <tr>
+            <td>2</td>
+            <td><a href="/dkp/mp_dec/#t3">Резюме обсуждения ключевой ставки</a></td>
+            <td>05.08.2026</td>
+          </tr>
+          <tr>
+            <td>3</td>
+            <td><a href="/dkp/mp_dec/decision_key_rate/">Комментарий к среднесрочному прогнозу Банка России</a></td>
+            <td>05.08.2026</td>
+          </tr>
+          <tr>
+            <td>4</td>
+            <td><a href="/analytics/finflows/#a_107637">Мониторинг отраслевых финансовых потоков</a></td>
+            <td>06.08.2026</td>
+          </tr>
+          <tr>
+            <td>5</td>
+            <td><a href="/analytics/finstab/orfr/#a_50194">Обзор рисков финансовых рынков</a></td>
+            <td>10.08.2026</td>
+          </tr>
+          <tr>
+            <td>6</td>
+            <td><a href="/analytics/dkp/likvid/#a_17329">Денежно-кредитные условия и трансмиссия ДКП</a></td>
+            <td>11.08.2026</td>
+          </tr>
+          <tr>
+            <td>7</td>
+            <td><a href="/analytics/dkp/bal/#a_84865">Оценка платежного баланса Российской Федерации</a></td>
+            <td>14.08.2026</td>
+          </tr>
+          <tr>
+            <td>8</td>
+            <td><a href="/analytics/RSCI/activity_npf/#a_108092">Доходность НПФ</a></td>
+            <td>17.08.2026</td>
+          </tr>
+          <tr>
+            <td>9</td>
+            <td><a href="/analytics/dkp/dinamic/#a_17327">Инфляция в России</a></td>
+            <td>17.08.2026</td>
+          </tr>
+          <tr>
+            <td>10</td>
+            <td><a href="/ec_research/mb/#a_16761">Оценка трендовой инфляции</a></td>
+            <td>17.08.2026</td>
+          </tr>
+          <tr>
+            <td>11</td>
+            <td><a href="/analytics/dkp/regInflation/">Информационно-аналитические комментарии об инфляции в регионах</a></td>
+            <td>19.08.2026</td>
+          </tr>
+          <tr>
+            <td>12</td>
+            <td><a href="/analytics/dkp/monitoring/#a_136157">Мониторинг предприятий</a></td>
+            <td>18.08.2026</td>
+          </tr>
+          <tr>
+            <td>13</td>
+            <td><a href="/analytics/dkp/inflationary_expectations/#a_62825">Оперативная справка по результатам исследования «Измерение инфляционных ожиданий и потребительских настроений на основе опросов населения»</a></td>
+            <td>19.08.2026</td>
+          </tr>
+          <tr>
+            <td>14</td>
+            <td><a href="/analytics/insurance/overview_insurers/#a_85436">Обзор ключевых показателей деятельности страховщиков</a></td>
+            <td>21.08.2026</td>
+          </tr>
+          <tr>
+            <td>15</td>
+            <td><a href="/analytics/bank_sector/develop/#a_48876">О развитии банковского сектора Российской Федерации</a></td>
+            <td>24.08.2026</td>
+          </tr>
+          <tr>
+            <td>16</td>
+            <td><a href="/analytics/rcb/review_broker/#a_156497">Обзор ключевых показателей брокеров</a></td>
+            <td>25.08.2026</td>
+          </tr>
+          <tr>
+            <td>17</td>
+            <td><a href="/statistics/macro_itm/dkfs/#a_177308">Денежные агрегаты и кредит экономике</a></td>
+            <td>25.08.2026</td>
+          </tr>
+          <tr>
+            <td>18</td>
+            <td><a href="/analytics/dkp/inflationary_expectations/#a_102610">Инфляционные ожидания и потребительские настроения</a></td>
+            <td>26.08.2026</td>
+          </tr>
+          <tr>
+            <td>19</td>
+            <td><a href="/analytics/RSCI/review_uk/#a_156354">Обзор ключевых показателей управляющих компаний</a></td>
+            <td>28.08.2026</td>
+          </tr>
+          <tr>
+            <td>20</td>
+            <td><a href="/analytics/RSCI/activity_npf/rewiew_npf/#a_85256">Обзор ключевых показателей негосударственных пенсионных фондов</a></td>
+            <td>31.08.2026</td>
+          </tr>
+          <tr>
+            <td>21</td>
+            <td><a href="/analytics/bank_sector/#a_120863">О проектном финансировании строительства жилья</a></td>
+            <td>31.08.2026</td>
+          </tr>
+          <tr>
+            <td>22</td>
+            <td><a href="/about_br/publ/ondkp/">Основные направления единой государственной денежно-кредитной политики на 2027 год и период 2028 и 2029 годов (первый проект)</a></td>
+            <td>31.08.2026</td>
+          </tr>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="dropdown"><a id="dropdown_title_4" aria-expanded="false" aria-controls="DropDown4_content" role="button" tabindex="0" class="dropdown_title">
+		Календарь публикации на июль 2026 года</a><div id="DropDown4_content" role="region" class="dropdown_content" aria-labelledby="dropdown_title_4">
+    <div class="table-wrapper">
+      <div class="table">
+        <table class="data">
+          <tr>
+            <th>№</th>
+            <th>Название публикации</th>
+            <th>Дата публикации</th>
+          </tr>
+          <tr>
+            <td>1</td>
+            <td><a href="/dkp/mp_dec/#t3">Резюме обсуждения ключевой ставки</a></td>
+            <td>01.07.2026</td>
+          </tr>
+          <tr>
+            <td>2</td>
+            <td><a href="/ec_research/mb/#a_62316">Новостной индекс деловой активности</a></td>
+            <td>02.07.2026</td>
+          </tr>
+          <tr>
+            <td>3</td>
+            <td><a href="/analytics/microfinance/#a_130742">Тенденции на рынке кредитных потребительских кооперативов</a></td>
+            <td>06.07.2026</td>
+          </tr>
+          <tr>
+            <td>4</td>
+            <td><a href="/analytics/finstab/orfr/#a_50194">Обзор рисков финансовых рынков</a></td>
+            <td>08.07.2026</td>
+          </tr>
+          <tr>
+            <td>5</td>
+            <td><a href="/analytics/dkp/likvid/#a_17329">Денежно-кредитные условия и трансмиссия ДКП</a></td>
+            <td>09.07.2026</td>
+          </tr>
+          <tr>
+            <td>6</td>
+            <td><a href="/analytics/finflows/#a_107637">Мониторинг отраслевых финансовых потоков</a></td>
+            <td>09.07.2026</td>
+          </tr>
+          <tr>
+            <td>7</td>
+            <td><a href="/ec_research/mb/#a_16760">О чем говорят тренды</a></td>
+            <td>15.07.2026</td>
+          </tr>
+          <tr>
+            <td>8</td>
+            <td><a href="/statistics/ddkp/#a_120880page">Макроэкономический опрос Банка России</a></td>
+            <td>15.07.2026</td>
+          </tr>
+          <tr>
+            <td>9</td>
+            <td><a href="/analytics/dkp/reg_review/#a_118418">Региональная экономика: комментарии ГУ</a></td>
+            <td>15.07.2026</td>
+          </tr>
+          <tr>
+            <td>10</td>
+            <td><a href="/analytics/dkp/monitoring/#a_136157">Мониторинг предприятий</a></td>
+            <td>15.07.2026</td>
+          </tr>
+          <tr>
+            <td>11</td>
+            <td><a href="/ec_research/mb/#a_16761">Оценка трендовой инфляции</a></td>
+            <td>15.07.2026</td>
+          </tr>
+          <tr>
+            <td>12</td>
+            <td><a href="/analytics/dkp/dinamic/#a_17327">Инфляция в России</a></td>
+            <td>15.07.2026</td>
+          </tr>
+          <tr>
+            <td>13</td>
+            <td><a href="/analytics/dkp/regInflation/">Информационно-аналитические комментарии об инфляции в регионах</a></td>
+            <td>17.07.2026</td>
+          </tr>
+          <tr>
+            <td>14</td>
+            <td><a href="/analytics/bank_sector/develop/#a_48876">О развитии банковского сектора Российской Федерации</a></td>
+            <td>17.07.2026</td>
+          </tr>
+          <tr>
+            <td>15</td>
+            <td><a href="/analytics/dkp/inflationary_expectations/#a_62825">Оперативная справка по результатам исследования «Измерение инфляционных ожиданий и потребительских настроений на основе опросов населения»</a></td>
+            <td>21.07.2026</td>
+          </tr>
+          <tr>
+            <td>16</td>
+            <td><a href="/statistics/cash_circulation/#a_77526">Данные о поддельных денежных знаках, выявленных в банковской системе</a></td>
+            <td>23.07.2026</td>
+          </tr>
+          <tr>
+            <td>17</td>
+            <td><a href="/statistics/macro_itm/dkfs/#a_177308">Денежные агрегаты и кредит экономике</a></td>
+            <td>27.07.2026</td>
+          </tr>
+          <tr>
+            <td>18</td>
+            <td><a href="/analytics/dkp/inflationary_expectations/#a_102610">Инфляционные ожидания и потребительские настроения</a></td>
+            <td>28.07.2026</td>
+          </tr>
+          <tr>
+            <td>19</td>
+            <td><a href="/na/banking_regulation_newsletter/#a_146625">Обзор банковского регулирования</a></td>
+            <td>30.07.2026</td>
+          </tr>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="dropdown"><a id="dropdown_title_5" aria-expanded="false" aria-controls="DropDown5_content" role="button" tabindex="0" class="dropdown_title">
+		Календарь публикации на июнь 2026 года</a><div id="DropDown5_content" role="region" class="dropdown_content" aria-labelledby="dropdown_title_5">
+    <div class="table-wrapper">
+      <div class="table">
+        <table class="data">
+          <tr>
+            <th>№</th>
+            <th>Название публикации</th>
+            <th>Дата публикации</th>
+          </tr>
+          <tr>
+            <td>1.</td>
+            <td><a href="/finstab/review/#a_48176">Обзор финансовой стабильности</a></td>
+            <td>01.06.2026</td>
+          </tr>
+          <tr>
+            <td>3.</td>
+            <td><a href="/analytics/RSCI/review_uk/#a_156354">Обзор ключевых показателей управляющих компаний</a></td>
+            <td>01.06.2026</td>
+          </tr>
+          <tr>
+            <td>4.</td>
+            <td><a href="/ec_research/mb/#a_62316">Новостной индекс деловой активности</a></td>
+            <td>02.06.2026</td>
+          </tr>
+          <tr>
+            <td>5.</td>
+            <td><a href="/analytics/bank_sector/#a_120863">О проектном финансировании строительства жилья</a></td>
+            <td>02.06.2026</td>
+          </tr>
+          <tr>
+            <td>6.</td>
+            <td><a href="/analytics/finstab/orfr/#a_50194">Обзор рисков финансовых рынков</a></td>
+            <td>09.06.2026</td>
+          </tr>
+          <tr>
+            <td>7.</td>
+            <td><a href="/ec_research/mb/#a_16760">О чем говорят тренды</a></td>
+            <td>09.06.2026</td>
+          </tr>
+          <tr>
+            <td>8.</td>
+            <td><a href="/analytics/microfinance/#a_103884">Тенденции микрофинансового рынка</a></td>
+            <td>10.06.2026</td>
+          </tr>
+          <tr>
+            <td>9.</td>
+            <td><a href="/analytics/dkp/reg_review/#a_118418">Региональная экономика: комментарии ГУ</a></td>
+            <td>10.06.2026</td>
+          </tr>
+          <tr>
+            <td>10.</td>
+            <td><a href="/analytics/dkp/likvid/#a_17329">Денежно-кредитные условия и трансмиссия ДКП</a></td>
+            <td>10.06.2026</td>
+          </tr>
+          <tr>
+            <td>11.</td>
+            <td><a href="/statistics/ddkp/#a_120880page">Макроэкономический опрос Банка России</a></td>
+            <td>10.06.2026</td>
+          </tr>
+          <tr>
+            <td>12.</td>
+            <td><a href="/analytics/finflows/#a_107637">Мониторинг отраслевых финансовых потоков</a></td>
+            <td>11.06.2026</td>
+          </tr>
+          <tr>
+            <td>13.</td>
+            <td><a href="/analytics/dkp/inflationary_expectations/#a_62825">Оперативная справка по результатам исследования «Измерение инфляционных ожиданий и потребительских настроений на основе опросов населения»</a></td>
+            <td>17.06.2026</td>
+          </tr>
+          <tr>
+            <td>14.</td>
+            <td><a href="/analytics/dkp/monitoring/#a_136157">Оперативная справка по результатам мониторинга предприятий</a></td>
+            <td>17.06.2026</td>
+          </tr>
+          <tr>
+            <td>15.</td>
+            <td><a href="/analytics/dkp/monitoring/#a_136157">Мониторинг предприятий</a></td>
+            <td>22.06.2026</td>
+          </tr>
+          <tr>
+            <td>16.</td>
+            <td><a href="/ec_research/mb/#a_16761">Оценка трендовой инфляции</a></td>
+            <td>22.06.2026</td>
+          </tr>
+          <tr>
+            <td>17.</td>
+            <td><a href="/analytics/dkp/dinamic/#a_17327">Инфляция в России</a></td>
+            <td>22.06.2026</td>
+          </tr>
+          <tr>
+            <td>18.</td>
+            <td><a href="/analytics/ndo/#a_123657">Отношение населения Российской Федерации к различным средствам платежа</a></td>
+            <td>23.06.2026</td>
+          </tr>
+          <tr>
+            <td>19.</td>
+            <td><a href="/analytics/dkp/regInflation/">Информационно-аналитические комментарии об инфляции в регионах</a></td>
+            <td>23.06.2026</td>
+          </tr>
+          <tr>
+            <td>20.</td>
+            <td><a href="/analytics/dkp/inflationary_expectations/#a_102610">Инфляционные ожидания и потребительские настроения</a></td>
+            <td>24.06.2026</td>
+          </tr>
+          <tr>
+            <td>21.</td>
+            <td><a href="/analytics/bank_sector/develop/#a_48876">О развитии банковского сектора Российской Федерации</a></td>
+            <td>24.06.2026</td>
+          </tr>
+          <tr>
+            <td>22.</td>
+            <td><a href="/statistics/macro_itm/dkfs/#a_177308">Денежные агрегаты и кредит экономике</a></td>
+            <td>25.06.2026</td>
+          </tr>
+          <tr>
+            <td>23.</td>
+            <td><a href="/analytics/microfinance/reveiw_mfo/#a_84043">Обзор ключевых показателей микрофинансовых институтов</a></td>
+            <td>26.06.2026</td>
+          </tr>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="dropdown"><a id="dropdown_title_6" aria-expanded="false" aria-controls="DropDown6_content" role="button" tabindex="0" class="dropdown_title">
+		Календарь публикации на май 2026 года</a><div id="DropDown6_content" role="region" class="dropdown_content" aria-labelledby="dropdown_title_6">
+    <div class="table-wrapper">
+      <div class="table">
+        <table class="data">
+          <tr>
+            <th>№</th>
+            <th>Название публикации</th>
+            <th>Дата публикации</th>
+          </tr>
+          <tr>
+            <td>1.</td>
+            <td><a href="/ec_research/mb/#a_62316">Новостной индекс деловой активности</a></td>
+            <td>05.05.2026</td>
+          </tr>
+          <tr>
+            <td>2.</td>
+            <td><a href="/dkp/mp_dec/#t3">Резюме обсуждения ключевой ставки</a></td>
+            <td>07.05.2026</td>
+          </tr>
+          <tr>
+            <td>3.</td>
+            <td><a href="/dkp/mp_dec/decision_key_rate/">Комментарий к среднесрочному прогнозу Банка России</a></td>
+            <td>07.05.2026</td>
+          </tr>
+          <tr>
+            <td>4.</td>
+            <td><a href="/analytics/finflows/#a_107637">Мониторинг отраслевых финансовых потоков</a></td>
+            <td>07.05.2026</td>
+          </tr>
+          <tr>
+            <td>5.</td>
+            <td><a href="/analytics/finstab/orfr/#a_50194">Обзор рисков финансовых рынков</a></td>
+            <td>12.05.2026</td>
+          </tr>
+          <tr>
+            <td>6.</td>
+            <td><a href="/analytics/dkp/likvid/#a_17329">Денежно-кредитные условия и трансмиссия ДКП</a></td>
+            <td>13.05.2026</td>
+          </tr>
+          <tr>
+            <td>7.</td>
+            <td><a href="/analytics/dkp/bal/#a_84865">Оценка платежного баланса Российской Федерации</a></td>
+            <td>18.05.2026</td>
+          </tr>
+          <tr>
+            <td>8.</td>
+            <td><a href="/analytics/dkp/inflationary_expectations/#a_62825">Оперативная справка по результатам исследования «Измерение инфляционных ожиданий и потребительских настроений на основе опросов населения»</a></td>
+            <td>19.05.2026</td>
+          </tr>
+          <tr>
+            <td>9.</td>
+            <td><a href="/analytics/RSCI/activity_npf/#a_108092">Доходность НПФ</a></td>
+            <td>20.05.2026</td>
+          </tr>
+          <tr>
+            <td>10.</td>
+            <td><a href="/ec_research/mb/#a_16761">Оценка трендовой инфляции</a></td>
+            <td>20.05.2026</td>
+          </tr>
+          <tr>
+            <td>11.</td>
+            <td><a href="/analytics/dkp/dinamic/#a_17327">Инфляция в России</a></td>
+            <td>20.05.2026</td>
+          </tr>
+          <tr>
+            <td>12.</td>
+            <td><a href="/analytics/bank_sector/analytical_review_bs/#a_123445">Аналитический обзор «Банковский сектор»</a></td>
+            <td>21.05.2026</td>
+          </tr>
+          <tr>
+            <td>13.</td>
+            <td><a href="/analytics/dkp/regInflation/">Информационно-аналитические комментарии об инфляции в регионах</a></td>
+            <td>22.05.2026</td>
+          </tr>
+          <tr>
+            <td>14.</td>
+            <td><a href="/analytics/rcb/#a_155846">Тенденции сегмента индивидуальных инвестиционных счетов</a></td>
+            <td>22.05.2026</td>
+          </tr>
+          <tr>
+            <td>15.</td>
+            <td><a href="/analytics/dkp/inflationary_expectations/#a_102610">Инфляционные ожидания и потребительские настроения</a></td>
+            <td>26.05.2026</td>
+          </tr>
+          <tr>
+            <td>16.</td>
+            <td><a href="/analytics/dkp/monitoring/#a_136157">Мониторинг предприятий</a></td>
+            <td>26.05.2026</td>
+          </tr>
+          <tr>
+            <td>17.</td>
+            <td><a href="/analytics/microfinance/#a_128268">Тенденции на рынке ломбардов</a></td>
+            <td>27.05.2026</td>
+          </tr>
+          <tr>
+            <td>18.</td>
+            <td><a href="/analytics/bank_sector/develop/#a_48876">О развитии банковского сектора Российской Федерации</a></td>
+            <td>27.05.2026</td>
+          </tr>
+          <tr>
+            <td>19.</td>
+            <td><a href="/statistics/macro_itm/dkfs/#a_177308">Денежные агрегаты и кредит экономике</a></td>
+            <td>28.05.2026</td>
+          </tr>
+          <tr>
+            <td>20.</td>
+            <td><a href="/analytics/rcb/review_broker/#a_156497">Обзор ключевых показателей брокеров</a></td>
+            <td>28.05.2026</td>
+          </tr>
+          <tr>
+            <td>21.</td>
+            <td><a href="/analytics/RSCI/activity_npf/rewiew_npf/#a_85256">Обзор ключевых показателей негосударственных пенсионных фондов</a></td>
+            <td>29.05.2026</td>
+          </tr>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="dropdown"><a id="dropdown_title_7" aria-expanded="false" aria-controls="DropDown7_content" role="button" tabindex="0" class="dropdown_title">
+		Календарь публикации на апрель 2026 года</a><div id="DropDown7_content" role="region" class="dropdown_content" aria-labelledby="dropdown_title_7">
+    <div class="table-wrapper">
+      <div class="table">
+        <table class="data">
+          <tr>
+            <th>№</th>
+            <th>Название публикации</th>
+            <th>Дата публикации</th>
+          </tr>
+          <tr>
+            <td>1.</td>
+            <td><a href="/dkp/mp_dec/#t3">Резюме обсуждения ключевой ставки</a></td>
+            <td>01.04.2026</td>
+          </tr>
+          <tr>
+            <td>2.</td>
+            <td><a href="/ec_research/mb/#a_62316">Новостной индекс деловой активности</a></td>
+            <td>02.04.2026</td>
+          </tr>
+          <tr>
+            <td>3.</td>
+            <td><a href="/analytics/microfinance/reveiw_mfo/#a_84043">Обзор ключевых показателей микрофинансовых институтов</a></td>
+            <td>08.04.2026</td>
+          </tr>
+          <tr>
+            <td>4.</td>
+            <td><a href="/analytics/finstab/orfr/#a_50194">Обзор рисков финансовых рынков</a></td>
+            <td>08.04.2026</td>
+          </tr>
+          <tr>
+            <td>5.</td>
+            <td><a href="/analytics/dkp/likvid/#a_17329">Денежно-кредитные условия и трансмиссия ДКП</a></td>
+            <td>09.04.2026</td>
+          </tr>
+          <tr>
+            <td>6.</td>
+            <td><a href="/analytics/finflows/#a_107637">Мониторинг отраслевых финансовых потоков</a></td>
+            <td>09.04.2026</td>
+          </tr>
+          <tr>
+            <td>7.</td>
+            <td><a href="/ec_research/analitics/#a_160330">Российский финансовый сектор</a></td>
+            <td>14.04.2026</td>
+          </tr>
+          <tr>
+            <td>8.</td>
+            <td><a href="/analytics/dkp/reg_review/#a_118418">Региональная экономика: комментарии ГУ</a></td>
+            <td>15.04.2026</td>
+          </tr>
+          <tr>
+            <td>9.</td>
+            <td><a href="/statistics/ddkp/#a_120880page">Макроэкономический опрос Банка России</a></td>
+            <td>15.04.2026</td>
+          </tr>
+          <tr>
+            <td>10.</td>
+            <td><a href="/analytics/dkp/monitoring/#a_136157">Мониторинг предприятий</a></td>
+            <td>15.04.2026</td>
+          </tr>
+          <tr>
+            <td>11.</td>
+            <td><a href="/ec_research/mb/#a_16761">Оценка трендовой инфляции</a></td>
+            <td>15.04.2026</td>
+          </tr>
+          <tr>
+            <td>12.</td>
+            <td><a href="/analytics/dkp/dinamic/#a_17327">Инфляция в России</a></td>
+            <td>15.04.2026</td>
+          </tr>
+          <tr>
+            <td>13.</td>
+            <td><a href="/ec_research/mb/#a_16760">О чем говорят тренды</a></td>
+            <td>16.04.2026</td>
+          </tr>
+          <tr>
+            <td>14.</td>
+            <td><a href="/analytics/dkp/inflationary_expectations/#a_62825">Оперативная справка по результатам исследования «Измерение инфляционных ожиданий и потребительских настроений на основе опросов населения»</a></td>
+            <td>16.04.2026</td>
+          </tr>
+          <tr>
+            <td>15.</td>
+            <td><a href="/analytics/RSCI/activity_npf/#a_108092">Доходность НПФ</a></td>
+            <td>16.04.2026</td>
+          </tr>
+          <tr>
+            <td>16.</td>
+            <td><a href="/analytics/dkp/regInflation/">Информационно-аналитические комментарии об инфляции в регионах</a></td>
+            <td>17.04.2026</td>
+          </tr>
+          <tr>
+            <td>17.</td>
+            <td><a href="/analytics/bank_sector/develop/#a_48876">О развитии банковского сектора Российской Федерации</a></td>
+            <td>17.04.2026</td>
+          </tr>
+          <tr>
+            <td>18.</td>
+            <td><a href="/statistics/cash_circulation/#a_77526">Данные о поддельных денежных знаках, выявленных в банковской системе России</a></td>
+            <td>23.04.2026</td>
+          </tr>
+          <tr>
+            <td>19.</td>
+            <td><a href="/statistics/macro_itm/dkfs/#a_177308">Денежные агрегаты и кредит экономике</a></td>
+            <td>27.04.2026</td>
+          </tr>
+          <tr>
+            <td>20.</td>
+            <td><a href="/na/banking_regulation_newsletter/#a_146625">Обзор банковского регулирования</a></td>
+            <td>27.04.2026</td>
+          </tr>
+          <tr>
+            <td>21.</td>
+            <td><a href="/analytics/dkp/inflationary_expectations/#a_102610">Инфляционные ожидания и потребительские настроения</a></td>
+            <td>27.04.2026</td>
+          </tr>
+          <tr>
+            <td>22.</td>
+            <td><a href="/analytics/microfinance/#a_103881">Тенденции на рынке МФО предпринимательского финансирования</a></td>
+            <td>29.04.2026</td>
+          </tr>
+          <tr>
+            <td>23.</td>
+            <td><a href="/analytics/RSCI/activity_npf/rewiew_npf/#a_85256">Обзор ключевых показателей негосударственных пенсионных фондов</a></td>
+            <td>30.04.2026</td>
+          </tr>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="dropdown"><a id="dropdown_title_8" aria-expanded="false" aria-controls="DropDown8_content" role="button" tabindex="0" class="dropdown_title">
+		Календарь публикации на март 2026 года</a><div id="DropDown8_content" role="region" class="dropdown_content" aria-labelledby="dropdown_title_8">
+    <div class="table-wrapper">
+      <div class="table">
+        <table class="data">
+          <tr>
+            <th>№</th>
+            <th>Название публикации</th>
+            <th>Дата публикации</th>
+          </tr>
+          <tr>
+            <td>1.</td>
+            <td><a href="/ec_research/mb/#a_62316">Новостной индекс деловой активности</a></td>
+            <td>03.03.2026</td>
+          </tr>
+          <tr>
+            <td>2.</td>
+            <td><a href="/analytics/finflows/#a_107637">Мониторинг отраслевых финансовых потоков</a></td>
+            <td>05.03.2026</td>
+          </tr>
+          <tr>
+            <td>3.</td>
+            <td><a href="/analytics/rcb/review_broker/#a_156497">Обзор ключевых показателей брокеров</a></td>
+            <td>10.03.2026</td>
+          </tr>
+          <tr>
+            <td>4.</td>
+            <td><a href="/analytics/insurance/overview_insurers/#a_85436">Обзор ключевых показателей деятельности страховщиков</a></td>
+            <td>11.03.2026</td>
+          </tr>
+          <tr>
+            <td>5.</td>
+            <td><a href="/analytics/bank_sector/analytical_review_bs/#a_123445">Аналитический обзор «Банковский сектор»</a></td>
+            <td>11.03.2026</td>
+          </tr>
+          <tr>
+            <td>6.</td>
+            <td><a href="/analytics/dkp/reg_review/#a_118418">Региональная экономика: комментарии ГУ</a></td>
+            <td>11.03.2026</td>
+          </tr>
+          <tr>
+            <td>7.</td>
+            <td><a href="/statistics/ddkp/#a_120880page">Макроэкономический опрос Банка России</a></td>
+            <td>11.03.2026</td>
+          </tr>
+          <tr>
+            <td>8.</td>
+            <td><a href="/analytics/finstab/orfr/#a_50194">Обзор рисков финансовых рынков</a></td>
+            <td>11.03.2026</td>
+          </tr>
+          <tr>
+            <td>9.</td>
+            <td><a href="/ec_research/mb/#a_16760">О чем говорят тренды</a></td>
+            <td>12.03.2026</td>
+          </tr>
+          <tr>
+            <td>10.</td>
+            <td><a href="/analytics/dkp/likvid/#a_17329">Денежно-кредитные условия и трансмиссия ДКП</a></td>
+            <td>12.03.2026</td>
+          </tr>
+          <tr>
+            <td>11.</td>
+            <td><a href="/analytics/RSCI/review_uk/#a_156354">Обзор ключевых показателей управляющих компаний</a></td>
+            <td>12.03.2026</td>
+          </tr>
+          <tr>
+            <td>12.</td>
+            <td><a href="/analytics/bank_sector/#a_120863">О проектном финансировании строительства жилья</a></td>
+            <td>13.03.2026</td>
+          </tr>
+          <tr>
+            <td>13.</td>
+            <td><a href="/ec_research/analitics/#a_159497">Обзор финансовых инструментов</a></td>
+            <td>13.03.2026</td>
+          </tr>
+          <tr>
+            <td>14.</td>
+            <td><a href="/analytics/dkp/monitoring/#a_136157">Оперативная справка по результатам мониторинга предприятий</a></td>
+            <td>17.03.2026</td>
+          </tr>
+          <tr>
+            <td>15.</td>
+            <td><a href="/analytics/dkp/inflationary_expectations/#a_62825">Оперативная справка по результатам исследования «Измерение инфляционных ожиданий и потребительских настроений на основе опросов населения»</a></td>
+            <td>18.03.2026</td>
+          </tr>
+          <tr>
+            <td>16.</td>
+            <td><a href="/about_br/publ/god/#a_48123">Годовой отчет Банка России за 2025 год</a></td>
+            <td>20.03.2026</td>
+          </tr>
+          <tr>
+            <td>17.</td>
+            <td><a href="/about_br/publ/results_work/#a_120829">Итоги работы Банка России: коротко о главном за 2025 год</a></td>
+            <td>20.03.2026</td>
+          </tr>
+          <tr>
+            <td>18.</td>
+            <td><a href="/analytics/microfinance/#a_103884">Тенденции микрофинансового рынка</a></td>
+            <td>23.03.2026</td>
+          </tr>
+          <tr>
+            <td>19.</td>
+            <td><a href="/analytics/dkp/monitoring/#a_136157">Мониторинг предприятий</a></td>
+            <td>23.03.2026</td>
+          </tr>
+          <tr>
+            <td>20.</td>
+            <td><a href="/statistics/macro_itm/dkfs/#a_177308">Кредит экономике и денежная масса</a></td>
+            <td>23.03.2026</td>
+          </tr>
+          <tr>
+            <td>21.</td>
+            <td><a href="/analytics/dkp/dinamic/#a_17327">Инфляция в России</a></td>
+            <td>23.03.2026</td>
+          </tr>
+          <tr>
+            <td>22.</td>
+            <td><a href="/ec_research/mb/#a_16761">Оценка трендовой инфляции</a></td>
+            <td>23.03.2026</td>
+          </tr>
+          <tr>
+            <td>23.</td>
+            <td><a href="/analytics/dkp/regInflation/">Информационно-аналитические комментарии об инфляции в регионах</a></td>
+            <td>25.03.2026</td>
+          </tr>
+          <tr>
+            <td>24.</td>
+            <td><a href="/analytics/dkp/inflationary_expectations/#a_102610">Инфляционные ожидания и потребительские настроения</a></td>
+            <td>25.03.2026</td>
+          </tr>
+          <tr>
+            <td>25.</td>
+            <td><a href="/analytics/bank_sector/develop/#a_48876">О развитии банковского сектора Российской Федерации</a></td>
+            <td>25.03.2026</td>
+          </tr>
+          <tr>
+            <td>26.</td>
+            <td><a href="/analytics/podft/#a_83365">Структура подозрительных операций и отрасли экономики, формировавшие спрос на теневые финансовые услуги</a></td>
+            <td>31.03.2026</td>
+          </tr>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="dropdown"><a id="dropdown_title_9" aria-expanded="false" aria-controls="DropDown9_content" role="button" tabindex="0" class="dropdown_title">
+		Календарь публикации на февраль 2026 года</a><div id="DropDown9_content" role="region" class="dropdown_content" aria-labelledby="dropdown_title_9">
+    <div class="table-wrapper">
+      <div class="table">
+        <table class="data">
+          <tr>
+            <th>№</th>
+            <th>Название публикации</th>
+            <th>Дата публикации</th>
+          </tr>
+          <tr>
+            <td>1.</td>
+            <td><a href="/analytics/bank_sector/develop/#a_48876">О развитии банковского сектора Российской Федерации</a></td>
+            <td>03.02.2026</td>
+          </tr>
+          <tr>
+            <td>2.</td>
+            <td><a href="/ec_research/mb/#a_16760">О чем говорят тренды</a></td>
+            <td>03.02.2026</td>
+          </tr>
+          <tr>
+            <td>3.</td>
+            <td><a href="/analytics/dkp/inflationary_expectations/#a_102610">Инфляционные ожидания и потребительские настроения</a></td>
+            <td>03.02.2026</td>
+          </tr>
+          <tr>
+            <td>4.</td>
+            <td><a href="/ec_research/mb/#a_62316">Новостной индекс деловой активности</a></td>
+            <td>03.02.2026</td>
+          </tr>
+          <tr>
+            <td>5.</td>
+            <td><a href="/analytics/dkp/reg_review/#a_118418">Региональная экономика: комментарии ГУ</a></td>
+            <td>04.02.2026</td>
+          </tr>
+          <tr>
+            <td>6.</td>
+            <td><a href="/statistics/ddkp/#a_120880page">Макроэкономический опрос Банка России</a></td>
+            <td>04.02.2026</td>
+          </tr>
+          <tr>
+            <td>7.</td>
+            <td><a href="/analytics/finflows/#a_107637">Мониторинг отраслевых финансовых потоков</a></td>
+            <td>05.02.2026</td>
+          </tr>
+          <tr>
+            <td>8.</td>
+            <td><a href="/analytics/finstab/orfr/#a_50194">Обзор рисков финансовых рынков</a></td>
+            <td>06.02.2026</td>
+          </tr>
+          <tr>
+            <td>9.</td>
+            <td><a href="/analytics/dkp/monitoring/#a_136157">Оперативная справка по результатам мониторинга предприятий</a></td>
+            <td>11.02.2026</td>
+          </tr>
+          <tr>
+            <td>10.</td>
+            <td><a href="/analytics/dkp/likvid/#a_17329">Денежно-кредитные условия и трансмиссия ДКП</a></td>
+            <td>16.02.2026</td>
+          </tr>
+          <tr>
+            <td>11.</td>
+            <td><a href="/analytics/dkp/monitoring/#a_136157">Мониторинг предприятий</a></td>
+            <td>16.02.2026</td>
+          </tr>
+          <tr>
+            <td>12.</td>
+            <td><a href="/na/banking_regulation_newsletter/#a_146625">Обзор банковского регулирования</a></td>
+            <td>16.02.2026</td>
+          </tr>
+          <tr>
+            <td>13.</td>
+            <td><a href="/analytics/dkp/dinamic/#a_17327">Инфляция в России</a></td>
+            <td>18.02.2026</td>
+          </tr>
+          <tr>
+            <td>14.</td>
+            <td><a href="/ec_research/mb/#a_16761">Оценка трендовой инфляции</a></td>
+            <td>18.02.2026</td>
+          </tr>
+          <tr>
+            <td>15.</td>
+            <td><a href="/analytics/dkp/bal/#a_84865">Информационно-аналитический комментарий «Оценка платежного баланса Российской Федерации»</a></td>
+            <td>19.02.2026</td>
+          </tr>
+          <tr>
+            <td>16.</td>
+            <td><a href="/statistics/macro_itm/dkfs/#a_177308">Кредит экономике и денежная масса</a></td>
+            <td>19.02.2026</td>
+          </tr>
+          <tr>
+            <td>17.</td>
+            <td><a href="/analytics/dkp/inflationary_expectations/#a_62825">Оперативная справка по результатам исследования «Измерение инфляционных ожиданий и потребительских настроений на основе опросов населения»</a></td>
+            <td>19.02.2026</td>
+          </tr>
+          <tr>
+            <td>18.</td>
+            <td><a href="/analytics/dkp/regInflation/">Информационно-аналитические комментарии об инфляции в регионах</a></td>
+            <td>20.02.2026</td>
+          </tr>
+          <tr>
+            <td>19.</td>
+            <td><a href="/statistics/cash_circulation/#a_77526">Данные о поддельных денежных знаках, выявленных в банковской системе России</a></td>
+            <td>25.02.2026</td>
+          </tr>
+          <tr>
+            <td>20.</td>
+            <td><a href="/analytics/bank_sector/develop/#a_48876">О развитии банковского сектора Российской Федерации</a></td>
+            <td>26.02.2026</td>
+          </tr>
+          <tr>
+            <td>21.</td>
+            <td><a href="/analytics/dkp/inflationary_expectations/#a_102610">Инфляционные ожидания и потребительские настроения</a></td>
+            <td>26.02.2026</td>
+          </tr>
+          <tr>
+            <td>22.</td>
+            <td><a href="/dkp/mp_dec/#t3">Резюме обсуждения ключевой ставки</a></td>
+            <td>26.02.2026</td>
+          </tr>
+          <tr>
+            <td>23.</td>
+            <td><a href="/dkp/mp_dec/decision_key_rate/">Комментарий к среднесрочному прогнозу Банка России</a></td>
+            <td>26.02.2026</td>
+          </tr>
+          <tr>
+            <td>24.</td>
+            <td><a href="/analytics/rcb/#a_155846">Тенденции сегмента индивидуальных инвестиционных счетов</a></td>
+            <td>27.02.2026</td>
+          </tr>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="dropdown"><a id="dropdown_title_10" aria-expanded="false" aria-controls="DropDown10_content" role="button" tabindex="0" class="dropdown_title">
+		Календарь публикации на январь 2026 года</a><div id="DropDown10_content" role="region" class="dropdown_content" aria-labelledby="dropdown_title_10">
+    <div class="table-wrapper">
+      <div class="table">
+        <table class="data">
+          <tr>
+            <th>№</th>
+            <th>Название публикации</th>
+            <th>Дата публикации</th>
+          </tr>
+          <tr>
+            <td>1.</td>
+            <td><a href="/ec_research/mb/#a_62316">Новостной индекс деловой активности</a></td>
+            <td>13.01.2026</td>
+          </tr>
+          <tr>
+            <td>2.</td>
+            <td><a href="/analytics/finflows/#a_107637">Мониторинг отраслевых финансовых потоков</a></td>
+            <td>15.01.2026</td>
+          </tr>
+          <tr>
+            <td>3.</td>
+            <td><a href="/analytics/dkp/likvid/#a_17329">Денежно-кредитные условия и трансмиссия ДКП</a></td>
+            <td>20.01.2026</td>
+          </tr>
+          <tr>
+            <td>4.</td>
+            <td><a href="/analytics/dkp/dinamic/#a_17327">Инфляция в России</a></td>
+            <td>21.01.2026</td>
+          </tr>
+          <tr>
+            <td>5.</td>
+            <td><a href="/ec_research/mb/#a_16761">Оценка трендовой инфляции</a></td>
+            <td>21.01.2026</td>
+          </tr>
+          <tr>
+            <td>6.</td>
+            <td><a href="/analytics/dkp/regInflation/">Информационно-аналитические комментарии об инфляции в регионах</a></td>
+            <td>23.01.2026</td>
+          </tr>
+          <tr>
+            <td>7.</td>
+            <td><a href="/analytics/dkp/monitoring/#a_136157">Мониторинг предприятий</a></td>
+            <td>26.01.2026</td>
+          </tr>
+          <tr>
+            <td>8.</td>
+            <td><a href="/analytics/dkp/inflationary_expectations/#a_62825">Оперативная справка по результатам исследования «Измерение инфляционных ожиданий и потребительских настроений на основе опросов населения»</a></td>
+            <td>27.01.2026</td>
+          </tr>
+          <tr>
+            <td>9.</td>
+            <td><a href="/statistics/macro_itm/dkfs/#a_177308">Кредит экономике и денежная масса</a></td>
+            <td>29.01.2026</td>
+          </tr>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="dropdown"><a id="dropdown_title_11" aria-expanded="false" aria-controls="DropDown11_content" role="button" tabindex="0" class="dropdown_title">
+		Календарь публикации на декабрь 2025 года</a><div id="DropDown11_content" role="region" class="dropdown_content" aria-labelledby="dropdown_title_11">
+    <div class="table-wrapper">
+      <div class="table">
+        <table class="data">
+          <tr>
+            <th>№</th>
+            <th>Название публикации</th>
+            <th>Дата публикации</th>
+          </tr>
+          <tr>
+            <td>1.</td>
+            <td><a href="/analytics/insurance/overview_insurers/#a_85436">Обзор ключевых показателей деятельности страховщиков</a></td>
+            <td>01.12.2025</td>
+          </tr>
+          <tr>
+            <td>2.</td>
+            <td><a href="/ec_research/mb/#a_62316">Новостной индекс деловой активности</a></td>
+            <td>02.12.2025</td>
+          </tr>
+          <tr>
+            <td>3.</td>
+            <td><a href="/analytics/rcb/review_broker/#a_156497">Обзор ключевых показателей брокеров</a></td>
+            <td>03.12.2025</td>
+          </tr>
+          <tr>
+            <td>4.</td>
+            <td><a href="/analytics/microfinance/#a_130742">Тенденции на рынке кредитных потребительских кооперативов</a></td>
+            <td>09.12.2025</td>
+          </tr>
+          <tr>
+            <td>5.</td>
+            <td><a href="/na/banking_regulation_newsletter/#a_146625">Обзор банковского регулирования</a></td>
+            <td>09.12.2025</td>
+          </tr>
+          <tr>
+            <td>6.</td>
+            <td><a href="/ec_research/mb/#a_16760">О чем говорят тренды</a></td>
+            <td>09.12.2025</td>
+          </tr>
+          <tr>
+            <td>7.</td>
+            <td><a href="/statistics/ddkp/#a_120880page">Макроэкономический опрос Банка России</a></td>
+            <td>10.12.2025</td>
+          </tr>
+          <tr>
+            <td>8.</td>
+            <td><a href="/analytics/dkp/reg_review/#a_118418">Региональная экономика: комментарии ГУ</a></td>
+            <td>10.12.2025</td>
+          </tr>
+          <tr>
+            <td>9.</td>
+            <td><a href="/analytics/finstab/orfr/#a_50194">Обзор рисков финансовых рынков</a></td>
+            <td>10.12.2025</td>
+          </tr>
+          <tr>
+            <td>10.</td>
+            <td><a href="/analytics/dkp/likvid/#a_17329">Денежно-кредитные условия и трансмиссия ДКП</a></td>
+            <td>11.12.2025</td>
+          </tr>
+          <tr>
+            <td>11.</td>
+            <td><a href="/analytics/finflows/#a_107637">Мониторинг отраслевых финансовых потоков</a></td>
+            <td>11.12.2025</td>
+          </tr>
+          <tr>
+            <td>12.</td>
+            <td><a href="/analytics/dkp/dinamic/#a_17327">Инфляция в России</a></td>
+            <td>12.12.2025</td>
+          </tr>
+          <tr>
+            <td>13.</td>
+            <td><a href="/ec_research/mb/#a_16761">Оценка трендовой инфляции</a></td>
+            <td>12.12.2025</td>
+          </tr>
+          <tr>
+            <td>14.</td>
+            <td><a href="/analytics/dkp/inflationary_expectations/#a_62825">Оперативная справка по результатам исследования «Измерение инфляционных ожиданий и потребительских настроений на основе опросов населения»</a></td>
+            <td>17.12.2025</td>
+          </tr>
+          <tr>
+            <td>15.</td>
+            <td><a href="/analytics/dkp/monitoring/#a_136157">Оперативная справка по результатам мониторинга предприятий</a></td>
+            <td>17.12.2025</td>
+          </tr>
+          <tr>
+            <td>16.</td>
+            <td><a href="/analytics/microfinance/reveiw_mfo/#a_84043">Обзор ключевых показателей микрофинансовых институтов</a></td>
+            <td>22.12.2025</td>
+          </tr>
+          <tr>
+            <td>17.</td>
+            <td><a href="/analytics/dkp/monitoring/#a_136157">Мониторинг предприятий</a></td>
+            <td>22.12.2025</td>
+          </tr>
+          <tr>
+            <td>18.</td>
+            <td><a href="/statistics/macro_itm/dkfs/#a_177308">Кредит экономике и денежная масса</a></td>
+            <td>22.12.2025</td>
+          </tr>
+          <tr>
+            <td>19.</td>
+            <td><a href="/analytics/dkp/regInflation/">Информационно-аналитические комментарии об инфляции в регионах</a></td>
+            <td>22.12.2025</td>
+          </tr>
+          <tr>
+            <td>20.</td>
+            <td><a href="/analytics/bank_sector/develop/#a_48876">О развитии банковского сектора Российской Федерации</a></td>
+            <td>24.12.2025</td>
+          </tr>
+          <tr>
+            <td>21.</td>
+            <td><a href="/analytics/dkp/inflationary_expectations/#a_102610">Инфляционные ожидания и потребительские настроения</a></td>
+            <td>24.12.2025</td>
+          </tr>
+          <tr>
+            <td>22.</td>
+            <td><a href="/dkp/mp_dec/#t3">Резюме обсуждения ключевой ставки</a></td>
+            <td>29.12.2025</td>
+          </tr>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="dropdown"><a id="dropdown_title_12" aria-expanded="false" aria-controls="DropDown12_content" role="button" tabindex="0" class="dropdown_title">
+		Календарь публикации на ноябрь 2025 года</a><div id="DropDown12_content" role="region" class="dropdown_content" aria-labelledby="dropdown_title_12">
+    <div class="table-wrapper">
+      <div class="table">
+        <table class="data">
+          <tr>
+            <th>№</th>
+            <th>Название публикации</th>
+            <th>Дата публикации</th>
+          </tr>
+          <tr>
+            <td>1.</td>
+            <td><a href="/ec_research/mb/#a_62316">Новостной индекс деловой активности</a></td>
+            <td>05.11.2025</td>
+          </tr>
+          <tr>
+            <td>2.</td>
+            <td><a href="/dkp/mp_dec/decision_key_rate/">Комментарий к среднесрочному прогнозу Банка России</a></td>
+            <td>06.11.2025</td>
+          </tr>
+          <tr>
+            <td>3.</td>
+            <td><a href="/dkp/mp_dec/#t3">Резюме обсуждения ключевой ставки</a></td>
+            <td>06.11.2025</td>
+          </tr>
+          <tr>
+            <td>4.</td>
+            <td><a href="/analytics/finstab/orfr/#a_50194">Обзор рисков финансовых рынков</a></td>
+            <td>10.11.2025</td>
+          </tr>
+          <tr>
+            <td>5.</td>
+            <td><a href="/analytics/dkp/likvid/#a_17329">Денежно-кредитные условия и трансмиссия ДКП</a></td>
+            <td>11.11.2025</td>
+          </tr>
+          <tr>
+            <td>6.</td>
+            <td><a href="/analytics/finflows/#a_107637">Мониторинг отраслевых финансовых потоков</a></td>
+            <td>13.11.2025</td>
+          </tr>
+          <tr>
+            <td>7.</td>
+            <td><a href="/analytics/rcb/#a_155846">Тенденции сегмента индивидуальных инвестиционных счетов</a></td>
+            <td>18.11.2025</td>
+          </tr>
+          <tr>
+            <td>8.</td>
+            <td><a href="/analytics/RSCI/activity_npf/#a_108092">Доходность НПФ</a></td>
+            <td>18.11.2025</td>
+          </tr>
+          <tr>
+            <td>9.</td>
+            <td><a href="/analytics/dkp/monitoring/#a_136157">Мониторинг предприятий</a></td>
+            <td>18.11.2025</td>
+          </tr>
+          <tr>
+            <td>10.</td>
+            <td><a href="/analytics/dkp/dinamic/#a_17327">Инфляция в России</a></td>
+            <td>19.11.2025</td>
+          </tr>
+          <tr>
+            <td>11.</td>
+            <td><a href="/ec_research/mb/#a_16761">Оценка трендовой инфляции</a></td>
+            <td>19.11.2025</td>
+          </tr>
+          <tr>
+            <td>12.</td>
+            <td><a href="/analytics/dkp/inflationary_expectations/#a_62825">Оперативная справка по результатам исследования «Измерение инфляционных ожиданий и потребительских настроений на основе опросов населения»</a></td>
+            <td>20.11.2025</td>
+          </tr>
+          <tr>
+            <td>13.</td>
+            <td><a href="/analytics/dkp/regInflation/">Информационно-аналитические комментарии об инфляции в регионах</a></td>
+            <td>21.11.2025</td>
+          </tr>
+          <tr>
+            <td>14.</td>
+            <td><a href="/analytics/bank_sector/analytical_review_bs/#a_123445">Аналитический обзор «Банковский сектор»</a></td>
+            <td>21.11.2025</td>
+          </tr>
+          <tr>
+            <td>15.</td>
+            <td><a href="/analytics/dkp/bal/#a_84865">Платежный баланс Российской Федерации</a></td>
+            <td>21.11.2025</td>
+          </tr>
+          <tr>
+            <td>16.</td>
+            <td><a href="/statistics/macro_itm/dkfs/#a_177308">Кредит экономике и денежная масса</a></td>
+            <td>21.11.2025</td>
+          </tr>
+          <tr>
+            <td>17.</td>
+            <td><a href="/analytics/bank_sector/develop/#a_48876">О развитии банковского сектора Российской Федерации</a></td>
+            <td>26.11.2025</td>
+          </tr>
+          <tr>
+            <td>18.</td>
+            <td><a href="/finstab/review/#a_48176">Обзор финансовой стабильности</a></td>
+            <td>27.11.2025</td>
+          </tr>
+          <tr>
+            <td>19.</td>
+            <td><a href="/analytics/RSCI/activity_npf/rewiew_npf/#a_85256">Обзор ключевых показателей негосударственных пенсионных фондов</a></td>
+            <td>27.11.2025</td>
+          </tr>
+          <tr>
+            <td>20.</td>
+            <td><a href="/analytics/dkp/inflationary_expectations/#a_102610">Инфляционные ожидания и потребительские настроения</a></td>
+            <td>27.11.2025</td>
+          </tr>
+          <tr>
+            <td>21.</td>
+            <td><a href="/analytics/RSCI/review_uk/#a_156354">Обзор ключевых показателей управляющих компаний</a></td>
+            <td>28.11.2025</td>
+          </tr>
+          <tr>
+            <td>22.</td>
+            <td><a href="/analytics/bank_sector/#a_120863">О проектном финансировании строительства жилья</a></td>
+            <td>28.11.2025</td>
+          </tr>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="dropdown"><a id="dropdown_title_13" aria-expanded="false" aria-controls="DropDown13_content" role="button" tabindex="0" class="dropdown_title">
+		Календарь публикации на октябрь 2025 года</a><div id="DropDown13_content" role="region" class="dropdown_content" aria-labelledby="dropdown_title_13">
+    <div class="table-wrapper">
+      <div class="table">
+        <table class="data">
+          <tr>
+            <th>№</th>
+            <th>Название публикации</th>
+            <th>Дата публикации</th>
+          </tr>
+          <tr>
+            <td>1.</td>
+            <td><a href="/ec_research/mb/#a_62316">Новостной индекс деловой активности</a></td>
+            <td>02.10.2025</td>
+          </tr>
+          <tr>
+            <td>2.</td>
+            <td><a href="/analytics/finstab/orfr/#a_50194">Обзор рисков финансовых рынков</a></td>
+            <td>08.10.2025</td>
+          </tr>
+          <tr>
+            <td>3.</td>
+            <td><a href="/analytics/dkp/likvid/#a_17329">Денежно-кредитные условия и трансмиссия ДКП</a></td>
+            <td>09.10.2025</td>
+          </tr>
+          <tr>
+            <td>4.</td>
+            <td><a href="/analytics/finflows/#a_107637">Мониторинг отраслевых финансовых потоков</a></td>
+            <td>09.10.2025</td>
+          </tr>
+          <tr>
+            <td>5.</td>
+            <td><a href="/ec_research/mb/#a_16760">О чем говорят тренды</a></td>
+            <td>14.10.2025</td>
+          </tr>
+          <tr>
+            <td>6.</td>
+            <td><a href="/analytics/dkp/reg_review/#a_118418">Региональная экономика: комментарии ГУ</a></td>
+            <td>15.10.2025</td>
+          </tr>
+          <tr>
+            <td>7.</td>
+            <td><a href="/analytics/dkp/monitoring/#a_136157">Мониторинг предприятий: оценки, ожидания, комментарии</a></td>
+            <td>15.10.2025</td>
+          </tr>
+          <tr>
+            <td>8.</td>
+            <td><a href="/statistics/ddkp/#a_120880page">Макроэкономический опрос Банка России</a></td>
+            <td>15.10.2025</td>
+          </tr>
+          <tr>
+            <td>9.</td>
+            <td><a href="/ec_research/mb/#a_16761">Оценка трендовой инфляции</a></td>
+            <td>15.10.2025</td>
+          </tr>
+          <tr>
+            <td>10.</td>
+            <td><a href="/analytics/dkp/dinamic/#a_17327">Инфляция в России</a></td>
+            <td>15.10.2025</td>
+          </tr>
+          <tr>
+            <td>11.</td>
+            <td><a href="/analytics/microfinance/#a_103881">Тенденции на рынке МФО предпринимательского финансирования</a></td>
+            <td>16.10.2025</td>
+          </tr>
+          <tr>
+            <td>12.</td>
+            <td><a href="/analytics/bank_sector/develop/#a_48876">О развитии банковского сектора Российской Федерации</a></td>
+            <td>17.10.2025</td>
+          </tr>
+          <tr>
+            <td>13.</td>
+            <td><a href="/analytics/dkp/inflationary_expectations/#a_62825">Оперативная справка по результатам исследования «Измерение инфляционных ожиданий и потребительских настроений на основе опросов населения»</a></td>
+            <td>22.10.2025</td>
+          </tr>
+          <tr>
+            <td>14.</td>
+            <td><a href="/about_br/publ/ondkp/">Основные направления единой государственной денежно-кредитной политики на 2026 год и период 2027 и 2028 годов</a></td>
+            <td>27.10.2025</td>
+          </tr>
+          <tr>
+            <td>15.</td>
+            <td><a href="/statistics/macro_itm/dkfs/#a_177308">Кредит экономике и денежная масса</a></td>
+            <td>27.10.2025</td>
+          </tr>
+          <tr>
+            <td>16.</td>
+            <td><a href="/analytics/dkp/regInflation/">Информационно-аналитические комментарии об инфляции в регионах</a></td>
+            <td>27.10.2025</td>
+          </tr>
+          <tr>
+            <td>17.</td>
+            <td><a href="/analytics/dkp/inflationary_expectations/#a_102610">Инфляционные ожидания и потребительские настроения</a></td>
+            <td>29.10.2025</td>
+          </tr>
+          <tr>
+            <td>18.</td>
+            <td><a href="/statistics/cash_circulation/#a_77526">Данные о поддельных денежных знаках, выявленных в банковской системе</a></td>
+            <td>29.10.2025</td>
+          </tr>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="dropdown"><a id="dropdown_title_14" aria-expanded="false" aria-controls="DropDown14_content" role="button" tabindex="0" class="dropdown_title">
+		Календарь публикации на сентябрь 2025 года</a><div id="DropDown14_content" role="region" class="dropdown_content" aria-labelledby="dropdown_title_14">
+    <div class="table-wrapper">
+      <div class="table">
+        <table class="data">
+          <tr>
+            <th>№</th>
+            <th>Название публикации</th>
+            <th>Дата публикации</th>
+          </tr>
+          <tr>
+            <td>1.</td>
+            <td><a href="/analytics/rcb/review_broker/#a_156497">Обзор ключевых показателей брокеров</a></td>
+            <td>01.09.2025</td>
+          </tr>
+          <tr>
+            <td>2.</td>
+            <td><a href="/ec_research/mb/#a_16760">О чем говорят тренды</a></td>
+            <td>02.09.2025</td>
+          </tr>
+          <tr>
+            <td>3.</td>
+            <td><a href="/about_br/publ/ondkp/">Основные направления единой государственной денежно-кредитной политики на 2026 год и период 2027 и 2028 годов (первый проект)</a></td>
+            <td>02.09.2025</td>
+          </tr>
+          <tr>
+            <td>4.</td>
+            <td><a href="/ec_research/mb/#a_62316">Новостной индекс деловой активности</a></td>
+            <td>03.09.2025</td>
+          </tr>
+          <tr>
+            <td>5.</td>
+            <td><a href="/analytics/dkp/reg_review/#a_118418">Региональная экономика: комментарии ГУ</a></td>
+            <td>03.09.2025</td>
+          </tr>
+          <tr>
+            <td>6.</td>
+            <td><a href="/statistics/ddkp/#a_120880page">Макроэкономический опрос Банка России</a></td>
+            <td>03.09.2025</td>
+          </tr>
+          <tr>
+            <td>7.</td>
+            <td><a href="/analytics/insurance/overview_insurers/#a_85436">Обзор ключевых показателей деятельности страховщиков</a></td>
+            <td>03.09.2025</td>
+          </tr>
+          <tr>
+            <td>8.</td>
+            <td><a href="/analytics/bank_sector/analytical_review_bs/#a_123445">Аналитический обзор «Банковский сектор»</a></td>
+            <td>04.09.2025</td>
+          </tr>
+          <tr>
+            <td>9.</td>
+            <td><a href="/analytics/finstab/orfr/#a_50194">Обзор рисков финансовых рынков</a></td>
+            <td>05.09.2025</td>
+          </tr>
+          <tr>
+            <td>10.</td>
+            <td><a href="/analytics/dkp/monitoring/#a_136157">Оперативная справка по результатам мониторинга предприятий</a></td>
+            <td>10.09.2025</td>
+          </tr>
+          <tr>
+            <td>11.</td>
+            <td><a href="/analytics/dkp/likvid/#a_17329">Денежно-кредитные условия и трансмиссионный механизм денежно-кредитной политики</a></td>
+            <td>15.09.2025</td>
+          </tr>
+          <tr>
+            <td>12.</td>
+            <td><a href="/analytics/finflows/#a_107637">Мониторинг отраслевых финансовых потоков</a></td>
+            <td>15.09.2025</td>
+          </tr>
+          <tr>
+            <td>13.</td>
+            <td><a href="/ec_research/mb/#a_16761">Оценка трендовой инфляции</a></td>
+            <td>15.09.2025</td>
+          </tr>
+          <tr>
+            <td>14.</td>
+            <td><a href="/analytics/dkp/dinamic/#a_17327">Инфляция в России</a></td>
+            <td>15.09.2025</td>
+          </tr>
+          <tr>
+            <td>15.</td>
+            <td><a href="/analytics/dkp/monitoring/#a_136157">Мониторинг предприятий: оценки, ожидания, комментарии</a></td>
+            <td>16.09.2025</td>
+          </tr>
+          <tr>
+            <td>16.</td>
+            <td><a href="/analytics/dkp/inflationary_expectations/#a_62825">Оперативная справка по результатам исследования «Измерение инфляционных ожиданий и потребительских настроений на основе опросов населения»</a></td>
+            <td>17.09.2025</td>
+          </tr>
+          <tr>
+            <td>17.</td>
+            <td><a href="/analytics/microfinance/reveiw_mfo/#a_84043">Обзор ключевых показателей микрофинансовых институтов</a></td>
+            <td>17.09.2025</td>
+          </tr>
+          <tr>
+            <td>18.</td>
+            <td><a href="/analytics/dkp/regInflation/">Информационно-аналитические комментарии об инфляции в регионах</a></td>
+            <td>18.09.2025</td>
+          </tr>
+          <tr>
+            <td>19.</td>
+            <td><a href="/statistics/macro_itm/dkfs/#a_177308">Кредит экономике и денежная масса</a></td>
+            <td>22.09.2025</td>
+          </tr>
+          <tr>
+            <td>20.</td>
+            <td><a href="/analytics/bank_sector/develop/#a_48876">О развитии банковского сектора Российской Федерации</a></td>
+            <td>23.09.2025</td>
+          </tr>
+          <tr>
+            <td>21.</td>
+            <td><a href="/analytics/dkp/inflationary_expectations/#a_102610">Инфляционные ожидания и потребительские настроения</a></td>
+            <td>24.09.2025</td>
+          </tr>
+          <tr>
+            <td>22.</td>
+            <td><a href="/dkp/mp_dec/#t3">Резюме обсуждения ключевой ставки</a></td>
+            <td>24.09.2025</td>
+          </tr>
+          <tr>
+            <td>23.</td>
+            <td><a href="/about_br/publ/ondkp/">Основные направления единой государственной денежно-кредитной политики на 2026 год и период 2027 и 2028 годов (второй проект)</a></td>
+            <td>26.09.2025</td>
+          </tr>
+          <tr>
+            <td>24.</td>
+            <td><a href="/analytics/microfinance/#a_128268">Тенденции на рынке ломбардов</a></td>
+            <td>29.09.2025</td>
+          </tr>
+          <tr>
+            <td>25.</td>
+            <td><a href="/analytics/podft/#a_83365">Структура подозрительных операций и отрасли экономики, формировавшие спрос на теневые финансовые услуги</a></td>
+            <td>30.09.2025</td>
+          </tr>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="dropdown"><a id="dropdown_title_15" aria-expanded="false" aria-controls="DropDown15_content" role="button" tabindex="0" class="dropdown_title">
+		Календарь публикации на август 2025 года</a><div id="DropDown15_content" role="region" class="dropdown_content" aria-labelledby="dropdown_title_15">
+    <div class="table-wrapper">
+      <div class="table">
+        <table class="data">
+          <tr>
+            <th>№</th>
+            <th>Название публикации</th>
+            <th>Дата публикации</th>
+          </tr>
+          <tr>
+            <td>1.</td>
+            <td><a href="/ec_research/mb/#a_62316">Новостной индекс деловой активности</a></td>
+            <td>04.08.2025</td>
+          </tr>
+          <tr>
+            <td>2.</td>
+            <td><a href="/dkp/mp_dec/#t3">Резюме обсуждения ключевой ставки</a></td>
+            <td>06.08.2025</td>
+          </tr>
+          <tr>
+            <td>3.</td>
+            <td><a href="/dkp/mp_dec/decision_key_rate/">Комментарий к среднесрочному прогнозу Банка России</a></td>
+            <td>06.08.2025</td>
+          </tr>
+          <tr>
+            <td>4.</td>
+            <td><a href="/analytics/finflows/#a_107637">Мониторинг отраслевых финансовых потоков</a></td>
+            <td>07.08.2025</td>
+          </tr>
+          <tr>
+            <td>5.</td>
+            <td><a href="/analytics/finstab/orfr/#a_50194">Обзор рисков финансовых рынков</a></td>
+            <td>08.08.2025</td>
+          </tr>
+          <tr>
+            <td>6.</td>
+            <td><a href="/analytics/dkp/likvid/#a_17329">Денежно-кредитные условия и трансмиссионный механизм денежно-кредитной политики</a></td>
+            <td>11.08.2025</td>
+          </tr>
+          <tr>
+            <td>7.</td>
+            <td><a href="/analytics/rcb/#a_155846">Тенденции сегмента индивидуальных инвестиционных счетов</a></td>
+            <td>15.08.2025</td>
+          </tr>
+          <tr>
+            <td>8.</td>
+            <td><a href="/analytics/RSCI/activity_npf/#a_108092">Доходность НПФ</a></td>
+            <td>15.08.2025</td>
+          </tr>
+          <tr>
+            <td>9.</td>
+            <td><a href="/analytics/dkp/monitoring/#a_136157">Мониторинг предприятий: оценки, ожидания, комментарии</a></td>
+            <td>18.08.2025</td>
+          </tr>
+          <tr>
+            <td>10.</td>
+            <td><a href="/ec_research/mb/#a_16761">Оценка трендовой инфляции</a></td>
+            <td>18.08.2025</td>
+          </tr>
+          <tr>
+            <td>11.</td>
+            <td><a href="/analytics/dkp/dinamic/#a_17327">Динамика потребительских цен</a></td>
+            <td>18.08.2025</td>
+          </tr>
+          <tr>
+            <td>12.</td>
+            <td><a href="/analytics/dkp/inflationary_expectations/#a_62825">Оперативная справка по результатам исследования «Измерение инфляционных ожиданий и потребительских настроений на основе опросов населения»</a></td>
+            <td>20.08.2025</td>
+          </tr>
+          <tr>
+            <td>13.</td>
+            <td><a href="/statistics/macro_itm/dkfs/#a_177308">Кредит экономике и денежная масса</a></td>
+            <td>21.08.2025</td>
+          </tr>
+          <tr>
+            <td>14.</td>
+            <td><a href="/analytics/dkp/regInflation/">Информационно-аналитические комментарии об инфляции в регионах</a></td>
+            <td>21.08.2025</td>
+          </tr>
+          <tr>
+            <td>15.</td>
+            <td><a href="/analytics/microfinance/#a_103884">Тенденции микрофинансового рынка</a></td>
+            <td>22.08.2025</td>
+          </tr>
+          <tr>
+            <td>16.</td>
+            <td><a href="/analytics/dkp/bal/#a_84865">Платежный баланс Российской Федерации</a></td>
+            <td>25.08.2025</td>
+          </tr>
+          <tr>
+            <td>17.</td>
+            <td><a href="/analytics/bank_sector/develop/#a_48876">О развитии банковского сектора Российской Федерации</a></td>
+            <td>26.08.2025</td>
+          </tr>
+          <tr>
+            <td>18.</td>
+            <td><a href="/analytics/dkp/inflationary_expectations/#a_102610">Инфляционные ожидания и потребительские настроения</a></td>
+            <td>27.08.2025</td>
+          </tr>
+          <tr>
+            <td>19.</td>
+            <td><a href="/analytics/bank_sector/#a_120863">О проектном финансировании строительства жилья</a></td>
+            <td>27.08.2025</td>
+          </tr>
+          <tr>
+            <td>20.</td>
+            <td><a href="/analytics/RSCI/review_uk/#a_156354">Обзор ключевых показателей управляющих компаний</a></td>
+            <td>28.08.2025</td>
+          </tr>
+          <tr>
+            <td>21.</td>
+            <td><a href="/analytics/RSCI/activity_npf/rewiew_npf/#a_85256">Обзор ключевых показателей негосударственных пенсионных фондов</a></td>
+            <td>29.08.2025</td>
+          </tr>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="dropdown"><a id="dropdown_title_16" aria-expanded="false" aria-controls="DropDown16_content" role="button" tabindex="0" class="dropdown_title">
+		Календарь публикации на июль 2025 года</a><div id="DropDown16_content" role="region" class="dropdown_content" aria-labelledby="dropdown_title_16">
+    <div class="table-wrapper">
+      <div class="table">
+        <table class="data">
+          <tr>
+            <th>№</th>
+            <th>Название публикации</th>
+            <th>Дата публикации</th>
+          </tr>
+          <tr>
+            <td>1.</td>
+            <td><a href="/analytics/microfinance/#a_130742">Тенденции на рынке кредитных потребительских кооперативов</a></td>
+            <td>01.07.2025</td>
+          </tr>
+          <tr>
+            <td>2.</td>
+            <td><a href="/ec_research/mb/#a_62316">Новостной индекс деловой активности</a></td>
+            <td>02.07.2025</td>
+          </tr>
+          <tr>
+            <td>3.</td>
+            <td><a href="/analytics/finflows/#a_107637">Мониторинг отраслевых финансовых потоков</a></td>
+            <td>10.07.2025</td>
+          </tr>
+          <tr>
+            <td>4.</td>
+            <td><a href="/analytics/finstab/orfr/#a_50194">Обзор рисков финансовых рынков</a></td>
+            <td>10.07.2025</td>
+          </tr>
+          <tr>
+            <td>5.</td>
+            <td><a href="/analytics/dkp/likvid/#a_17329">Денежно-кредитные условия и трансмиссионный механизм денежно-кредитной политики</a></td>
+            <td>11.07.2025</td>
+          </tr>
+          <tr>
+            <td>6.</td>
+            <td><a href="/ec_research/mb/#a_16760">О чем говорят тренды</a></td>
+            <td>15.07.2025</td>
+          </tr>
+          <tr>
+            <td>7.</td>
+            <td><a href="/analytics/dkp/reg_review/#a_118418">Региональная экономика: комментарии ГУ</a></td>
+            <td>16.07.2025</td>
+          </tr>
+          <tr>
+            <td>8.</td>
+            <td><a href="/analytics/dkp/monitoring/#a_136157">Мониторинг предприятий: оценки, ожидания, комментарии</a></td>
+            <td>16.07.2025</td>
+          </tr>
+          <tr>
+            <td>9.</td>
+            <td><a href="/statistics/ddkp/#a_120880page">Макроэкономический опрос Банка России</a></td>
+            <td>16.07.2025</td>
+          </tr>
+          <tr>
+            <td>10.</td>
+            <td><a href="/ec_research/mb/#a_16761">Оценка трендовой инфляции</a></td>
+            <td>16.07.2025</td>
+          </tr>
+          <tr>
+            <td>11.</td>
+            <td><a href="/analytics/dkp/dinamic/#a_17327">Динамика потребительских цен</a></td>
+            <td>16.07.2025</td>
+          </tr>
+          <tr>
+            <td>12.</td>
+            <td><a href="/analytics/dkp/inflationary_expectations/#a_62825">Оперативная справка по результатам исследования «Измерение инфляционных ожиданий и потребительских настроений на основе опросов населения»</a></td>
+            <td>17.07.2025</td>
+          </tr>
+          <tr>
+            <td>13.</td>
+            <td><a href="/analytics/bank_sector/develop/#a_48876">О развитии банковского сектора Российской Федерации</a></td>
+            <td>18.07.2025</td>
+          </tr>
+          <tr>
+            <td>14.</td>
+            <td><a href="/statistics/cash_circulation/#a_77526">Данные о поддельных денежных знаках, выявленных в банковской системе</a></td>
+            <td>23.07.2025</td>
+          </tr>
+          <tr>
+            <td>15.</td>
+            <td><a href="/analytics/dkp/inflationary_expectations/#a_102610">Инфляционные ожидания и потребительские настроения</a></td>
+            <td>28.07.2025</td>
+          </tr>
+          <tr>
+            <td>16.</td>
+            <td><a href="/analytics/dkp/regInflation/">Информационно-аналитические комментарии об инфляции в регионах</a></td>
+            <td>28.07.2025</td>
+          </tr>
+          <tr>
+            <td>17.</td>
+            <td><a href="/statistics/macro_itm/dkfs/#a_177308">Кредит экономике и денежная масса</a></td>
+            <td>28.07.2025</td>
+          </tr>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="dropdown"><a id="dropdown_title_17" aria-expanded="false" aria-controls="DropDown17_content" role="button" tabindex="0" class="dropdown_title">
+		Календарь публикации на июнь 2025 года</a><div id="DropDown17_content" role="region" class="dropdown_content" aria-labelledby="dropdown_title_17">
+    <div class="table-wrapper">
+      <div class="table">
+        <table class="data">
+          <tr>
+            <th>№</th>
+            <th>Название публикации</th>
+            <th>Дата публикации</th>
+          </tr>
+          <tr>
+            <td>1.</td>
+            <td><a href="/analytics/RSCI/review_uk/#a_156354">Обзор ключевых показателей управляющих компаний</a></td>
+            <td>03.06.2025</td>
+          </tr>
+          <tr>
+            <td>2.</td>
+            <td><a href="/analytics/rcb/review_broker/#a_156497">Обзор ключевых показателей брокеров</a></td>
+            <td>05.06.2025</td>
+          </tr>
+          <tr>
+            <td>3.</td>
+            <td><a href="/analytics/insurance/overview_insurers/#a_85436">Обзор ключевых показателей деятельности страховщиков</a></td>
+            <td>05.06.2025</td>
+          </tr>
+          <tr>
+            <td>4.</td>
+            <td><a href="/analytics/finflows/#a_107637">Мониторинг отраслевых финансовых потоков </a></td>
+            <td>09.06.2025</td>
+          </tr>
+          <tr>
+            <td>5.</td>
+            <td><a href="/ec_research/mb/#a_62316">Новостной индекс деловой активности</a></td>
+            <td>09.06.2025</td>
+          </tr>
+          <tr>
+            <td>6.</td>
+            <td><a href="/analytics/finstab/orfr/#a_50194">Обзор рисков финансовых рынков</a></td>
+            <td>09.06.2025</td>
+          </tr>
+          <tr>
+            <td>7.</td>
+            <td><a href="/analytics/microfinance/#a_128268">Тенденции на рынке ломбардов</a></td>
+            <td>10.06.2025</td>
+          </tr>
+          <tr>
+            <td>8.</td>
+            <td><a href="/analytics/dkp/likvid/#a_17329">Денежно-кредитные условия и трансмиссионный механизм денежно-кредитной политики</a></td>
+            <td>10.06.2025</td>
+          </tr>
+          <tr>
+            <td>9.</td>
+            <td><a href="/analytics/bank_sector/analytical_review_bs/#a_123445">Аналитический обзор «Банковский сектор»</a></td>
+            <td>11.06.2025</td>
+          </tr>
+          <tr>
+            <td>10.</td>
+            <td><a href="/analytics/dkp/inflationary_expectations/#a_62825">Оперативная справка по результатам исследования «Измерение инфляционных ожиданий и потребительских настроений на основе опросов населения»</a></td>
+            <td>18.06.2025</td>
+          </tr>
+          <tr>
+            <td>11.</td>
+            <td><a href="/ec_research/mb/#a_16761">Оценка трендовой инфляции</a></td>
+            <td>18.06.2025</td>
+          </tr>
+          <tr>
+            <td>12.</td>
+            <td><a href="/analytics/dkp/dinamic/#a_17327">Динамика потребительских цен</a></td>
+            <td>18.06.2025</td>
+          </tr>
+          <tr>
+            <td>13.</td>
+            <td><a href="/analytics/dkp/monitoring/#a_136157">Мониторинг предприятий: оценки, ожидания, комментарии</a></td>
+            <td>19.06.2025</td>
+          </tr>
+          <tr>
+            <td>14.</td>
+            <td><a href="/analytics/ndo/#a_123657">Отношение населения Российской Федерации к различным средствам платежа</a></td>
+            <td>19.06.2025</td>
+          </tr>
+          <tr>
+            <td>15.</td>
+            <td><a href="/dkp/mp_dec/#t3">Резюме обсуждения ключевой ставки</a></td>
+            <td>20.06.2025</td>
+          </tr>
+          <tr>
+            <td>16.</td>
+            <td><a href="/analytics/dkp/regInflation/">Информационно-аналитические комментарии об инфляции в регионах</a></td>
+            <td>23.06.2025</td>
+          </tr>
+          <tr>
+            <td>17.</td>
+            <td><a href="/analytics/dkp/inflationary_expectations/#a_102610">Инфляционные ожидания и потребительские настроения</a></td>
+            <td>25.06.2025</td>
+          </tr>
+          <tr>
+            <td>18.</td>
+            <td><a href="/analytics/bank_sector/develop/#a_48876">О развитии банковского сектора Российской Федерации</a></td>
+            <td>26.06.2025</td>
+          </tr>
+          <tr>
+            <td>19.</td>
+            <td><a href="/analytics/microfinance/reveiw_mfo/#a_84043">Обзор ключевых показателей микрофинансовых институтов</a></td>
+            <td>26.06.2025</td>
+          </tr>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="dropdown"><a id="dropdown_title_18" aria-expanded="false" aria-controls="DropDown18_content" role="button" tabindex="0" class="dropdown_title">
+		Календарь публикации на май 2025 года</a><div id="DropDown18_content" role="region" class="dropdown_content" aria-labelledby="dropdown_title_18">
+    <div class="table-wrapper">
+      <div class="table">
+        <table class="data">
+          <tr>
+            <th>№</th>
+            <th>Название публикации</th>
+            <th>Дата публикации</th>
+          </tr>
+          <tr>
+            <td>1.</td>
+            <td><a href="/ec_research/mb/#a_62316">Новостной индекс деловой активности</a></td>
+            <td>06.05.2025</td>
+          </tr>
+          <tr>
+            <td>2.</td>
+            <td><a href="/dkp/mp_dec/#t3">Резюме обсуждения ключевой ставки</a></td>
+            <td>12.05.2025</td>
+          </tr>
+          <tr>
+            <td>3.</td>
+            <td><a href="/dkp/mp_dec/decision_key_rate/">Комментарий к среднесрочному прогнозу Банка России</a></td>
+            <td>12.05.2025</td>
+          </tr>
+          <tr>
+            <td>4.</td>
+            <td><a href="/analytics/finstab/orfr/#a_50194">Обзор рисков финансовых рынков</a></td>
+            <td>14.05.2025</td>
+          </tr>
+          <tr>
+            <td>5.</td>
+            <td><a href="/analytics/dkp/likvid/#a_17329">Денежно-кредитные условия и трансмиссионный механизм денежно-кредитной политики</a></td>
+            <td>14.05.2025</td>
+          </tr>
+          <tr>
+            <td>6.</td>
+            <td><a href="/analytics/finflows/#a_107637">Мониторинг отраслевых финансовых потоков</a></td>
+            <td>15.05.2025</td>
+          </tr>
+          <tr>
+            <td>7.</td>
+            <td><a href="/analytics/dkp/inflationary_expectations/#a_62825">Оперативная справка по результатам исследования «Измерение инфляционных ожиданий и потребительских настроений на основе опросов населения»</a></td>
+            <td>20.05.2025</td>
+          </tr>
+          <tr>
+            <td>8.</td>
+            <td><a href="/ec_research/mb/#a_16761">Оценка трендовой инфляции</a></td>
+            <td>21.05.2025</td>
+          </tr>
+          <tr>
+            <td>9.</td>
+            <td><a href="/analytics/dkp/dinamic/#a_17327">Динамика потребительских цен</a></td>
+            <td>21.05.2025</td>
+          </tr>
+          <tr>
+            <td>10.</td>
+            <td><a href="/analytics/dkp/monitoring/#a_136157">Мониторинг предприятий: оценки, ожидания, комментарии</a></td>
+            <td>22.05.2025</td>
+          </tr>
+          <tr>
+            <td>11.</td>
+            <td><a href="/analytics/rcb/#a_155846">Тенденции сегмента индивидуальных инвестиционных счетов</a></td>
+            <td>22.05.2025</td>
+          </tr>
+          <tr>
+            <td>12.</td>
+            <td><a href="/analytics/microfinance/#a_103884">Тенденции микрофинансового рынка</a></td>
+            <td>23.05.2025</td>
+          </tr>
+          <tr>
+            <td>13.</td>
+            <td><a href="/analytics/dkp/regInflation/">Информационно-аналитические комментарии об инфляции в регионах</a></td>
+            <td>26.05.2025</td>
+          </tr>
+          <tr>
+            <td>14.</td>
+            <td><a href="/analytics/bank_sector/#a_120863">О проектном финансировании строительства жилья</a></td>
+            <td>27.05.2025</td>
+          </tr>
+          <tr>
+            <td>15.</td>
+            <td><a href="/ec_research/mb/#a_16760">О чем говорят тренды</a></td>
+            <td>27.05.2025</td>
+          </tr>
+          <tr>
+            <td>16.</td>
+            <td><a href="/analytics/dkp/inflationary_expectations/#a_102610">Инфляционные ожидания и потребительские настроения</a></td>
+            <td>27.05.2025</td>
+          </tr>
+          <tr>
+            <td>17.</td>
+            <td><a href="/analytics/dkp/reg_review/#a_118418">Региональная экономика: комментарии ГУ</a></td>
+            <td>28.05.2025</td>
+          </tr>
+          <tr>
+            <td>18.</td>
+            <td><a href="/statistics/ddkp/#a_120880page">Макроэкономический опрос Банка России</a></td>
+            <td>28.05.2025</td>
+          </tr>
+          <tr>
+            <td>19.</td>
+            <td><a href="/analytics/bank_sector/develop/#a_48876">О развитии банковского сектора Российской Федерации</a></td>
+            <td>28.05.2025</td>
+          </tr>
+          <tr>
+            <td>20.</td>
+            <td><a href="/finstab/review/#a_48176">Обзор финансовой стабильности</a></td>
+            <td>28.05.2025</td>
+          </tr>
+          <tr>
+            <td>21.</td>
+            <td><a href="/analytics/RSCI/activity_npf/rewiew_npf/#a_85256">Обзор ключевых показателей негосударственных пенсионных фондов</a></td>
+            <td>30.05.2025</td>
+          </tr>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="dropdown"><a id="dropdown_title_19" aria-expanded="false" aria-controls="DropDown19_content" role="button" tabindex="0" class="dropdown_title">
+		Календарь публикации на апрель 2025 года</a><div id="DropDown19_content" role="region" class="dropdown_content" aria-labelledby="dropdown_title_19">
+    <div class="table-wrapper">
+      <div class="table">
+        <table class="data">
+          <tr>
+            <th>№</th>
+            <th>Название публикации</th>
+            <th>Дата публикации</th>
+          </tr>
+          <tr>
+            <td>1.</td>
+            <td><a href="/ec_research/mb/#a_62316">Новостной индекс деловой активности</a></td>
+            <td>02.04.2025</td>
+          </tr>
+          <tr>
+            <td>2.</td>
+            <td><a href="/dkp/mp_dec/#t3">Резюме обсуждения ключевой ставки</a></td>
+            <td>02.04.2025</td>
+          </tr>
+          <tr>
+            <td>3.</td>
+            <td><a href="/analytics/finstab/orfr/#a_50194">Обзор рисков финансовых рынков</a></td>
+            <td>08.04.2025</td>
+          </tr>
+          <tr>
+            <td>4.</td>
+            <td><a href="/analytics/dkp/likvid/#a_17329">Денежно-кредитные условия и трансмиссионный механизм денежно-кредитной политики</a></td>
+            <td>09.04.2025</td>
+          </tr>
+          <tr>
+            <td>5.</td>
+            <td><a href="/analytics/finflows/#a_107637">Мониторинг отраслевых финансовых потоков</a></td>
+            <td>10.04.2025</td>
+          </tr>
+          <tr>
+            <td>6.</td>
+            <td><a href="/ec_research/analitics/">Обзор российского финансового сектора</a></td>
+            <td>14.04.2025</td>
+          </tr>
+          <tr>
+            <td>7.</td>
+            <td><a href="/ec_research/mb/#a_16760">О чем говорят тренды</a></td>
+            <td>15.04.2025</td>
+          </tr>
+          <tr>
+            <td>8.</td>
+            <td><a href="/ec_research/mb/#a_16761">Оценка трендовой инфляции</a></td>
+            <td>16.04.2025</td>
+          </tr>
+          <tr>
+            <td>9.</td>
+            <td><a href="/analytics/dkp/dinamic/#a_17327">Динамика потребительских цен</a></td>
+            <td>16.04.2025</td>
+          </tr>
+          <tr>
+            <td>10.</td>
+            <td><a href="/analytics/dkp/reg_review/#a_118418">Региональная экономика: комментарии ГУ</a></td>
+            <td>16.04.2025</td>
+          </tr>
+          <tr>
+            <td>11.</td>
+            <td><a href="/statistics/ddkp/#a_120880page">Макроэкономический опрос Банка России</a></td>
+            <td>16.04.2025</td>
+          </tr>
+          <tr>
+            <td>12.</td>
+            <td><a href="/analytics/dkp/monitoring/#a_136157">Мониторинг предприятий: оценки, ожидания, комментарии</a></td>
+            <td>16.04.2025</td>
+          </tr>
+          <tr>
+            <td>13.</td>
+            <td><a href="/analytics/dkp/bal/#a_84865">Платежный баланс Российской Федерации</a></td>
+            <td>17.04.2025</td>
+          </tr>
+          <tr>
+            <td>14.</td>
+            <td><a href="/analytics/dkp/inflationary_expectations/#a_62825">Оперативная справка по результатам исследования «Измерение инфляционных ожиданий и потребительских настроений на основе опросов населения»</a></td>
+            <td>17.04.2025</td>
+          </tr>
+          <tr>
+            <td>15.</td>
+            <td><a href="/analytics/bank_sector/develop/#a_48876">О развитии банковского сектора Российской Федерации</a></td>
+            <td>18.04.2025</td>
+          </tr>
+          <tr>
+            <td>16.</td>
+            <td><a href="/statistics/cash_circulation/#a_77526">Данные о поддельных денежных знаках, выявленных в банковской системе России</a></td>
+            <td>25.04.2025</td>
+          </tr>
+          <tr>
+            <td>17.</td>
+            <td><a href="/analytics/microfinance/#a_103881">Тенденции на рынке МФО предпринимательского финансирования</a></td>
+            <td>28.04.2025</td>
+          </tr>
+          <tr>
+            <td>18.</td>
+            <td><a href="/analytics/dkp/inflationary_expectations/#a_102610">Инфляционные ожидания и потребительские настроения</a></td>
+            <td>28.04.2025</td>
+          </tr>
+          <tr>
+            <td>19.</td>
+            <td><a href="/analytics/dkp/regInflation/">Информационно-аналитические комментарии об инфляции в регионах</a></td>
+            <td>29.04.2025</td>
+          </tr>
+          <tr>
+            <td>20.</td>
+            <td><a href="/analytics/RSCI/activity_npf/rewiew_npf/#a_85256">Обзор ключевых показателей негосударственных пенсионных фондов</a></td>
+            <td>30.04.2025</td>
+          </tr>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="dropdown"><a id="dropdown_title_20" aria-expanded="false" aria-controls="DropDown20_content" role="button" tabindex="0" class="dropdown_title">
+		Календарь публикации на март 2025 года</a><div id="DropDown20_content" role="region" class="dropdown_content" aria-labelledby="dropdown_title_20">
+    <div class="table-wrapper">
+      <div class="table">
+        <table class="data">
+          <tr>
+            <th>№</th>
+            <th>Название публикации</th>
+            <th>Дата публикации</th>
+          </tr>
+          <tr>
+            <td>1.</td>
+            <td><a href="/ec_research/mb/#a_62316">Новостной индекс деловой активности</a></td>
+            <td>04.03.2025</td>
+          </tr>
+          <tr>
+            <td>2.</td>
+            <td><a href="/analytics/finflows/#a_107637">Мониторинг отраслевых финансовых потоков</a></td>
+            <td>06.03.2025</td>
+          </tr>
+          <tr>
+            <td>3.</td>
+            <td><a href="/analytics/RSCI/review_uk/#a_156354">Обзор ключевых показателей управляющих компаний</a></td>
+            <td>07.03.2025</td>
+          </tr>
+          <tr>
+            <td>4.</td>
+            <td><a href="/analytics/bank_sector/#a_120863">О проектном финансировании строительства жилья</a></td>
+            <td>10.03.2025</td>
+          </tr>
+          <tr>
+            <td>5.</td>
+            <td><a href="/analytics/finstab/orfr/#a_50194">Обзор рисков финансовых рынков</a></td>
+            <td>10.03.2025</td>
+          </tr>
+          <tr>
+            <td>6.</td>
+            <td><a href="/analytics/dkp/likvid/#a_17329">Денежно-кредитные условия и трансмиссионный механизм денежно-кредитной политики</a></td>
+            <td>11.03.2025</td>
+          </tr>
+          <tr>
+            <td>7.</td>
+            <td><a href="/ec_research/mb/#a_16760">О чем говорят тренды</a></td>
+            <td>11.03.2025</td>
+          </tr>
+          <tr>
+            <td>8.</td>
+            <td><a href="/ec_research/analitics/#a_119947">Обзор финансовых инструментов</a></td>
+            <td>12.03.2025</td>
+          </tr>
+          <tr>
+            <td>9.</td>
+            <td><a href="/analytics/dkp/reg_review/#a_118418">Региональная экономика: комментарии ГУ</a></td>
+            <td>12.03.2025</td>
+          </tr>
+          <tr>
+            <td>10.</td>
+            <td><a href="/statistics/ddkp/#a_120880page">Макроэкономический опрос Банка России</a></td>
+            <td>12.03.2025</td>
+          </tr>
+          <tr>
+            <td>11.</td>
+            <td><a href="/analytics/rcb/review_broker/#a_156497">Обзор ключевых показателей брокеров</a></td>
+            <td>12.03.2025</td>
+          </tr>
+          <tr>
+            <td>12.</td>
+            <td><a href="/analytics/insurance/overview_insurers/#a_85436">Обзор ключевых показателей деятельности страховщиков</a></td>
+            <td>14.03.2025</td>
+          </tr>
+          <tr>
+            <td>13.</td>
+            <td><a href="/analytics/bank_sector/analytical_review_bs/#a_123445">Аналитический обзор «Банковский сектор»</a></td>
+            <td>14.03.2025</td>
+          </tr>
+          <tr>
+            <td>14.</td>
+            <td><a href="/analytics/dkp/inflationary_expectations/#a_62825">Оперативная справка по результатам исследования «Измерение инфляционных ожиданий и потребительских настроений на основе опросов населения»</a></td>
+            <td>19.03.2025</td>
+          </tr>
+          <tr>
+            <td>15.</td>
+            <td><a href="/analytics/dkp/monitoring/#a_136157">Оперативная справка по результатам мониторинга предприятий</a></td>
+            <td>19.03.2025</td>
+          </tr>
+          <tr>
+            <td>16.</td>
+            <td><a href="/analytics/dkp/monitoring/#a_136157">Мониторинг предприятий: оценки, ожидания, комментарии</a></td>
+            <td>24.03.2025</td>
+          </tr>
+          <tr>
+            <td>17.</td>
+            <td><a href="/ec_research/mb/#a_16761">Оценка трендовой инфляции</a></td>
+            <td>..</td>
+          </tr>
+          <tr>
+            <td>18.</td>
+            <td><a href="/analytics/dkp/dinamic/#a_17327">Динамика потребительских цен</a></td>
+            <td>..</td>
+          </tr>
+          <tr>
+            <td>19.</td>
+            <td><a href="/analytics/bank_sector/develop/#a_48876">О развитии банковского сектора Российской Федерации</a></td>
+            <td>25.03.2025</td>
+          </tr>
+          <tr>
+            <td>20.</td>
+            <td><a href="/analytics/dkp/regInflation/">Информационно-аналитические комментарии об инфляции в регионах</a></td>
+            <td>25.03.2025</td>
+          </tr>
+          <tr>
+            <td>21.</td>
+            <td><a href="/analytics/dkp/inflationary_expectations/#a_102610">Инфляционные ожидания и потребительские настроения</a></td>
+            <td>26.03.2025</td>
+          </tr>
+          <tr>
+            <td>22.</td>
+            <td><a href="/analytics/microfinance/reveiw_mfo/#a_84043">Обзор ключевых показателей микрофинансовых институтов</a></td>
+            <td>28.03.2025</td>
+          </tr>
+          <tr>
+            <td>23.</td>
+            <td>Годовой отчет Банка России за 2024 год</td>
+            <td>..</td>
+          </tr>
+          <tr>
+            <td>24.</td>
+            <td>Итоги работы Банка России: коротко о главном за 2024 год</td>
+            <td>..</td>
+          </tr>
+          <tr>
+            <td>25.</td>
+            <td><a href="/analytics/podft/#a_83365">Структура подозрительных операций и отрасли экономики, формировавшие спрос на теневые финансовые услуги</a></td>
+            <td>31.03.2025</td>
+          </tr>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="dropdown"><a id="dropdown_title_21" aria-expanded="false" aria-controls="DropDown21_content" role="button" tabindex="0" class="dropdown_title">
+		Календарь публикации на февраль 2025 года</a><div id="DropDown21_content" role="region" class="dropdown_content" aria-labelledby="dropdown_title_21">
+    <div class="table-wrapper">
+      <div class="table">
+        <table class="data">
+          <tr>
+            <th>№</th>
+            <th>Название публикации</th>
+            <th>Дата публикации</th>
+          </tr>
+          <tr>
+            <td>1.</td>
+            <td><a href="/ec_research/mb/#a_16760">О чем говорят тренды</a></td>
+            <td>04.02.2025</td>
+          </tr>
+          <tr>
+            <td>2.</td>
+            <td><a href="/ec_research/mb/#a_62316">Новостной индекс деловой активности</a></td>
+            <td>04.02.2025</td>
+          </tr>
+          <tr>
+            <td>3.</td>
+            <td><a href="/analytics/dkp/reg_review/#a_118418">Региональная экономика: комментарии ГУ</a></td>
+            <td>05.02.2025</td>
+          </tr>
+          <tr>
+            <td>4.</td>
+            <td><a href="/analytics/dkp/inflationary_expectations/#a_102610">Инфляционные ожидания и потребительские настроения</a></td>
+            <td>05.02.2025</td>
+          </tr>
+          <tr>
+            <td>5.</td>
+            <td><a href="/statistics/ddkp/#a_120880page">Макроэкономический опрос Банка России</a></td>
+            <td>05.02.2025</td>
+          </tr>
+          <tr>
+            <td>6.</td>
+            <td><a href="/analytics/finstab/orfr/#a_50194">Обзор рисков финансовых рынков</a></td>
+            <td>06.02.2025</td>
+          </tr>
+          <tr>
+            <td>7.</td>
+            <td><a href="/analytics/finflows/#a_107637">Мониторинг отраслевых финансовых потоков</a></td>
+            <td>06.02.2025</td>
+          </tr>
+          <tr>
+            <td>8.</td>
+            <td><a href="/analytics/dkp/likvid/#a_17329">Денежно-кредитные условия и трансмиссионный механизм денежно-кредитной политики</a></td>
+            <td>07.02.2025</td>
+          </tr>
+          <tr>
+            <td>9.</td>
+            <td><a href="/statistics/cash_circulation/#a_77526">Данные о поддельных денежных знаках, выявленных в банковской системе России</a></td>
+            <td>12.02.2025</td>
+          </tr>
+          <tr>
+            <td>10.</td>
+            <td><a href="/analytics/dkp/monitoring/#a_136157">Оперативная справка по результатам мониторинга предприятий</a></td>
+            <td>13.02.2025</td>
+          </tr>
+          <tr>
+            <td>11.</td>
+            <td><a href="/ec_research/mb/#a_16761">Оценка трендовой инфляции</a></td>
+            <td>19.02.2025</td>
+          </tr>
+          <tr>
+            <td>12.</td>
+            <td><a href="/analytics/dkp/dinamic/#a_17327">Динамика потребительских цен</a></td>
+            <td>19.02.2025</td>
+          </tr>
+          <tr>
+            <td>13.</td>
+            <td><a href="/analytics/dkp/monitoring/#a_136157">Мониторинг предприятий: оценки, ожидания, комментарии</a></td>
+            <td>19.02.2025</td>
+          </tr>
+          <tr>
+            <td>14.</td>
+            <td><a href="/analytics/dkp/inflationary_expectations/#a_62825">Оперативная справка по результатам исследования «Измерение инфляционных ожиданий и потребительских настроений на основе опросов населения»</a></td>
+            <td>19.02.2025</td>
+          </tr>
+          <tr>
+            <td>15.</td>
+            <td><a href="/analytics/dkp/regInflation/">Информационно-аналитические комментарии об инфляции в регионах</a></td>
+            <td>24.02.2025</td>
+          </tr>
+          <tr>
+            <td>16.</td>
+            <td><a href="/analytics/bank_sector/develop/#a_48876">О развитии банковского сектора Российской Федерации</a></td>
+            <td>25.02.2025</td>
+          </tr>
+          <tr>
+            <td>17.</td>
+            <td><a href="/analytics/rcb/#a_155846">Тенденции сегмента индивидуальных инвестиционных счетов</a></td>
+            <td>25.02.2025</td>
+          </tr>
+          <tr>
+            <td>18.</td>
+            <td><a href="/dkp/mp_dec/#t3">Резюме обсуждения ключевой ставки</a></td>
+            <td>26.02.2025</td>
+          </tr>
+          <tr>
+            <td>19.</td>
+            <td><a href="/dkp/mp_dec/decision_key_rate/">Комментарий к среднесрочному прогнозу Банка России</a></td>
+            <td>26.02.2025</td>
+          </tr>
+          <tr>
+            <td>20.</td>
+            <td><a href="/analytics/dkp/inflationary_expectations/#a_102610">Инфляционные ожидания и потребительские настроения</a></td>
+            <td>26.02.2025</td>
+          </tr>
+          <tr>
+            <td>21.</td>
+            <td><a href="/analytics/microfinance/#a_103884">Тенденции микрофинансового рынка</a></td>
+            <td>28.02.2025</td>
+          </tr>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="dropdown"><a id="dropdown_title_22" aria-expanded="false" aria-controls="DropDown22_content" role="button" tabindex="0" class="dropdown_title">
+		Календарь публикации на январь 2025 года</a><div id="DropDown22_content" role="region" class="dropdown_content" aria-labelledby="dropdown_title_22">
+    <div class="table-wrapper">
+      <div class="table">
+        <table class="data">
+          <tr>
+            <th>№</th>
+            <th>Название публикации</th>
+            <th>Дата публикации</th>
+          </tr>
+          <tr>
+            <td>1.</td>
+            <td><a href="/ec_research/mb/#a_62316">Новостной индекс деловой активности</a></td>
+            <td>10.01.2025</td>
+          </tr>
+          <tr>
+            <td>2.</td>
+            <td><a href="/analytics/finflows/#a_107637">Мониторинг отраслевых финансовых потоков</a></td>
+            <td>16.01.2025</td>
+          </tr>
+          <tr>
+            <td>3.</td>
+            <td><a href="/analytics/dkp/likvid/#a_17329">Денежно-кредитные условия и трансмиссионный механизм денежно-кредитной политики</a></td>
+            <td>17.01.2025</td>
+          </tr>
+          <tr>
+            <td>4.</td>
+            <td><a href="/ec_research/mb/#a_16761">Оценка трендовой инфляции</a></td>
+            <td>20.01.2025</td>
+          </tr>
+          <tr>
+            <td>5.</td>
+            <td><a href="/analytics/dkp/dinamic/#a_17327">Динамика потребительских цен</a></td>
+            <td>20.01.2025</td>
+          </tr>
+          <tr>
+            <td>6.</td>
+            <td><a href="/analytics/dkp/regInflation/">Информационно-аналитические комментарии об инфляции в регионах</a></td>
+            <td>23.01.2025</td>
+          </tr>
+          <tr>
+            <td>7.</td>
+            <td><a href="/analytics/dkp/monitoring/#a_136157">Мониторинг предприятий: оценки, ожидания, комментарии</a></td>
+            <td>24.01.2025</td>
+          </tr>
+          <tr>
+            <td>8.</td>
+            <td><a href="/analytics/dkp/inflationary_expectations/#a_62825">Оперативная справка по результатам исследования «Измерение инфляционных ожиданий и потребительских настроений на основе опросов населения»</a></td>
+            <td>29.01.2025</td>
+          </tr>
+          <tr>
+            <td>9.</td>
+            <td><a href="/analytics/bank_sector/develop/#a_48876">О развитии банковского сектора Российской Федерации</a></td>
+            <td>30.01.2025</td>
+          </tr>
+          <tr>
+            <td>10.</td>
+            <td><a href="/analytics/dkp/bal/#a_84865">Платежный баланс Российской Федерации</a></td>
+            <td>30.01.2025</td>
+          </tr>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+                    </div>
+</div>
+
+
+                    
+                    <!--/index-->
+
+    <div class="page-info">
+        <!--noindex-->
+        
+
+
+<div class="page-info_helpful"
+     data-page-feedback=""
+     data-feedback-url="/Content/PageInfo/RegisterFeedback">
+    <!--noindex-->
+    <div class="helpful" data-helpful="">
+        Страница была полезной?
+        <div class="helpful_btns">
+            <button class="helpful_btn _yes" data-helpful-btn="yes"><i class="helpful_icon"></i><span>Да</span></button>
+            <button class="helpful_btn _no" data-helpful-btn="no"><i class="helpful_icon"></i><span>Нет</span></button>
+        </div>
+    </div>
+    <!--/noindex-->
+</div>
+
+        <!--/noindex-->
+    </div>
+                </div>
+            </div>
+    </main>
+
+    <footer class="footer" id="footer">
+    <div class="offsetMenu footer_margin-left">
+        <div class="footer_main">
+            <div class="col-md-23 col-xl-22 offset-md-1 offset-xl-2 footer-size">
+                <div class="footer_top">
+                    <a class="footer_logo" href="/"></a>
+                    <div class="footer_up gotoUp">
+                        <div class="footer_up_title">Наверх</div>
+                        <div class="footer_up_icon"></div>
+                    </div>
+                </div>
+                
+<div class="footer_contacts">
+<div class="footer_address">107016, Москва, ул. Неглинная, д.&nbsp;12, к. В, Банк
+России</div>
+<div class="footer_phones">
+<div class="footer_phone"><a class="footer_phone_val" href="tel:300">300</a><span>(круглосуточно, бесплатно для&nbsp;звонков с&nbsp;мобильных телефонов)</span></div>
+<div class="footer_phone"><a class="footer_phone_val" href="tel:88003003000">8&nbsp;800 300-30-00</a><span>(круглосуточно, бесплатно для&nbsp;звонков из&nbsp;регионов России)</span></div>
+<div class="footer_phone"><a class="footer_phone_val" href="tel:+74993003000">+7&nbsp;499 300-30-00</a><span>(круглосуточно, в&nbsp;соответствии с&nbsp;тарифами вашего оператора)</span></div>
+
+</div>
+</div>
+<div class="footer_main_block">
+<div class="footer_left-menu">
+<div class="footer_left-menu_item"><a href="/lk_uio/">Личный кабинет участника информационного обмена</a></div>
+<div class="footer_left-menu_item"><a href="/about_br/irp/">Отношения с&nbsp;инвесторами</a></div>
+<div class="footer_left-menu_item"><a href="/rbr/list_inside/">Перечень инсайдерской информации Банка России</a></div>
+<div class="footer_left-menu_item"><a href="/analytics/na_vr/">Официальное опубликование нормативных актов Банка России</a></div>
+<div class="footer_left-menu_item"><a href="/project_na/">Проекты нормативных актов Банка России</a></div>
+<div class="footer_left-menu_item"><a href="/other/holidays/">Перечень нерабочих праздничных дней и&nbsp;перенесенных выходных дней</a></div>
+</div>
+<div class="networks-circle footer_networks">
+<a class="networks-circle_item _vk" href="https://vk.com/cbr_official"></a>
+<a class="networks-circle_item _yt" href="https://www.youtube.com/user/BankofRussia"></a>
+<a class="networks-circle_item _tg" href="https://telegram.me/centralbank_russia" title="Telegram"></a>
+<a class="networks-circle_item _ydzen" href="https://dzen.ru/cbr" title="Яндекс Дзен"></a>
+<a class="networks-circle_item _ok" href="https://ok.ru/group/68858679787580" title="Одноклассники"></a>
+<a class="networks-circle_item _rt" href="https://rutube.ru/channel/23873201/" title="RUTUBE"></a>
+<a class="networks-circle_item _max" href="https://max.ru/cbr_official" title="Макс"></a>
+</div>
+</div>
+<div class="footer_menu">
+<div class="footer_menu_items">
+<div class="footer_menu_item"><a href="/about/">О&nbsp;сайте</a></div>
+<div class="footer_menu_item"><a href="/contacts/">Контакты</a></div>
+<div class="footer_menu_item"><a href="/about_br/anticor/">Противодействие коррупции</a></div>
+<div class="footer_menu_item"><a href="/development/">Технические ресурсы</a></div>
+</div>
+<a class="footer_menu_item _visually-impaired" href="#" title="Версия для слабовидящих">
+	<div class="footer_visually-impaired-icon"></div>
+	<div><span class="visually-impaired-on">Версия для&nbsp;слабовидящих</span><span class="visually-impaired-off">Обычная версия</span></div>
+</a>
+</div>
+
+            </div>
+        </div>
+        <div class="footer_bottom">
+            <div class="col-md-23 col-xl-23 offset-md-1 offset-xl-2 row footer_bottom-container">
+                <div class="footer_bottom_text col-md-11 col-xl-11">&#169; Банк России, 2000–2026.</div>
+<div class="footer_bottom_aic col-md-12 col-xl-11">Дизайн сайта — <a href="https://aic.ru" target="_blank"><img src="/common/images/icons/aic-logo.svg" /></a></div>
+
+            </div>
+        </div>
+    </div>
+</footer>
+
+    
+    
+
+        <div class="popup-cookies" data-popup-cookies>
+            <div class="popup-cookies_title">
+                На сайте Банка России используются файлы cookie
+            </div>
+            <div class="popup-cookies_subtitle">
+                Оставаясь на <a href="/">www.cbr.ru</a>, вы принимаете
+                <a href='/user_agreement/'>пользовательское соглашение</a>
+            </div>
+            <button class="btn _medium _blue " data-popup-cookies-btn>
+                Подтвердить
+            </button>
+        </div>
+
+    
+<!--[if IE 9]><script>$('body').addClass('ie9')</script><![endif]-->
+<script src="/Modules/Content/Scripts/PageInfo.js?v=v3116962712" type="text/javascript"></script>
+    <script type="text/javascript">
+        $(function () {
+            Content_PageInfo.init($('[data-page-feedback]'));
+        });
+    </script>
+
+
+
+</body>
+</html>
