@@ -22,13 +22,18 @@ As-of: заседание — 13:30 МСК. Доступность месячн�
 Цели: SA m/m `M0…M0+5` строятся по фактической NSA-истории через последний
 целевой месяц (в бэктесте метки известны). Признаки же используют только
 историю, доступную к заседанию: сезонные факторы и SA-лаги отсекаются
-последним опубликованным месяцем. Для текущего/будущего заседания целевой
-путь — `None`.
+последним опубликованным месяцем (`seasonal_asof`), а целевой снимок
+`seasonal` — только сторона метки/диагностики и в признаки не входит. Для
+текущего/будущего заседания целевой путь — `None`.
 
 `cpi_sa_available=1` только если SA-история к заседанию — не меньше двух
 полных периодов (24 месяца) и OOF stage 1 присутствует; иначе 0. Это
 закрывает разрыв Task 2: пустые факторы STL неотличимы от настоящей SA без
 явного индикатора.
+
+Обучение walk-forward дополнительно фильтруется календарём: train-строка
+входит, только если конец её целевого пути (`M0+5`) уже опубликован к
+тестовому заседанию; иначе метки обучения заглядывали бы в будущее теста.
 
 Модели: direct CatBoost на каждый месяц пути; опционально bottom-up по трём
 компонентам (food/nonfood/services) + NNLS; ансамбль 0,5/0,5 direct и
@@ -36,8 +41,8 @@ bottom-up — заявленный кандидат, правило «тольк
 `evaluate` на общих фолдах, а не выбирается по тесту.
 
 NSA back-transform (SA-путь + сезонные факторы) и Gate 2 (cumulative h1/h3/h6
-не хуже `cpi_live3_horizons` + 5 %) — диагностика/приёмка; SA-путь отдельно
-сверяется с официальным SA ЦБ.
+не хуже `cpi_live3_horizons` + 5 %) — диагностика/приёмка; +5 % — допуск
+плана (в спеке его нет). SA-путь отдельно сверяется с официальным SA ЦБ.
 
 Скрипт только читает ClickHouse; в БД не пишет. Запуск — `make
 cpi-pipeline-stage2`, тесты — `scripts/models/cpi/cpi_pipeline_stage2_test.py`.
@@ -132,12 +137,17 @@ FEATURE_NAMES = [
 
 SEED = cm.SEED
 DEFAULT_START = 24
-MIN_TRAIN = 12
+# Минимальное обучающее окно stage 2 — 24 строки (план: «24+ train-origin»);
+# меньшее окно не идентифицирует сезонность и не даёт стабильный CatBoost.
+MIN_TRAIN = 24
+# Task 2: меньше двух полных сезонных периодов (24 месяца) — факторов нет.
+SA_MIN_HISTORY = sa.MIN_PERIODS * sa.DEFAULT_PERIOD
 BOOTSTRAP_BLOCK = 3
 BOOTSTRAP_N = 2000
 
 # Gate 2 (Task 3 acceptance): NSA back-transform cumulative h1/h3/h6 не хуже
-# текущего `cpi_live3_horizons` более чем на 5 %.
+# текущего `cpi_live3_horizons` более чем на 5 %. Это предрегистрация плана:
+# в спеке допуска нет (там «не хуже live3»), +5 % — явная поблажка.
 GATE2_MODEL = "catboost_direct"
 GATE2_TOLERANCE = 1.05
 GATE2_BASELINE = "cpi_live3_horizons:cpi_v3_h1/h3/h6"
@@ -162,10 +172,16 @@ class Stage2Row:
     (`100·(Π(1+s/100)−1)`, h ∈ {1, 3, 6}); `None` вместе с `sa_path`.
 
     `features` — только доступные к заседанию данные; отсутствующее значение —
-    `None`, а не ноль. `component_paths` — SA-путь трёх компонент bottom-up
-    (food/nonfood/services), `seasonal` — аддитивные сезонные факторы
-    снимка `M0+5`; оба поля — вспомогательные для bottom-up и NSA
-    back-transform, в матрицу признаков не попадают.
+    `None`, а не ноль. Вспомогательные поля (в матрицу признаков не входят):
+
+    - `component_paths` — SA-путь трёх компонент bottom-up
+      (food/nonfood/services), метки для bottom-up-модели;
+    - `seasonal` — аддитивные сезонные факторы снимка `M0+5` (целевая
+      сторона); нужны только NSA back-transform фактического пути и никогда
+      не участвуют в признаках;
+    - `seasonal_asof` — сезонные факторы снимка заседания (история до
+      последнего опубликованного календарём месяца); это as-of величина,
+      не видящая будущее, в отличие от `seasonal`.
     """
 
     meeting_date: date
@@ -175,6 +191,7 @@ class Stage2Row:
     cum: Optional[dict]
     component_paths: dict = field(default_factory=dict)
     seasonal: dict = field(default_factory=dict)
+    seasonal_asof: dict = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -503,6 +520,9 @@ def build_rows(
         m0 = calendar.next_unpublished_month(SOURCE, SERIES, meeting_at)
         latest = calendar.latest_published_month(SOURCE, SERIES, meeting_at)
         history_cut = _month_end(latest) if latest is not None else None
+        # As-of снимок сезонности: только история до последнего опубликованного
+        # месяца. Целевой снимок `seasonal` считается отдельно в `_target_path`
+        # и в признаки не попадает.
         factors, history = _sa_factors(total_points, history_cut)
 
         entry = oof.get(source_row.meeting_date) or {}
@@ -548,7 +568,10 @@ def build_rows(
         )
 
         sa_available = int(
-            bool(factors) and stage1_m0 is not None and stage1_m1 is not None
+            bool(factors)
+            and len(history) >= SA_MIN_HISTORY
+            and stage1_m0 is not None
+            and stage1_m1 is not None
         )
         features = {
             "stage1_m0": stage1_m0,
@@ -599,6 +622,7 @@ def build_rows(
                 cum=cum,
                 component_paths=components,
                 seasonal=seasonal,
+                seasonal_asof=factors,
             )
         )
     return rows
@@ -841,46 +865,99 @@ def _ensemble_predictions(predictions: list) -> list:
     return ensemble
 
 
+def target_published(
+    row: Stage2Row, calendar: PublicationCalendar, as_of
+) -> bool:
+    """Опубликован ли конец целевого пути строки (`M0+5`) к `as_of`.
+
+    `as_of` — `date` (тогда берётся 13:30 МСК) или наивный `datetime`.
+    Нужен для обучения: train-строка, чей целевой конец ещё не вышел к
+    тестовому заседанию, информационно недоступна и в обучение не входит.
+    """
+    if row.sa_path is None:
+        return False
+    moment = (
+        as_of if isinstance(as_of, datetime) else meeting_datetime(as_of)
+    )
+    end = shift_month(row.m0, PATH_MONTHS - 1)
+    return calendar.is_available(SOURCE, SERIES, _month_end(end), moment)
+
+
 def walk_forward(
     rows: list,
     start: int = DEFAULT_START,
     models: Optional[dict] = None,
+    calendar: Optional[PublicationCalendar] = None,
+    skipped: Optional[dict] = None,
 ) -> list:
     """Walk-forward по заседаниям: train `rows[:i]`, прогноз `rows[i]`.
 
     Обучающее окно — только строки с OOF stage 1 и достаточной SA-историей
-    (`cpi_sa_available=1`); строка без целевого пути (текущее/будущее
-    заседание) пропускается. `DegenerateWindowError` модели — пропуск этого
-    фолда/модели, как в stage 1. По умолчанию direct и bottom-up считаются
-    один раз, ансамбль — их среднее (без повторного фита).
+    (`cpi_sa_available=1`), чей целевой конец `M0+5` ОПУБЛИКОВАН к тестовому
+    заседанию по `PublicationCalendar`: иначе метки обучения заглядывали бы
+    в будущее теста. Строка без целевого пути (текущее/будущее заседание)
+    пропускается. `DegenerateWindowError` модели — пропуск фолда этой модели.
+
+    `calendar` обязателен: без него фильтр публикаций не построить (ValueError).
+    `skipped` — необязательный счётчик причин пропуска (заполняется
+    вызывающим, как в `cpi_monthly.walk_forward`): `fold_target_unavailable`,
+    `fold_train_below_min`, `train_rows_excluded_unpublished`,
+    `<model>:degenerate`, `<model>:prediction_missing`. По умолчанию direct и
+    bottom-up считаются один раз, ансамбль — их среднее (без повторного фита).
     """
     if start < 1:
         raise ValueError(f"walk-forward: start={start} — меньше одной строки")
+    if calendar is None:
+        raise ValueError(
+            "walk-forward: нужен PublicationCalendar — без него нельзя "
+            "проверить публикацию целевого конца train-строк"
+        )
     for previous, current in zip(rows, rows[1:]):
         if previous.meeting_date >= current.meeting_date:
             raise ValueError(
                 "walk-forward: строки не упорядочены по meeting_date "
                 f"({previous.meeting_date} >= {current.meeting_date})"
             )
+    counts = skipped if skipped is not None else {}
+
+    def bump(key: str) -> None:
+        counts[key] = counts.get(key, 0) + 1
+
     selected = dict(BASE_MODELS) if models is None else dict(models)
     predictions = []
     for index in range(start, len(rows)):
-        train = rows[:index]
         row = rows[index]
         if not _row_available(row):
+            bump("fold_target_unavailable")
+            continue
+        test_at = meeting_datetime(row.meeting_date)
+        train = [
+            item
+            for item in rows[:index]
+            if target_published(item, calendar, test_at)
+        ]
+        excluded = index - len(train)
+        if excluded:
+            key = "train_rows_excluded_unpublished"
+            counts[key] = counts.get(key, 0) + excluded
+        if len([item for item in train if _row_available(item)]) < MIN_TRAIN:
+            bump("fold_train_below_min")
             continue
         months = target_months(row.m0)
         for name, fit in selected.items():
             try:
                 values = fit(train, row)
             except cm.DegenerateWindowError:
+                bump(f"{name}:degenerate")
                 continue
             for position, month in enumerate(months):
                 predicted = values.get(month)
                 actual = row.sa_path.get(month)
                 if predicted is None or actual is None:
+                    bump(f"{name}:prediction_missing")
                     continue
                 if not math.isfinite(float(predicted)):
+                    bump(f"{name}:prediction_missing")
                     continue
                 predictions.append(
                     Stage2Prediction(
@@ -1087,7 +1164,12 @@ def _nsa_cum(path: dict, months: list, horizon: int) -> float:
 def nsa_backtest(
     predictions: list, rows: list, model: str = GATE2_MODEL
 ) -> dict:
-    """NSA back-transform cumulative h1/h3/h6: RMSE/MAE против факта."""
+    """NSA back-transform cumulative h1/h3/h6: RMSE/MAE против факта.
+
+    `skipped` — счётчик причин, почему заседание не вошло в сверку
+    (`row_missing`, `no_target_path`, `path_incomplete`), чтобы пропуски не
+    были молчаливыми.
+    """
     rows_by_meeting = {row.meeting_date: row for row in rows}
     grouped: dict = {}
     for item in predictions:
@@ -1095,12 +1177,22 @@ def nsa_backtest(
             continue
         grouped.setdefault(item.meeting_date, {})[item.target_month] = item
     errors = {horizon: [] for horizon in HORIZONS}
+    skipped = {
+        "row_missing": 0,
+        "no_target_path": 0,
+        "path_incomplete": 0,
+    }
     for meeting, path in grouped.items():
         row = rows_by_meeting.get(meeting)
-        if row is None or row.sa_path is None or not row.seasonal:
+        if row is None:
+            skipped["row_missing"] += 1
+            continue
+        if row.sa_path is None or not row.seasonal:
+            skipped["no_target_path"] += 1
             continue
         months = target_months(row.m0)
         if any(month not in path for month in months):
+            skipped["path_incomplete"] += 1
             continue
         predicted = nsa_backtransform(
             row, {month: path[month].y_pred for month in months}
@@ -1122,6 +1214,7 @@ def nsa_backtest(
             "rmse": eu.rmse(values),
             "mae": eu.mae(values),
         }
+    result["skipped"] = skipped
     return result
 
 
@@ -1302,7 +1395,9 @@ def gate2_report(
     Сравниваются только заседания, где origin live3 даёт тот же `M0`
     (`origin + 1 = M0`): у live3 фиксированные часы (8-е число), у stage 2 —
     точный календарь публикаций. RMSE/MAE, DM-HLN и блочный бутстрап — по
-    каждому h; `PASS`, если все три RMSE не больше live3 × 1.05.
+    каждому h; `PASS`, если все три RMSE не больше live3 × 1.05
+    (предрегистрация плана; в спеке допуска нет). `skipped` — счётчик причин,
+    почему заседание не вошло в общие фолды.
     """
     rows_by_meeting = {row.meeting_date: row for row in rows}
     grouped: dict = {}
@@ -1312,12 +1407,23 @@ def gate2_report(
         grouped.setdefault(item.meeting_date, {})[item.target_month] = item
     common = []
     excluded = []
+    skipped = {
+        "row_missing": 0,
+        "no_target_path": 0,
+        "live3_missing": 0,
+        "path_incomplete": 0,
+    }
     for meeting in sorted(grouped):
         row = rows_by_meeting.get(meeting)
-        if row is None or row.sa_path is None or not row.seasonal:
+        if row is None:
+            skipped["row_missing"] += 1
+            continue
+        if row.sa_path is None or not row.seasonal:
+            skipped["no_target_path"] += 1
             continue
         entry = _normalize_live3_path(live3_values.get(meeting))
         if any(entry[f"h{horizon}"] is None for horizon in HORIZONS):
+            skipped["live3_missing"] += 1
             continue
         if (
             entry["origin"] is not None
@@ -1327,6 +1433,7 @@ def gate2_report(
             continue
         months = target_months(row.m0)
         if any(month not in grouped[meeting] for month in months):
+            skipped["path_incomplete"] += 1
             continue
         common.append(meeting)
     base = {
@@ -1335,6 +1442,7 @@ def gate2_report(
         "n": len(common),
         "meetings": [meeting.isoformat() for meeting in common],
         "excluded_target_mismatch": sorted(excluded),
+        "skipped": skipped,
     }
     if len(common) < 2:
         return {**base, "decision": "INSUFFICIENT", "horizons": {}}
@@ -1491,6 +1599,17 @@ def write_report(path: Path, payload: dict) -> None:
             f"- Окно: {payload['first_meeting']} … {payload['last_meeting']}"
         )
     lines.append(f"- Seed: {payload.get('seed')}")
+    lines.append(f"- MIN_TRAIN: {payload.get('min_train', MIN_TRAIN)}")
+    skipped = payload.get("skipped") or {}
+    if skipped:
+        lines.append(
+            "- Пропуски walk-forward: "
+            + ", ".join(
+                f"`{name}`={count}"
+                for name, count in sorted(skipped.items())
+                if count
+            )
+        )
     lines.append("")
     lines.append("## SA-путь (m/m, п.п.)")
     lines.append("")
@@ -1553,6 +1672,19 @@ def write_report(path: Path, payload: dict) -> None:
                 f"- {horizon}: n={item['n']}, RMSE {item['rmse']:.6f}, "
                 f"MAE {item['mae']:.6f}"
             )
+    back_skipped = {
+        name: count
+        for name, count in (backtest.get("skipped") or {}).items()
+        if count
+    }
+    if back_skipped:
+        lines.append(
+            "- Пропуски NSA-сверки: "
+            + ", ".join(
+                f"`{name}`={count}"
+                for name, count in sorted(back_skipped.items())
+            )
+        )
     lines.append("")
     lines.append("## Gate 2 (NSA back-transform vs cpi_live3_horizons)")
     lines.append("")
@@ -1565,6 +1697,19 @@ def write_report(path: Path, payload: dict) -> None:
             f"baseline: `{gate['baseline']}`"
         )
         lines.append(f"- Общих фолдов: {gate['n']}")
+        gate_skipped = {
+            name: count
+            for name, count in (gate.get("skipped") or {}).items()
+            if count
+        }
+        if gate_skipped:
+            lines.append(
+                "- Пропуски Gate 2: "
+                + ", ".join(
+                    f"`{name}`={count}"
+                    for name, count in sorted(gate_skipped.items())
+                )
+            )
         if gate.get("excluded_target_mismatch"):
             lines.append(
                 "- Исключены (origin live3 + 1 ≠ `M0`): "
@@ -1686,7 +1831,10 @@ def _log_experiment(
             "finished",
             f"as_of={as_of}; rows={len(rows)}; predictions={len(predictions)}",
         )
-    except Exception as exc:  # журнал — best-effort, прогон не роняем
+    except Exception as exc:  # noqa: BLE001 — журнал best-effort, но не молчит
+        # Явно сообщаем в stdout (паспорт run не записан), не глотаем ошибку:
+        # это осознанная граница «артефакты важнее журнала». `BaseException`
+        # (KeyboardInterrupt/SystemExit) сюда не попадает.
         print(
             f"Журнал эксперимента не записан: {type(exc).__name__}: {exc}",
             flush=True,
@@ -1737,7 +1885,10 @@ def run(
         as_of,
     )
     assert_no_lookahead(rows, calendar)
-    predictions = walk_forward(rows, start)
+    skipped: dict = {}
+    predictions = walk_forward(
+        rows, start, calendar=calendar, skipped=skipped
+    )
     result = evaluate(predictions)
     cbr_sa_points = (
         expectations.get(CBR_SA_SERIES)
@@ -1754,6 +1905,8 @@ def run(
         "last_meeting": rows[-1].meeting_date.isoformat(),
         "features": list(FEATURE_NAMES),
         "models": list(MODELS),
+        "min_train": MIN_TRAIN,
+        "skipped": skipped,
         "summary": result["summary"],
         "cumulative": result["cumulative"],
         "pairs": result["pairs"],

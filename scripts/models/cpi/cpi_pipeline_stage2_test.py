@@ -84,7 +84,7 @@ def compound(values: list) -> float:
 
 
 def cpi_points(
-    first: date = date(2023, 1, 1),
+    first: date = date(2021, 1, 1),
     last: date = date(2027, 5, 1),
     base: float = 0.4,
 ) -> list:
@@ -105,7 +105,7 @@ def flat_points(first: date, last: date, value: float = 1.0) -> list:
 
 
 def make_series(
-    first: date = date(2023, 1, 1), last: date = date(2027, 5, 1)
+    first: date = date(2021, 1, 1), last: date = date(2027, 5, 1)
 ) -> dict:
     """Четыре синтетических ряда: общий ИПЦ и три компонента bottom-up."""
     total = cpi_points(first, last)
@@ -127,8 +127,8 @@ def make_series(
 
 
 def make_meetings() -> list:
-    """Восемнадцать заседаний 2025-07-15 … 2026-12-15."""
-    months = months_between(date(2025, 7, 1), date(2026, 12, 1))
+    """Тридцать шесть заседаний 2024-01-15 … 2026-12-15."""
+    months = months_between(date(2024, 1, 1), date(2026, 12, 1))
     return [date(month.year, month.month, 15) for month in months]
 
 
@@ -196,16 +196,28 @@ def row_for(rows: list, meeting: date = MEETING) -> stage2.Stage2Row:
     raise AssertionError(f"нет строки {meeting}")
 
 
-def actual_nsa_path(row: stage2.Stage2Row) -> dict:
+def raw_nsa_values(series=None) -> dict:
+    """Сырые NSA m/m синтетического ряда: `{месяц: значение}` (не из строки)."""
+    series = make_series() if series is None else series
     return {
-        month: value + row.seasonal[month.month]
-        for month, value in row.sa_path.items()
+        date(day.year, day.month, 1): value
+        for day, value in series["cpi_all"]
     }
 
 
-def actual_nsa_cum(row: stage2.Stage2Row, horizon: int) -> float:
+def actual_nsa_path(row: stage2.Stage2Row, series=None) -> dict:
+    """Фактический NSA-путь из исходного ряда, а не из `sa_path`+факторов."""
+    raw = raw_nsa_values(series)
+    return {
+        month: raw[month] for month in stage2.target_months(row.m0)
+    }
+
+
+def actual_nsa_cum(
+    row: stage2.Stage2Row, horizon: int, series=None
+) -> float:
     months = stage2.target_months(row.m0)
-    path = actual_nsa_path(row)
+    path = actual_nsa_path(row, series)
     return compound([path[month] for month in months[:horizon]])
 
 
@@ -213,18 +225,25 @@ def predictions_for(
     row: stage2.Stage2Row,
     model: str = "catboost_direct",
     delta: float = 0.0,
-    sa_path=None,
+    true_path=None,
+    pred_path=None,
 ) -> list:
+    """Синтетические прогнозы; `true_path`/`pred_path` можно задать явно."""
     months = stage2.target_months(row.m0)
-    values = row.sa_path if sa_path is None else sa_path
+    if true_path is None:
+        true_path = {month: row.sa_path[month] for month in months}
+    if pred_path is None:
+        pred_path = {
+            month: true_path[month] + delta for month in months
+        }
     return [
         stage2.Stage2Prediction(
             meeting_date=row.meeting_date,
             target_month=month,
             model=model,
             horizon=index + 1,
-            y_true=row.sa_path[month],
-            y_pred=values[month] + delta,
+            y_true=true_path[month],
+            y_pred=pred_path[month],
             cpi_sa_available=int(row.features["cpi_sa_available"]),
         )
         for index, month in enumerate(months)
@@ -234,17 +253,29 @@ def predictions_for(
 class TestTargetPath(unittest.TestCase):
     def test_target_path_m0_m5(self):
         row = build_rows()[0]
-        self.assertEqual(
-            sorted(row.sa_path),
-            [shift_month(row.m0, index) for index in range(6)],
-        )
+        months = [shift_month(row.m0, index) for index in range(6)]
+        self.assertEqual(sorted(row.sa_path), months)
         self.assertEqual(sorted(row.cum), [1, 3, 6])
-        self.assertAlmostEqual(
-            row.cum[1], row.sa_path[row.m0], places=12
-        )
-        path = [row.sa_path[shift_month(row.m0, index)] for index in range(6)]
-        self.assertAlmostEqual(row.cum[3], compound(path[:3]), places=12)
-        self.assertAlmostEqual(row.cum[6], compound(path), places=12)
+        self.assertEqual(sorted(row.seasonal), list(range(1, 13)))
+        raw = {
+            date(day.year, day.month, 1): value
+            for day, value in make_series()["cpi_all"]
+        }
+        # Независимая проверка: SA-путь = сырой NSA минус сезонный фактор
+        # месяца, cumulative — компаундирование этого же пути.
+        expected = {
+            month: raw[month] - row.seasonal[month.month] for month in months
+        }
+        for month in months:
+            self.assertAlmostEqual(
+                row.sa_path[month], expected[month], places=12
+            )
+        for horizon in (1, 3, 6):
+            self.assertAlmostEqual(
+                row.cum[horizon],
+                compound([expected[month] for month in months[:horizon]]),
+                places=12,
+            )
 
     def test_stage1_oof_not_actual(self):
         # Постоянный NSA-ряд 1.0: SA-цель M0 равна 1.0, а OOF stage 1 — 0.123.
@@ -263,14 +294,33 @@ class TestTargetPath(unittest.TestCase):
         )
 
     def test_no_future_sa(self):
-        # Точка после горизонта M0+5 не должна менять ни признаки, ни путь.
-        base = cpi_points(date(2023, 1, 1), date(2027, 3, 1))
+        # Точка после горизонта M0+5 не должна менять ни признаки, ни путь,
+        # ни сезонные снимки (as-of и целевой).
+        base = cpi_points(date(2021, 1, 1), date(2027, 3, 1))
         future = base + [(month_end(date(2027, 5, 1)), 9999.0)]
         base_row = build_rows(series={"cpi_all": base})[0]
         future_row = build_rows(series={"cpi_all": future})[0]
         self.assertEqual(base_row.features, future_row.features)
         self.assertEqual(base_row.sa_path, future_row.sa_path)
         self.assertEqual(base_row.cum, future_row.cum)
+        self.assertEqual(base_row.seasonal, future_row.seasonal)
+        self.assertEqual(base_row.seasonal_asof, future_row.seasonal_asof)
+
+    def test_future_inside_path_does_not_change_features_or_asof(self):
+        # Точка внутри (заседание, M0+5] — это метка будущего месяца: она
+        # может менять целевой путь, но НЕ признаки и НЕ сезонный снимок
+        # заседания (`seasonal_asof`).
+        base = cpi_points(date(2021, 1, 1), date(2027, 3, 1))
+        inside = month_end(date(2027, 1, 1))
+        future = [
+            (day, 9999.0 if day == inside else value)
+            for day, value in base
+        ]
+        base_row = build_rows(series={"cpi_all": base})[0]
+        future_row = build_rows(series={"cpi_all": future})[0]
+        self.assertEqual(base_row.features, future_row.features)
+        self.assertEqual(base_row.seasonal_asof, future_row.seasonal_asof)
+        self.assertNotEqual(base_row.sa_path, future_row.sa_path)
 
     def test_current_meeting_has_no_target_path(self):
         row = build_rows(as_of=MEETING)[0]
@@ -371,16 +421,14 @@ class TestFeatures(unittest.TestCase):
         # SA-трансформация OOF — NSA минус сезонный фактор месяца, снимок
         # строго на заседание (последний опубликованный месяц), а не на конец
         # целевого пути.
-        from models.cpi import cpi_pipeline_sa as sa
-
-        cutoff = date(2026, 9, 30)  # сентябрь опубликован 2026-10-09
-        factors = sa.seasonal_factors(make_series()["cpi_all"], cutoff)
+        self.assertEqual(sorted(row.seasonal_asof), list(range(1, 13)))
         stage1_m0 = row.features["stage1_m0"]
         self.assertAlmostEqual(
             row.features["stage1_m0_sa"],
-            stage1_m0 - factors[row.m0.month],
+            stage1_m0 - row.seasonal_asof[row.m0.month],
             places=12,
         )
+        self.assertNotEqual(row.seasonal, row.seasonal_asof)
 
     def test_cbr_sa_available_per_calendar(self):
         expectations = {
@@ -490,9 +538,13 @@ class TestFeatures(unittest.TestCase):
 
 
 class TestModels(unittest.TestCase):
+    def test_min_train_is_24(self):
+        self.assertEqual(stage2.MIN_TRAIN, 24)
+        self.assertEqual(stage2.DEFAULT_START, 24)
+
     def test_fit_predict_paths_and_ensemble(self):
         rows = build_rows(meetings=make_meetings())
-        train, row = rows[:12], rows[12]
+        train, row = rows[:30], rows[30]
         months = stage2.target_months(row.m0)
         direct = stage2.fit_predict(train, row, "catboost_direct")
         bottomup = stage2.fit_predict(train, row, "catboost_bottomup")
@@ -520,7 +572,7 @@ class TestModels(unittest.TestCase):
 
     def test_walk_forward_outputs_all_models_and_horizons(self):
         rows = build_rows(meetings=make_meetings())
-        predictions = stage2.walk_forward(rows, start=8)
+        predictions = stage2.walk_forward(rows, start=30, calendar=CAL)
         self.assertEqual(
             {item.model for item in predictions},
             {"catboost_direct", "catboost_bottomup", "ensemble"},
@@ -561,8 +613,9 @@ class TestModels(unittest.TestCase):
         rows[-2] = replace(rows[-2], features=features)
         predictions = stage2.walk_forward(
             rows,
-            start=8,
+            start=30,
             models={"catboost_direct": stage2.fit_catboost_direct},
+            calendar=CAL,
         )
         skipped = {rows[-1].meeting_date, rows[-2].meeting_date}
         self.assertFalse(
@@ -571,11 +624,60 @@ class TestModels(unittest.TestCase):
         self.assertTrue(predictions)
         self.assertEqual(len(predictions), 4 * 6)
 
+    def test_walk_forward_reports_skipped_folds(self):
+        rows = build_rows(meetings=make_meetings())
+        rows[-1] = replace(rows[-1], sa_path=None, cum=None)
+        features = dict(rows[-2].features)
+        features["cpi_sa_available"] = 0
+        rows[-2] = replace(rows[-2], features=features)
+        counts = {}
+        stage2.walk_forward(
+            rows,
+            start=30,
+            models={"catboost_direct": stage2.fit_catboost_direct},
+            calendar=CAL,
+            skipped=counts,
+        )
+        self.assertEqual(counts["fold_target_unavailable"], 2)
+
+    def test_walk_forward_excludes_unpublished_train_rows(self):
+        rows = build_rows(meetings=make_meetings())
+        last = rows[-1]
+        self.assertFalse(
+            stage2.target_published(
+                last, CAL, stage2.meeting_datetime(date(2026, 9, 11))
+            )
+        )
+        self.assertTrue(
+            stage2.target_published(
+                last, CAL, stage2.meeting_datetime(date(2027, 6, 30))
+            )
+        )
+        # Заседание rows[30] (2026-07-15): train-строка rows[29] (M0=2026-06,
+        # конец 2026-11) ещё не опубликована, а rows[23] (конец 2026-05) — да.
+        test_at = stage2.meeting_datetime(rows[30].meeting_date)
+        self.assertFalse(stage2.target_published(rows[29], CAL, test_at))
+        self.assertTrue(stage2.target_published(rows[23], CAL, test_at))
+        counts = {}
+        stage2.walk_forward(
+            rows,
+            start=30,
+            models={"catboost_direct": stage2.fit_catboost_direct},
+            calendar=CAL,
+            skipped=counts,
+        )
+        self.assertGreater(counts["train_rows_excluded_unpublished"], 0)
+
+    def test_walk_forward_requires_calendar(self):
+        rows = build_rows(meetings=make_meetings())
+        with self.assertRaises(ValueError):
+            stage2.walk_forward(rows, start=30)
+
     def test_walk_forward_rejects_unsorted_rows(self):
         rows = build_rows(meetings=make_meetings())
         rows[3], rows[4] = rows[4], rows[3]
         with self.assertRaises(ValueError):
-            stage2.walk_forward(rows, start=8)
+            stage2.walk_forward(rows, start=30, calendar=CAL)
 
 
 class TestEvaluate(unittest.TestCase):
@@ -704,24 +806,32 @@ class TestNsaBacktransform(unittest.TestCase):
 class TestCbrSaBacktest(unittest.TestCase):
     def test_compares_published_cbr_sa(self):
         row = build_rows()[0]
+        months = stage2.target_months(row.m0)
         predictions = predictions_for(row)
+        official = {
+            month: 0.1 * index for index, month in enumerate(months)
+        }
         points = [
-            (month_end(month), row.sa_path[month] + 0.1)
-            for month in stage2.target_months(row.m0)
+            (month_end(month), official[month]) for month in months
         ]
         result = stage2.cbr_sa_backtest(
             predictions, [row], points, CAL, AS_OF
         )
+        expected = abs(row.sa_path[months[0]] - official[months[0]])
         self.assertEqual(result["h1"]["n"], 1)
-        self.assertAlmostEqual(result["h1"]["rmse"], 0.1, places=12)
+        self.assertAlmostEqual(result["h1"]["rmse"], expected, places=12)
         self.assertEqual(result["h6"]["n"], 1)
-        self.assertAlmostEqual(result["h6"]["rmse"], 0.1, places=12)
+        self.assertAlmostEqual(
+            result["h6"]["rmse"],
+            abs(row.sa_path[months[5]] - official[months[5]]),
+            places=12,
+        )
 
     def test_unpublished_cbr_sa_is_excluded(self):
         row = build_rows()[0]
         predictions = predictions_for(row)
         month = stage2.target_months(row.m0)[0]
-        points = [(month_end(month), row.sa_path[month] + 0.1)]
+        points = [(month_end(month), 1.0)]
         # Сезонный снимок ЦБ за октябрь 2026 выходит 2026-11-18 (fallback).
         result = stage2.cbr_sa_backtest(
             predictions, [row], points, CAL, date(2026, 10, 31)
@@ -730,6 +840,16 @@ class TestCbrSaBacktest(unittest.TestCase):
 
 
 class TestGate2(unittest.TestCase):
+    @staticmethod
+    def _expected_error(row: stage2.Stage2Row, horizon: int, delta: float):
+        """Ожидаемая ошибка NSA-back-transform cum при прогнозе SA+delta."""
+        months = stage2.target_months(row.m0)
+        actual = actual_nsa_path(row)
+        predicted = {month: actual[month] + delta for month in months}
+        return compound(
+            [predicted[month] for month in months[:horizon]]
+        ) - compound([actual[month] for month in months[:horizon]])
+
     def _setup(self, delta: float = 0.05):
         meetings = make_meetings()[:6]
         rows = build_rows(meetings=meetings)
@@ -752,6 +872,16 @@ class TestGate2(unittest.TestCase):
         self.assertEqual(result["n"], 6)
         for horizon in (1, 3, 6):
             item = result["horizons"][f"h{horizon}"]
+            expected = [
+                self._expected_error(row, horizon, 0.05) for row in rows
+            ]
+            rmse_expected = math.sqrt(
+                sum(error * error for error in expected) / len(expected)
+            )
+            self.assertAlmostEqual(
+                item["rmse_stage2"], rmse_expected, places=9
+            )
+            self.assertAlmostEqual(item["rmse_live3"], 0.3, places=12)
             self.assertLessEqual(item["rmse_stage2"], item["threshold"])
             self.assertAlmostEqual(
                 item["threshold"], item["rmse_live3"] * 1.05
@@ -783,6 +913,25 @@ class TestGate2(unittest.TestCase):
         )
         self.assertEqual(result["decision"], "INSUFFICIENT")
         self.assertEqual(result["n"], 1)
+
+    def test_gate2_reports_live3_missing_skip(self):
+        rows, predictions, live3 = self._setup()
+        first = sorted(live3)[0]
+        live3[first] = {
+            "h1": None,
+            "h3": None,
+            "h6": None,
+            "origin": shift_month(first, -1),
+        }
+        result = stage2.gate2_report(predictions, rows, live3)
+        self.assertEqual(result["n"], 5)
+        self.assertEqual(result["skipped"]["live3_missing"], 1)
+
+    def test_nsa_backtest_reports_row_missing_skip(self):
+        row = build_rows()[0]
+        result = stage2.nsa_backtest(predictions_for(row), [])
+        self.assertEqual(result["skipped"]["row_missing"], 1)
+        self.assertEqual(result["h1"]["n"], 0)
 
     def test_live3_cache_is_reused(self):
         calls = []
