@@ -44,6 +44,8 @@ ROSSTAT_FILES = {
     "tov": "https://rosstat.gov.ru/storage/mediabank/Proizvoditeli_Ind_tov_08-2026.xlsx",
     "cena": "https://rosstat.gov.ru/storage/mediabank/Proizvoditeli_Cena_08-2026.xlsx",
     "vesa": "https://rosstat.gov.ru/storage/mediabank/vesa_2006-2026.xlsx",
+    # Веса ИПЦ в группировке КИПЦ (не веса ИЦП по ВЭД): нужны mapping T3 и панели T4.
+    "vesa_kIPC": "https://rosstat.gov.ru/storage/mediabank/Vesa-tov-KIPC_2012-2026.xlsx",
     "sezon": "https://rosstat.gov.ru/storage/mediabank/sezon_2023_08-2026.xlsx",
     "concepts": "https://rosstat.gov.ru/storage/mediabank/Osnovnye%20ponyatiya_ICP_promtovary.pdf",
 }
