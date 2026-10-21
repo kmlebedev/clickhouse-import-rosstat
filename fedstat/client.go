@@ -155,9 +155,12 @@ func fedstatToken(page []byte, indicatorID string) (string, error) {
 // Нужен для all-dims: у 57806 это все ОКВЭД2, у 31074 — все 1 105 товаров;
 // зашивать их в код нельзя — справочник меняется, а POST требует коды, не имена.
 func fedstatPageConfig(page []byte, dims []string) (map[string][]string, error) {
+	// Страница отдаётся с CRLF; JS-конфиг размечается отступом строк, поэтому
+	// переводы строк нормализуются до LF (research-проба делала то же самое).
+	page = bytes.ReplaceAll(page, []byte("\r\n"), []byte("\n"))
 	starts := fedstatDimStartRe.FindAllSubmatchIndex(page, -1)
 	if len(starts) == 0 {
-		return nil, fmt.Errorf("%s: JS-конфиг grid.init не найден на странице", fedstatBaseURL)
+		return nil, fmt.Errorf("%s: JS-конфиг grid.init не найден на странице (%d байт): %s", fedstatBaseURL, len(page), util.ErrorSnippet(page))
 	}
 	blocks := make([]fedstatDimBlock, 0, len(starts))
 	for i, match := range starts {
