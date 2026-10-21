@@ -185,6 +185,7 @@ make mlflow-down
 | Python-инженер (не-ML) | [`python-engineer`](.kimi-code/skills/python-engineer/SKILL.md) |
 | ML-инженер | [`ml-engineer`](.kimi-code/skills/ml-engineer/SKILL.md) |
 | Research-инженер | [`research-engineer`](.kimi-code/skills/research-engineer/SKILL.md) |
+| Главный редактор | [`editor-in-chief`](.kimi-code/skills/editor-in-chief/SKILL.md) |
 
 Общий роутер — [AGENTS.md](AGENTS.md); диспатч субагентов — [`subagent-dispatch`](.kimi-code/skills/subagent-dispatch/SKILL.md). Скилы не отменяют Go-стандарт для DDL/импортёров.
 
