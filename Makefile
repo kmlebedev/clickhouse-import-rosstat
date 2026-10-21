@@ -91,7 +91,7 @@ DAGU_VERSION     ?= v2.18.2
 MKDOCS_VERSION ?= 9.7.7
 MKDOCS := uv run --with mkdocs-material==$(MKDOCS_VERSION) --python 3.12 mkdocs
 
-.PHONY: all lint fmt vet test build run deps clean info ch-up ch-down ch-status ch-sql mlflow-up mlflow-down mlflow-status mlflow-export mlflow-backfill mlflow-backfill-test mlflow-preflight mlflow-register mlflow-promote mlflow-models ml-gate ml-gate-test ml-live-check ml-live-check-test dev-check env-check import mp-llm-eval archive-registry archive-list archive-restore mcp-run mcp-user mcp-check build-ingest run-ingest deploy-staging deploy-staging-binary deploy-staging-dagu deploy-staging-mcp deploy-staging-mlflow deploy-staging-preflight deploy-staging-smoke upgrade-staging mcp-user-staging staging-precheck grafana-build grafana-validate grafana-up grafana-down grafana-deploy-test grafana-deploy-staging grafana-provision-staging grafana-check grafana-test-token grafana-provision-alerting-staging key-rate-model key-rate-cbr-rule key-rate-cbr-rule-test key-rate-scenario-fan key-rate-scenario-fan-test key-rate-scenario-fan-v2 key-rate-scenario-fan-v2-test key-rate-scenario-fan-v3 key-rate-scenario-fan-v3-test key-rate-cpi-v3-experiment key-rate-cpi-v3-experiment-test cpi-live3-horizons cpi-live3-horizons-test shock-classifier shock-classifier-test key-rate-llm-forecast key-rate-forecast-log cpi-nowcast cpi-monthly cpi-monthly-v3 cpi-monthly-v3-test cpi-monthly-industry cpi-monthly-industry-test cpi-public-audit cpi-public-audit-test cpi-weekly-panel cpi-weekly-panel-test cpi-pipeline-stage1 cpi-pipeline-stage1-test cpi-pipeline-stage2 cpi-pipeline-stage2-test cpi-pipeline-sa-test publication-calendar-test cb-comp-parity cb-comp-parity-test cb-comp-live cb-comp-live-test cb-comp-live-compare cb-comp-proxy ppi-sa-weights-panel ppi-sa-weights-panel-test ppi-sa-parity ppi-sa-parity-test edisclosure-login edisclosure-collect docs-check docs-build docs-serve
+.PHONY: all lint fmt vet test build run deps clean info ch-up ch-down ch-status ch-sql mlflow-up mlflow-down mlflow-status mlflow-export mlflow-backfill mlflow-backfill-test mlflow-preflight mlflow-register mlflow-promote mlflow-models ml-gate ml-gate-test ml-live-check ml-live-check-test dev-check env-check import mp-llm-eval archive-registry archive-list archive-restore mcp-run mcp-user mcp-check build-ingest run-ingest deploy-staging deploy-staging-binary deploy-staging-dagu deploy-staging-mcp deploy-staging-mlflow deploy-staging-preflight deploy-staging-smoke upgrade-staging mcp-user-staging staging-precheck grafana-build grafana-validate grafana-up grafana-down grafana-deploy-test grafana-deploy-staging grafana-provision-staging grafana-check grafana-test-token grafana-provision-alerting-staging key-rate-model key-rate-cbr-rule key-rate-cbr-rule-test key-rate-scenario-fan key-rate-scenario-fan-test key-rate-scenario-fan-v2 key-rate-scenario-fan-v2-test key-rate-scenario-fan-v3 key-rate-scenario-fan-v3-test key-rate-cpi-v3-experiment key-rate-cpi-v3-experiment-test cpi-live3-horizons cpi-live3-horizons-test shock-classifier shock-classifier-test key-rate-llm-forecast key-rate-forecast-log cpi-nowcast cpi-monthly cpi-monthly-v3 cpi-monthly-v3-test cpi-monthly-industry cpi-monthly-industry-test cpi-public-audit cpi-public-audit-test cpi-weekly-panel cpi-weekly-panel-test cpi-pipeline-stage1 cpi-pipeline-stage1-test cpi-pipeline-stage2 cpi-pipeline-stage2-test cpi-pipeline-sa-test publication-calendar-test cb-comp-parity cb-comp-parity-test cb-comp-live cb-comp-live-test cb-comp-live-compare cb-comp-proxy ppi-sa-weights-panel ppi-sa-weights-panel-test ppi-sa-parity ppi-sa-parity-test ppi-sa-text-anchors ppi-sa-text-anchors-test edisclosure-login edisclosure-collect docs-check docs-build docs-serve
 
 all: lint test build build-ingest
 
@@ -634,6 +634,15 @@ ppi-sa-parity:
 
 ppi-sa-parity-test:
 	python3 scripts/ppi_sa_parity_test.py -v
+
+# T3/T4: сверка ppi_sa с текстовыми якорями 12 выпусков «Инфляции в России»
+# (2025-10…2026-09). Точные числа — где они есть; качественные формулировки —
+# отдельный класс проверок. Читает ClickHouse read-only, пишет CSV/JSON в docs/research/.
+ppi-sa-text-anchors:
+	python3 scripts/ppi_sa_text_anchors.py --print
+
+ppi-sa-text-anchors-test:
+	python3 scripts/ppi_sa_text_anchors_test.py -v
 
 # Live-диагностика per_sheet: экспорт v_cbr_mp_public_panel (87 кодов × 3
 # индикатора, но 33 различные серии) и v_cbr_mp_bsu_map (код → industry_slug)
