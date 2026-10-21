@@ -75,23 +75,25 @@
 
 **Канал** — только то, что ЦБ сам называет в резюме обсуждения: у него есть дословная формулировка в §3 и одно из 11 имён. **Инструмент** — ряд, которым канал измеряется; у инструмента нет цитаты ЦБ, и он не становится двенадцатым каналом. Это правило отделяет «новый источник» от «нового канала» и не даёт карте расти от каждого импортёра: Brent, платёжный баланс, аукционы ОФЗ, портфели банков, отраслевой мониторинг — инструменты, а не каналы.
 
-Слаги расходятся между тремя реестрами кода. Канон — реестр разметки резюме (`cbr/mp_summary_channels.go`), потому что он привязан к тексту ЦБ; теги новостей и признаки веера — алиасы, их переименование меняло бы данные и разметку LLM, поэтому вынесено в отдельный пункт (`key-rate/phase-4-channel-slug-alignment`).
+Слаги выровнены 2026-10-21 (`key-rate/phase-4-channel-slug-alignment`, issue [#329](https://github.com/kmlebedev/clickhouse-import-rosstat/issues/329)): канон — реестр разметки резюме (`cbr/mp_summary_channels.go`), потому что он привязан к тексту ЦБ, и тот же слаг теперь хранят теги новостей (`news/tags.go`, `newsPromptVersion=3`). Legacy-слаги (`credit_transmission`, `external_conditions`, `savings`, `macroprudential`) остались только в исторических строках `news_annotation` (`prompt_version ≤ 2`); витрины `v_news_events`/`v_news_flash` нормализуют их на чтении, а реестр `v_news_tags` и промпт видят только канон.
 
-| Канал §3 | Слаг-канон (`cbr_mp_summary_channel`) | Алиас в тегах новостей (`v_news_tags.cb_channel`) | Признаки веера v3 (`key_rate_scenario_fan_v3.py`) |
+| Канал §3 | Слаг-канон (`cbr_mp_summary_channel`) | Слаг в тегах новостей (`v_news_tags.cb_channel`) | Признаки веера v3 (`key_rate_scenario_fan_v3.py`) |
 |---|---|---|---|
 | Текущий рост цен | `current_inflation` | `current_inflation` | `pi_saar`, `cpi_saar` (+ дельты) |
 | Устойчивая («базовая») инфляция | `core_inflation` | `core_inflation` | компоненты базового ИПЦ (E3) |
 | Инфляционные и ценовые ожидания | `expectations` | `expectations` | `infl_exp_expected`, `price_expectations` (+ дельты) |
 | Рынок труда | `labor_market` | `labor_market` | признаки панели `CbrRow` |
-| Кредитование и трансмиссия ДКП | `lending_transmission` | `credit_transmission` | кредит панели `CbrRow` + `ofz10_spread`, `ofz2_spread`, `slope_10y_1y` |
+| Кредитование и трансмиссия ДКП | `lending_transmission` | `lending_transmission` | кредит панели `CbrRow` + `ofz10_spread`, `ofz2_spread`, `slope_10y_1y` |
 | Разрыв выпуска / перегрев спроса | `output_gap` | `output_gap` | `gdp_gap`, `ibk_gap`, `business_climate` |
 | Бюджетный импульс | `budget_impulse` | `budget_impulse` | `budget_balance` + сценарная дельта |
 | Денежная масса | `money_supply` | `money_supply` | признаки панели `CbrRow` |
-| Внешние условия и курс | `external_fx` | `external_conditions` | `brent_3m`, `bop_ca_q`, `has_bop` |
-| Сберегательное поведение | `savings_behavior` | `savings` | `deposit_yoy`, `deposit_share`, `has_savings` |
-| Автономные (немонетарные) факторы | `autonomous_factors` | `macroprudential` | `credit_gap_broad`, `hh_yoy`, `nfo_rub_yoy`, `has_ccyb` |
+| Внешние условия и курс | `external_fx` | `external_fx` | `brent_3m`, `bop_ca_q`, `has_bop` |
+| Сберегательное поведение | `savings_behavior` | `savings_behavior` | `deposit_yoy`, `deposit_share`, `has_savings` |
+| Автономные (немонетарные) факторы | `autonomous_factors` | `autonomous_factors` | `credit_gap_broad`, `hh_yoy`, `nfo_rub_yoy`, `has_ccyb` |
 
-**Оговорка по 11-му каналу.** «Макропруденциальные требования» — не отдельный канал, а **часть** канала автономных факторов (§3: АЦН, лимиты МПЛ, нормативы НКЛ, дефицит ликвидности). В тегах новостей слаг остаётся `macroprudential` как алиас; в §8 отдельной строкой он не идёт.
+Колонка веера — имена групп признаков Python-скрипта, а не слаги, хранимые в БД: унификация слагов их не затрагивает.
+
+**Оговорка по 11-му каналу.** «Макропруденциальные требования» — не отдельный канал, а **часть** канала автономных факторов (§3: АЦН, лимиты МПЛ, нормативы НКЛ, дефицит ликвидности). В тегах новостей канал называется `autonomous_factors`, а `macroprudential` — только legacy-алиас строк редакций ≤2; в §8 отдельной строкой он не идёт.
 
 ## 4. Как ЦБ сам описывает взвешивание каналов
 
@@ -152,19 +154,19 @@
 
 Срез 2026-10-21 (MCP `kimi_reader`): `v_cbr_mp_summary_channels` — 11 слагов, `v_key_rate_dashboard` — 23 индикатора в 6 контурах, Grafana `key-rate-publications` — 23 панели в 4 рядах. Колонки «витрина» и «панель» — **разные артефакты и не взаимозаменяемы**: витрина даёт значение для расчёта, панель — картинку для статьи; «нет панели» не значит «нет данных».
 
-| Канал §3 | Слаг-канон | Алиасы (теги / веер) | Канонический ряд (витрина) | `v_key_rate_dashboard` | Панель Grafana | Цикл | Последняя точка (21.10) | Статус |
+| Канал §3 | Слаг-канон | Теги и веер | Канонический ряд (витрина) | `v_key_rate_dashboard` | Панель Grafana | Цикл | Последняя точка (21.10) | Статус |
 |---|---|---|---|---|---|---|---|---|
 | Текущий рост цен | `current_inflation` | теги: тот же; веер: `pi_saar`, `cpi_saar` | `rosstat_ipc_mes` (месяц), `rosstat_ipc_weeks` (неделя), `cbr_indicators_cpd` (SA м/м) | `ipc_yoy` | 2, 3, 4 | недельный (чт) + месячный | 2026-10-12 / 2026-09-30 | ✅ полное; SAAR считается в модели, не в БД |
 | Устойчивая («базовая») инфляция | `core_inflation` | теги: тот же; веер: компоненты базового ИПЦ (E3) | `cbr_indicators_cpd` («Базовый ИПЦ») | `base_ipc_saar` | 4 | месячный | 2026-08-31 | ✅ полное; недельного базового нет |
 | Инфляционные и ценовые ожидания | `expectations` | теги: тот же; веер: `infl_exp_expected`, `price_expectations` | `cbr_infl_exp`; `v_cbr_survey` (`price_expectations_sa`) | `infl_exp_expected`, `price_expectations_sa` | 5 | волна 14-го + месячный | 2026-09-14 / 2026-10-01 | ✅ полное; октябрьская волна — 21.10/28.10 |
 | Рынок труда | `labor_market` | теги: тот же; веер: признаки панели `CbrRow` | `rosstat_labour_force_mes`, `rosstat_salaries_mes` | — | 9 | месячный | 2026-07-31 / 2026-08-01 | ⚠️ витрины нет, панель есть |
-| Кредитование и трансмиссия ДКП | `lending_transmission` | теги: `credit_transmission`; веер: кредит `CbrRow` + `ofz10_spread`, `ofz2_spread`, `slope_10y_1y` | `v_cbr_macro` («Кредит экономике»), `cbr_int_rate_loans`, `cbr_ruania` | — | 6, 7, 25, 26 | месячный + дневной RUONIA | 2026-09-01 / 2026-08-30 / 2026-10-15 | ⚠️ витрины нет, панели есть |
+| Кредитование и трансмиссия ДКП | `lending_transmission` | теги: тот же (legacy `credit_transmission` — только редакции ≤2); веер: кредит `CbrRow` + `ofz10_spread`, `ofz2_spread`, `slope_10y_1y` | `v_cbr_macro` («Кредит экономике»), `cbr_int_rate_loans`, `cbr_ruania` | — | 6, 7, 25, 26 | месячный + дневной RUONIA | 2026-09-01 / 2026-08-30 / 2026-10-15 | ⚠️ витрины нет, панели есть |
 | Разрыв выпуска / перегрев спроса | `output_gap` | теги: тот же; веер: `gdp_gap`, `ibk_gap`, `business_climate` | `rosstat_vvp_kvartal`; `v_cbr_survey` (ИБК, загрузка мощностей) | `business_climate_sa` | — | квартальный / месячный | 2026-07-01 / 2026-10-01 | ⚠️ частично: один прокси в витрине |
 | Бюджетный импульс | `budget_impulse` | теги: тот же; веер: `budget_balance` + сценарная дельта | `v_minfin_budget` (`minfin`, `minfin_mesyats`, `minfin_oil_gas`) | — | 8, 27, 28 | месячный | 2026-09-01 / 2026-08-01 / 2026-09-01 | ⚠️ кумулятивного ряда нет (см. §8.1) |
 | Денежная масса | `money_supply` | теги: тот же; веер: признаки панели `CbrRow` | `v_cbr_macro` («М2 SA»), `cbr_credit_m2x` | — | 6 | месячный | 2026-09-01 | ⚠️ витрины нет, панель есть |
-| Внешние условия и курс | `external_fx` | теги: `external_conditions`; веер: `brent_3m`, `bop_ca_q`, `has_bop` | `v_cbr_macro` (`cbr_currency_usd`), `v_moex_market` (Brent), `v_cbr_bop` | — | — | дневной / месячный / квартальный | 2026-10-17 / 2026-10-19 / 2026-08-31 | ⚠️ панели нет |
-| Сберегательное поведение | `savings_behavior` | теги: `savings`; веер: `deposit_yoy`, `deposit_share`, `has_savings` | `v_cbr_macro` («Депозиты населения», «депозиты физических лиц», «депозиты индивидуальных предпринимателей»), `cbr_households_b_mes` | — | — | месячный | 2026-09-01 | ⚠️ уровни есть, срочности нет |
-| Автономные (немонетарные) факторы | `autonomous_factors` | теги: `macroprudential`; веер: `credit_gap_broad`, `hh_yoy`, `nfo_rub_yoy`, `has_ccyb` | `v_cbr_ccyb_indicators` (АЦН, кредитные гэпы); нормативные документы — вне БД | — | — | месячный (АЦН) + нерегулярный | 2024-10-01 | ⚠️ АЦН отстаёт; RUONIA читается в канале 5 |
+| Внешние условия и курс | `external_fx` | теги: тот же (legacy `external_conditions` — только редакции ≤2); веер: `brent_3m`, `bop_ca_q`, `has_bop` | `v_cbr_macro` (`cbr_currency_usd`), `v_moex_market` (Brent), `v_cbr_bop` | — | — | дневной / месячный / квартальный | 2026-10-17 / 2026-10-19 / 2026-08-31 | ⚠️ панели нет |
+| Сберегательное поведение | `savings_behavior` | теги: тот же (legacy `savings` — только редакции ≤2); веер: `deposit_yoy`, `deposit_share`, `has_savings` | `v_cbr_macro` («Депозиты населения», «депозиты физических лиц», «депозиты индивидуальных предпринимателей»), `cbr_households_b_mes` | — | — | месячный | 2026-09-01 | ⚠️ уровни есть, срочности нет |
+| Автономные (немонетарные) факторы | `autonomous_factors` | теги: тот же (legacy `macroprudential` — только редакции ≤2); веер: `credit_gap_broad`, `hh_yoy`, `nfo_rub_yoy`, `has_ccyb` | `v_cbr_ccyb_indicators` (АЦН, кредитные гэпы); нормативные документы — вне БД | — | — | месячный (АЦН) + нерегулярный | 2024-10-01 | ⚠️ АЦН отстаёт; RUONIA читается в канале 5 |
 
 ### 8.1. Инструменты канала и правила выбора ряда
 
@@ -237,21 +239,21 @@
 
 **Как молния ложится на 11 каналов §3.** Измерение `cb_channel` — это те же каналы решения ЦБ; направление у них статическое (свойство канала), у `person`/`country`/`sector`/`event` — `neutral`/`mixed` (знак задаёт конкретная новость):
 
-| `cb_channel` (слаг в тегах) | Канал §3 | Слаг-канон (§3.1) | Знак |
-|---|---|---|---|
-| `current_inflation` | Текущий рост цен | `current_inflation` | proinflationary |
-| `core_inflation` | Устойчивая («базовая») инфляция | `core_inflation` | proinflationary |
-| `expectations` | Инфляционные и ценовые ожидания | `expectations` | proinflationary |
-| `labor_market` | Рынок труда | `labor_market` | proinflationary |
-| `credit_transmission` | Кредитование и трансмиссия ДКП | `lending_transmission` | disinflationary |
-| `output_gap` | Разрыв выпуска / перегрев спроса | `output_gap` | proinflationary |
-| `budget_impulse` | Бюджетный импульс | `budget_impulse` | proinflationary |
-| `money_supply` | Денежная масса | `money_supply` | proinflationary |
-| `external_conditions` | Внешние условия и курс | `external_fx` | proinflationary |
-| `savings` | Сберегательное поведение | `savings_behavior` | disinflationary |
-| `macroprudential` | Автономные (немонетарные) факторы | `autonomous_factors` | disinflationary |
+| `cb_channel` (слаг) | Канал §3 | Знак |
+|---|---|---|
+| `current_inflation` | Текущий рост цен | proinflationary |
+| `core_inflation` | Устойчивая («базовая») инфляция | proinflationary |
+| `expectations` | Инфляционные и ценовые ожидания | proinflationary |
+| `labor_market` | Рынок труда | proinflationary |
+| `lending_transmission` | Кредитование и трансмиссия ДКП | disinflationary |
+| `output_gap` | Разрыв выпуска / перегрев спроса | proinflationary |
+| `budget_impulse` | Бюджетный импульс | proinflationary |
+| `money_supply` | Денежная масса | proinflationary |
+| `external_fx` | Внешние условия и курс | proinflationary |
+| `savings_behavior` | Сберегательное поведение | disinflationary |
+| `autonomous_factors` | Автономные (немонетарные) факторы | disinflationary |
 
-**Почему слаг в тегах не переименован.** `credit_transmission`, `external_conditions`, `savings` и `macroprudential` лежат в `news/tags.go` и в уже размеченных строках `news_annotation` — переименование потребовало бы миграции данных и переразметки LLM. Поэтому канон живёт в §3.1 и в реестре §8, а теги хранят алиас; унификация вынесена в `key-rate/phase-4-channel-slug-alignment`. Последняя строка — не «узкий» канал: `macroprudential` покрывает только макропруденциальную часть автономных факторов, поэтому в реестре канал называется «Автономные (немонетарные) факторы».
+**Унификация слагов (2026-10-21).** `news/tags.go` перешёл на канон `cbr/mp_summary_channels.go` (`lending_transmission`, `external_fx`, `savings_behavior`, `autonomous_factors`), `newsPromptVersion` повышен до 3 — переразметка пишет новые строки рядом со старыми, не затирая их. Legacy-слаги (`credit_transmission`, `external_conditions`, `savings`, `macroprudential`) остались только в исторических строках `news_annotation` (`prompt_version ≤ 2`): витрины `v_news_events` и `v_news_flash` нормализуют их на чтении (`newsTagAliases`), поэтому агент видит 11 канонических слагов независимо от редакции промпта. `v_news_tags` содержит 46 канонических тегов; последняя строка — не «узкий» канал: `autonomous_factors` включает макропруденциальные требования (АЦН, МПЛ, НКЛ, дефицит ликвидности) как часть автономных факторов.
 
 **Реестр 46 тегов** (`v_news_tags`, единственный источник правды — `news/tags.go`): `person` — 8 (`trump`, `putin`, `xi_jinping`, `powell`, `lagarde`, `nabiullina`, `siluanov`, `mishustin`), `country` — 7 (`china`, `usa`, `eu`, `russia`, `india`, `iran`, `turkey`), `sector` — 8 (`oil_gas`, `metals`, `gold`, `banks`, `tech`, `real_estate`, `agriculture`, `utilities`), `event` — 12 (`energy_transition`, `deglobalization`, `sanctions`, `tariffs`, `energy_prices`, `budget_impulse`, `labor_market`, `inflation_expectations`, `credit`, `key_rate`, `opec`, `ofz_auctions`), `cb_channel` — 11 (таблица выше). Измерение `theme` объявлено, но в стартовом наборе не заполнено: сюжеты энергоперехода и деглобализации пока живут в `event`.
 
