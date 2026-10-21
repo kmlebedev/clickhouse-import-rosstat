@@ -1228,8 +1228,8 @@ async def check(params, server_log):
             fedstat_catalog = text(await session.call_tool("run_query", {"query": "SELECT count() AS n FROM v_series_catalog WHERE source = 'fedstat'"}))
             fedstat_catalog_rows = result_rows(fedstat_catalog)
             fedstat_catalog_n = fedstat_catalog_rows[0].get("n") if fedstat_catalog_rows else None
-            # 158 (37426) + 432 (ИПП) + 9 (розница) + 30 (сельхоз) + 5 (инвестиции) + 1 105 (ИПЦ).
-            fedstat_catalog_want = 1739
+            # 158 (37426) + 432 (ИПП) + 9 (розница) + 18 (сельхоз) + 5 (инвестиции) + 1 105 (ИПЦ).
+            fedstat_catalog_want = 1727
             if fedstat_catalog_rows is None:
                 fedstat_catalog_detail = f"ответ не распознан: {fedstat_catalog[:200]}"
             elif fedstat_catalog_n == fedstat_catalog_want:
@@ -1250,7 +1250,7 @@ async def check(params, server_log):
             fedstat_macro = [
                 ("v_fedstat_ipp", 55968, 432, "ИПП 43046+57806"),
                 ("v_fedstat_retail", 4638, 9, "розница 31066+31260"),
-                ("v_fedstat_agri", 565, 30, "сельхоз 34128/59001/31062/43337"),
+                ("v_fedstat_agri", 565, 18, "сельхоз 34128/59001/31062/43337"),
                 ("v_fedstat_investment", 153, 5, "инвестиции 58089/58090/34129/40562/34475"),
                 ("v_fedstat_ipc", 204038, 1105, "ИПЦ 31074"),
             ]
