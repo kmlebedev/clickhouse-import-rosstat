@@ -123,9 +123,10 @@ func TestInflExpPdfHistoryMatchesXlsx(t *testing.T) {
 	for _, row := range rec.rows {
 		key := row.date.Format("2006-01")
 		values := book[key]
-		if row.name == inflExpObservedName {
+		switch row.name {
+		case inflExpObservedName:
 			values[0] = row.value
-		} else if row.name == inflExpExpectedName {
+		case inflExpExpectedName:
 			values[1] = row.value
 		}
 		book[key] = values
