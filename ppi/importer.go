@@ -108,7 +108,7 @@ func (s *ppiSAImporter) Import(ctx context.Context, conn driver.Conn) (count int
 			return 0, pointsErr
 		}
 		if points == knownPoints {
-			if catalogErr := util.UpsertSeriesCatalog(ctx, conn, ppiSASeriesMeta()); catalogErr != nil {
+			if catalogErr := publishPPIDerived(ctx, conn); catalogErr != nil {
 				return 0, catalogErr
 			}
 			log.Infof("%s: no-op, версия %s уже импортирована, %d точек на месте", ppiSATable, fingerprint, points)
@@ -158,7 +158,7 @@ func (s *ppiSAImporter) Import(ctx context.Context, conn driver.Conn) (count int
 		return count, insertErr
 	}
 
-	if catalogErr := util.UpsertSeriesCatalog(ctx, conn, ppiSASeriesMeta()); catalogErr != nil {
+	if catalogErr := publishPPIDerived(ctx, conn); catalogErr != nil {
 		return count, catalogErr
 	}
 	points, pointsErr := util.CountPoints(ctx, conn, ppiSACountPoints)
@@ -177,6 +177,20 @@ func (s *ppiSAImporter) Import(ctx context.Context, conn driver.Conn) (count int
 	}
 	log.Infof("%s: %d series, %d rows, spec %s, taxonomy %s", ppiSATable, len(ppiSAOrder), count, ppiSASpecVersion, ppiSATaxonomyVersion)
 	return count, nil
+}
+
+// publishPPIDerived — 5 базовых рядов ppi_sa + 20 рядов метрик витрины и сама
+// v_rosstat_ppi. Вызывается и на no-op-пути: каталог и витрина self-heal, даже
+// если строки ppi_sa уже на месте. CreateView пропускает витрину, пока нет
+// хотя бы одной из четырёх таблиц; на практике ppi_sa уже прочитал входы.
+func publishPPIDerived(ctx context.Context, conn driver.Conn) error {
+	meta := append([]util.SeriesMeta{}, ppiSASeriesMeta()...)
+	meta = append(meta, ppiSAViewSeriesMeta()...)
+	if err := util.UpsertSeriesCatalog(ctx, conn, meta); err != nil {
+		return err
+	}
+	_, err := util.CreateView(ctx, conn, ppiView)
+	return err
 }
 
 // readInputs читает оба сырых ряда с FINAL. Пустой вход — ошибка: производный
