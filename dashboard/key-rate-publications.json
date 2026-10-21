@@ -232,6 +232,99 @@
       },
       {
         "type": "timeseries",
+        "id": 36,
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT date AS time, pow(avg(value) / 100, 52) - 1 AS \"Недельное, годовое выражение\"\nFROM v_rosstat_macro AS w\nINNER JOIN v_series_catalog AS c ON c.source = w.source AND c.series = w.series\nWHERE c.frequency = 'W' AND date \u003e= '2022-01-10' AND $__timeFilter(date)\nGROUP BY date\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "B",
+            "rawSql": "SELECT time, y AS \"4-нед. средняя (товары)\"\nFROM (\n    SELECT time,\n           pow(exp(avg(ln(idx / 100)) OVER (ORDER BY time ROWS BETWEEN 3 PRECEDING AND CURRENT ROW)), 52) - 1 AS y,\n           count() OVER (ORDER BY time ROWS BETWEEN 3 PRECEDING AND CURRENT ROW) AS n\n    FROM (\n        SELECT date AS time, avg(value) AS idx\nFROM v_rosstat_macro AS w\nINNER JOIN v_series_catalog AS c ON c.source = w.source AND c.series = w.series\nWHERE c.frequency = 'W' AND date \u003e= '2022-01-10'\nGROUP BY date\n    )\n)\nWHERE n = 4 AND $__timeFilter(time)\nORDER BY time\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "C",
+            "rawSql": "SELECT time, y AS \"4-нед. средняя (недельный ИПЦ)\"\nFROM (\n    SELECT time,\n           pow(exp(avg(ln(idx / 100)) OVER (ORDER BY time ROWS BETWEEN 3 PRECEDING AND CURRENT ROW)), 52) - 1 AS y,\n           count() OVER (ORDER BY time ROWS BETWEEN 3 PRECEDING AND CURRENT ROW) AS n\n    FROM (\n        SELECT date AS time, value AS idx\nFROM v_rosstat_macro AS w\nINNER JOIN v_series_catalog AS c ON c.source = w.source AND c.series = w.series\nWHERE c.frequency = 'W' AND c.series = 'Индекс потребительских цен (недельная оценка)' AND date \u003e= '2022-01-10'\n    )\n)\nWHERE n = 4 AND $__timeFilter(time)\nORDER BY time\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "Недельные цены: 4-недельная средняя, годовое выражение",
+        "description": "Средний недельный индекс цен недельных товарных рядов (v_rosstat_macro, отбор — v_series_catalog.frequency = 'W') в годовом выражении: pow(индекс/100, 52) - 1 — «если бы такая неделя шла весь год». Это не SAAR и не сезонная корректировка. 4-нед. средняя — геометрическое среднее четырёх последних недель, приведённое к году той же степенью 52 (эквивалент: накопленный за 4 недели рост в степень 13); первые три недели ряда не показываются — окно по ним неполное. История с 2022-01-10: до этой даты недельные ряды собраны из бюллетеней с другим набором позиций, и средние несравнимы. Серия «недельный ИПЦ» — официальный агрегат «Индекс потребительских цен (недельная оценка)», он отстаёт от товарного слоя на неделю. Порог 4 % — цель ЦБ.",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 9,
+          "w": 12,
+          "x": 0,
+          "y": 10
+        },
+        "repeatDirection": "h",
+        "timeFrom": "5y",
+        "options": {
+          "legend": {
+            "displayMode": "table",
+            "placement": "bottom",
+            "showLegend": true,
+            "calcs": [
+              "last",
+              "mean",
+              "max"
+            ]
+          },
+          "tooltip": {
+            "mode": "single",
+            "sort": "none"
+          }
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percentunit",
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "value": null,
+                  "color": "super-light-green"
+                },
+                {
+                  "value": 0.04,
+                  "color": "super-light-red"
+                }
+              ]
+            },
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "gradientMode": "none",
+              "thresholdsStyle": {
+                "mode": "line"
+              },
+              "lineWidth": 1,
+              "lineInterpolation": "smooth",
+              "fillOpacity": 0,
+              "spanNulls": false
+            }
+          },
+          "overrides": []
+        }
+      },
+      {
+        "type": "timeseries",
         "id": 3,
         "targets": [
           {
@@ -253,7 +346,7 @@
         "gridPos": {
           "h": 9,
           "w": 12,
-          "x": 0,
+          "x": 12,
           "y": 10
         },
         "repeatDirection": "h",
@@ -321,8 +414,8 @@
         "gridPos": {
           "h": 9,
           "w": 12,
-          "x": 12,
-          "y": 10
+          "x": 0,
+          "y": 19
         },
         "repeatDirection": "h",
         "options": {
@@ -413,7 +506,7 @@
         "gridPos": {
           "h": 9,
           "w": 24,
-          "x": 0,
+          "x": 12,
           "y": 19
         },
         "repeatDirection": "h",
@@ -2489,6 +2582,306 @@
               ]
             }
           ]
+        }
+      },
+      {
+        "type": "row",
+        "collapsed": false,
+        "title": "Цены производителей, продовольствие, средние цены",
+        "gridPos": {
+          "h": 1,
+          "w": 24,
+          "x": 0,
+          "y": 158
+        },
+        "id": 40,
+        "panels": []
+      },
+      {
+        "type": "timeseries",
+        "id": 37,
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT date AS time, pow(value / 100, 12) - 1 AS \"ИЦП, м/м → годовое выражение\"\nFROM v_rosstat_ppi\nWHERE series = 'ИЦП по ВЭД, РФ, m/m' AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "B",
+            "rawSql": "SELECT date AS time, value / 100 - 1 AS \"ИЦП, г/г (официальный)\"\nFROM v_rosstat_ppi\nWHERE series = 'ИЦП по ВЭД, РФ, y/y' AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "C",
+            "rawSql": "SELECT date AS time, value AS \"ИЦП SA: SAAR 3м\"\nFROM v_rosstat_ppi\nWHERE series = 'ppi_sa:total:saar3' AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "D",
+            "rawSql": "SELECT date AS time, value AS \"ИЦП SA: SAAR 3м, ядро\"\nFROM v_rosstat_ppi\nWHERE series = 'ppi_sa:core:saar3' AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "ИЦП: годовое выражение",
+        "description": "ИЦП по ВЭД (Промышленность, v_rosstat_ppi). «м/м → годовое выражение» = pow(индекс/100, 12) - 1 с 1998: индекс к прошлому месяцу, приведённый к году. «г/г» = индекс/100 - 1 с 2021: это уже темп к прошлому году, степень к нему не применяется. «SAAR 3м» — сезонно скорректированный слой ppi_sa (X-13ARIMA-SEATS), «ядро» — KIPC food + non-food; это расчёт контура, а не официальный ряд. Порога 4 % здесь нет: 4 % — цель ЦБ по потребительской инфляции, на цены производителей она не распространяется.",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 9,
+          "w": 12,
+          "x": 0,
+          "y": 159
+        },
+        "repeatDirection": "h",
+        "timeFrom": "10y",
+        "options": {
+          "legend": {
+            "displayMode": "table",
+            "placement": "bottom",
+            "showLegend": true,
+            "calcs": [
+              "last",
+              "mean",
+              "max"
+            ]
+          },
+          "tooltip": {
+            "mode": "single",
+            "sort": "none"
+          }
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percentunit",
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "gradientMode": "none",
+              "lineWidth": 1,
+              "lineInterpolation": "smooth",
+              "fillOpacity": 0,
+              "spanNulls": false
+            }
+          },
+          "overrides": []
+        }
+      },
+      {
+        "type": "timeseries",
+        "id": 38,
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT period_date AS time, value AS \"ФАО: сводный\"\nFROM v_fao_food_price\nWHERE series = 'Food Price Index' AND $__timeFilter(period_date)\nORDER BY period_date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "B",
+            "rawSql": "SELECT period_date AS time, value AS \"ФАО: зерновые\"\nFROM v_fao_food_price\nWHERE series = 'Cereals' AND $__timeFilter(period_date)\nORDER BY period_date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "C",
+            "rawSql": "SELECT period_date AS time, value AS \"ФАО: молочные\"\nFROM v_fao_food_price\nWHERE series = 'Dairy' AND $__timeFilter(period_date)\nORDER BY period_date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "D",
+            "rawSql": "SELECT period_date AS time, value AS \"ФАО: мясо\"\nFROM v_fao_food_price\nWHERE series = 'Meat' AND $__timeFilter(period_date)\nORDER BY period_date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "E",
+            "rawSql": "SELECT period_date AS time, value AS \"ФАО: масла\"\nFROM v_fao_food_price\nWHERE series = 'Oils' AND $__timeFilter(period_date)\nORDER BY period_date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "F",
+            "rawSql": "SELECT period_date AS time, value AS \"ФАО: сахар\"\nFROM v_fao_food_price\nWHERE series = 'Sugar' AND $__timeFilter(period_date)\nORDER BY period_date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "ФАО: индексы продовольственных цен",
+        "description": "Индексы продовольственных цен ФАО (v_fao_food_price): сводный и пять подиндексов, номинальные, 2014-2016 = 100; real-индекса в источнике нет. По оси времени — period_date (месяц наблюдения); date витрины — дата публикации (1-е число следующего месяца), и на графике она сдвинула бы ряд на месяц. Это внешний фон продовольственной инфляции, а не российские цены.",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 9,
+          "w": 12,
+          "x": 12,
+          "y": 159
+        },
+        "repeatDirection": "h",
+        "timeFrom": "10y",
+        "options": {
+          "legend": {
+            "displayMode": "table",
+            "placement": "bottom",
+            "showLegend": true,
+            "calcs": [
+              "last",
+              "mean",
+              "max"
+            ]
+          },
+          "tooltip": {
+            "mode": "single",
+            "sort": "none"
+          }
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "gradientMode": "none",
+              "lineWidth": 1,
+              "lineInterpolation": "smooth",
+              "fillOpacity": 0,
+              "spanNulls": false
+            }
+          },
+          "overrides": []
+        }
+      },
+      {
+        "type": "timeseries",
+        "id": 39,
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT date AS time, value AS \"Говядина, ₽/кг\"\nFROM v_fedstat_weekly_prices\nWHERE series = 'Говядина (кроме бескостного мяса), кг' AND region = 'Российская Федерация' AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "B",
+            "rawSql": "SELECT date AS time, value AS \"Куры, ₽/кг\"\nFROM v_fedstat_weekly_prices\nWHERE series = 'Куры охлажденные и мороженые, кг' AND region = 'Российская Федерация' AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "C",
+            "rawSql": "SELECT date AS time, value AS \"Молоко 2,5–3,2 %, ₽/л\"\nFROM v_fedstat_weekly_prices\nWHERE series = 'Молоко питьевое цельное пастеризованное 2,5-3,2% жирности, л' AND region = 'Российская Федерация' AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "D",
+            "rawSql": "SELECT date AS time, value AS \"Картофель, ₽/кг\"\nFROM v_fedstat_weekly_prices\nWHERE series = 'Картофель, кг' AND region = 'Российская Федерация' AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "E",
+            "rawSql": "SELECT date AS time, value AS \"Яйца, ₽/10 шт.\"\nFROM v_fedstat_weekly_prices\nWHERE series = 'Яйца куриные, 10 шт.' AND region = 'Российская Федерация' AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "F",
+            "rawSql": "SELECT date AS time, value AS \"Бензин АИ-92, ₽/л\"\nFROM v_fedstat_weekly_prices\nWHERE series = 'Бензин автомобильный марки АИ-92, л' AND region = 'Российская Федерация' AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "Средние потребительские цены (ФЕДСТАТ), ₽",
+        "description": "Средние потребительские цены ЕМИСС (v_fedstat_weekly_prices), рубли за единицу из названия ряда (кг, л, 10 шт.) — это уровень цены, а не индекс: изменение за n недель = value_t / value_(t−n) − 1. Ряд идёт 2008-01-09 … 2022-12-26: в 2023–2025 источник данных не отдаёт, а 2026 публикуется в другом определении РФ («без учёта новых субъектов») и в панель не взят — поэтому линия непрерывна и заканчивается 2022-12-26. Окно панели — 20 лет, чтобы история читалась независимо от общего диапазона дашборда.",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 9,
+          "w": 12,
+          "x": 0,
+          "y": 168
+        },
+        "repeatDirection": "h",
+        "timeFrom": "20y",
+        "options": {
+          "legend": {
+            "displayMode": "table",
+            "placement": "bottom",
+            "showLegend": true,
+            "calcs": [
+              "last",
+              "mean",
+              "max"
+            ]
+          },
+          "tooltip": {
+            "mode": "single",
+            "sort": "none"
+          }
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "currencyRUB",
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "gradientMode": "none",
+              "lineWidth": 1,
+              "lineInterpolation": "smooth",
+              "fillOpacity": 0,
+              "spanNulls": false
+            }
+          },
+          "overrides": []
         }
       }
     ],
