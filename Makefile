@@ -331,13 +331,43 @@ env-check:
 	@if [ -n "$$GRAFANA_TEST_TOKEN" ]; then echo "OK   GRAFANA_TEST_TOKEN задан"; else echo "НЕТ  GRAFANA_TEST_TOKEN не задан (нужен для make grafana-deploy-test: сервис-аккаунт Editor на $(GRAFANA_TEST_URL))"; fi
 	@if [ -n "$$GRAFANA_STAGING_TOKEN" ]; then echo "OK   GRAFANA_STAGING_TOKEN задан"; else echo "НЕТ  GRAFANA_STAGING_TOKEN не задан (нужен для make grafana-deploy-staging: сервис-аккаунт Editor на staging, доступ через туннель $(GRAFANA_STAGING_URL))"; fi
 
-# Локальный прогон одного импортёра: make import STAT=bea (нужны CLICKHOUSE_URL и ключ импортёра из $(ROSSTAT_ENV)).
+# Локальный прогон одного импортёра или группы: make import STAT=bea / STAT=key_rate_sources
+# (нужны CLICKHOUSE_URL и ключи источников из $(ROSSTAT_ENV)).
 STAT ?=
+
+# Группа «источники контура ключевой ставки»: make import STAT=key_rate_sources.
+# Группа — не импортёр, а именованный список Name() через запятую: main.go принимает
+# список (CLICKHOUSE_IMPORT_STAT=a,b), запускает выбранные импортёры в одном процессе и
+# одном соединении, а ошибка одного не останавливает остальные (итоговый код — 1).
+# Порядок исполнения — порядок регистрации в chimport.Stats, а не порядок списка; пробелы
+# после запятых (перенос строки) parseImportFilter срезает TrimSpace. Новая группа — новая
+# переменная STATS_<имя>, рецепт import её подхватывает без правок.
+# Состав — контракт публикации (docs/KEY_RATE_PUBLICATIONS.md §6) и карта каналов
+# (docs/KEY_RATE_CHANNELS.md §8/§8.1); обоснование состава — docs/publications/README.md.
+STATS_key_rate_sources := \
+	cbr_key_rate,cbr_currency_usd,cbr_m2,cbr_credit_m2x,\
+	cbr_loans_to_corporations,cbr_loans_to_individuals,cbr_households_b_mes,\
+	cbr_infl_exp,cbr_bank_int_rate,cbr_int_rate_loans,cbr_ruania,cbr_indicators_cpd,\
+	cbr_zcyc,cbr_mp_survey,cbr_mo_br,cbr_mp_summary,cbr_bop_est,cbr_bop_standard,\
+	cbr_dip_bulletin,cbr_mt_forecast,cbr_form101,cbr_ccyb_indicators,\
+	cbr_risk_weight_addons,cbr_mpl,cbr_mp_bsu_map,cbr_publication_calendar,\
+	rosstat_ipc_mes,rosstat_ipc_weeks,rosstat_bi_cpi_weekly,rosstat_ipc_weeks_bulletins,\
+	rosstat_labour_force_mes,rosstat_salaries_mes,rosstat_vvp_kvartal,\
+	minfin_fed_bud_mes,minfin_fed_bud_mesyats,minfin_oil_gas_mes,\
+	minfin_debt_stock,minfin_debt_service,minfin_ofz_auction,\
+	moex_market,keyrate_futures,ofz_curve,\
+	sber_consumper_spending_index,sber_izmenenie_trat,bank_company_metrics,domrf_mortgage,\
+	fedstat_weekly_prices,fedstat_ipc,news_watch,events_calendar
+# В Makefile выше стоит голый export (строка 2): без unexport имя группы с запятыми и
+# пробелами уехало бы в окружение дочернего процесса.
+unexport STATS_key_rate_sources
+
 import:
 	@test -n "$(STAT)" || { echo "укажите импортёр: make import STAT=bea"; exit 1; }
+	@if [ -n "$(STATS_$(STAT))" ]; then echo "группа $(STAT): $(STATS_$(STAT))"; fi
 	@mkdir -p $(BUILD_DIR)
 	go build -o $(BUILD_DIR)/$(BINARY)-native .
-	CLICKHOUSE_IMPORT_STAT=$(STAT) ./$(BUILD_DIR)/$(BINARY)-native
+	CLICKHOUSE_IMPORT_STAT="$(or $(STATS_$(STAT)),$(STAT))" ./$(BUILD_DIR)/$(BINARY)-native
 
 # Живой harness сравнения LLM-моделей разметки cbr_mp_summary (спека §3.4): читает документы
 # ЦБ и ClickHouse, пишет артефакты в $(CURDIR)/build/mp-llm-eval (MP_LLM_EVAL_OUT).

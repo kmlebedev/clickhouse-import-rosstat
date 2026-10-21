@@ -287,7 +287,7 @@ func TestNewsLLMBacklogLimitFromEnv(t *testing.T) {
 // по устаревшей инструкции, а данные получают старый prompt_version.
 func TestNewsPromptVersionAndRegistry(t *testing.T) {
 	prompt := newsLLMSystemPrompt()
-	const wantRevision = "Редакция инструкции: 2."
+	const wantRevision = "Редакция инструкции: 3."
 	if !strings.Contains(prompt, wantRevision) {
 		t.Fatalf("system-промпт не содержит метку редакции %q", wantRevision)
 	}
@@ -347,7 +347,7 @@ func TestNewsLLMAskOnceOK(t *testing.T) {
 		`"model":"test-model"`,
 		`"max_tokens":4096`,
 		`"temperature":0`,
-		`"system":[{"text":"Редакция инструкции: 2.`,
+		`"system":[{"text":"Редакция инструкции: 3.`,
 		`"role":"user"`,
 		inputs[0].URL,
 		inputs[0].Description,
@@ -397,7 +397,7 @@ func TestNewsLLMAskOnceOpenAI(t *testing.T) {
 		`"reasoning_effort":"none"`,
 		`"role":"system"`,
 		`"role":"user"`,
-		"Редакция инструкции: 2.",
+		"Редакция инструкции: 3.",
 		inputs[0].URL,
 		inputs[0].Description,
 	} {
