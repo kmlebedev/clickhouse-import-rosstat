@@ -135,7 +135,7 @@ func (s *FedstatAgriStat) Import(ctx context.Context, conn driver.Conn) (count i
 		}
 	}
 
-	client := util.NewDefaultTLSClient()
+	client := fedstatMacroClient()
 	pacer := &fedstatPacer{pause: fedstatMacroPause}
 	var all []fedstatAgriPoint
 	for _, item := range fedstatAgriSources {

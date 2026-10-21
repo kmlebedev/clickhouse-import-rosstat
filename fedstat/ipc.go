@@ -85,7 +85,7 @@ func (s *FedstatIPCStat) Import(ctx context.Context, conn driver.Conn) (count in
 	if err != nil {
 		return 0, err
 	}
-	client := util.NewDefaultTLSClient()
+	client := fedstatMacroClient()
 	pacer := &fedstatPacer{pause: fedstatIPCPause}
 	currentYear := time.Now().Year()
 	for _, year := range fedstatIPCSource.years {

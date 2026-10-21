@@ -104,7 +104,7 @@ func (s *FedstatIPPStat) Import(ctx context.Context, conn driver.Conn) (count in
 		}
 	}
 
-	client := util.NewDefaultTLSClient()
+	client := fedstatMacroClient()
 	pacer := &fedstatPacer{pause: fedstatMacroPause}
 	var all []fedstatIPPPoint
 	for _, item := range fedstatIPPSources {

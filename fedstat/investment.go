@@ -172,7 +172,7 @@ func (s *FedstatInvestmentStat) Import(ctx context.Context, conn driver.Conn) (c
 		}
 	}
 
-	client := util.NewDefaultTLSClient()
+	client := fedstatMacroClient()
 	pacer := &fedstatPacer{pause: fedstatMacroPause}
 	var all []fedstatInvestmentPoint
 	for _, item := range fedstatInvestmentSources {
