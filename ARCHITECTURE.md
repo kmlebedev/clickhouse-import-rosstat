@@ -1163,6 +1163,73 @@ CREATE TABLE IF NOT EXISTS fedstat_weekly_prices (
     price   Float64                  -- средняя потребительская цена, рублей
 ) ENGINE = ReplacingMergeTree ORDER BY (product, region, date);
 
+-- fedstat/ipp.go — ЕМИСС ИПП: 43046 (ОКВЭД1, 2000–2016) + 57806 (ОКВЭД2, 2015–2026),
+-- импортёр fedstat_ipp. Ключ включает okved_version: 2015–2016 есть в обоих
+-- классификаторах, ряды не склеиваются. Значение — индекс, 100 = без изменения.
+CREATE TABLE IF NOT EXISTS fedstat_ipp (
+    okved_version LowCardinality(String),  -- 'OKVED1' | 'OKVED2'
+    okved         LowCardinality(String),  -- вид деятельности; у 43046 — 'Промышленность'
+    indicator_type LowCardinality(String), -- 'К предыдущему месяцу' | '…к соответствующему…' | '…с начала года…'
+    region        LowCardinality(String),  -- 'Российская Федерация' | 'РФ без учёта новых субъектов'
+    date          Date,                    -- первое число месяца
+    value         Float64                  -- индекс, процент
+) ENGINE = ReplacingMergeTree ORDER BY (okved_version, okved, indicator_type, region, date);
+
+-- fedstat/retail.go — ЕМИСС розница: 31066 (индекс физобъёма) + 31260 (оборот),
+-- импортёр fedstat_retail. period — подпись периода источника: у накопительных
+-- периодов дата начала одна (1 января), без period ReplacingMergeTree схлопнул бы
+-- «январь-март»/«январь-июнь»/…; indicator_type различает два вида показателя 31066.
+CREATE TABLE IF NOT EXISTS fedstat_retail (
+    series        LowCardinality(String),  -- 'index' | 'turnover'
+    indicator_type LowCardinality(String), -- 'К предыдущему месяцу' | 'К соответствующему периоду предыдущего года' | 'Оборот розничной торговли'
+    subject       LowCardinality(String),  -- 'Всего' | 'Розничные рынки и ярмарки' | 'Торгующие организации'
+    region        LowCardinality(String),  -- 'Российская Федерация' | 'РФ без учёта новых субъектов'
+    period_type   LowCardinality(String),  -- 'M' | 'CUM'
+    period        LowCardinality(String),  -- 'январь' | 'январь-март' | …
+    date          Date,                    -- начало периода
+    value         Float64,
+    unit          LowCardinality(String)   -- 'процент' | 'миллион рублей'
+) ENGINE = ReplacingMergeTree ORDER BY (series, indicator_type, subject, region, period_type, period, date);
+
+-- fedstat/agri.go — ЕМИСС сельхоз: 34128 (квартальный индекс), 59001/31062
+-- (годовой индекс), 43337 (стоимость); импортёр fedstat_agri. series различает
+-- index_q/index_y/value_y; activity и category — подписи источника.
+CREATE TABLE IF NOT EXISTS fedstat_agri (
+    series        LowCardinality(String),  -- 'index_q' | 'index_y' | 'value_y'
+    activity      LowCardinality(String),  -- 'Сельское хозяйство' | 'Растениеводство' | 'Животноводство'
+    category      LowCardinality(String),  -- 'Хозяйства всех категорий' | …
+    region        LowCardinality(String),
+    period_type   LowCardinality(String),  -- 'Q' | 'Y'
+    date          Date,                    -- начало квартала / года
+    value         Float64,
+    unit          LowCardinality(String)   -- 'процент' | 'миллион рублей'
+) ENGINE = ReplacingMergeTree ORDER BY (series, activity, category, region, date);
+
+-- fedstat/investment.go — ЕМИСС инвестиции: 58089/58090 (2017–2026), 34129/40562/34475
+-- (история); импортёр fedstat_investment. period обязателен по той же причине, что
+-- в fedstat_retail; indicator_id различает источники, summary_type — круг организаций.
+CREATE TABLE IF NOT EXISTS fedstat_investment (
+    series        LowCardinality(String),  -- 'index' | 'value'
+    indicator_id  LowCardinality(String),  -- '58089' | '58090' | '34129' | '40562' | '34475'
+    summary_type  LowCardinality(String),  -- 'Полный круг' | 'Всего'
+    region        LowCardinality(String),
+    period_type   LowCardinality(String),  -- 'Q' | 'CUM' | 'Y'
+    period        LowCardinality(String),  -- 'январь-июнь' | 'II квартал' | …
+    date          Date,
+    value         Float64,
+    unit          LowCardinality(String)   -- 'процент' | 'тысяча рублей' | 'миллион рублей'
+) ENGINE = ReplacingMergeTree ORDER BY (series, indicator_id, summary_type, region, period_type, period, date);
+
+-- fedstat/ipc.go — ЕМИСС 31074: индексы потребительских цен на товары и услуги,
+-- импортёр fedstat_ipc. Тип — только «К предыдущему месяцу»; product — имя из Excel.
+CREATE TABLE IF NOT EXISTS fedstat_ipc (
+    product       LowCardinality(String),  -- товар/услуга; имя из Excel (1 105)
+    indicator_type LowCardinality(String), -- 'К предыдущему месяцу'
+    region        LowCardinality(String),  -- 'Российская Федерация' | 'РФ без учёта новых субъектов'
+    date          Date,                    -- первое число месяца
+    value         Float64                  -- индекс, процент
+) ENGINE = ReplacingMergeTree ORDER BY (product, indicator_type, region, date);
+
 -- minfin/fedbud_mes.go, minfin/fedbud_mesyats.go — исполнение федерального и
 -- консолидированного бюджета (импортёры minfin_fed_bud_mes и minfin_fed_bud_mesyats;
 -- пункт key-rate/phase-2-minfin-refactor, issue #233): лист «месяц», значения в источнике
