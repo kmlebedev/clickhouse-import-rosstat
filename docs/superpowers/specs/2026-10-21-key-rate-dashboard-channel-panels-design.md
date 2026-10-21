@@ -22,7 +22,7 @@ Grafana-дашборд `key-rate-publications` покрывал 7 из 11 кан
 |---|---|---|---|---|
 | `cbr_currency_usd` | `v_cbr_macro` | 3 403 | 2013-01-10 … 2026-10-17 | руб. за 1 USD |
 | `brent_front` | `v_moex_market` | 3 916 | 2009-10-01 … 2026-10-19 | USD/барр. |
-| `Счет текущих операций (квартал)`, `source='cbr_bop_standard'` | `v_cbr_bop` | 134 | 1994-03-31 … 2026-06-30 | млн USD |
+| `Счет текущих операций (квартал)`, `source='cbr_bop_standard'` | `v_cbr_bop` | 130 | 1994-03-31 … 2026-06-30 | млн USD |
 | `Счет текущих операций (месяц)`, `source='cbr_bop_est'` | `v_cbr_bop` | 4 | 2025-07-31 … 2026-08-31 | млрд USD |
 | `Депозиты населения` | `v_cbr_macro` | 141 | 2015-01-01 … 2026-09-01 | млн руб. |
 | `business_climate_sa` | `v_cbr_survey` | 297 | 2002-01-01 … 2026-09-01 | пункты |
@@ -154,8 +154,8 @@ ORDER BY date
 
 ## 6. Тесты (`grafana/key_rate_publications_test.go`)
 
-- Состав дашборда: 28 панелей; 5 рядов с явными id `[21, 22, 23, 24, 34]` и заголовками (старая проверка вычисляла диапазон id — с рядом 34 её надо переписать).
-- `TestKeyRateChannelPanels`: заголовки, unit слева, число и refId таргетов, `FROM v_*`, `series`/`source`, `$__timeFilter`, `ORDER BY`; правые оси и unit-override для 29 B, 31 B, 32 C, 33 C/D.
+- Состав дашборда: 28 панелей; 5 рядов с явными id `[21, 22, 23, 24, 34]` и заголовками (старая проверка вычисляла диапазон id; с рядом 34 она переписана на явные id).
+- Панели по одной: `TestKeyRateChannelPanelTitlesAndUnits` (заголовки, units, число таргетов), `TestKeyRateExternalFxPanel`, `TestKeyRateExternalBopPanel`, `TestKeyRateSavingsPanel`, `TestKeyRateOutputGapPanel`, `TestKeyRateAutonomousFactorsPanel` — `FROM v_*`, `series`/`source`, `$__timeFilter`, `ORDER BY`, правые оси и unit-override; состав и id — `TestKeyRatePublicationsHasTwentyEightPanels`, `TestKeyRatePublicationsRowTitles`, `TestKeyRateSpecConventions`.
 - Разрежённые серии: 30 B — `pointsOnlyProps`.
 - Окно 31 B: `$__timeFilter` ровно один, снаружи подзапроса, `lagInFrame(value, 1, NULL)`.
 - Оговорки в `Description`: Brent «не спот»; депозиты «ФЛ + ИП»; ccyb «2024-10» и «не ноль».
