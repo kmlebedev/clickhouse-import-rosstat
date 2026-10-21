@@ -40,10 +40,16 @@ ssh palmshell 'install -m 600 /dev/null /etc/clickhouse-import-rosstat.env'
 #    cbr_mt_forecast и polyus_financial_metrics; no-op-прогоны утилиту не вызывают
 ssh palmshell 'apt install -y poppler-utils'
 
-# 3. Развернуть
+# 3. Поставить R и пакет seasonal для шага ppi_sa (dagu/ppi.yaml, X-13):
+#    без них шаг падает до записи; Go-тесты и остальные импортёры R не требуют.
+#    Для сборки пакета может понадобиться r-base-dev и системные библиотеки.
+ssh palmshell 'apt install -y r-base r-base-dev'
+ssh palmshell 'Rscript -e "install.packages(\"seasonal\", repos=\"https://cloud.r-project.org\")"'
+
+# 4. Развернуть
 make deploy-staging
 
-# 4. Создать пользователя kimi_reader (если ещё нет)
+# 5. Создать пользователя kimi_reader (если ещё нет)
 CH_SETUP_PASSWORD=<пароль default> make mcp-user-staging
 ```
 
