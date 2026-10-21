@@ -15,7 +15,7 @@ import (
 const KeyRatePublicationsUID = "key-rate-publications"
 
 // firstKeyRateRowID — id первого ряда (21): нулевой или совпавший с панелью id Grafana трактует
-// как «не задан» и заменит своим, поэтому ряды нумеруются вне диапазона панелей 1..33.
+// как «не задан» и заменит своим, поэтому ряды нумеруются вне диапазона панелей 1..19, 25–33, 35.
 const firstKeyRateRowID = 21
 
 // channelRowID — id пятого ряда (34): он идёт после панелей 29–33, поэтому не может взять
@@ -116,6 +116,27 @@ ORDER BY time
 // (зарплата, v_rosstat_macro) различаются только витриной, кодом ряда и алиасом.
 func krYoYSQL(view, series, alias string) string {
 	return fmt.Sprintf(krYoYTemplate, alias, view, series)
+}
+
+// krBankLoansYoYTemplate — годовой темп кредитного портфеля банка: сумма кредитов ЮЛ и ФЛ считается
+// ДО расчёта темпа (lagInFrame по сумме, а не среднее из двух темпов), окно — по полному ряду,
+// фильтр времени снаружи подзапроса. Обе метрики — gross: customer_loans в витрине netto и у Сбера
+// обрывается 2026-06, поэтому в один ряд с gross не смешивается. %s по порядку: алиас серии, банк.
+const krBankLoansYoYTemplate = `SELECT time, yoy AS %s
+FROM (
+    SELECT report_month AS time,
+           sum(value_bln_rub) / nullIf(lagInFrame(sum(value_bln_rub), 12) OVER (ORDER BY report_month), 0) - 1 AS yoy
+    FROM v_bank_loan_portfolio_forward
+    WHERE bank = '%s' AND metric IN ('loans_corporations', 'loans_individuals')
+    GROUP BY report_month
+)
+WHERE $__timeFilter(time)
+ORDER BY time
+`
+
+// krBankLoansYoYSQL собирает запрос годового темпа кредитов банка по шаблону.
+func krBankLoansYoYSQL(bank, alias string) string {
+	return fmt.Sprintf(krBankLoansYoYTemplate, alias, bank)
 }
 
 // krSalarySeries — код ряда среднемесячной зарплаты в v_rosstat_macro: длинное имя, которое
@@ -374,8 +395,9 @@ ORDER BY time
 // krPanelDefaults — общие визуальные конвенции дашборда (выведены из UI-экспорта): палитра classic,
 // легенда снизу таблицей с calcs (последнее/среднее/максимум), tooltip по одной серии, линия
 // шириной 1 без заливки, градиента и соединения разрывов (spanNulls false — разрыв недельного
-// ряда честно остаётся разрывом). Панели добавляют свои Id/Title/Description/Span и таргеты поверх:
-// так конвенции не разъезжаются между рядами по мере роста дашборда.
+// ряда честно остаётся разрывом). Интерполяция — smooth: соседние месячные точки соединяются
+// сглаженной линией, а не ломаной (значения при этом не сглаживаются). Панели добавляют свои
+// Id/Title/Description/Span и таргеты поверх: так конвенции не разъезжаются между рядами.
 func krPanelDefaults(builder *timeseries.PanelBuilder) *timeseries.PanelBuilder {
 	return builder.
 		Datasource(datasourceRef()).
@@ -389,6 +411,7 @@ func krPanelDefaults(builder *timeseries.PanelBuilder) *timeseries.PanelBuilder 
 			Mode(common.TooltipDisplayModeSingle).
 			Sort(common.SortOrderNone)).
 		LineWidth(1).
+		LineInterpolation(common.LineInterpolationSmooth).
 		FillOpacity(0).
 		GradientMode(common.GraphGradientModeNone).
 		SpanNulls(common.BoolOrFloat64{Bool: ptr(false)})
@@ -403,13 +426,19 @@ func krFixedColorProp(color string) dashboard.DynamicConfigValue {
 	}
 }
 
-// krPastYearProps — свойства серии прошлого года панели 2: пунктир из UI-экспорта, чтобы
-// календарное наложение не читалось как ещё один ряд текущего года.
-func krPastYearProps() []dashboard.DynamicConfigValue {
+// krDashedProps — пунктирная линия: серия-референс не должна читаться как ещё один равноправный
+// ряд (прошлый год панели 2, М2 на панели 35).
+func krDashedProps() []dashboard.DynamicConfigValue {
 	return []dashboard.DynamicConfigValue{{
 		Id:    "custom.lineStyle",
 		Value: common.LineStyle{Dash: []float64{10, 10}, Fill: ptr(common.LineStyleFillDash)},
 	}}
+}
+
+// krPastYearProps — свойства серии прошлого года панели 2: пунктир из UI-экспорта, чтобы
+// календарное наложение не читалось как ещё один ряд текущего года.
+func krPastYearProps() []dashboard.DynamicConfigValue {
+	return krDashedProps()
 }
 
 // krFourPercentThresholds — порог 4% годовых панелей 2 и 4: цель ЦБ по инфляции. Значения серий —
@@ -443,10 +472,10 @@ func krZeroThresholds() *dashboard.ThresholdsConfigBuilder {
 }
 
 // NewKeyRatePublications собирает дашборд «Ключевая ставка — публикации». Собраны ряды 21 «Ставка
-// и инфляция» (панели 1–5), 22 «Деньги, кредит, бюджет, труд» (панели 6–10), 23 «Рыночный контур»
-// (панели 11–14 и 25–28), 24 «Сигнал, консенсус, календарь» (панели 15–19) и 34 «Остальные каналы
-// решения» (панели 29–33) — полный контракт спеки §5. Порядок вызовов WithRow/WithPanel задаёт
-// и порядок сетки, и нумерацию панелей.
+// и инфляция» (панели 1–5), 22 «Деньги, кредит, бюджет, труд» (панели 6–10 и 35), 23 «Рыночный
+// контур» (панели 11–14 и 25–28), 24 «Сигнал, консенсус, календарь» (панели 15–19) и 34 «Остальные
+// каналы решения» (панели 29–33) — полный контракт спеки §5. Порядок вызовов WithRow/WithPanel
+// задаёт и порядок сетки, и нумерацию панелей.
 func NewKeyRatePublications() *dashboard.DashboardBuilder {
 	return dashboard.NewDashboardBuilder("Ключевая ставка — публикации").
 		Uid(KeyRatePublicationsUID).
@@ -461,6 +490,7 @@ func NewKeyRatePublications() *dashboard.DashboardBuilder {
 		WithPanel(krInflationPanel()).
 		WithPanel(krExpectationsPanel()).
 		WithRow(dashboard.NewRowBuilder("Деньги, кредит, бюджет, труд").Id(firstKeyRateRowID + 1)).
+		WithPanel(krBankLoansPanel()).
 		WithPanel(krMoneyCreditPanel()).
 		WithPanel(krCreditRatesPanel()).
 		WithPanel(krBudgetPanel()).
@@ -577,6 +607,34 @@ func krExpectationsPanel() *timeseries.PanelBuilder {
 			{Id: "unit", Value: units.Short},
 			krFixedColorProp("text"),
 		})
+}
+
+// krBankLoansPanel — панель 35: кредиты, выданные банками (Сбер, ВТБ), как опережающий срез
+// месячных данных по М2. Сумма кредитов ЮЛ и ФЛ — gross (до резервов): customer_loans в витрине
+// netto и у Сбера обрывается 2026-06, поэтому с gross не смешивается. М2 SA — пунктирный референс:
+// месячный агрегат ЦБ выходит позже отчётов банков, и по панели видно, насколько кредит банков
+// опережает динамику денежной массы. Значения — доли г/г, поэтому percentunit и нулевой порог.
+func krBankLoansPanel() *timeseries.PanelBuilder {
+	return krPanelDefaults(timeseries.NewPanelBuilder()).
+		Id(35).
+		Title("Кредиты банков (Сбер, ВТБ) — опережающий срез М2, г/г").
+		Span(24).
+		Description("Годовой темп кредитов, выданных банками: сумма кредитов ЮЛ и ФЛ (gross, до резервов) "+
+			"по v_bank_loan_portfolio_forward для Сбера (РСБУ) и ВТБ (МСФО). Темп считается по сумме — "+
+			"value к значению 12 месяцев назад − 1, окном по полному ряду; фильтр времени снаружи "+
+			"подзапроса. Это опережающий срез кредитной составляющей М2: отчёты банков за месяц выходят "+
+			"раньше денежной статистики ЦБ (Сбер за сентябрь — 09.10.2026), а М2 SA (v_cbr_macro) "+
+			"показана пунктиром как референс. Оговорки: customer_loans — netto и у Сбера кончается "+
+			"2026-06, поэтому не используется; базы РСБУ и МСФО разные — сравнивать темпы банков между "+
+			"собой нельзя, только динамику каждого с М2. Пропуск ВТБ за 2026-01 — разрыв источника, "+
+			"а не ноль. Значения — доли (Grafana печатает «11.9%»).").
+		WithTarget(timeseriesQuery("A", krBankLoansYoYSQL("SBER", `"Сбер: кредиты ЮЛ+ФЛ, г/г"`))).
+		WithTarget(timeseriesQuery("B", krBankLoansYoYSQL("VTBR", `"ВТБ: кредиты ЮЛ+ФЛ, г/г"`))).
+		WithTarget(timeseriesQuery("C", krYoYSQL("v_cbr_macro", "М2 SA", `"М2 SA, г/г — референс"`))).
+		Unit(units.PercentUnit).
+		Thresholds(krZeroThresholds()).
+		ThresholdsStyle(krThresholdLineStyle()).
+		OverrideByQuery("C", krDashedProps())
 }
 
 // krMoneyCreditPanel — панель 6: годовые темпы денежной массы (М2 SA) и кредита экономике.
