@@ -22,6 +22,26 @@ const firstKeyRateRowID = 21
 // следующий по порядку id 25 — тот уже занят панелью долгового контура ОФЗ.
 const channelRowID = 34
 
+// pricesRowID — id шестого ряда (40): панели 36–39 заняли id, поэтому ряд берёт следующий
+// свободный вне диапазона панелей — иначе Grafana трактует совпавший id как «не задан».
+const pricesRowID = 40
+
+// krWeeklyHistoryStart — начало сопоставимого недельного ряда: лист nedel_Ipc.xlsx
+// (rosstat_ipc_weeks) начинается 2022-01-10, а до этой даты недельные ряды собраны из
+// бюллетеней «Оперативной информации» с другим набором позиций. Средняя по разному набору
+// несравнима, поэтому полный ряд и 4-недельное окно стартуют здесь.
+const krWeeklyHistoryStart = "2022-01-10"
+
+// krWeeklyAggregateSeries — официальная недельная оценка ИПЦ (агрегатный ряд бюллетеней и
+// BI-выгрузки). Это отдельная серия каталога, а не средняя по товарам: у неё своя история, и
+// она отстаёт от товарного слоя на неделю.
+const krWeeklyAggregateSeries = "Индекс потребительских цен (недельная оценка)"
+
+// krFedstatRegion — регион ценовой панели: 2008–2022 годы в источнике — «Российская Федерация»,
+// 2026 — «без учёта новых субъектов». В панель берём только первый: иначе линия получила бы
+// разрыв 2023–2025 и смену территориального определения.
+const krFedstatRegion = "Российская Федерация"
+
 // krMacroValueTemplate — срез витрины v_cbr_macro «дата + значение» по коду ряда: так читаются
 // ключевая ставка (панель 1) и инфляционные ожидания (панель 5) — форма одна, различаются только
 // код ряда и алиас. Первый %s — алиас серии, второй — код ряда.
@@ -70,6 +90,56 @@ WHERE c.frequency = 'W' AND $__timeFilter(date)
 GROUP BY date
 ORDER BY date
 `
+
+// krWeeklyHistorySQL — полный ряд недельного индекса панели 36: средняя по недельным товарным
+// рядам, годовое выражение (степень 52). Отличие от панели 2 — нет годового фильтра: ряд идёт
+// с krWeeklyHistoryStart до последней недели, поэтому на графике видна вся история с 2022.
+const krWeeklyHistorySQL = `SELECT date AS time, pow(avg(value) / 100, 52) - 1 AS "Недельное, годовое выражение"
+FROM v_rosstat_macro AS w
+INNER JOIN v_series_catalog AS c ON c.source = w.source AND c.series = w.series
+WHERE c.frequency = 'W' AND date >= '` + krWeeklyHistoryStart + `' AND $__timeFilter(date)
+GROUP BY date
+ORDER BY date
+`
+
+// krWeeklyGoodsIndexSQL — подзапрос 4-недельной средней: индекс по дате, усреднённый по всем
+// недельным товарным рядам каталога (та же база, что у панели 2).
+const krWeeklyGoodsIndexSQL = `SELECT date AS time, avg(value) AS idx
+FROM v_rosstat_macro AS w
+INNER JOIN v_series_catalog AS c ON c.source = w.source AND c.series = w.series
+WHERE c.frequency = 'W' AND date >= '` + krWeeklyHistoryStart + `'
+GROUP BY date`
+
+// krWeeklyAggregateIndexSQL — подзапрос 4-недельной средней по официальному агрегату: одна
+// серия, поэтому idx — само значение. JOIN каталога оставлен намеренно: он подтверждает, что
+// ряд недельный, и держит правило «недельные ряды отбираются каталогом» в каждом недельном запросе.
+const krWeeklyAggregateIndexSQL = `SELECT date AS time, value AS idx
+FROM v_rosstat_macro AS w
+INNER JOIN v_series_catalog AS c ON c.source = w.source AND c.series = w.series
+WHERE c.frequency = 'W' AND c.series = '` + krWeeklyAggregateSeries + `' AND date >= '` + krWeeklyHistoryStart + `'`
+
+// krWeeklyAvg4Template — 4-недельная средняя недельного индекса, приведённая к году: окно —
+// четыре последние недели, внутри — геометрическое среднее (avg логарифмов + exp), затем
+// степень 52 («если бы средний за 4 недели недельный темп держался весь год»). Эквивалент —
+// накопленный за 4 недели рост в степень 13. n = 4 отбрасывает первые три точки: окно по 1–3
+// неделям дало бы ложный отсчёт. %s по порядку: алиас серии, подзапрос «дата + индекс».
+const krWeeklyAvg4Template = `SELECT time, y AS %s
+FROM (
+    SELECT time,
+           pow(exp(avg(ln(idx / 100)) OVER (ORDER BY time ROWS BETWEEN 3 PRECEDING AND CURRENT ROW)), 52) - 1 AS y,
+           count() OVER (ORDER BY time ROWS BETWEEN 3 PRECEDING AND CURRENT ROW) AS n
+    FROM (
+        %s
+    )
+)
+WHERE n = 4 AND $__timeFilter(time)
+ORDER BY time
+`
+
+// krWeeklyAvg4SQL собирает запрос 4-недельной средней: панель 36 читает обе базы одной формой.
+func krWeeklyAvg4SQL(indexSubquery, alias string) string {
+	return fmt.Sprintf(krWeeklyAvg4Template, alias, indexSubquery)
+}
 
 // krCPIAnnualizedSQL — ИПЦ: в витрине индекс потребительских цен (100 = без изменения),
 // поэтому годовое выражение — pow(индекс/100, 12) - 1.
@@ -392,6 +462,82 @@ WHERE $__timeFilter(time)
 ORDER BY time
 `
 
+// krPPIMMAnnualSQL — годовое выражение месячного ИЦП: индекс к прошлому месяцу (100 = без
+// изменения) возводится в степень 12. Длинный ряд — с 1998 года.
+const krPPIMMAnnualSQL = `SELECT date AS time, pow(value / 100, 12) - 1 AS "ИЦП, м/м → годовое выражение"
+FROM v_rosstat_ppi
+WHERE series = 'ИЦП по ВЭД, РФ, m/m' AND $__timeFilter(date)
+ORDER BY date
+`
+
+// krPPIYYAnnualSQL — официальный г/г: в витрине уже индекс к прошлому году, поэтому темп —
+// value / 100 - 1, без степени. Формула другая, чем у м/м (индекс против темпа), и это
+// подписано в Description панели 37.
+const krPPIYYAnnualSQL = `SELECT date AS time, value / 100 - 1 AS "ИЦП, г/г (официальный)"
+FROM v_rosstat_ppi
+WHERE series = 'ИЦП по ВЭД, РФ, y/y' AND $__timeFilter(date)
+ORDER BY date
+`
+
+// krPPISAARTemplate — срез ppi_sa: SAAR 3м уже в процентах, поэтому значение отдаётся как есть
+// (никакого pow — иначе годовой темп возвёлся бы в квадрат). %s по порядку: алиас, код ряда.
+const krPPISAARTemplate = `SELECT date AS time, value AS %s
+FROM v_rosstat_ppi
+WHERE series = '%s' AND $__timeFilter(date)
+ORDER BY date
+`
+
+// krPPISAARSQL собирает запрос слоя ppi_sa по шаблону.
+func krPPISAARSQL(series, alias string) string {
+	return fmt.Sprintf(krPPISAARTemplate, alias, series)
+}
+
+// krFAOTemplate — индекс ФАО по месяцу наблюдения: date витрины — дата публикации (1-е число
+// следующего месяца), period_date — сам месяц наблюдения. Панель читает period_date, иначе
+// картинка сдвинута на месяц. %s по порядку: алиас, код ряда.
+const krFAOTemplate = `SELECT period_date AS time, value AS %s
+FROM v_fao_food_price
+WHERE series = '%s' AND $__timeFilter(period_date)
+ORDER BY period_date
+`
+
+// krFAOSQL собирает запрос индекса ФАО по шаблону.
+func krFAOSQL(series, alias string) string {
+	return fmt.Sprintf(krFAOTemplate, alias, series)
+}
+
+// krFedstatPrice — позиция ценовой панели: код ряда витрины (он же название товара с единицей
+// измерения) и короткий алиас для легенды.
+type krFedstatPrice struct {
+	series string
+	alias  string
+}
+
+// krFedstatPrices — шесть позиций панели 39: еда и моторное топливо, которые читаются на одной
+// оси 50–760 ₽. Хлеб не взят: у позиции в 2022 сменилось название ряда, и две серии не сшиваются.
+var krFedstatPrices = []krFedstatPrice{
+	{series: "Говядина (кроме бескостного мяса), кг", alias: `"Говядина, ₽/кг"`},
+	{series: "Куры охлажденные и мороженые, кг", alias: `"Куры, ₽/кг"`},
+	{series: "Молоко питьевое цельное пастеризованное 2,5-3,2% жирности, л", alias: `"Молоко 2,5–3,2 %, ₽/л"`},
+	{series: "Картофель, кг", alias: `"Картофель, ₽/кг"`},
+	{series: "Яйца куриные, 10 шт.", alias: `"Яйца, ₽/10 шт."`},
+	{series: "Бензин автомобильный марки АИ-92, л", alias: `"Бензин АИ-92, ₽/л"`},
+}
+
+// krFedstatPriceTemplate — уровень цены в рублях: region входит в запрос, потому что 2026 год
+// публикуется в другом определении РФ и в панель не берётся (иначе — разрыв 2023–2025 и смена
+// территориального определения). %s по порядку: алиас, ряд, регион.
+const krFedstatPriceTemplate = `SELECT date AS time, value AS %s
+FROM v_fedstat_weekly_prices
+WHERE series = '%s' AND region = '%s' AND $__timeFilter(date)
+ORDER BY date
+`
+
+// krFedstatPriceSQL собирает запрос средней цены по шаблону.
+func krFedstatPriceSQL(p krFedstatPrice) string {
+	return fmt.Sprintf(krFedstatPriceTemplate, p.alias, p.series, krFedstatRegion)
+}
+
 // krPanelDefaults — общие визуальные конвенции дашборда (выведены из UI-экспорта): палитра classic,
 // легенда снизу таблицей с calcs (последнее/среднее/максимум), tooltip по одной серии, линия
 // шириной 1 без заливки, градиента и соединения разрывов (spanNulls false — разрыв недельного
@@ -486,6 +632,7 @@ func NewKeyRatePublications() *dashboard.DashboardBuilder {
 		WithRow(dashboard.NewRowBuilder("Ставка и инфляция").Id(firstKeyRateRowID)).
 		WithPanel(krRatePanel()).
 		WithPanel(krWeeklyAnnualizedPanel()).
+		WithPanel(krWeeklyAvg4Panel()).
 		WithPanel(krWeeklyRisersPanel()).
 		WithPanel(krInflationPanel()).
 		WithPanel(krExpectationsPanel()).
@@ -516,7 +663,11 @@ func NewKeyRatePublications() *dashboard.DashboardBuilder {
 		WithPanel(krExternalBopPanel()).
 		WithPanel(krSavingsPanel()).
 		WithPanel(krOutputGapPanel()).
-		WithPanel(krAutonomousFactorsPanel())
+		WithPanel(krAutonomousFactorsPanel()).
+		WithRow(dashboard.NewRowBuilder("Цены производителей, продовольствие, средние цены").Id(pricesRowID)).
+		WithPanel(krPPIPanel()).
+		WithPanel(krFAOPanel()).
+		WithPanel(krFedstatPricesPanel())
 }
 
 // krRatePanel — панель 1: ключевая ставка линией и точки решений ЦБ. Ставка — уровень на дату,
@@ -1108,4 +1259,97 @@ func krAutonomousFactorsPanel() *timeseries.PanelBuilder {
 			{Id: "unit", Value: units.Percent},
 			axisPlacementRightProp(),
 		})
+}
+
+// krWeeklyAvg4Panel — панель 36: недельные цены в годовом выражении на полной истории с
+// 2022-01-10 и две 4-недельные средние. Панель 2 режет ряд по годам (календарное наложение),
+// поэтому полная история живёт здесь; окно панели — 5 лет, иначе общий диапазон дашборда
+// (now-3y) срезал бы 2022 год и требование «ряд с 2022» не выполнялось бы.
+func krWeeklyAvg4Panel() *timeseries.PanelBuilder {
+	return krPanelDefaults(timeseries.NewPanelBuilder()).
+		Id(36).
+		Title("Недельные цены: 4-недельная средняя, годовое выражение").
+		Span(spanHalf).
+		TimeFrom("5y").
+		Description("Средний недельный индекс цен недельных товарных рядов (v_rosstat_macro, отбор — " +
+			"v_series_catalog.frequency = 'W') в годовом выражении: pow(индекс/100, 52) - 1 — «если бы такая " +
+			"неделя шла весь год». Это не SAAR и не сезонная корректировка. 4-нед. средняя — геометрическое " +
+			"среднее четырёх последних недель, приведённое к году той же степенью 52 (эквивалент: накопленный " +
+			"за 4 недели рост в степень 13); первые три недели ряда не показываются — окно по ним неполное. " +
+			"История с 2022-01-10: до этой даты недельные ряды собраны из бюллетеней с другим набором позиций, " +
+			"и средние несравнимы. Серия «недельный ИПЦ» — официальный агрегат «Индекс потребительских цен " +
+			"(недельная оценка)», он отстаёт от товарного слоя на неделю. Порог 4 % — цель ЦБ.").
+		WithTarget(timeseriesQuery("A", krWeeklyHistorySQL)).
+		WithTarget(timeseriesQuery("B", krWeeklyAvg4SQL(krWeeklyGoodsIndexSQL, `"4-нед. средняя (товары)"`))).
+		WithTarget(timeseriesQuery("C", krWeeklyAvg4SQL(krWeeklyAggregateIndexSQL, `"4-нед. средняя (недельный ИПЦ)"`))).
+		Unit(units.PercentUnit).
+		Thresholds(krFourPercentThresholds()).
+		ThresholdsStyle(krThresholdLineStyle())
+}
+
+// krPPIPanel — панель 37: ИЦП в годовом выражении. Две разные формулы (индекс к прошлому месяцу
+// против индекса к прошлому году) и два разных начала ряда — подписаны в Description. Порог 4 %
+// не ставится: это цель по потребительской инфляции, а не по ценам производителей.
+func krPPIPanel() *timeseries.PanelBuilder {
+	return krPanelDefaults(timeseries.NewPanelBuilder()).
+		Id(37).
+		Title("ИЦП: годовое выражение").
+		Span(spanHalf).
+		TimeFrom("10y").
+		Description("ИЦП по ВЭД (Промышленность, v_rosstat_ppi). «м/м → годовое выражение» = " +
+			"pow(индекс/100, 12) - 1 с 1998: индекс к прошлому месяцу, приведённый к году. «г/г» = " +
+			"индекс/100 - 1 с 2021: это уже темп к прошлому году, степень к нему не применяется. " +
+			"«SAAR 3м» — сезонно скорректированный слой ppi_sa (X-13ARIMA-SEATS), «ядро» — KIPC food + " +
+			"non-food; это расчёт контура, а не официальный ряд. Порога 4 % здесь нет: 4 % — цель ЦБ по " +
+			"потребительской инфляции, на цены производителей она не распространяется.").
+		WithTarget(timeseriesQuery("A", krPPIMMAnnualSQL)).
+		WithTarget(timeseriesQuery("B", krPPIYYAnnualSQL)).
+		WithTarget(timeseriesQuery("C", krPPISAARSQL("ppi_sa:total:saar3", `"ИЦП SA: SAAR 3м"`))).
+		WithTarget(timeseriesQuery("D", krPPISAARSQL("ppi_sa:core:saar3", `"ИЦП SA: SAAR 3м, ядро"`))).
+		Unit(units.PercentUnit)
+}
+
+// krFAOPanel — панель 38: индексы продовольственных цен ФАО. Время — месяц наблюдения
+// (period_date), а не дата публикации: иначе весь ряд сдвинут на месяц вперёд.
+func krFAOPanel() *timeseries.PanelBuilder {
+	return krPanelDefaults(timeseries.NewPanelBuilder()).
+		Id(38).
+		Title("ФАО: индексы продовольственных цен").
+		Span(spanHalf).
+		TimeFrom("10y").
+		Description("Индексы продовольственных цен ФАО (v_fao_food_price): сводный и пять подиндексов, " +
+			"номинальные, 2014-2016 = 100; real-индекса в источнике нет. По оси времени — period_date " +
+			"(месяц наблюдения); date витрины — дата публикации (1-е число следующего месяца), и на " +
+			"графике она сдвинула бы ряд на месяц. Это внешний фон продовольственной инфляции, а не " +
+			"российские цены.").
+		WithTarget(timeseriesQuery("A", krFAOSQL("Food Price Index", `"ФАО: сводный"`))).
+		WithTarget(timeseriesQuery("B", krFAOSQL("Cereals", `"ФАО: зерновые"`))).
+		WithTarget(timeseriesQuery("C", krFAOSQL("Dairy", `"ФАО: молочные"`))).
+		WithTarget(timeseriesQuery("D", krFAOSQL("Meat", `"ФАО: мясо"`))).
+		WithTarget(timeseriesQuery("E", krFAOSQL("Oils", `"ФАО: масла"`))).
+		WithTarget(timeseriesQuery("F", krFAOSQL("Sugar", `"ФАО: сахар"`))).
+		Unit(units.Short)
+}
+
+// krFedstatPricesPanel — панель 39: средние потребительские цены в рублях (ЕМИСС 37426). Только
+// регион «Российская Федерация»: 2026 год публикуется в другом определении РФ, и без фильтра
+// линия получила бы разрыв 2023–2025 и смену территории. Окно панели — 20 лет: ряд кончается
+// 2022-12-26, и при общем диапазоне дашборда (now-3y) панель была бы пустой.
+func krFedstatPricesPanel() *timeseries.PanelBuilder {
+	builder := krPanelDefaults(timeseries.NewPanelBuilder()).
+		Id(39).
+		Title("Средние потребительские цены (ФЕДСТАТ), ₽").
+		Span(spanHalf).
+		TimeFrom("20y").
+		Description("Средние потребительские цены ЕМИСС (v_fedstat_weekly_prices), рубли за единицу из " +
+			"названия ряда (кг, л, 10 шт.) — это уровень цены, а не индекс: изменение за n недель = " +
+			"value_t / value_(t−n) − 1. Ряд идёт 2008-01-09 … 2022-12-26: в 2023–2025 источник данных не " +
+			"отдаёт, а 2026 публикуется в другом определении РФ («без учёта новых субъектов») и в панель " +
+			"не взят — поэтому линия непрерывна и заканчивается 2022-12-26. Окно панели — 20 лет, чтобы " +
+			"история читалась независимо от общего диапазона дашборда.").
+		Unit(units.Rubles)
+	for i, p := range krFedstatPrices {
+		builder = builder.WithTarget(timeseriesQuery(string(rune('A'+i)), krFedstatPriceSQL(p)))
+	}
+	return builder
 }
