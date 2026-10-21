@@ -222,7 +222,8 @@ func TestNewsViewStatementsShape(t *testing.T) {
 				// У пары (url, content_hash) может быть несколько doc-строк (модели/редакции):
 				// витрине нужна одна — последняя.
 				"LIMIT 1 BY url, content_hash",
-				"groupArrayIf(tuple(t.dimension, t.tag, t.direction), t.tag != '') AS tags",
+				"groupArrayIf(tuple(t.dimension, ",
+				", t.direction), t.tag != '') AS tags",
 				// Пустой content_hash — строка до миграции: в JOIN не участвует.
 				"content_hash != ''",
 				"ORDER BY date DESC",
@@ -251,7 +252,8 @@ func TestNewsViewStatementsShape(t *testing.T) {
 				// другой редакции промпта.
 				"d.url = v.url AND d.content_hash = v.content_hash",
 				"t.model = d.model AND t.prompt_version = d.prompt_version",
-				"groupArrayIf(tuple(t.dimension, t.tag, t.direction), t.tag != '') AS tags",
+				"groupArrayIf(tuple(t.dimension, ",
+				", t.direction), t.tag != '') AS tags",
 				"WHERE v.last_deleted = 0",
 				"GROUP BY v.date",
 				"ORDER BY date DESC, message_id DESC",
@@ -378,6 +380,32 @@ func newsViewCommentStatements(name string) []string {
 func TestNewsSQLStringEscapesLiterals(t *testing.T) {
 	if got, want := newsSQLString(`a'b\c`), `'a''b\\c'`; got != want {
 		t.Errorf("newsSQLString = %s, want %s", got, want)
+	}
+}
+
+// TestNewsViewsCanonicalizeChannelAliases — legacy-слаги каналов живут только в истории
+// news_annotation (prompt_version ≤ 2): обе витрины обязаны нормализовать их на чтении, а
+// статический реестр v_news_tags — не содержать. Иначе агент снова увидит два имени одного
+// канала: канон у новых строк и legacy у старых.
+func TestNewsViewsCanonicalizeChannelAliases(t *testing.T) {
+	for _, name := range []string{"v_news_events", "v_news_flash"} {
+		view := newsViewByName(t, name)
+		for _, alias := range newsTagAliases {
+			for _, want := range []string{
+				"t.dimension = '" + alias.Dimension + "' AND t.tag = '" + alias.Legacy + "'",
+				"'" + alias.Canonical + "'",
+			} {
+				if !strings.Contains(view, want) {
+					t.Errorf("%s: нет нормализации %s → %s (%q)", name, alias.Legacy, alias.Canonical, want)
+				}
+			}
+		}
+	}
+	tagsView := newsViewByName(t, "v_news_tags")
+	for _, alias := range newsTagAliases {
+		if strings.Contains(tagsView, "'"+alias.Legacy+"'") {
+			t.Errorf("v_news_tags содержит legacy-слаг %q: реестр обязан быть каноническим", alias.Legacy)
+		}
 	}
 }
 
