@@ -2731,6 +2731,50 @@ async def check(params, server_log):
                 failed += not expect(f"сырая {table} закрыта", denied,
                                      f"отказ ClickHouse 497 на {table} (ожидаемо)" if denied else raw[:200])
 
+            # ИЦП: витрина v_rosstat_ppi над rosstat_ppi_ved/product/weights и ppi_sa
+            # (T5 #280). Ожидаемо 571 + 336 512 + 758 + 1 744 = 339 585 строк,
+            # 5 408 рядов, 20 NULL-краёв ppi_sa; каталог ppi_sa — 25 рядов
+            # (5 базовых + 20 метрик витрины). Сырые таблицы закрыты.
+            failed += not expect("витрина v_rosstat_ppi видна", "v_rosstat_ppi" in tables, "list_tables default")
+
+            ppi_totals = text(await session.call_tool("run_query", {
+                "query": "SELECT count() AS n, uniqExact(series) AS series, countIf(value IS NULL) AS nulls FROM v_rosstat_ppi"}))
+            ppi_total_rows = result_rows(ppi_totals)
+            ppi_n = ppi_total_rows[0].get("n") if ppi_total_rows else None
+            ppi_series = ppi_total_rows[0].get("series") if ppi_total_rows else None
+            ppi_nulls = ppi_total_rows[0].get("nulls") if ppi_total_rows else None
+            failed += not expect("v_rosstat_ppi: ≥339 585 строк / ≥5 408 рядов / ≥20 NULL",
+                                 (ppi_n or 0) >= 339585 and (ppi_series or 0) >= 5408 and (ppi_nulls or 0) >= 20,
+                                 ppi_totals[:200])
+
+            ppi_sources = text(await session.call_tool("run_query", {
+                "query": "SELECT source, count() AS n FROM v_rosstat_ppi GROUP BY source ORDER BY source"}))
+            ppi_source_rows = result_rows(ppi_sources)
+            ppi_source = {row.get("source"): row.get("n") for row in (ppi_source_rows or [])}
+            failed += not expect("v_rosstat_ppi: rosstat ≥337 841 / ppi_sa ≥1 744",
+                                 (ppi_source.get("rosstat") or 0) >= 337841 and (ppi_source.get("ppi_sa") or 0) >= 1744,
+                                 ppi_sources[:200])
+
+            ppi_catalog = text(await session.call_tool("run_query", {
+                "query": "SELECT count() AS n FROM v_series_catalog WHERE source = 'ppi_sa'"}))
+            ppi_catalog_rows = result_rows(ppi_catalog)
+            ppi_catalog_n = ppi_catalog_rows[0].get("n") if ppi_catalog_rows else None
+            failed += not expect("каталог ppi_sa: 25 рядов", ppi_catalog_n == 25, ppi_catalog[:200])
+
+            ppi_spot = text(await session.call_tool("run_query", {
+                "query": "SELECT date, value FROM v_rosstat_ppi WHERE source='ppi_sa' "
+                         "AND series='ppi_sa:core:saar3' AND date='2026-08-31'"}))
+            ppi_spot_rows = result_rows(ppi_spot)
+            ppi_spot_ok = bool(ppi_spot_rows) and str(ppi_spot_rows[0].get("date")) == "2026-08-31" \
+                and abs(float(ppi_spot_rows[0].get("value") or 0) - 6.0788) < 0.001
+            failed += not expect("v_rosstat_ppi: core saar3 2026-08-31 = 6,0788", ppi_spot_ok, ppi_spot[:200])
+
+            for table in ("rosstat_ppi_ved", "rosstat_ppi_product", "rosstat_ppi_weights", "ppi_sa"):
+                raw = text(await session.call_tool("run_query", {"query": f"SELECT count() FROM {table}"}))
+                denied = "ACCESS_DENIED" in raw or "Not enough privileges" in raw
+                failed += not expect(f"сырая {table} закрыта", denied,
+                                     f"отказ ClickHouse 497 на {table} (ожидаемо)" if denied else raw[:200])
+
     return failed
 
 
