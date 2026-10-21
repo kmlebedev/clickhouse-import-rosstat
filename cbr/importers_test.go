@@ -35,6 +35,16 @@ var sharedMacroSeriesOwners = map[string]bool{
 	"cbr_mo_br":     true, // source='cbr_mo_br'
 }
 
+// sharedTableOwners — импортёры, пишущие в cbr_-таблицу под другим именем: общий
+// канонический артефакт двух источников. Сейчас такая пара одна — cbr_infl_exp:
+// книга Infl_exp_ГГ-ММ.xlsx (cbr_infl_exp, точные значения) и PDF «Оперативная
+// справка» (cbr_infl_exp_op, оперативная точка до выхода книги). Набор литеральный,
+// как и sharedMacroSeriesOwners: новая пара — осознанная правка, а не побочный эффект
+// переименования (стандарт §8.2/§8.3, скил go-engineer §5.1).
+var sharedTableOwners = map[string]string{
+	"cbr_infl_exp_op": "cbr_infl_exp",
+}
+
 // expectedPublicationCountPoints — запросы количественного чека (спека §3.5) для
 // импортёров, объявивших точку контроля публикации. Литералами, а не ссылкой на
 // константу импортёра: проверка «колонка countPoints реестра == объявление самого
@@ -56,6 +66,7 @@ var expectedPublicationCountPoints = map[string]string{
 	"cbr_int_rate_loans":        "SELECT count() FROM cbr_int_rate_loans FINAL",
 	"cbr_indicators_cpd":        "SELECT count() FROM cbr_indicators_cpd FINAL",
 	"cbr_infl_exp":              "SELECT count() FROM cbr_infl_exp FINAL",
+	"cbr_infl_exp_op":           "SELECT count() FROM cbr_infl_exp FINAL",
 	"cbr_mo_br":                 "SELECT count() FROM macro_series FINAL WHERE source = 'cbr_mo_br'",
 	"cbr_bop_est":               "SELECT count() FROM cbr_bop_est FINAL",
 	"cbr_bop_standard":          "SELECT count() FROM cbr_bop_standard FINAL",
@@ -119,7 +130,7 @@ func TestDaguStatsIgnoreComments(t *testing.T) {
 //     dagu не заметил бы ни один тест: реестр остаётся верным сам по себе), как и
 //     шаг контура резюме обсуждений (cbr_mp_summary: пропавший шаг оставил бы
 //     витрины v_cbr_mp_summary* пустыми при всех зелёных тестах);
-//   - (д) точка контроля публикации (префлайт) объявлена ровно у ожидаемых девятнадцати
+//   - (д) точка контроля публикации (префлайт) объявлена ровно у ожидаемых двадцати
 //     импортёров и запросом из expectedPublicationCountPoints: колонка countPoints
 //     реестра сверяется с объявлением самого импортёра (метод Publication()
 //     встроенного util.ClickHouseImport), а у импортёров вне ожидаемого набора
@@ -162,6 +173,14 @@ func TestCbrImportersPrefixedAndRegistered(t *testing.T) {
 		}
 		if !strings.HasPrefix(imp.table, cbrNamePrefix) {
 			t.Errorf("таблица %q импортёра %q без префикса %q и не равна %q", imp.table, name, cbrNamePrefix, sharedMacroSeriesTable)
+		}
+		// Общая каноническая таблица двух артефактов: имя импортёра отличается от
+		// таблицы осознанно, и пара записана в литеральном allowlist.
+		if shared, ok := sharedTableOwners[name]; ok {
+			if imp.table != shared {
+				t.Errorf("импортёр %q объявил общую таблицу %q, а allowlist ждёт %q", name, imp.table, shared)
+			}
+			continue
 		}
 		// У всех импортёров, кроме владельцев общей macro_series, Name() — это
 		// TableName встроенного util.ClickHouseImport. Значит, литерал в колонке
@@ -268,7 +287,7 @@ func TestCbrImportersPrefixedAndRegistered(t *testing.T) {
 	// v_cbr_mp_summary* остались бы пустыми, а у платёжного баланса витрина v_cbr_bop, у приложений
 	// ДИП витрина v_cbr_dip_bulletin и у «Комментария» витрина v_cbr_mt_forecast остались бы
 	// непустыми и просто перестали бы обновляться; последнего не замечает и mcp_check (он проверяет
-	// непустоту витрины и полноту каталога, а не свежесть точек), поэтому все двенадцать шагов
+	// непустоту витрины и полноту каталога, а не свежесть точек), поэтому все тринадцать шагов
 	// перечислены здесь явно.
 	keyScheduled := map[string]string{
 		"cbr_mp_summary":           "контур резюме обсуждений не запускается по расписанию, а витрины v_cbr_mp_summary* остаются пустыми",
@@ -283,6 +302,7 @@ func TestCbrImportersPrefixedAndRegistered(t *testing.T) {
 		"cbr_mpl":                  "макропруденциальные лимиты не обновляются по расписанию, а витрина v_cbr_mpl тихо стареет",
 		"cbr_mp_bsu_map":           "публичный кроссворд BSU не пересобирается по расписанию, а витрины v_cbr_mp_bsu_map/v_cbr_mp_public_panel тихо стареют",
 		"cbr_publication_calendar": "график публикаций ЦБ и публикационные даты не обновляются по расписанию, а витрины v_cbr_publication_calendar/v_series_publication тихо стареют",
+		"cbr_infl_exp_op":          "оперативная точка инфляционных ожиданий не обновляется до выхода книги, а v_cbr_macro и v_key_rate_dashboard тихо стареют на 1–3 недели",
 	}
 	for step, why := range keyScheduled {
 		if !scheduled[step] {

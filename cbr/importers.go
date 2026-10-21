@@ -23,7 +23,7 @@ type cbrImporter struct {
 }
 
 // cbrImporters — единственная точка регистрации импортёров ЦБ: персональных
-// init()-append по файлам импортёров больше нет (26 записей в одном месте вместо
+// init()-append по файлам импортёров больше нет (27 записей в одном месте вместо
 // 13 прежних). Порядок повторяет dagu/cbr.yaml; в chimport.Stats порядок значения
 // не имеет.
 //
@@ -100,6 +100,11 @@ var cbrImporters = []cbrImporter{
 	{cbrMPLImporter, "cbr_mpl", "SELECT count() FROM cbr_mpl FINAL"},
 	{cbrMpBsuMapImporter, "cbr_mp_bsu_map", ""},
 	{cbrPublicationCalendarImporter, "cbr_publication_calendar", ""},
+	// Хвост реестра повторяет хвост dagu/cbr.yaml. cbr_infl_exp_op пишет в ту же
+	// cbr_infl_exp, что и книга: оперативная точка PDF до выхода Infl_exp_ГГ-ММ.xlsx.
+	// Имя импортёра поэтому отличается от таблицы, а тест реестра держит пару
+	// «имя → общая таблица» в литеральном allowlist.
+	{cbrInflExpOpImporter, "cbr_infl_exp", "SELECT count() FROM cbr_infl_exp FINAL"},
 }
 
 // init — единственная регистрация импортёров ЦБ в chimport.Stats. Порядок
