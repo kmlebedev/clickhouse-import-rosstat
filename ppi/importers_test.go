@@ -83,6 +83,10 @@ func TestPPIImportersPrefixedAndRegistered(t *testing.T) {
 	scheduled := make(map[string]bool, len(steps))
 	for _, step := range steps {
 		name := step[1]
+		if !strings.HasPrefix(name, ppiNamePrefix) {
+			// dagu/ppi.yaml общий с пакетом weeklysa: чужой шаг проверяет его энфорсер.
+			continue
+		}
 		scheduled[name] = true
 		if !seen[name] {
 			t.Errorf("шаг %s не найден в реестре ppiImporters", name)
