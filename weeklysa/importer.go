@@ -46,6 +46,8 @@ type weeklySARow struct {
 	SAIndex     float64
 	SA4W        float64
 	SAAR        float64
+	AsOf        time.Time
+	Partial     bool
 	PublishedAt sql.NullTime
 }
 
@@ -65,6 +67,11 @@ func (s *weeklySAImporter) Import(ctx context.Context, conn driver.Conn) (count 
 	}
 	if execErr := conn.Exec(ctx, weeklySADdl); execErr != nil {
 		return 0, fmt.Errorf("%s: DDL: %w", weeklySATable, execErr)
+	}
+	for _, alter := range weeklySAAlters {
+		if execErr := conn.Exec(ctx, alter); execErr != nil {
+			return 0, fmt.Errorf("%s: миграция колонок: %w", weeklySATable, execErr)
+		}
 	}
 
 	bulletin, bi, readErr := readInputs(ctx, conn)
@@ -110,24 +117,29 @@ func (s *weeklySAImporter) Import(ctx context.Context, conn driver.Conn) (count 
 	if indexErr != nil {
 		return 0, fmt.Errorf("%s: %w", weeklySATable, indexErr)
 	}
-	months, monthsErr := monthlyLastInMonth(index, grid[len(grid)-1].Date, weeklySAFirstMonth, weeklySAMinMonths)
+	lastGridDate := grid[len(grid)-1].Date
+	months, monthsErr := monthlyLastInMonth(index, lastGridDate, weeklySAFirstMonth, weeklySAMinMonths)
 	if monthsErr != nil {
 		return 0, fmt.Errorf("%s: %w", weeklySATable, monthsErr)
 	}
-
-	input, encodeErr := encodeX13Input(months)
-	if encodeErr != nil {
-		return 0, encodeErr
+	partial, partialErr := partialMonth(index, lastGridDate)
+	if partialErr != nil {
+		return 0, fmt.Errorf("%s: %w", weeklySATable, partialErr)
 	}
+
 	runner := s.runner
 	if runner == nil {
 		runner = runX13
 	}
-	output, runErr := runner(ctx, input)
+	completeInput, encodeErr := encodeX13Input(months)
+	if encodeErr != nil {
+		return 0, encodeErr
+	}
+	completeOutput, runErr := runner(ctx, completeInput)
 	if runErr != nil {
 		return 0, runErr
 	}
-	sa, parseErr := parseX13Output(output, months)
+	sa, parseErr := parseX13Output(completeOutput, months)
 	if parseErr != nil {
 		return 0, parseErr
 	}
@@ -139,6 +151,26 @@ func (s *weeklySAImporter) Import(ctx context.Context, conn driver.Conn) (count 
 	rows, rowsErr := buildRows(months, sa, published)
 	if rowsErr != nil {
 		return 0, fmt.Errorf("%s: %w", weeklySATable, rowsErr)
+	}
+	if partial != nil {
+		nowcastMonths := append(append([]monthPoint{}, months...), *partial)
+		nowcastInput, nowcastEncodeErr := encodeX13Input(nowcastMonths)
+		if nowcastEncodeErr != nil {
+			return 0, nowcastEncodeErr
+		}
+		nowcastOutput, nowcastRunErr := runner(ctx, nowcastInput)
+		if nowcastRunErr != nil {
+			return 0, nowcastRunErr
+		}
+		nowcastSA, nowcastParseErr := parseX13Output(nowcastOutput, nowcastMonths)
+		if nowcastParseErr != nil {
+			return 0, nowcastParseErr
+		}
+		partialRows, partialRowsErr := buildRows([]monthPoint{*partial}, []saPoint{nowcastSA[len(nowcastSA)-1]}, published)
+		if partialRowsErr != nil {
+			return 0, fmt.Errorf("%s: %w", weeklySATable, partialRowsErr)
+		}
+		rows = append(rows, partialRows...)
 	}
 	count, insertErr := insertRows(ctx, conn, rows)
 	if insertErr != nil {
@@ -223,7 +255,7 @@ func inputFingerprint(points []rawPoint) string {
 // что смена пина меняет отпечаток.
 func inputFingerprintWithScript(points []rawPoint, scriptSHA string) string {
 	hash := sha256.New()
-	_, _ = fmt.Fprintf(hash, "spec=%s\nx13=%s\n", weeklySASpecVersion, scriptSHA)
+	_, _ = fmt.Fprintf(hash, "spec=%s\nfeature=%s\nx13=%s\n", weeklySASpecVersion, weeklySAFeatureVersion, scriptSHA)
 	sorted := append([]rawPoint(nil), points...)
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Date.Before(sorted[j].Date) })
 	for _, point := range sorted {
@@ -252,8 +284,9 @@ func readPublishedAt(ctx context.Context, conn driver.Conn) (sql.NullTime, error
 }
 
 // buildRows проверяет совпадение SA-ряда с месяцами и собирает строки с версией
-// в каждой.
-func buildRows(months []rawPoint, sa []saPoint, published sql.NullTime) ([]weeklySARow, error) {
+// в каждой. AsOf/Partial переносятся из monthPoint: так полные месяцы и
+// nowcast-строка различаются без отдельного SQL-признака по дате.
+func buildRows(months []monthPoint, sa []saPoint, published sql.NullTime) ([]weeklySARow, error) {
 	metrics, err := computeMetrics(months, sa)
 	if err != nil {
 		return nil, err
@@ -268,6 +301,8 @@ func buildRows(months []rawPoint, sa []saPoint, published sql.NullTime) ([]weekl
 			SAIndex:     metric.SAIndex,
 			SA4W:        metric.SA4W,
 			SAAR:        metric.SAAR,
+			AsOf:        metric.AsOf,
+			Partial:     metric.Partial,
 			PublishedAt: published,
 		}
 	}
@@ -276,7 +311,7 @@ func buildRows(months []rawPoint, sa []saPoint, published sql.NullTime) ([]weekl
 
 // insertRows — один PrepareBatch на прогон, Append с проверкой, Send.
 func insertRows(ctx context.Context, conn driver.Conn, rows []weeklySARow) (int64, error) {
-	batch, err := conn.PrepareBatch(ctx, "INSERT INTO weekly_cpi_sa (date, series, method, spec_version, sa_index, sa_4w, saar, published_at)")
+	batch, err := conn.PrepareBatch(ctx, "INSERT INTO weekly_cpi_sa (date, series, method, spec_version, sa_index, sa_4w, saar, as_of, partial, published_at)")
 	if err != nil {
 		return 0, err
 	}
@@ -289,6 +324,8 @@ func insertRows(ctx context.Context, conn driver.Conn, rows []weeklySARow) (int6
 			row.SAIndex,
 			row.SA4W,
 			row.SAAR,
+			row.AsOf,
+			row.Partial,
 			nullableDate(row.PublishedAt),
 		); appendErr != nil {
 			if abortErr := batch.Abort(); abortErr != nil {

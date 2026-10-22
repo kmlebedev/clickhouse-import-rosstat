@@ -8,7 +8,7 @@ import (
 )
 
 func TestEncodeX13Input(t *testing.T) {
-	months := []rawPoint{
+	months := []monthPoint{
 		{Date: weeklyDate(2020, 1, 31), Value: 100.5},
 		{Date: weeklyDate(2020, 2, 29), Value: 101.25},
 	}
@@ -35,7 +35,7 @@ func TestEncodeX13Input(t *testing.T) {
 }
 
 func TestParseX13Output(t *testing.T) {
-	expected := []rawPoint{
+	expected := []monthPoint{
 		{Date: weeklyDate(2020, 1, 31), Value: 100.5},
 		{Date: weeklyDate(2020, 2, 29), Value: 101.25},
 	}
@@ -52,7 +52,7 @@ func TestParseX13Output(t *testing.T) {
 }
 
 func TestParseX13OutputMissingPoint(t *testing.T) {
-	expected := []rawPoint{
+	expected := []monthPoint{
 		{Date: weeklyDate(2020, 1, 31)},
 		{Date: weeklyDate(2020, 2, 29)},
 	}
@@ -63,7 +63,7 @@ func TestParseX13OutputMissingPoint(t *testing.T) {
 }
 
 func TestParseX13OutputDuplicate(t *testing.T) {
-	expected := []rawPoint{{Date: weeklyDate(2020, 1, 31)}}
+	expected := []monthPoint{{Date: weeklyDate(2020, 1, 31)}}
 	output := []byte("date,sa_level\n2020-01-31,100\n2020-01-31,101\n")
 	if _, err := parseX13Output(output, expected); err == nil {
 		t.Fatal("ожидалась ошибка дубля точки")
@@ -71,7 +71,7 @@ func TestParseX13OutputDuplicate(t *testing.T) {
 }
 
 func TestParseX13OutputNA(t *testing.T) {
-	expected := []rawPoint{{Date: weeklyDate(2020, 1, 31)}}
+	expected := []monthPoint{{Date: weeklyDate(2020, 1, 31)}}
 	output := []byte("date,sa_level\n2020-01-31,NA\n")
 	if _, err := parseX13Output(output, expected); err == nil {
 		t.Fatal("ожидалась ошибка NA")
@@ -79,7 +79,7 @@ func TestParseX13OutputNA(t *testing.T) {
 }
 
 func TestParseX13OutputNonPositive(t *testing.T) {
-	expected := []rawPoint{{Date: weeklyDate(2020, 1, 31)}}
+	expected := []monthPoint{{Date: weeklyDate(2020, 1, 31)}}
 	output := []byte("date,sa_level\n2020-01-31,0\n")
 	if _, err := parseX13Output(output, expected); err == nil {
 		t.Fatal("ожидалась ошибка неположительного SA")

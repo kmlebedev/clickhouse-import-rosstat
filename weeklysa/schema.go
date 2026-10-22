@@ -22,6 +22,13 @@ const (
 	weeklySASpecVersion = "weekly-cpi-sa-2026-v1"
 	weeklySASeries      = "weekly_cpi"
 
+	// weeklySAFeatureVersion — версия набора строк/провенанса, не формулы:
+	// nowcast-строка (as_of/partial) — расширение, которого не было в v1.
+	// Входит в отпечаток входа, чтобы первый прогон после фикса не стал no-op
+	// на старом (209-строчном) отпечатке; spec_version при этом не меняется —
+	// формула и R-скрипт те же.
+	weeklySAFeatureVersion = "weekly-cpi-sa-nowcast-v1"
+
 	// Источники: агрегат «Индекс потребительских цен (недельная оценка)» лежит в
 	// бюллетенях 2009–2021 (колонка name) и в BI 2019+ (колонка series); на
 	// пересечении 2019–2021 BI приоритетен, ровно как в v_rosstat_macro.
@@ -65,11 +72,21 @@ const weeklySADdl = `CREATE TABLE IF NOT EXISTS weekly_cpi_sa (
   , sa_index       Float64
   , sa_4w          Float64
   , saar           Float64
+  , as_of          Date DEFAULT '1970-01-01'
+  , partial        UInt8 DEFAULT 0
   , published_at   Nullable(Date)
   , loaded_at      DateTime DEFAULT now()
 ) ENGINE = ReplacingMergeTree(loaded_at)
 ORDER BY (date, series, method, spec_version);
 `
+
+// weeklySAAlters — миграция уже существующей таблицы (первая версия шла без
+// as_of/partial). Идемпотентна: ADD COLUMN IF NOT EXISTS; DEFAULT нужен, чтобы
+// старые строки читались, пока полный прогон не перезапишет их с реальным as_of.
+var weeklySAAlters = []string{
+	`ALTER TABLE weekly_cpi_sa ADD COLUMN IF NOT EXISTS as_of Date DEFAULT '1970-01-01'`,
+	`ALTER TABLE weekly_cpi_sa ADD COLUMN IF NOT EXISTS partial UInt8 DEFAULT 0`,
+}
 
 // checkEmbeddedPins сверяет встроенный R-скрипт с пином. Это не косметика:
 // правка скрипта без bump spec_version сделала бы версию в строке ложной.

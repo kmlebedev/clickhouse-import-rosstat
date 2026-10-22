@@ -31,7 +31,7 @@ func runX13(ctx context.Context, input []byte) ([]byte, error) {
 }
 
 // encodeX13Input — вход R: date,level, конец месяца и 4-нед. индекс.
-func encodeX13Input(months []rawPoint) ([]byte, error) {
+func encodeX13Input(months []monthPoint) ([]byte, error) {
 	if len(months) == 0 {
 		return nil, fmt.Errorf("CSV входа X-13: пустой месячный ряд")
 	}
@@ -56,7 +56,7 @@ func encodeX13Input(months []rawPoint) ([]byte, error) {
 
 // parseX13Output разбирает date,sa_level. Полнота проверяется по входу: каждый
 // ожидаемый месяц обязан быть, лишние/дубли/NA/неположительные — ошибка.
-func parseX13Output(data []byte, expected []rawPoint) ([]saPoint, error) {
+func parseX13Output(data []byte, expected []monthPoint) ([]saPoint, error) {
 	reader := csv.NewReader(bytes.NewReader(data))
 	reader.FieldsPerRecord = -1
 	header, err := reader.Read()

@@ -208,9 +208,9 @@ func TestMonthlyLastInMonthRejectsWrongFirstMonth(t *testing.T) {
 }
 
 func TestComputeMetrics(t *testing.T) {
-	months := []rawPoint{
-		{Date: weeklyDate(2020, 1, 31), Value: 100.5},
-		{Date: weeklyDate(2020, 2, 29), Value: 101.2},
+	months := []monthPoint{
+		{Date: weeklyDate(2020, 1, 31), Value: 100.5, AsOf: weeklyDate(2020, 1, 27)},
+		{Date: weeklyDate(2020, 2, 29), Value: 101.2, AsOf: weeklyDate(2020, 2, 24)},
 	}
 	sa := []saPoint{
 		{Date: weeklyDate(2020, 1, 31), SA: 100},
@@ -232,9 +232,35 @@ func TestComputeMetrics(t *testing.T) {
 }
 
 func TestComputeMetricsRejectsDateMismatch(t *testing.T) {
-	months := []rawPoint{{Date: weeklyDate(2020, 1, 31)}}
+	months := []monthPoint{{Date: weeklyDate(2020, 1, 31), AsOf: weeklyDate(2020, 1, 27)}}
 	sa := []saPoint{{Date: weeklyDate(2020, 2, 29), SA: 100}}
 	if _, err := computeMetrics(months, sa); err == nil {
 		t.Fatal("ожидалась ошибка несовпадения дат")
+	}
+}
+
+func TestPartialMonth(t *testing.T) {
+	index := []rawPoint{
+		{Date: weeklyDate(2020, 1, 6), Value: 100},
+		{Date: weeklyDate(2020, 1, 27), Value: 101},
+		{Date: weeklyDate(2020, 2, 3), Value: 102},
+		{Date: weeklyDate(2020, 2, 24), Value: 103},
+	}
+	partial, err := partialMonth(index, weeklyDate(2020, 2, 24))
+	if err != nil {
+		t.Fatalf("partialMonth: %v", err)
+	}
+	if partial == nil {
+		t.Fatal("ожидалась nowcast-строка неполного февраля")
+	}
+	if !partial.Date.Equal(weeklyDate(2020, 2, 29)) || !partial.AsOf.Equal(weeklyDate(2020, 2, 24)) {
+		t.Fatalf("date/as_of = %s/%s, ожидались 2020-02-29/2020-02-24",
+			partial.Date.Format("2006-01-02"), partial.AsOf.Format("2006-01-02"))
+	}
+	if !partial.Partial || partial.Value != 103 {
+		t.Fatalf("partial/value = %v/%v, ожидались true/103", partial.Partial, partial.Value)
+	}
+	if full, err := partialMonth(index, weeklyDate(2020, 2, 29)); err != nil || full != nil {
+		t.Fatalf("полный месяц: partial=%v, err=%v; ожидался nil/nil", full, err)
 	}
 }
