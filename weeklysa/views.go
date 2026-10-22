@@ -2,7 +2,7 @@ package weeklysa
 
 import "github.com/kmlebedev/clickhouse-import-rosstat/util"
 
-// weeklySAView — витрина МCP-агента над производной таблицей. Длинная форма:
+// weeklySAView — витрина MCP-агента над производной таблицей. Длинная форма:
 // одна строка на (source, series, date); source/series совпадают с
 // v_series_catalog, поэтому описание ряда ищется по тому же ключу. Витрину
 // публикует импортёр (и на no-op-пути), отдельный шаг не нужен.
