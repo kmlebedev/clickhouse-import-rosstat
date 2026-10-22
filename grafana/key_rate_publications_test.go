@@ -119,6 +119,8 @@ func TestKeyRateAllTimeseriesUseTimeFilter(t *testing.T) {
 // TestKeyRateInflationPanelWeeklySA: панель 4 показывает weekly SA-агрегат третьей серией —
 // опережающее сравнение с базовой ЦБ. В витрине value в процентах, панель в percentunit,
 // поэтому SQL обязан делить на 100; series фиксируется, чтобы панель не переехала на другой ряд.
+// Nowcast-точка обязана быть видимой при to=now: её метка месяца лежит в будущем, поэтому
+// время берётся как as_of, а фильтр — по as_of; иначе октябрьская оценка выпадала из окна.
 func TestKeyRateInflationPanelWeeklySA(t *testing.T) {
 	panel := panelByID(t, builtKeyRatePublications(t), 4)
 	if len(panel.Targets) != 3 {
@@ -128,7 +130,7 @@ func TestKeyRateInflationPanelWeeklySA(t *testing.T) {
 	if !ok {
 		t.Fatalf("панель %q: запрос не является запросом ClickHouse", panelTitle(panel))
 	}
-	for _, want := range []string{"v_weekly_cpi_sa", "series = 'weekly_cpi:saar'", "value / 100", "$__timeFilter(date)"} {
+	for _, want := range []string{"v_weekly_cpi_sa", "series = 'weekly_cpi:saar'", "value / 100", "if(partial = 1, as_of, date)", "$__timeFilter(as_of)"} {
 		if !strings.Contains(query.RawSql, want) {
 			t.Fatalf("панель %q: запрос %q не содержит %q: %s", panelTitle(panel), query.RefId, want, query.RawSql)
 		}
