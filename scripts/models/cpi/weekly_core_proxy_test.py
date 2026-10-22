@@ -18,8 +18,10 @@ from weekly_core_proxy import (
     align_first_next,
     align_last,
     align_mean,
+    annualize_four_week_index,
     four_week_average,
     four_week_index,
+    four_week_index_from_grid,
     growth_rows,
     month_end,
     month_key,
@@ -65,6 +67,25 @@ class FourWeekIndexTest(unittest.TestCase):
     def test_requires_four_weeks(self):
         rows = [WeeklyRow(date(2022, 1, day), 100.0, 1) for day in (10, 17, 24)]
         self.assertEqual(four_week_index(rows), [])
+
+
+class FourWeekIndexGridTest(unittest.TestCase):
+    def test_grid_index_uses_28_days(self):
+        grid = [
+            (date(2022, 1, 3), 0.0),
+            (date(2022, 1, 10), 0.01),
+            (date(2022, 1, 17), 0.02),
+            (date(2022, 1, 24), 0.03),
+            (date(2022, 1, 31), 0.04),
+        ]
+        result = four_week_index_from_grid(grid)
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0][0], date(2022, 1, 31))
+        self.assertAlmostEqual(result[0][1], math.exp(0.04) * 100, places=10)
+
+    def test_annualize_uses_thirteen_periods(self):
+        result = annualize_four_week_index({"2022-01": 101.0})
+        self.assertAlmostEqual(result["2022-01"], (1.01**13 - 1) * 100, places=10)
 
 
 class RegularGridTest(unittest.TestCase):

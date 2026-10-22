@@ -87,7 +87,7 @@ FORMAT JSON
 CORE_SQL = """
 SELECT date, value
 FROM v_cbr_macro
-WHERE series = 'Базовый ИПЦ' AND date >= '2021-12-01'
+WHERE series = 'Базовый ИПЦ'
 ORDER BY date
 FORMAT JSON
 """
@@ -97,6 +97,15 @@ SELECT date, value
 FROM v_rosstat_macro
 WHERE series = 'Индексы потребительских цен на товары и услуги по Российской Федерации'
   AND date >= '2021-12-01'
+ORDER BY date
+FORMAT JSON
+"""
+
+AGGREGATE_HISTORY_SQL = """
+SELECT date, value
+FROM v_rosstat_macro
+WHERE series = 'Индекс потребительских цен (недельная оценка)'
+  AND date >= '2009-04-06'
 ORDER BY date
 FORMAT JSON
 """
@@ -169,6 +178,22 @@ def four_week_index(rows: list, weeks: int = WEEKS) -> list:
         level = math.exp(sum(math.log(row.idx / 100.0) for row in window)) * 100.0
         out.append((rows[index].date, level))
     return out
+
+
+def four_week_index_from_grid(grid: list, weeks: int = WEEKS) -> list:
+    """4-нед. индекс на 7-дневной сетке: exp(L_t − L_{t−weeks}) × 100 (28 дней)."""
+    if len(grid) <= weeks:
+        return []
+    out = []
+    for index in range(weeks, len(grid)):
+        day, level = grid[index]
+        out.append((day, math.exp(level - grid[index - weeks][1]) * 100.0))
+    return out
+
+
+def annualize_four_week_index(series: dict) -> dict:
+    """4-нед. индекс → % годовых: pow(index/100, 13) − 1 (13 четырёхнедельных периодов)."""
+    return {key: (math.pow(value / 100.0, 13) - 1.0) * 100.0 for key, value in series.items()}
 
 
 def regular_grid(rows: list, step_days: int = 7) -> list:
@@ -357,6 +382,11 @@ def metrics(actual: dict, prediction: dict, baseline: dict) -> dict | None:
     }
 
 
+def subset(series: dict, keys: list) -> dict:
+    allowed = set(keys)
+    return {key: value for key, value in series.items() if key in allowed}
+
+
 def load_weekly() -> list:
     rows = ch_query(WEEKLY_SQL)
     by_date = {}
@@ -375,6 +405,17 @@ def load_weekly() -> list:
         if WEEKLY_AGGREGATE in by_date[day]:
             aggregate.append(WeeklyRow(day, by_date[day][WEEKLY_AGGREGATE], 1))
     return goods, aggregate
+
+
+def load_aggregate_history() -> list:
+    """Официальный агрегат с 2009: бюллетени 2009–2018 + BI 2019+."""
+    out = []
+    for row in ch_query(AGGREGATE_HISTORY_SQL):
+        value = float(row["value"])
+        if value <= 0:
+            raise ValueError(f"недельный индекс ≤ 0: {row['date']}: {value}")
+        out.append(WeeklyRow(date.fromisoformat(row["date"]), value, 1))
+    return out
 
 
 def load_monthly(sql: str, as_index: bool) -> dict:
@@ -615,6 +656,15 @@ def main(argv=None) -> int:
     x13m_asof_goods, monthly_probe, x13m_asof_goods_errors = x13_monthly_asof(index_goods, keys, monthly_probe)
     x13m_asof_aggregate, monthly_probe, x13m_asof_aggregate_errors = x13_monthly_asof(index_aggregate, keys, monthly_probe)
 
+    aggregate_history = load_aggregate_history()
+    grid_aggregate_history = regular_grid(aggregate_history)
+    index_aggregate_ext = four_week_index_from_grid(grid_aggregate_history)
+    b0_aggregate_ext = annualize_four_week_index(align_last(index_aggregate_ext))
+    keys_ext = [key for key in months_between("2009-05", "2026-09") if key in core]
+    ext_probe = x13_monthly_probe()
+    x13m_ext_full, ext_probe, x13m_ext_full_errors = x13_monthly_fit(index_aggregate_ext, keys_ext, ext_probe)
+    x13m_ext_asof, ext_probe, x13m_ext_asof_errors = x13_monthly_asof(index_aggregate_ext, keys_ext, ext_probe)
+
     predictions_goods = {"cal": cal_goods, "stl": stl_goods}
     predictions_aggregate = {"cal": cal_aggregate, "stl": stl_aggregate}
     if x13_goods:
@@ -635,6 +685,25 @@ def main(argv=None) -> int:
     headline_x13m_aggregate = metrics(headline, x13m_aggregate, b0_aggregate)
     headline_x13m_asof_goods = metrics(headline, x13m_asof_goods, b0_goods)
     headline_x13m_asof_aggregate = metrics(headline, x13m_asof_aggregate, b0_aggregate)
+
+    core_ext_baseline = metrics(core, b0_aggregate_ext, b0_aggregate_ext)
+    core_ext_full = metrics(core, x13m_ext_full, b0_aggregate_ext)
+    core_ext_asof = metrics(core, x13m_ext_asof, b0_aggregate_ext)
+    keys_2019 = [key for key in keys_ext if key >= "2019-01"]
+    keys_2022 = [key for key in keys_ext if key >= "2022-01"]
+    core_ext_full_2019 = metrics(subset(core, keys_2019), subset(x13m_ext_full, keys_2019), subset(b0_aggregate_ext, keys_2019))
+    core_ext_asof_2019 = metrics(subset(core, keys_2019), subset(x13m_ext_asof, keys_2019), subset(b0_aggregate_ext, keys_2019))
+    core_ext_full_2022 = metrics(subset(core, keys_2022), subset(x13m_ext_full, keys_2022), subset(b0_aggregate_ext, keys_2022))
+    core_ext_asof_2022 = metrics(subset(core, keys_2022), subset(x13m_ext_asof, keys_2022), subset(b0_aggregate_ext, keys_2022))
+    overlap = sorted(set(b0_aggregate) & set(b0_aggregate_ext))
+    validation_grid_vs_raw = None
+    if overlap:
+        diffs = [b0_aggregate_ext[key] - b0_aggregate[key] for key in overlap]
+        validation_grid_vs_raw = {
+            "n": len(overlap),
+            "mae": eu.mae(diffs),
+            "corr": _corr([b0_aggregate_ext[key] for key in overlap], [b0_aggregate[key] for key in overlap]),
+        }
 
     ex_tariff = [key for key in keys if key not in TARIFF_MONTHS]
     sensitivity = [key for key in keys if key not in TARIFF_MONTHS_SENSITIVITY]
@@ -697,6 +766,17 @@ def main(argv=None) -> int:
                 "x13m_asof_agg": x13m_asof_aggregate.get(key),
             }
         )
+
+    monthly_extended = [
+        {
+            "month": key,
+            "core_pp": core.get(key),
+            "b0_agg_ext": b0_aggregate_ext.get(key),
+            "x13m_ext_full": x13m_ext_full.get(key),
+            "x13m_ext_asof": x13m_ext_asof.get(key),
+        }
+        for key in keys_ext
+    ]
 
     payload = {
         "decision": "accepted" if accepted else "indicative",
@@ -784,7 +864,39 @@ def main(argv=None) -> int:
                 "errors": {"goods": x13m_asof_goods_errors, "agg": x13m_asof_aggregate_errors},
             },
         },
+        "x13_monthly_extended": {
+            "status": ext_probe["status"],
+            "detail": ext_probe["detail"],
+            "spec": {
+                "frequency": 12,
+                "index": "7-day grid, 4 weeks (28 days)",
+                "transform": "log",
+                "aictest": "td",
+                "asof_min_months": 36,
+            },
+            "inputs": {
+                "start": keys_ext[0],
+                "end": keys_ext[-1],
+                "months": len(keys_ext),
+                "aggregate_points": len(aggregate_history),
+                "grid_points": len(grid_aggregate_history),
+            },
+            "baseline": core_ext_baseline,
+            "full_sample": {
+                "all": core_ext_full,
+                "from_2019": core_ext_full_2019,
+                "from_2022": core_ext_full_2022,
+            },
+            "as_of": {
+                "all": core_ext_asof,
+                "from_2019": core_ext_asof_2019,
+                "from_2022": core_ext_asof_2022,
+            },
+            "errors": {"full": x13m_ext_full_errors, "as_of": x13m_ext_asof_errors},
+            "validation_grid_vs_raw_2022": validation_grid_vs_raw,
+        },
         "monthly": monthly,
+        "monthly_extended": monthly_extended,
         "metrics": {
             "core": {"goods": core_goods, "agg": core_aggregate},
             "headline": {"goods": headline_goods, "agg": headline_aggregate},
@@ -820,6 +932,7 @@ def main(argv=None) -> int:
             "Цель — «Базовый ИПЦ» (core), товарная средняя и агрегат — прокси текущего роста цен.",
             "X-13: Gate 0 фиксирует отказ X-13 на frequency=52; числа не подставляются.",
             "X-13 monthly (x13_monthly) — дополнительная проверка: frequency=12 на 4-нед. накопленном индексе, вне предрегистрированного критерия; full_sample — in-sample, as_of — расширяющееся окно с 36 месяцев.",
+            "X-13 monthly extended (x13_monthly_extended) — агрегат 2009+ на 7-дневной сетке (4 недели = 28 дней); товарная база до 2022 не расширяется: состав 26→111 рядов несопоставим.",
         ],
     }
 
@@ -856,6 +969,34 @@ def main(argv=None) -> int:
                 f"MAE={asof['mae']:.2f} (B0 {asof['baseline']['mae']:.2f}) "
                 f"DM p={asof['dm_vs_b0']['p']:.4f} corr={asof['corr']:.2f}"
             )
+    print(f"x13_monthly_extended={ext_probe['status']} months={len(keys_ext)}")
+    for label, entry in (
+        ("all  ", core_ext_full),
+        ("2019+", core_ext_full_2019),
+        ("2022+", core_ext_full_2022),
+    ):
+        if entry:
+            print(
+                f"ext full {label}: n={entry['n']:3d} MAE={entry['mae']:.2f} "
+                f"(B0 {entry['baseline']['mae']:.2f}) DM p={entry['dm_vs_b0']['p']:.4f} "
+                f"corr={entry['corr']:.2f}"
+            )
+    for label, entry in (
+        ("all  ", core_ext_asof),
+        ("2019+", core_ext_asof_2019),
+        ("2022+", core_ext_asof_2022),
+    ):
+        if entry:
+            print(
+                f"ext asof {label}: n={entry['n']:3d} MAE={entry['mae']:.2f} "
+                f"(B0 {entry['baseline']['mae']:.2f}) DM p={entry['dm_vs_b0']['p']:.4f} "
+                f"corr={entry['corr']:.2f}"
+            )
+    if validation_grid_vs_raw:
+        print(
+            f"grid vs raw 2022+: n={validation_grid_vs_raw['n']} "
+            f"MAE={validation_grid_vs_raw['mae']:.2f} corr={validation_grid_vs_raw['corr']:.2f}"
+        )
     print(f"written {out_path}")
     return 0
 
