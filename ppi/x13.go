@@ -8,99 +8,26 @@ import (
 	"fmt"
 	"io"
 	"math"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
-	log "github.com/sirupsen/logrus"
+	"github.com/kmlebedev/clickhouse-import-rosstat/util"
 )
 
 //go:embed data/ppi_sa_x13.R
 var ppiX13Script []byte
 
-// ppiX13Timeout — предел одного прогона X-13: авто-ARIMA на 164 месяцах
-// укладывается в секунды, но зависший R не должен держать dagu-шаг вечно.
-const ppiX13Timeout = 15 * time.Minute
-
 // x13Runner — точка подмены в тестах: R в CI нет, а разбор и запись надо
 // проверять офлайн.
 type x13Runner func(ctx context.Context, input []byte) ([]byte, error)
 
-// runX13 пишет встроенный скрипт и вход во временный каталог и вызывает
-// Rscript. Скрипт и данные встроены, поэтому бинарник на staging не зависит
-// от scripts/ и docs/; внешняя зависимость — только R + seasonal.
+// runX13 делегирует общий мост util.RunX13: временный каталог, whitelist
+// окружения, таймаут и хвост stderr живут в одном месте для ppi_sa и
+// weekly_cpi_sa.
 func runX13(ctx context.Context, input []byte) ([]byte, error) {
-	rscript, err := exec.LookPath("Rscript")
-	if err != nil {
-		return nil, fmt.Errorf("не найден Rscript в PATH: нужен R с пакетом seasonal: %w", err)
-	}
-	dir, err := os.MkdirTemp("", "ppi_sa_x13_")
-	if err != nil {
-		return nil, fmt.Errorf("X-13: временный каталог: %w", err)
-	}
-	defer func() {
-		if rmErr := os.RemoveAll(dir); rmErr != nil {
-			log.Warnf("ppi_sa: не удалось удалить временный каталог %s: %v", dir, rmErr)
-		}
-	}()
-
-	scriptPath := filepath.Join(dir, "ppi_sa_x13.R")
-	inputPath := filepath.Join(dir, "input.csv")
-	outputPath := filepath.Join(dir, "output.csv")
-	if writeErr := os.WriteFile(scriptPath, ppiX13Script, 0o600); writeErr != nil {
-		return nil, fmt.Errorf("X-13: скрипт: %w", writeErr)
-	}
-	if writeErr := os.WriteFile(inputPath, input, 0o600); writeErr != nil {
-		return nil, fmt.Errorf("X-13: вход: %w", writeErr)
-	}
-
-	runCtx, cancel := context.WithTimeout(ctx, ppiX13Timeout)
-	defer cancel()
-	cmd := exec.CommandContext(runCtx, rscript, scriptPath, inputPath, outputPath)
-	// R не нужны секреты конвейера (CLICKHOUSE_URL/пароли/токены): передаём только
-	// то, без чего не работает Rscript, включая пользовательскую библиотеку.
-	cmd.Env = rEnvironment()
-	// Если R не закрывает pipes после Kill по контексту, Wait не должен висеть вечно.
-	cmd.WaitDelay = 10 * time.Second
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if runErr := cmd.Run(); runErr != nil {
-		return nil, fmt.Errorf("запуск X-13 (Rscript): %w: %s", runErr, tail(stderr.String(), 2000))
-	}
-	result, readErr := os.ReadFile(outputPath)
-	if readErr != nil {
-		return nil, fmt.Errorf("X-13: результат: %w", readErr)
-	}
-	log.Infof("ppi_sa: X-13 %s", strings.TrimSpace(stdout.String()))
-	return result, nil
-}
-
-// rEnvironment — минимальное окружение Rscript: пути, локаль, временный каталог
-// и пользовательская библиотека. Секреты конвейера (DSN, пароли, токены) в R не
-// передаются.
-func rEnvironment() []string {
-	keys := []string{"PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "R_LIBS_USER", "R_LIBS", "R_LIBS_SITE"}
-	env := make([]string, 0, len(keys))
-	for _, key := range keys {
-		if value, ok := os.LookupEnv(key); ok {
-			env = append(env, key+"="+value)
-		}
-	}
-	return env
-}
-
-// tail оставляет хвост вывода R: начало stderr часто занимает шум загрузки
-// пакета, а причина — в конце.
-func tail(text string, limit int) string {
-	if len(text) <= limit {
-		return strings.TrimSpace(text)
-	}
-	return strings.TrimSpace(text[len(text)-limit:])
+	return util.RunX13(ctx, ppiX13Script, input, ppiSATable)
 }
 
 // encodeSeriesCSV — вход R: series,date,level в фиксированном порядке рядов.

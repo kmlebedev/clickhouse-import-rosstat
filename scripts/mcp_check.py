@@ -1204,6 +1204,39 @@ async def check(params, server_log):
                                  (rosstat_aggregate_n or 0) >= 760 and rosstat_aggregate_mn == "2009-04-06"
                                  and (rosstat_aggregate_mx or "") >= "2026-10-12", rosstat_aggregate_detail)
 
+            # Недельный SA-агрегат ИПЦ (пункт key-rate/phase-4-weekly-sa-aggregate,
+            # #353): витрина v_weekly_cpi_sa читается агентом и непуста, каталог
+            # описывает 3 ряда, сырая weekly_cpi_sa закрыта. Ряд растёт с каждым
+            # закрытым месяцем, поэтому строки — «>= 627» (3 × 209 на снимке
+            # 2026-10-22), а не точное равенство.
+            sa_view = text(await session.call_tool("run_query", {"query":
+                "SELECT count() AS rows, uniqExact(series) AS series FROM v_weekly_cpi_sa"}))
+            sa_view_rows = result_rows(sa_view)
+            sa_view_n = sa_view_rows[0].get("rows") if sa_view_rows else None
+            sa_series_n = sa_view_rows[0].get("series") if sa_view_rows else None
+            if sa_view_rows is None:
+                sa_view_detail = f"витрина не читается: {sa_view[:200]}"
+            elif (sa_view_n or 0) >= 627 and sa_series_n == 3:
+                sa_view_detail = f"строк: {sa_view_n}, рядов: {sa_series_n}"
+            else:
+                sa_view_detail = (f"строк: {sa_view_n}, рядов: {sa_series_n}, want >= 627 / 3 — "
+                                  "прогнать make import STAT=weekly_cpi_sa")
+            failed += not expect("витрина v_weekly_cpi_sa непуста и полна",
+                                 (sa_view_n or 0) >= 627 and sa_series_n == 3, sa_view_detail)
+
+            sa_catalog = text(await session.call_tool("run_query", {"query":
+                "SELECT count() AS n FROM v_series_catalog WHERE source = 'weekly_cpi_sa'"}))
+            sa_catalog_rows = result_rows(sa_catalog)
+            sa_catalog_n = sa_catalog_rows[0].get("n") if sa_catalog_rows else None
+            failed += not expect("каталог weekly_cpi_sa описывает 3 ряда", sa_catalog_n == 3,
+                                 f"записей: {sa_catalog_n}" if sa_catalog_rows is not None
+                                 else f"каталог не читается: {sa_catalog[:200]}")
+
+            raw = text(await session.call_tool("run_query", {"query": "SELECT count() FROM weekly_cpi_sa"}))
+            denied = "ACCESS_DENIED" in raw or "Not enough privileges" in raw
+            failed += not expect("сырая weekly_cpi_sa закрыта", denied,
+                                 "отказ ClickHouse 497 на weekly_cpi_sa (ожидаемо)" if denied else raw[:200])
+
             # Контур ЕМИСС 37426 (пункт key-rate/phase-4-emiss-weekly-prices, импортёр
             # fedstat_weekly_prices): витрина v_fedstat_weekly_prices читается агентом и
             # непуста. Полный срез v1 — 158 товаров, 2 определения РФ (2008–2022 и 2026),
