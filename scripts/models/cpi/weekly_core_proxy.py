@@ -159,6 +159,18 @@ def four_week_average(rows: list, weeks: int = WEEKS) -> list:
     return out
 
 
+def four_week_index(rows: list, weeks: int = WEEKS) -> list:
+    """4-нед. накопленный индекс: 100 = без изменения за `weeks` недель."""
+    if len(rows) < weeks:
+        return []
+    out = []
+    for index in range(weeks - 1, len(rows)):
+        window = rows[index - weeks + 1 : index + 1]
+        level = math.exp(sum(math.log(row.idx / 100.0) for row in window)) * 100.0
+        out.append((rows[index].date, level))
+    return out
+
+
 def regular_grid(rows: list, step_days: int = 7) -> list:
     """7-дневная сетка лог-уровня; недостающие недели — равномерный прирост по дням."""
     if len(rows) < 2:
@@ -434,6 +446,97 @@ def x13_run(grid: list, keys: list, probe: dict) -> tuple:
     return series, probe
 
 
+def _x13_monthly_script() -> Path:
+    return ROOT / "scripts" / "models" / "cpi" / "weekly_core_proxy_x13_monthly.R"
+
+
+def _x13_env() -> dict:
+    env = dict(os.environ)
+    env["R_LIBS_USER"] = str(ROOT / "build" / "weekly-core-proxy" / "r-lib")
+    return env
+
+
+def x13_monthly_probe() -> dict:
+    """Gate 0 месячной сетки: frequency=12 на синтетическом ряду."""
+    try:
+        completed = subprocess.run(
+            ["Rscript", str(_x13_monthly_script()), "--probe"],
+            capture_output=True, text=True, timeout=120, env=_x13_env(),
+        )
+    except FileNotFoundError:
+        return {"status": "unavailable", "detail": "Rscript не найден"}
+    detail = (completed.stdout + completed.stderr).strip()
+    if completed.returncode == 0:
+        return {"status": "supported", "detail": detail}
+    return {"status": "unavailable", "detail": detail}
+
+
+def _x13_monthly_csv(series: list, keys: list, path: Path) -> None:
+    by_month = align_last(series)
+    with path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(["date", "level"])
+        for key in keys:
+            if key in by_month:
+                writer.writerow([month_end(key).isoformat(), by_month[key]])
+
+
+def _x13_monthly_from_sa(rows: list) -> dict:
+    out = {}
+    for row in rows:
+        if row.get("error") or not row.get("sa_level"):
+            continue
+        level = float(row["sa_level"])
+        value = (math.pow(level / 100.0, 13) - 1.0) * 100.0
+        out[month_key(date.fromisoformat(row["date"]))] = value
+    return out
+
+
+def x13_monthly_fit(series: list, keys: list, probe: dict) -> tuple:
+    """X-13 на полной месячной выборке 4-нед. индекса (frequency=12, in-sample)."""
+    if probe["status"] != "supported":
+        return {}, probe, []
+    with tempfile.TemporaryDirectory() as directory:
+        input_path = Path(directory) / "months.csv"
+        output_path = Path(directory) / "sa.csv"
+        _x13_monthly_csv(series, keys, input_path)
+        completed = subprocess.run(
+            ["Rscript", str(_x13_monthly_script()), "--fit", str(input_path), str(output_path)],
+            capture_output=True, text=True, timeout=300, env=_x13_env(),
+        )
+        if completed.returncode != 0 or not output_path.exists():
+            return {}, {"status": "unavailable", "detail": (completed.stdout + completed.stderr).strip()}, []
+        with output_path.open(encoding="utf-8") as handle:
+            rows = list(csv.DictReader(handle))
+    errors = sorted({row["error"] for row in rows if row.get("error")})
+    return _x13_monthly_from_sa(rows), probe, errors
+
+
+def x13_monthly_asof(series: list, keys: list, probe: dict, min_months: int = 36) -> tuple:
+    """X-13 на месячной сетке as-of: для каждого cutoff — только данные ≤ cutoff."""
+    if probe["status"] != "supported":
+        return {}, probe, []
+    with tempfile.TemporaryDirectory() as directory:
+        input_path = Path(directory) / "months.csv"
+        cutoffs_path = Path(directory) / "cutoffs.txt"
+        output_path = Path(directory) / "sa.csv"
+        _x13_monthly_csv(series, keys, input_path)
+        cutoffs_path.write_text("\n".join(month_end(key).isoformat() for key in keys), encoding="utf-8")
+        completed = subprocess.run(
+            [
+                "Rscript", str(_x13_monthly_script()), "--asof",
+                str(input_path), str(cutoffs_path), str(output_path),
+            ],
+            capture_output=True, text=True, timeout=600, env=_x13_env(),
+        )
+        if completed.returncode != 0 or not output_path.exists():
+            return {}, {"status": "unavailable", "detail": (completed.stdout + completed.stderr).strip()}, []
+        with output_path.open(encoding="utf-8") as handle:
+            rows = list(csv.DictReader(handle))
+    errors = sorted({row["error"] for row in rows if row.get("error")})
+    return _x13_monthly_from_sa(rows), probe, errors
+
+
 def series_for_months(keys: list, function) -> list:
     out = []
     for key in keys:
@@ -504,6 +607,14 @@ def main(argv=None) -> int:
     x13_goods = align_last(x13_goods_raw)
     x13_aggregate = align_last(x13_aggregate_raw)
 
+    index_goods = four_week_index(goods)
+    index_aggregate = four_week_index(aggregate)
+    monthly_probe = x13_monthly_probe()
+    x13m_goods, monthly_probe, x13m_goods_errors = x13_monthly_fit(index_goods, keys, monthly_probe)
+    x13m_aggregate, monthly_probe, x13m_aggregate_errors = x13_monthly_fit(index_aggregate, keys, monthly_probe)
+    x13m_asof_goods, monthly_probe, x13m_asof_goods_errors = x13_monthly_asof(index_goods, keys, monthly_probe)
+    x13m_asof_aggregate, monthly_probe, x13m_asof_aggregate_errors = x13_monthly_asof(index_aggregate, keys, monthly_probe)
+
     predictions_goods = {"cal": cal_goods, "stl": stl_goods}
     predictions_aggregate = {"cal": cal_aggregate, "stl": stl_aggregate}
     if x13_goods:
@@ -515,6 +626,15 @@ def main(argv=None) -> int:
     core_aggregate = evaluate_basis(core, b0_aggregate, predictions_aggregate)
     headline_goods = evaluate_basis(headline, b0_goods, predictions_goods)
     headline_aggregate = evaluate_basis(headline, b0_aggregate, predictions_aggregate)
+
+    core_x13m_goods = metrics(core, x13m_goods, b0_goods)
+    core_x13m_aggregate = metrics(core, x13m_aggregate, b0_aggregate)
+    core_x13m_asof_goods = metrics(core, x13m_asof_goods, b0_goods)
+    core_x13m_asof_aggregate = metrics(core, x13m_asof_aggregate, b0_aggregate)
+    headline_x13m_goods = metrics(headline, x13m_goods, b0_goods)
+    headline_x13m_aggregate = metrics(headline, x13m_aggregate, b0_aggregate)
+    headline_x13m_asof_goods = metrics(headline, x13m_asof_goods, b0_goods)
+    headline_x13m_asof_aggregate = metrics(headline, x13m_asof_aggregate, b0_aggregate)
 
     ex_tariff = [key for key in keys if key not in TARIFF_MONTHS]
     sensitivity = [key for key in keys if key not in TARIFF_MONTHS_SENSITIVITY]
@@ -571,6 +691,10 @@ def main(argv=None) -> int:
                 "stl_agg": stl_aggregate.get(key),
                 "x13_goods": x13_goods.get(key),
                 "x13_agg": x13_aggregate.get(key),
+                "x13m_goods": x13m_goods.get(key),
+                "x13m_agg": x13m_aggregate.get(key),
+                "x13m_asof_goods": x13m_asof_goods.get(key),
+                "x13m_asof_agg": x13m_asof_aggregate.get(key),
             }
         )
 
@@ -638,6 +762,28 @@ def main(argv=None) -> int:
             "x13": {"spec": "seats_log_cal", "transform": "log", "aictest": "td"},
         },
         "x13": probe,
+        "x13_monthly": {
+            "status": monthly_probe["status"],
+            "detail": monthly_probe["detail"],
+            "spec": {
+                "frequency": 12,
+                "transform": "log",
+                "aictest": "td",
+                "alignment": "last_in_month",
+                "annualization": "pow(index/100, 13)-1",
+                "asof_min_months": 36,
+            },
+            "full_sample": {
+                "core": {"goods": core_x13m_goods, "agg": core_x13m_aggregate},
+                "headline": {"goods": headline_x13m_goods, "agg": headline_x13m_aggregate},
+                "errors": {"goods": x13m_goods_errors, "agg": x13m_aggregate_errors},
+            },
+            "as_of": {
+                "core": {"goods": core_x13m_asof_goods, "agg": core_x13m_asof_aggregate},
+                "headline": {"goods": headline_x13m_asof_goods, "agg": headline_x13m_asof_aggregate},
+                "errors": {"goods": x13m_asof_goods_errors, "agg": x13m_asof_aggregate_errors},
+            },
+        },
         "monthly": monthly,
         "metrics": {
             "core": {"goods": core_goods, "agg": core_aggregate},
@@ -673,6 +819,7 @@ def main(argv=None) -> int:
             "Товарная средняя — невзвешенное среднее доступных товарных рядов; агрегат исключён.",
             "Цель — «Базовый ИПЦ» (core), товарная средняя и агрегат — прокси текущего роста цен.",
             "X-13: Gate 0 фиксирует отказ X-13 на frequency=52; числа не подставляются.",
+            "X-13 monthly (x13_monthly) — дополнительная проверка: frequency=12 на 4-нед. накопленном индексе, вне предрегистрированного критерия; full_sample — in-sample, as_of — расширяющееся окно с 36 месяцев.",
         ],
     }
 
@@ -692,6 +839,23 @@ def main(argv=None) -> int:
                 f"corr={entry['corr']:.2f}"
             )
     print(f"x13={probe['status']}")
+    print(f"x13_monthly={monthly_probe['status']}")
+    for basis, entry, asof in (
+        ("goods", core_x13m_goods, core_x13m_asof_goods),
+        ("agg", core_x13m_aggregate, core_x13m_asof_aggregate),
+    ):
+        if entry:
+            print(
+                f"core {basis:5s} x13m     : n={entry['n']:2d} "
+                f"MAE={entry['mae']:.2f} (B0 {entry['baseline']['mae']:.2f}) "
+                f"DM p={entry['dm_vs_b0']['p']:.4f} corr={entry['corr']:.2f}"
+            )
+        if asof:
+            print(
+                f"core {basis:5s} x13m-asof: n={asof['n']:2d} "
+                f"MAE={asof['mae']:.2f} (B0 {asof['baseline']['mae']:.2f}) "
+                f"DM p={asof['dm_vs_b0']['p']:.4f} corr={asof['corr']:.2f}"
+            )
     print(f"written {out_path}")
     return 0
 
