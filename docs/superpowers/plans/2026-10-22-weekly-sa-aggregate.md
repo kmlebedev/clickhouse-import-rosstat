@@ -8,7 +8,7 @@
    - `schema.go` — DDL `weekly_cpi_sa` (колонки и `ORDER BY` из спеки §4), константы `series/method/spec_version`, `countPoints = "SELECT count() FROM weekly_cpi_sa FINAL"`, SHA-256 встроенного R-скрипта.
    - `data/weekly_cpi_sa_x13.R` — embedded: вход `date,level` (месячный 4-нед. индекс), `ts(frequency=12)`, `seats_log_cal` (`transform.function="log"`, `regression.aictest="td"`, `outlier=""`), выход `date,sa_level`.
    - `x13.go` — runner с точкой подмены в тестах. Приоритет — вынести общий мост из `ppi/x13.go` в `util` (минимальная правка `ppi`), иначе — копия с тем же `rEnvironment`/таймаутом 15 мин/`WaitDelay`; секреты в R не передаются.
-   - `importer.go` — слияние `rosstat_ipc_weeks` + `rosstat_bi_cpi_weekly` (BI приоритет 2019–2021), проверка 760 точек и строгой возрастаемости; 7-дневная сетка, 4-нед. индекс 28 дней, `last_in_month` (209 месяцев); CSV → X-13 → `sa_index`/`sa_4w`/`saar`; отпечаток входов + SHA скрипта + `spec_version`; no-op через `source_publications`/`PublicationKnown`; батч `PrepareBatch → Append → Send`; публикация каталога и витрины после записи.
+   - `importer.go` — слияние `rosstat_ipc_weeks_bulletins` (агрегатный `series`) + `rosstat_bi_cpi_weekly` (BI приоритет 2019–2021), проверка первого дня 2009-04-06, `>= 760` точек и строгой возрастаемости; дубли внутри источника — ошибка, пересечение источников разрешается BI; 7-дневная сетка, 4-нед. индекс 28 дней, `last_in_month` (`>= 209` полных месяцев; текущий неполный отбрасывается); CSV → X-13 → `sa_index`/`sa_4w`/`saar`; отпечаток входов + SHA скрипта + `spec_version`; no-op через `source_publications`/`PublicationKnown`; батч `PrepareBatch → Append → Send`; публикация каталога и витрины после записи.
    - `series_meta.go` — 3 ряда `source='weekly_cpi_sa'`: `weekly_cpi:sa_index`, `weekly_cpi:sa_4w`, `weekly_cpi:saar` с `title/unit/frequency/origin/description` (оговорки 2009–2018 и 2022+).
    - `views.go` — `v_weekly_cpi_sa` (long: `source, series, date, value, unit, frequency`).
    - `importers.go` — регистрация в `chimport.Stats` (`init()`), порядок как в `dagu/ppi.yaml`.
@@ -17,14 +17,14 @@
 
 3. **MCP:** `sql/mcp_kimi_reader.sql` — `GRANT SELECT ON default.v_weekly_cpi_sa TO kimi_reader`; `scripts/mcp_check.py` — проверка 3 ряда × 209 точек.
 
-4. **DAG:** `dagu/ppi.yaml` — шаг `weekly_cpi_sa` после `ppi_sa` (четверг 14:17), `CLICKHOUSE_IMPORT_STAT=weekly_cpi_sa`, retry 3 × 300 с, тот же `R_LIBS_USER`/`seasonal`.
+4. **DAG:** `dagu/ppi.yaml` — шаг `weekly_cpi_sa` после `ppi_sa` (четверг 14:17), `CLICKHOUSE_IMPORT_STAT=weekly_cpi_sa`, retry 3 × 300 с, тот же `R_LIBS_USER`/`seasonal`. DAG общий с `ppi`: энфорсер `ppi` проверяет только шаги с префиксом `ppi_`, энфорсер `weeklysa` — свой шаг (отступление от §8.3(г) стандарта из-за общего DAG, фиксируется в спеке §7).
 
 5. **Тесты `weeklysa/` (офлайн, без R):**
-   - слияние: BI приоритетнее на 2019–2021, 760 точек, дубль даты → ошибка;
+   - слияние: BI приоритетнее на 2019–2021; дубль даты внутри источника — ошибка, пересечение источников — нет; порог `>= 760` и первый день 2009-04-06 проверяются отдельно;
    - сетка: 14-дневный разрыв → равномерный прирост, 4-нед. индекс ровно 28 дней;
-   - месячная сетка: 209 ключей 2009-05 … 2026-09, `last_in_month`;
+   - месячная сетка: `last_in_month`, отбрасывание неполного месяца, `>= 209` и непрерывность;
    - CSV/разбор SA, `sa_4w`/`saar` (ручной расчёт);
-   - отпечаток, no-op на stub-runner, повтор не зовёт R;
+   - отпечаток и решение no-op (что повтор не зовёт R — доказывает живая приёмка);
    - DDL/витрина/каталог — литералы SQL и ключи.
 
 6. **Живой прогон:**
@@ -41,4 +41,4 @@
 
 ## Границы
 
-`v_rosstat_macro`, `rosstat_ipc_weeks`, `rosstat_bi_cpi_weekly`, `ppi_sa`, панели 36–39 и существующие гранты не меняются. Новые объекты — `weekly_cpi_sa`, `v_weekly_cpi_sa`, 3 записи каталога, грант, шаг DAG. Ряд производный: `series='weekly_cpi'`, `origin` — derived; 2022+ alone в research не значим (p = 0,1896), это публикуется в описании.
+`v_rosstat_macro`, `rosstat_ipc_weeks`, `rosstat_ipc_weeks_bulletins`, `rosstat_bi_cpi_weekly`, `ppi_sa`, панели 36–39 и существующие гранты не меняются. Новые объекты — `weekly_cpi_sa`, `v_weekly_cpi_sa`, 3 записи каталога, грант, шаг DAG. Ряд производный: `series='weekly_cpi'`, `origin` — derived; 2022+ alone в research не значим (p = 0,1896), это публикуется в описании.
