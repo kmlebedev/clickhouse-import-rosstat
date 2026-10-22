@@ -92,6 +92,49 @@ func TestKeyRateAllTargetsUseViews(t *testing.T) {
 	}
 }
 
+// TestKeyRateAllTimeseriesUseTimeFilter: каждый график обязан уважать выбранный
+// диапазон дашборда — $__timeFilter по своей временной колонке (date/period_date).
+// Табличные и stat-панели не проверяются: у них время не ось. Это машинная норма,
+// а не ревью-пожелание: новый график без фильтра валит make grafana-validate.
+func TestKeyRateAllTimeseriesUseTimeFilter(t *testing.T) {
+	for _, p := range panelsOf(builtKeyRatePublications(t)) {
+		if string(p.Type) != "timeseries" {
+			continue
+		}
+		if len(p.Targets) == 0 {
+			t.Fatalf("у графика %q нет запросов", panelTitle(p))
+		}
+		for _, target := range p.Targets {
+			query, ok := chQuery(target)
+			if !ok {
+				t.Fatalf("график %q: запрос не является запросом ClickHouse", panelTitle(p))
+			}
+			if !strings.Contains(query.RawSql, "$__timeFilter") {
+				t.Fatalf("график %q (%s): запрос без $__timeFilter: %s", panelTitle(p), query.RefId, query.RawSql)
+			}
+		}
+	}
+}
+
+// TestKeyRateInflationPanelWeeklySA: панель 4 показывает weekly SA-агрегат третьей серией —
+// опережающее сравнение с базовой ЦБ. В витрине value в процентах, панель в percentunit,
+// поэтому SQL обязан делить на 100; series фиксируется, чтобы панель не переехала на другой ряд.
+func TestKeyRateInflationPanelWeeklySA(t *testing.T) {
+	panel := panelByID(t, builtKeyRatePublications(t), 4)
+	if len(panel.Targets) != 3 {
+		t.Fatalf("у панели %q %d запросов, ожидалось 3 (ИПЦ, базовая, weekly SA)", panelTitle(panel), len(panel.Targets))
+	}
+	query, ok := chQuery(panel.Targets[2])
+	if !ok {
+		t.Fatalf("панель %q: запрос не является запросом ClickHouse", panelTitle(panel))
+	}
+	for _, want := range []string{"v_weekly_cpi_sa", "series = 'weekly_cpi:saar'", "value / 100", "$__timeFilter(date)"} {
+		if !strings.Contains(query.RawSql, want) {
+			t.Fatalf("панель %q: запрос %q не содержит %q: %s", panelTitle(panel), query.RefId, want, query.RawSql)
+		}
+	}
+}
+
 // TestKeyRatePanelIDsUnique проверяет и раскладку id (через Validate), и параметризацию
 // Validate: тот же дашборд с чужим uid обязан быть отвергнут, иначе опечатка в uid прошла
 // бы молча и один дашборд затёр бы другой при деплое.
@@ -108,6 +151,8 @@ func TestKeyRatePanelIDsUnique(t *testing.T) {
 // TestKeyRateWeeklyYearOverlay: ряд B панели 2 — календарное наложение прошлого года.
 // Время сдвигается на +1 год (date_add), а год отбирается ровно прошлый (toYear(now()) - 1):
 // поменяй одно без другого — наложение покажет не тот год, и «прошлый год» окажется текущим.
+// $__timeFilter при этом обязан стоять на сдвинутом time: фильтр по сырому date отбросил бы
+// прошлый год (его даты лежат вне окна дашборда), и пунктир исчез бы.
 func TestKeyRateWeeklyYearOverlay(t *testing.T) {
 	panel := panelByID(t, builtKeyRatePublications(t), 2)
 	if len(panel.Targets) != 2 {
@@ -117,10 +162,13 @@ func TestKeyRateWeeklyYearOverlay(t *testing.T) {
 	if !ok {
 		t.Fatalf("панель %q: запрос не является запросом ClickHouse", panelTitle(panel))
 	}
-	for _, want := range []string{"date_add(YEAR, 1, date)", "toYear(now()) - 1"} {
+	for _, want := range []string{"date_add(YEAR, 1, date)", "toYear(now()) - 1", "$__timeFilter(time)"} {
 		if !strings.Contains(query.RawSql, want) {
 			t.Fatalf("панель %q: запрос %q не содержит %q: %s", panelTitle(panel), query.RefId, want, query.RawSql)
 		}
+	}
+	if strings.Contains(query.RawSql, "$__timeFilter(date)") {
+		t.Fatalf("панель %q: запрос %q фильтрует сырой date, а не сдвинутый time: %s", panelTitle(panel), query.RefId, query.RawSql)
 	}
 }
 
