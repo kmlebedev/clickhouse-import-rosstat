@@ -1224,6 +1224,13 @@ async def check(params, server_log):
             failed += not expect("витрина v_weekly_cpi_sa непуста и полна",
                                  (sa_view_n or 0) >= 627 and sa_series_n == 3, sa_view_detail)
 
+            sa_partial = text(await session.call_tool("run_query", {"query":
+                "SELECT countIf(partial = 1) AS n FROM v_weekly_cpi_sa"}))
+            sa_partial_rows = result_rows(sa_partial)
+            sa_partial_n = sa_partial_rows[0].get("n") if sa_partial_rows else None
+            failed += not expect("nowcast-строка weekly_cpi_sa", (sa_partial_n or 0) in (0, 3),
+                                 f"nowcast-строк: {sa_partial_n} (ожидалось 0 или 3 — 3 ряда × 1 месяц)")
+
             sa_catalog = text(await session.call_tool("run_query", {"query":
                 "SELECT count() AS n FROM v_series_catalog WHERE source = 'weekly_cpi_sa'"}))
             sa_catalog_rows = result_rows(sa_catalog)

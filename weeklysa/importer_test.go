@@ -50,9 +50,9 @@ func TestShouldSkip(t *testing.T) {
 }
 
 func TestBuildRows(t *testing.T) {
-	months := []rawPoint{
-		{Date: weeklyDate(2020, 1, 31), Value: 100.5},
-		{Date: weeklyDate(2020, 2, 29), Value: 101.2},
+	months := []monthPoint{
+		{Date: weeklyDate(2020, 1, 31), Value: 100.5, AsOf: weeklyDate(2020, 1, 27)},
+		{Date: weeklyDate(2020, 2, 29), Value: 101.2, AsOf: weeklyDate(2020, 2, 29), Partial: true},
 	}
 	sa := []saPoint{
 		{Date: weeklyDate(2020, 1, 31), SA: 100},
@@ -74,6 +74,12 @@ func TestBuildRows(t *testing.T) {
 			t.Errorf("published_at %v", row.PublishedAt)
 		}
 	}
+	if !rows[0].AsOf.Equal(weeklyDate(2020, 1, 27)) || rows[0].Partial {
+		t.Errorf("полный месяц: as_of=%s partial=%v", rows[0].AsOf.Format("2006-01-02"), rows[0].Partial)
+	}
+	if !rows[1].AsOf.Equal(weeklyDate(2020, 2, 29)) || !rows[1].Partial {
+		t.Errorf("nowcast: as_of=%s partial=%v", rows[1].AsOf.Format("2006-01-02"), rows[1].Partial)
+	}
 	almostEqual(t, rows[1].SA4W, 1, 1e-12, "sa_4w")
 }
 
@@ -85,6 +91,8 @@ func TestSchemaLiterals(t *testing.T) {
 		"sa_index       Float64",
 		"sa_4w          Float64",
 		"saar           Float64",
+		"as_of          Date",
+		"partial        UInt8",
 		"published_at   Nullable(Date)",
 	} {
 		if !strings.Contains(weeklySADdl, fragment) {
@@ -129,6 +137,8 @@ func TestCatalogAndView(t *testing.T) {
 		"'weekly_cpi:sa_index'",
 		"'weekly_cpi:sa_4w'",
 		"'weekly_cpi:saar'",
+		"as_of",
+		"partial",
 		"FROM weekly_cpi_sa FINAL",
 	} {
 		if !strings.Contains(weeklySAView.Select, fragment) {
@@ -138,7 +148,7 @@ func TestCatalogAndView(t *testing.T) {
 	if weeklySAView.Name != "v_weekly_cpi_sa" {
 		t.Errorf("имя витрины %q", weeklySAView.Name)
 	}
-	if len(weeklySAView.Columns) != 6 {
-		t.Errorf("комментариев колонок %d, ожидалось 6", len(weeklySAView.Columns))
+	if len(weeklySAView.Columns) != 8 {
+		t.Errorf("комментариев колонок %d, ожидалось 8", len(weeklySAView.Columns))
 	}
 }

@@ -23,7 +23,7 @@ var keyRateDashboardView = util.View{
 	Tables: []string{
 		"cbr_key_rate", "cbr_indicators_cpd", "cbr_infl_exp", "rosstat_ipc_mes",
 		"ofz_curve", "cbr_ruania", "macro_series", "keyrate_futures",
-		"keyrate_contract", "events_calendar", "forecast_log",
+		"keyrate_contract", "events_calendar", "forecast_log", "weekly_cpi_sa",
 	},
 	// Все ветки UNION ALL приводят value к Nullable(Float64), даты — к Nullable(Date),
 	// флаги — к UInt8, текст — к String, prompt_version — к UInt16: иначе типы веток
@@ -65,6 +65,12 @@ var keyRateDashboardView = util.View{
             FROM cbr_indicators_cpd FINAL
             WHERE name = 'Базовый ИПЦ'
         )
+    ),
+    wsa AS (
+        SELECT
+            argMax(saar, tuple(partial, as_of, date)) AS saar,
+            argMax(as_of, tuple(partial, as_of, date)) AS weekly_as_of
+        FROM weekly_cpi_sa FINAL
     ),
     ie AS (
         SELECT
@@ -222,6 +228,23 @@ SELECT * FROM (
         '' AS data_version,
         toUInt16(0) AS prompt_version
     FROM cpd
+    UNION ALL
+    SELECT
+        'fundamental' AS contour,
+        'weekly_cpi_saar' AS indicator,
+        wsa.saar AS value,
+        '% г/г (SAAR, weekly)' AS unit,
+        wsa.weekly_as_of AS as_of,
+        CAST(NULL AS Nullable(Date)) AS target_date,
+        '> 4 % (SAAR, weekly nowcast; 2022+ alone не значим)' AS threshold,
+        toUInt8OrDefault(wsa.saar > 4, 0) AS flag,
+        toUInt8OrDefault(if(wsa.weekly_as_of IS NULL, 1, wsa.weekly_as_of < today() - 14), 1) AS stale,
+        CAST(NULL AS Nullable(Float64)) AS error_bp,
+        '' AS probabilities,
+        '' AS model,
+        '' AS data_version,
+        toUInt16(0) AS prompt_version
+    FROM wsa
     UNION ALL
     SELECT
         'fundamental' AS contour,

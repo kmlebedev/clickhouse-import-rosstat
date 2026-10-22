@@ -20,12 +20,26 @@ type saPoint struct {
 	SA   float64
 }
 
-// metricPoint — строка weekly_cpi_sa: SA-индекс и две производные метрики.
+// metricPoint — строка weekly_cpi_sa: SA-индекс, две производные метрики и
+// провенанс месяца (as_of последней недели, nowcast-признак).
 type metricPoint struct {
 	Date    time.Time
 	SAIndex float64
 	SA4W    float64
 	SAAR    float64
+	AsOf    time.Time
+	Partial bool
+}
+
+// monthPoint — месячная точка 4-нед. индекса: конец месяца (метка ряда),
+// значение, последняя дата 7-дневной сетки внутри месяца и признак неполного
+// (текущего) месяца. Для полного месяца AsOf — последняя неделя внутри месяца;
+// для nowcast — последняя доступная неделя.
+type monthPoint struct {
+	Date    time.Time
+	Value   float64
+	AsOf    time.Time
+	Partial bool
 }
 
 // mergeSources сливает агрегат бюллетеней 2009–2021 и BI 2019+. На пересечении
@@ -154,23 +168,26 @@ func fourWeekIndex(grid []rawPoint) ([]rawPoint, error) {
 
 // monthlyLastInMonth берёт последнюю точку каждого месяца и ставит её на конец
 // месяца. Месяц включается, только если последняя дата сетки дошла до его конца
-// (lastGridDate >= monthEnd): текущий неполный месяц в ряд не попадает.
-func monthlyLastInMonth(index []rawPoint, lastGridDate, firstMonth time.Time, minMonths int) ([]rawPoint, error) {
+// (lastGridDate >= monthEnd): текущий неполный месяц в полный ряд не попадает —
+// его отдаёт отдельно partialMonth для nowcast-строки.
+func monthlyLastInMonth(index []rawPoint, lastGridDate, firstMonth time.Time, minMonths int) ([]monthPoint, error) {
 	if len(index) == 0 {
 		return nil, fmt.Errorf("пустой ряд 4-нед. индекса")
 	}
 	type monthGroup struct {
 		month time.Time
 		value float64
+		asOf  time.Time
 	}
 	groups := make([]monthGroup, 0, len(index)/4+1)
 	for _, point := range index {
 		month := monthStart(point.Date)
 		if len(groups) == 0 || !groups[len(groups)-1].month.Equal(month) {
-			groups = append(groups, monthGroup{month: month, value: point.Value})
+			groups = append(groups, monthGroup{month: month, value: point.Value, asOf: point.Date})
 			continue
 		}
 		groups[len(groups)-1].value = point.Value
+		groups[len(groups)-1].asOf = point.Date
 	}
 	for i := 1; i < len(groups); i++ {
 		if !groups[i].month.Equal(groups[i-1].month.AddDate(0, 1, 0)) {
@@ -183,7 +200,7 @@ func monthlyLastInMonth(index []rawPoint, lastGridDate, firstMonth time.Time, mi
 	}
 
 	lastGridDate = normalizeDate(lastGridDate)
-	result := make([]rawPoint, 0, len(groups))
+	result := make([]monthPoint, 0, len(groups))
 	for _, group := range groups {
 		end := monthEnd(group.month)
 		if lastGridDate.Before(end) {
@@ -191,7 +208,7 @@ func monthlyLastInMonth(index []rawPoint, lastGridDate, firstMonth time.Time, mi
 			// lastGridDate заведомо позже их конца.
 			continue
 		}
-		result = append(result, rawPoint{Date: end, Value: group.value})
+		result = append(result, monthPoint{Date: end, Value: group.value, AsOf: group.asOf})
 	}
 	if len(result) < minMonths {
 		return nil, fmt.Errorf("полных месяцев %d, ожидалось не меньше %d (последняя дата сетки %s)",
@@ -200,12 +217,30 @@ func monthlyLastInMonth(index []rawPoint, lastGridDate, firstMonth time.Time, mi
 	return result, nil
 }
 
+// partialMonth — текущий неполный месяц: последняя точка 4-нед. индекса, если
+// её месяц ещё не закрыт (lastGridDate < monthEnd). Дата строки — конец месяца
+// (метка периода), AsOf — последняя доступная неделя, Partial = true. nil
+// означает, что последний месяц полный и nowcast-строки нет.
+func partialMonth(index []rawPoint, lastGridDate time.Time) (*monthPoint, error) {
+	if len(index) == 0 {
+		return nil, fmt.Errorf("пустой ряд 4-нед. индекса")
+	}
+	last := index[len(index)-1]
+	month := monthStart(last.Date)
+	end := monthEnd(month)
+	lastGridDate = normalizeDate(lastGridDate)
+	if !lastGridDate.Before(end) {
+		return nil, nil
+	}
+	return &monthPoint{Date: end, Value: last.Value, AsOf: last.Date, Partial: true}, nil
+}
+
 // computeMetrics считает метрики из SA-уровня 4-нед. индекса:
 //
 //	sa_index = sa
 //	sa_4w    = (sa/100 − 1) × 100          — % за 4 недели
 //	saar     = ((sa/100)^13 − 1) × 100     — % годовых, 13 окон по 4 недели
-func computeMetrics(months []rawPoint, sa []saPoint) ([]metricPoint, error) {
+func computeMetrics(months []monthPoint, sa []saPoint) ([]metricPoint, error) {
 	if len(months) != len(sa) {
 		return nil, fmt.Errorf("%d SA-точек против %d месяцев", len(sa), len(months))
 	}
@@ -223,6 +258,8 @@ func computeMetrics(months []rawPoint, sa []saPoint) ([]metricPoint, error) {
 			SAIndex: point.SA,
 			SA4W:    (point.SA/100 - 1) * 100,
 			SAAR:    (math.Pow(point.SA/100, weeklySAAnnualPeriods) - 1) * 100,
+			AsOf:    normalizeDate(months[i].AsOf),
+			Partial: months[i].Partial,
 		}
 	}
 	return result, nil
