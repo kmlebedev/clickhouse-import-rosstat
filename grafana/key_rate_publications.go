@@ -169,10 +169,13 @@ ORDER BY date
 // панель 4 в percentunit (доли), поэтому /100. Ряд включает nowcast текущего месяца
 // (partial = 1): последняя точка — оценка, а не официальный SA ЦБ; октябрь 2026
 // искажён тарифной неделей 2026-10-05, это headline-агрегат, не core.
-const krWeeklySAARSQL = `SELECT date AS time, value / 100 AS "Недельный SA-агрегат ИПЦ, SAAR"
+// Время nowcast-точки — as_of, а не конец месяца: метка date у неполного месяца
+// лежит в будущем (2026-10-31 при now 2026-10-22), и фильтр по date вырезал бы
+// её из окна — nowcast не был бы виден на дашборде вовсе.
+const krWeeklySAARSQL = `SELECT if(partial = 1, as_of, date) AS time, value / 100 AS "Недельный SA-агрегат ИПЦ, SAAR"
 FROM v_weekly_cpi_sa
-WHERE series = 'weekly_cpi:saar' AND $__timeFilter(date)
-ORDER BY date
+WHERE series = 'weekly_cpi:saar' AND $__timeFilter(as_of)
+ORDER BY time
 `
 
 // krBusinessExpectationsSQL — ценовые ожидания бизнеса (SA) в пунктах: единственная серия панели 5
@@ -749,7 +752,9 @@ func krInflationPanel() *timeseries.PanelBuilder {
 			"pow(индекс/100, 12) - 1; базовая инфляция — месячный прирост в %, pow(1 + прирост/100, 12) - 1. " +
 			"Базовую нельзя читать как индекс. Источники — v_rosstat_macro (ИПЦ) и v_cbr_macro (Базовый ИПЦ). " +
 			"Третья серия — недельный SA-агрегат ИПЦ (v_weekly_cpi_sa, weekly_cpi:saar, value/100): это headline-агрегат, " +
-			"а не core; последняя точка — nowcast текущего месяца (partial = 1), в октябре 2026 искажён тарифной неделей 2026-10-05.").
+			"а не core, поэтому сравнивать его с базовой как замену нельзя — на окне 2023+ в отдельные месяцы расхождение достигает " +
+			"5–9 п.п. (состав корзины и годовое усиление ×13). Последняя точка — nowcast текущего месяца (partial = 1) " +
+			"на дате as_of; в октябре 2026 искажён тарифной неделей 2026-10-05.").
 		WithTarget(timeseriesQuery("A", krCPIAnnualizedSQL)).
 		WithTarget(timeseriesQuery("B", krBaseInflationAnnualizedSQL)).
 		WithTarget(timeseriesQuery("C", krWeeklySAARSQL)).
