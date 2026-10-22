@@ -19,6 +19,7 @@ from weekly_core_proxy import (
     align_last,
     align_mean,
     four_week_average,
+    four_week_index,
     growth_rows,
     month_end,
     month_key,
@@ -46,6 +47,24 @@ class FourWeekAverageTest(unittest.TestCase):
     def test_requires_four_weeks(self):
         rows = [WeeklyRow(date(2022, 1, day), 100.0, 1) for day in (10, 17, 24)]
         self.assertEqual(four_week_average(rows), [])
+
+
+class FourWeekIndexTest(unittest.TestCase):
+    def test_index_is_product_of_four_weeks(self):
+        rows = [
+            WeeklyRow(date(2022, 1, 10), 101.0, 1),
+            WeeklyRow(date(2022, 1, 17), 99.0, 1),
+            WeeklyRow(date(2022, 1, 24), 100.0, 1),
+            WeeklyRow(date(2022, 1, 31), 100.0, 1),
+        ]
+        result = four_week_index(rows)
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0][0], date(2022, 1, 31))
+        self.assertAlmostEqual(result[0][1], 1.01 * 0.99 * 100, places=10)
+
+    def test_requires_four_weeks(self):
+        rows = [WeeklyRow(date(2022, 1, day), 100.0, 1) for day in (10, 17, 24)]
+        self.assertEqual(four_week_index(rows), [])
 
 
 class RegularGridTest(unittest.TestCase):
