@@ -65,20 +65,26 @@ ORDER BY meeting_date
 `
 
 // krWeeklyAnnualizedTemplate — годовое выражение недельного индекса: средний недельный индекс
-// (100 = без изменения) возводится в степень 52 — 52 недели в году. %s по порядку: выражение
-// времени, алиас серии, предикат года и колонка сортировки — ряды A/B различаются только ими
-// (B — календарное наложение: время сдвинуто на +1 год, чтобы прошлый год лёг поверх текущего).
-const krWeeklyAnnualizedTemplate = `SELECT %s AS time, pow(avg(value) / 100, 52) - 1 AS %s
-FROM v_rosstat_macro AS w
-INNER JOIN v_series_catalog AS c ON c.source = w.source AND c.series = w.series
-WHERE c.frequency = 'W' AND toYear(date) = %s
-GROUP BY date
-ORDER BY %s
+// (100 = без изменения) возводится в степень 52 — 52 недели в году. %s по порядку: алиас серии,
+// выражение времени и предикат года — ряды A/B различаются только ими (B — календарное
+// наложение: время сдвинуто на +1 год, чтобы прошлый год лёг поверх текущего). $__timeFilter —
+// по вычисленному time, а не по сырому date: у ряда B time = date + 1 год, и фильтр по date
+// выбросил бы прошлый год из окна дашборда.
+const krWeeklyAnnualizedTemplate = `SELECT time, pow(avg(value) / 100, 52) - 1 AS %s
+FROM (
+    SELECT %s AS time, value
+    FROM v_rosstat_macro AS w
+    INNER JOIN v_series_catalog AS c ON c.source = w.source AND c.series = w.series
+    WHERE c.frequency = 'W' AND toYear(date) = %s
+)
+WHERE $__timeFilter(time)
+GROUP BY time
+ORDER BY time
 `
 
 // krWeeklyAnnualizedSQL собирает запрос годового выражения по шаблону.
-func krWeeklyAnnualizedSQL(timeExpr, alias, yearFilter, orderBy string) string {
-	return fmt.Sprintf(krWeeklyAnnualizedTemplate, timeExpr, alias, yearFilter, orderBy)
+func krWeeklyAnnualizedSQL(timeExpr, alias, yearFilter string) string {
+	return fmt.Sprintf(krWeeklyAnnualizedTemplate, alias, timeExpr, yearFilter)
 }
 
 // krWeeklyRisersSQL — широта недельного роста: countIf считает недельные ряды, подорожавшие
@@ -156,6 +162,16 @@ ORDER BY date
 const krBaseInflationAnnualizedSQL = `SELECT date AS time, pow(1 + value / 100, 12) - 1 AS "Базовая инфляция, годовое выражение"
 FROM v_cbr_macro
 WHERE series = 'Базовый ИПЦ' AND $__timeFilter(date)
+ORDER BY date
+`
+
+// krWeeklySAARSQL — недельный SA-агрегат ИПЦ (v_weekly_cpi_sa): value в процентах,
+// панель 4 в percentunit (доли), поэтому /100. Ряд включает nowcast текущего месяца
+// (partial = 1): последняя точка — оценка, а не официальный SA ЦБ; октябрь 2026
+// искажён тарифной неделей 2026-10-05, это headline-агрегат, не core.
+const krWeeklySAARSQL = `SELECT date AS time, value / 100 AS "Недельный SA-агрегат ИПЦ, SAAR"
+FROM v_weekly_cpi_sa
+WHERE series = 'weekly_cpi:saar' AND $__timeFilter(date)
 ORDER BY date
 `
 
@@ -698,9 +714,10 @@ func krWeeklyAnnualizedPanel() *timeseries.PanelBuilder {
 		Description("Средний недельный индекс цен недельных товарных рядов (v_rosstat_macro, отбор — "+
 			"v_series_catalog.frequency = 'W') возведён в степень 52: «если бы такие недели шли весь год». "+
 			"SAAR считает модель, здесь — годовое выражение, а не прогноз. Пунктир — прошлый год, "+
-			"сдвинутый на +1 год для наложения на текущий. Порог 4% — цель ЦБ.").
-		WithTarget(timeseriesQuery("A", krWeeklyAnnualizedSQL("date", `"Текущий год, годовое выражение"`, "toYear(now())", "date"))).
-		WithTarget(timeseriesQuery("B", krWeeklyAnnualizedSQL("date_add(YEAR, 1, date)", `"Прошлый год, годовое выражение"`, "toYear(now()) - 1", "time"))).
+			"сдвинутый на +1 год для наложения на текущий; диапазон дат фильтрует уже сдвинутое время, "+
+			"поэтому оба года видны в одном окне. Порог 4% — цель ЦБ.").
+		WithTarget(timeseriesQuery("A", krWeeklyAnnualizedSQL("date", `"Текущий год, годовое выражение"`, "toYear(now())"))).
+		WithTarget(timeseriesQuery("B", krWeeklyAnnualizedSQL("date_add(YEAR, 1, date)", `"Прошлый год, годовое выражение"`, "toYear(now()) - 1"))).
 		Unit(units.PercentUnit).
 		Thresholds(krFourPercentThresholds()).
 		ThresholdsStyle(krThresholdLineStyle()).
@@ -730,9 +747,12 @@ func krInflationPanel() *timeseries.PanelBuilder {
 		Span(spanHalf).
 		Description("Годовое выражение месячных данных, формулы разные: ИПЦ — индекс (100 = без изменения), " +
 			"pow(индекс/100, 12) - 1; базовая инфляция — месячный прирост в %, pow(1 + прирост/100, 12) - 1. " +
-			"Базовую нельзя читать как индекс. Источники — v_rosstat_macro (ИПЦ) и v_cbr_macro (Базовый ИПЦ).").
+			"Базовую нельзя читать как индекс. Источники — v_rosstat_macro (ИПЦ) и v_cbr_macro (Базовый ИПЦ). " +
+			"Третья серия — недельный SA-агрегат ИПЦ (v_weekly_cpi_sa, weekly_cpi:saar, value/100): это headline-агрегат, " +
+			"а не core; последняя точка — nowcast текущего месяца (partial = 1), в октябре 2026 искажён тарифной неделей 2026-10-05.").
 		WithTarget(timeseriesQuery("A", krCPIAnnualizedSQL)).
 		WithTarget(timeseriesQuery("B", krBaseInflationAnnualizedSQL)).
+		WithTarget(timeseriesQuery("C", krWeeklySAARSQL)).
 		Unit(units.PercentUnit).
 		Thresholds(krFourPercentThresholds()).
 		ThresholdsStyle(krThresholdLineStyle())
