@@ -34,6 +34,7 @@ import (
 	_ "github.com/kmlebedev/clickhouse-import-rosstat/rosstat"
 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
 	_ "github.com/kmlebedev/clickhouse-import-rosstat/views"
+	_ "github.com/kmlebedev/clickhouse-import-rosstat/weeklysa"
 	_ "github.com/kmlebedev/clickhouse-import-rosstat/wgc"
 	log "github.com/sirupsen/logrus"
 	"os"
