@@ -86,6 +86,18 @@ func TestParseX13OutputNonPositive(t *testing.T) {
 	}
 }
 
+func TestParseX13OutputShortRow(t *testing.T) {
+	expected := []monthPoint{{Date: weeklyDate(2020, 1, 31)}}
+	for name, output := range map[string][]byte{
+		"short":     []byte("date,sa_level\n2020-01-31\n"),
+		"reordered": []byte("sa_level,date\n5\n"),
+	} {
+		if _, err := parseX13Output(output, expected); err == nil {
+			t.Errorf("%s: ожидалась ошибка короткой записи", name)
+		}
+	}
+}
+
 func TestEmbeddedPins(t *testing.T) {
 	if err := checkEmbeddedPins(); err != nil {
 		t.Fatal(err)
