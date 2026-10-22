@@ -73,6 +73,7 @@ func parseX13Output(data []byte, expected []monthPoint) ([]saPoint, error) {
 		}
 	}
 
+	dateIdx, saIdx := idx["date"], idx["sa_level"]
 	byDate := make(map[time.Time]float64, len(expected))
 	for line := 2; ; line++ {
 		record, readErr := reader.Read()
@@ -82,14 +83,17 @@ func parseX13Output(data []byte, expected []monthPoint) ([]saPoint, error) {
 		if readErr != nil {
 			return nil, fmt.Errorf("X-13: строка %d: %w", line, readErr)
 		}
-		date, dateErr := time.Parse("2006-01-02", strings.TrimSpace(record[idx["date"]]))
+		if len(record) <= dateIdx || len(record) <= saIdx {
+			return nil, fmt.Errorf("X-13: строка %d: короткая запись (%d полей)", line, len(record))
+		}
+		date, dateErr := time.Parse("2006-01-02", strings.TrimSpace(record[dateIdx]))
 		if dateErr != nil {
-			return nil, fmt.Errorf("X-13: строка %d: дата %q: %w", line, record[idx["date"]], dateErr)
+			return nil, fmt.Errorf("X-13: строка %d: дата %q: %w", line, record[dateIdx], dateErr)
 		}
 		date = normalizeDate(date)
-		value, valueErr := strconv.ParseFloat(strings.TrimSpace(record[idx["sa_level"]]), 64)
+		value, valueErr := strconv.ParseFloat(strings.TrimSpace(record[saIdx]), 64)
 		if valueErr != nil {
-			return nil, fmt.Errorf("X-13: строка %d: sa_level %q: %w", line, record[idx["sa_level"]], valueErr)
+			return nil, fmt.Errorf("X-13: строка %d: sa_level %q: %w", line, record[saIdx], valueErr)
 		}
 		if value <= 0 || math.IsNaN(value) || math.IsInf(value, 0) {
 			return nil, fmt.Errorf("X-13: строка %d: неположительный или нечисловой sa_level %v", line, value)
