@@ -14,7 +14,7 @@
 Файл: `bank/domrf_mortgage.go`.
 
 1. Переписать блок комментария констант: HTML-страница аналитики закрыта антиботом ServicePipe (HTTP 200 + ~1,8 КБ JS-оболочки вместо HTML, окнами), поэтому ссылка берётся из JSON-API того же раздела; сам файл и HEAD доступны общим клиентом.
-2. Заменить `domrfAnalyticsUrl` на `domrfListUrl = "…/api/v2/content/analytics/list/?section=838&include=Y"`; `domrfDataUrlPrefix` и `domrfPageBlockAnchor` остаются.
+2. Заменить `domrfAnalyticsUrl` на `domrfListUrl = "…/api/v2/content/analytics/list/?section=838&include=Y"`; `domrfDataUrlPrefix` и `domrfBlockAnchor` остаются.
 3. Добавить типы ответа `domrfListResponse`, `domrfListItem`, `domrfListProps`, `domrfFile` (только нужные поля).
 4. Добавить чистый разбор `domrfXlsSrcFromList(list domrfListResponse) (string, error)`:
    - `success=false` — ошибка;
