@@ -19,7 +19,7 @@
 
 Правила транспорта пакета:
 
-1. Страница качается **только** через `domrfGetPage` — до 8 попыток `util.GetPage` с паузой 1 с; ответ считается challenge, если `len < 4096` **и** содержит `servicepipe` или `js-challenge-loader`; после последней попытки — ошибка с числом попыток (не «0 строк»).
+1. Страница качается **только** через `domrfGetPage` — до 20 попыток `util.GetPage` с паузой 2 с и джиттером; ответ считается challenge, если `len < 4096` **и** содержит `servicepipe` или `js-challenge-loader`; после последней попытки — ошибка с числом попыток (не «0 строк»).
 2. Файлы (`/api/v2/content/download/...`) качает шаблон `util.ClickHouseImport` (`DataUrl`); WAF на них не распространяется, HEAD не используется.
 3. JSON-API раздела `/api/v2/content/analytics/list/?section=…&include=Y` антиботом не закрыт, но **блоки A и B в листингах отсутствуют** — они статические элементы страницы. Листинг годится только для `bank/domrf_mortgage` (там уже есть отдельная ветка `fix/domrf-mortgage-source`), в этом пакете не используется.
 4. `robots.txt`: `Crawl-delay: 30`, `/api/` не запрещён, `/upload/` запрещён (PDF не качаем). Прогон — 1–3 запроса в неделю.
@@ -137,7 +137,7 @@ CREATE TABLE IF NOT EXISTS domrf_price_index (
 
 | Импортёр | `Name()` / таблица | Порядок | Гейт |
 |---|---|---|---|
-| `domrf_mortgage_market` | `domrf_mortgage_market` | `BeforeImport`: страница → `statistical_series` → `DataUrl`; шаблон качает XLSX, `ImportFunc` разбирает | `PublicationCountPoints` объявлен; HEAD источника отдаёт 307 → префлайт fail-open, каждый прогон — полный импорт без записи версии (документировано) |
+| `domrf_mortgage_market` | `domrf_mortgage_market` | `BeforeImport`: страница → `statistical_series` → `DataUrl`; шаблон качает XLSX, `ImportFunc` разбирает | `PublicationCountPoints` объявлен. HEAD источника вероятностный (антибот): когда проходит — префлайт видит версию и повторный прогон даёт no-op; когда отдаёт 307 — fail-open, полный идемпотентный прогон без записи версии (документировано) |
 | `domrf_mortgage_weekly` | `domrf_mortgage_weekly` | свой `Import()`: страница → JSON → батч | нет; полный импорт 1 154 точек, идемпотентен `ReplacingMergeTree` |
 | `domrf_price_index` | `domrf_price_index` | свой `Import()`: дешёвый POST (РФ) → решение no-op → полный POST (75×4) | гейт по `max(month_dt)` и числу точек: совпало — no-op без записи в БД |
 
@@ -165,11 +165,11 @@ CREATE TABLE IF NOT EXISTS domrf_price_index (
 ## 9. Расписание и приёмка
 
 - `dagu/domrf.yaml`: chain, `schedule: "47 9 * * 1"`, `overlap_policy: skip`, три шага, `retry_policy: limit 3, interval_sec 300`.
-- Приёмка — стандарт §16.1: `make all`; живые прогоны (24 ряда ≈ 4 612 точек, 1 154 недельные, 20 700 панельных); повтор (market — идемпотентный полный, weekly — те же 1 154, price_index — no-op); `make mcp-check`; `dagu validate`; `make docs-check`; протокол комментарием в PR.
+- Приёмка — стандарт §16.1: `make all`; живые прогоны (24 ряда ≈ 4 612 точек, 1 154 недельные, 20 700 панельных); повтор (market — no-op при прошедшем HEAD по версии в `source_publications`, иначе полный идемпотентный; weekly — те же 1 154; price_index — no-op); `make mcp-check`; `dagu validate`; `make docs-check`; протокол комментарием в PR.
 
 ## 10. Ограничения
 
-1. Антибот вероятностный: 8 попыток дают высокую, но не 100 % вероятность; полный блок (как у наш.дом.рф) — смена источника решением владельца.
+1. Антибот вероятностный: 20 попыток с паузой и джиттером дают отказ порядка 0,1 % при наблюдаемой доле успеха ≈30 %; окно из 8 попыток подряд уже не давало ни одной (наблюдение 2026-10-23). Полный блок (как у наш.дом.рф) — смена источника решением владельца; шаг dagu повторяется 3 раза с интервалом 300 с.
 2. Индекс цен — внутренний API без контракта; смена схемы валит разбор.
 3. Ревизии истории индексом не хранятся (только последняя версия).
 4. `estateClass` не работает — разрез по классу жилья недоступен.
