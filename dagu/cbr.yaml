@@ -251,3 +251,16 @@ steps:
     retry_policy:
       limit: 3
       interval_sec: 300
+
+  # Стенограммы пресс-конференций по ключевой ставке (пункт
+  # key-rate/phase-4-cbr-key-rate-pressconf, #370): плейлист YouTube ЦБ → player API →
+  # русские автосубтитры. Шаг в хвосте: сбой YouTube не лишает данных проверенные шаги
+  # контура. Ежедневный прогон в 09:17 видит вчерашнюю конференцию; импорт в день
+  # заседания после 15:00 МСК — ручным `make import STAT=cbr_key_rate_pressconf`.
+  - id: cbr_key_rate_pressconf
+    run: "$ROSSTAT_IMPORT_BIN"
+    env:
+      - CLICKHOUSE_IMPORT_STAT=cbr_key_rate_pressconf
+    retry_policy:
+      limit: 3
+      interval_sec: 300
