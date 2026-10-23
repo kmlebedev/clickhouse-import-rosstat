@@ -21,6 +21,8 @@
 - `"INNERTUBE_API_KEY":"..."` — публичный ключ YouTube (не секрет; берётся со страницы, в код не хардкодится);
 - `"visitorData":"..."` — visitor id для player API.
 
+Страница скачивается через `util.HttpClient` с consent-cookie `SOCS=CAI`: без неё YouTube из EU отдаёт ConsentUi (HTTP 200, ~0,6 МБ) без `ytInitialData` и `visitorData`; `util.GetPage` этого не умеет, потому что не принимает заголовки.
+
 **Player API** — без `yt-dlp`:
 
 ```
@@ -56,7 +58,7 @@ CREATE TABLE IF NOT EXISTS cbr_key_rate_pressconf (
     caption_lang LowCardinality(String),     -- 'ru'
     caption_kind LowCardinality(String),     -- 'asr' | 'manual'
     cues UInt16,                             -- число записанных реплик
-    loaded_at DateTime('Europe/Moscow')      -- версия ReplacingMergeTree
+    loaded_at DateTime('Europe/Moscow') DEFAULT now()  -- версия ReplacingMergeTree
 ) ENGINE = ReplacingMergeTree(loaded_at) ORDER BY meeting_date;
 
 CREATE TABLE IF NOT EXISTS cbr_key_rate_pressconf_cue (

@@ -80,6 +80,12 @@ SELECT meeting_date, length(text) FROM v_cbr_key_rate_pressconf_text ORDER BY me
 
 Ожидание: 23 шапки, `2024-02-16 … 2026-10-23`, реплики всех 23 конференций, `v_..._text` — 23 непустые строки; повтор — `Imported 0 rows`; все проверки зелёные. Протокол — комментарием в PR.
 
-## Протокол живой приёмки
+## Протокол живой приёмки (2026-10-23)
 
-Заполняется после прогона: дата, команда, число шапок/реплик, диапазон дат, повтор, результаты `make all`/`make docs-check`/`dagu validate`/`make mcp-check`, спот-проверка текста 2026-10-23.
+- `make import STAT=cbr_key_rate_pressconf` — `Imported 23 rows`, **39 492** реплики, диапазон `2024-02-16 … 2026-10-23`; `v_cbr_key_rate_pressconf_text` — 23 непустые строки (минимальная длина 91 806 символов, `2026-10-23` — 113 362); расхождений `cues` шапки и `count()` реплик — 0.
+- Повтор — `Imported 0 rows`, лог: «новых пресс-конференций нет (в таблице: 23; реплик: 39492; в плейлисте: 23 с 2024-02-16)».
+- `v_cbr_key_rate_pressconf` — 23 строки; `v_cbr_key_rate_pressconf_cues` — 39 492; `v_cbr_key_rate_pressconf_text` — 23.
+- `make mcp-check` — все три витрины и обе сырые таблицы контура OK; общий прогон — **1 unrelated FAIL**: `bootstrap-разметка новых каналов` (`ifax_go 43/47`, `markettwits 54/65`, `newssmartlab 52/60`), вне этого пункта.
+- `make all` — exit 0: golangci-lint `0 issues`, `go vet`, `go test -race ./...`, обе сборки.
+- `make docs-check` — на ветке падает на **pre-existing** missing image `docs/publications/2026-10-22-weekly-sa-cpi/weekly-sa-mm-vs-cbr.svg` (файла нет и в `main`, пункт не наш). С временно подложенным untracked SVG из корня — `checked 62 pages`, `33 tests OK`; страницы этого пункта проходят.
+- `dagu validate dagu/cbr.yaml` — exit 0 (только предупреждение об `auth.mode`).
