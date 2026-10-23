@@ -149,7 +149,7 @@ func krWeeklyAvg4SQL(indexSubquery, alias string) string {
 
 // krCPIAnnualizedSQL — ИПЦ: в витрине индекс потребительских цен (100 = без изменения),
 // поэтому годовое выражение — pow(индекс/100, 12) - 1.
-const krCPIAnnualizedSQL = `SELECT date AS time, pow(value / 100, 12) - 1 AS "ИПЦ, годовое выражение"
+const krCPIAnnualizedSQL = `SELECT date AS time, pow(value / 100, 12) - 1 AS "ИПЦ, м/м в годовое выражение (Росстат)"
 FROM v_rosstat_macro
 WHERE series = 'Индексы потребительских цен на товары и услуги по Российской Федерации'
   AND $__timeFilter(date)
@@ -159,7 +159,7 @@ ORDER BY date
 // krBaseInflationAnnualizedSQL — базовая инфляция: в витрине месячный прирост в % (м/м),
 // поэтому годовое выражение — pow(1 + прирост/100, 12) - 1. Формула другая, чем у ИПЦ
 // (индекс против темпа): читать базовую как индекс нельзя, и это подписано в Description панели 4.
-const krBaseInflationAnnualizedSQL = `SELECT date AS time, pow(1 + value / 100, 12) - 1 AS "Базовая инфляция, годовое выражение"
+const krBaseInflationAnnualizedSQL = `SELECT date AS time, pow(1 + value / 100, 12) - 1 AS "Базовая инфляция, годовое выражение (ЦБ)"
 FROM v_cbr_macro
 WHERE series = 'Базовый ИПЦ' AND $__timeFilter(date)
 ORDER BY date
@@ -172,7 +172,7 @@ ORDER BY date
 // Время nowcast-точки — as_of, а не конец месяца: метка date у неполного месяца
 // лежит в будущем (2026-10-31 при now 2026-10-22), и фильтр по date вырезал бы
 // её из окна — nowcast не был бы виден на дашборде вовсе.
-const krWeeklySAARSQL = `SELECT if(partial = 1, as_of, date) AS time, value / 100 AS "Недельный SA-агрегат ИПЦ, SAAR"
+const krWeeklySAARSQL = `SELECT if(partial = 1, as_of, date) AS time, value / 100 AS "Недельный SA-агрегат узкого ИПЦ 4н/4н"
 FROM v_weekly_cpi_sa
 WHERE series = 'weekly_cpi:saar' AND $__timeFilter(as_of)
 ORDER BY time

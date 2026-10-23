@@ -54,6 +54,12 @@
     "section": "Контур ключевой ставки"
   },
   {
+    "source": "docs/publications/2026-10-22-weekly-sa-cpi.md",
+    "page": "weekly-sa-cpi-2026-10-22.md",
+    "title": "16,1% или 16,2%: как я построил недельный SA м/м ИПЦ",
+    "section": "Контур ключевой ставки"
+  },
+  {
     "source": "docs/DCF_DATA_COVERAGE.md",
     "page": "dcf-data-coverage.md",
     "title": "Полнота данных DCF",
