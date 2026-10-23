@@ -144,7 +144,7 @@ func domrfXlsSrcFromList(list domrfListResponse) (src string, err error) {
 		return "", fmt.Errorf("список %s: success=false", domrfListUrl)
 	}
 	for _, item := range list.Data {
-		if item.Props.Title != domrfBlockAnchor {
+		if strings.TrimSpace(item.Props.Title) != domrfBlockAnchor {
 			continue
 		}
 		src = strings.TrimSpace(item.Props.File2.Src)
