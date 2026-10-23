@@ -389,7 +389,7 @@
         "targets": [
           {
             "refId": "A",
-            "rawSql": "SELECT date AS time, pow(value / 100, 12) - 1 AS \"ИПЦ, годовое выражение\"\nFROM v_rosstat_macro\nWHERE series = 'Индексы потребительских цен на товары и услуги по Российской Федерации'\n  AND $__timeFilter(date)\nORDER BY date\n",
+            "rawSql": "SELECT date AS time, pow(value / 100, 12) - 1 AS \"ИПЦ, м/м в годовое выражение (Росстат)\"\nFROM v_rosstat_macro\nWHERE series = 'Индексы потребительских цен на товары и услуги по Российской Федерации'\n  AND $__timeFilter(date)\nORDER BY date\n",
             "editorType": "sql",
             "format": 0,
             "queryType": "timeseries",
@@ -397,7 +397,7 @@
           },
           {
             "refId": "B",
-            "rawSql": "SELECT date AS time, pow(1 + value / 100, 12) - 1 AS \"Базовая инфляция, годовое выражение\"\nFROM v_cbr_macro\nWHERE series = 'Базовый ИПЦ' AND $__timeFilter(date)\nORDER BY date\n",
+            "rawSql": "SELECT date AS time, pow(1 + value / 100, 12) - 1 AS \"Базовая инфляция, годовое выражение (ЦБ)\"\nFROM v_cbr_macro\nWHERE series = 'Базовый ИПЦ' AND $__timeFilter(date)\nORDER BY date\n",
             "editorType": "sql",
             "format": 0,
             "queryType": "timeseries",
@@ -405,7 +405,7 @@
           },
           {
             "refId": "C",
-            "rawSql": "SELECT if(partial = 1, as_of, date) AS time, value / 100 AS \"Недельный SA-агрегат ИПЦ, SAAR\"\nFROM v_weekly_cpi_sa\nWHERE series = 'weekly_cpi:saar' AND $__timeFilter(as_of)\nORDER BY time\n",
+            "rawSql": "SELECT if(partial = 1, as_of, date) AS time, value / 100 AS \"Недельный SA-агрегат узкого ИПЦ 4н/4н\"\nFROM v_weekly_cpi_sa\nWHERE series = 'weekly_cpi:saar' AND $__timeFilter(as_of)\nORDER BY time\n",
             "editorType": "sql",
             "format": 0,
             "queryType": "timeseries",
