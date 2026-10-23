@@ -58,6 +58,11 @@ GRANT SELECT ON default.v_cbr_mo_br TO kimi_reader;
 GRANT SELECT ON default.v_cbr_mp_summary TO kimi_reader;
 GRANT SELECT ON default.v_cbr_mp_summary_blocks TO kimi_reader;
 GRANT SELECT ON default.v_cbr_mp_summary_channels TO kimi_reader;
+-- Контур пресс-релизов по ключевой ставке (пункт key-rate/phase-4-cbr-key-rate-press, #368):
+-- три витрины — шапка релиза, абзацы и квартальные блоки; сырые таблицы агенту закрыты.
+GRANT SELECT ON default.v_cbr_key_rate_press TO kimi_reader;
+GRANT SELECT ON default.v_cbr_key_rate_press_blocks TO kimi_reader;
+GRANT SELECT ON default.v_cbr_key_rate_press_quarters TO kimi_reader;
 GRANT SELECT ON default.v_bank_sber_spending TO kimi_reader;
 GRANT SELECT ON default.v_bank_macro TO kimi_reader;
 GRANT SELECT ON default.v_cbr_bop TO kimi_reader;

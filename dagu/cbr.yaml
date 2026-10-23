@@ -237,3 +237,17 @@ steps:
     retry_policy:
       limit: 3
       interval_sec: 300
+
+  # Пресс-релизы по ключевой ставке (пункт key-rate/phase-4-cbr-key-rate-press, #368):
+  # даты и ссылки — из календаря cbr.ru/dkp/cal_mp/, текст — со страницы релиза. Шаг в
+  # хвосте: сбой разбора вёрстки релиза не лишает данных проверенные шаги контура.
+  # Ежедневный прогон в 09:17 в день заседания видит ещё не опубликованный релиз
+  # (выходит в 13:30 МСК) и пропускает его с warn; импорт в день заседания после
+  # 13:30 — ручным `make import STAT=cbr_key_rate_press` (публикационный контур).
+  - id: cbr_key_rate_press
+    run: "$ROSSTAT_IMPORT_BIN"
+    env:
+      - CLICKHOUSE_IMPORT_STAT=cbr_key_rate_press
+    retry_policy:
+      limit: 3
+      interval_sec: 300
