@@ -1057,6 +1057,36 @@ async def check(params, server_log):
                 failed += not expect(f"сырая {table} закрыта ({label})", denied,
                                      f"отказ ClickHouse 497 на {table} (ожидаемо)" if denied else raw[:200])
 
+            # Контур пресс-релизов по ключевой ставке (пункт key-rate/phase-4-cbr-key-rate-press,
+            # #368): три витрины — шапка релиза, дословные абзацы и квартальные блоки с
+            # числами — читаются агентом и непусты, а три сырые таблицы закрыты. Проверка
+            # устроена как у cbr_mp_summary: пустая витрина означает ни разу не отработавший
+            # шаг cbr_key_rate_press, а не отсутствие данных у источника (история — 23
+            # релиза с 16.02.2024).
+            for view, label in (("v_cbr_key_rate_press", "шапка релиза"),
+                                ("v_cbr_key_rate_press_blocks", "абзацы релиза"),
+                                ("v_cbr_key_rate_press_quarters", "квартальные блоки")):
+                press_view = text(await session.call_tool("run_query", {"query": f"SELECT count() FROM {view}"}))
+                press_view_rows = result_rows(press_view)
+                press_view_n = press_view_rows[0].get("count()") if press_view_rows else None
+                if press_view_rows is None:
+                    press_view_detail = f"витрина не читается: {press_view[:200]}"
+                elif (press_view_n or 0) > 0:
+                    press_view_detail = f"строк: {press_view_n}"
+                else:
+                    press_view_detail = (f"строк: {press_view_n} — прогнать импортёр контура "
+                                         "(make import STAT=cbr_key_rate_press)")
+                failed += not expect(f"витрина {view} существует и читается ({label})",
+                                     (press_view_n or 0) > 0, press_view_detail)
+
+            for table, label in (("cbr_key_rate_press", "шапка"),
+                                 ("cbr_key_rate_press_block", "блоки"),
+                                 ("cbr_key_rate_press_quarter", "кварталы")):
+                raw = text(await session.call_tool("run_query", {"query": f"SELECT count() FROM {table}"}))
+                denied = "ACCESS_DENIED" in raw or "Not enough privileges" in raw
+                failed += not expect(f"сырая {table} закрыта ({label})", denied,
+                                     f"отказ ClickHouse 497 на {table} (ожидаемо)" if denied else raw[:200])
+
             # Контур Росстата (фаза 3 роадмапа, задачи T4–T7): витрина v_rosstat_macro видна
             # и НЕПУСТА, каталог описывает ряды всех пяти импортёров пакета, а пять
             # сырых таблиц — источники витрины — агенту закрыты (как macro_series и
