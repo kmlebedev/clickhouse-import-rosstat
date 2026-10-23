@@ -1087,6 +1087,42 @@ async def check(params, server_log):
                 failed += not expect(f"сырая {table} закрыта ({label})", denied,
                                      f"отказ ClickHouse 497 на {table} (ожидаемо)" if denied else raw[:200])
 
+            # Контур стенограмм пресс-конференций по ключевой ставке (пункт
+            # key-rate/phase-4-cbr-key-rate-pressconf, #370): три витрины — шапка, реплики
+            # с таймкодами и полный текст — читаются агентом и непусты. Текстовая витрина
+            # дополнительно проверяется на непустой text: count() > 0 прошёл бы и на шапках
+            # без реплик. Две сырые таблицы закрыты, как у остальных текстовых контуров.
+            for view, label in (("v_cbr_key_rate_pressconf", "шапка"),
+                                ("v_cbr_key_rate_pressconf_cues", "реплики"),
+                                ("v_cbr_key_rate_pressconf_text", "полный текст")):
+                pressconf_view = text(await session.call_tool("run_query", {"query": f"SELECT count() FROM {view}"}))
+                pressconf_view_rows = result_rows(pressconf_view)
+                pressconf_view_n = pressconf_view_rows[0].get("count()") if pressconf_view_rows else None
+                if pressconf_view_rows is None:
+                    pressconf_view_detail = f"витрина не читается: {pressconf_view[:200]}"
+                elif (pressconf_view_n or 0) > 0:
+                    pressconf_view_detail = f"строк: {pressconf_view_n}"
+                else:
+                    pressconf_view_detail = (f"строк: {pressconf_view_n} — прогнать импортёр контура "
+                                             "(make import STAT=cbr_key_rate_pressconf)")
+                failed += not expect(f"витрина {view} существует и читается ({label})",
+                                     (pressconf_view_n or 0) > 0, pressconf_view_detail)
+
+            pressconf_empty = text(await session.call_tool("run_query", {
+                "query": "SELECT countIf(length(text) = 0) AS empty FROM v_cbr_key_rate_pressconf_text"}))
+            pressconf_empty_rows = result_rows(pressconf_empty)
+            pressconf_empty_n = pressconf_empty_rows[0].get("empty") if pressconf_empty_rows else None
+            failed += not expect("витрина v_cbr_key_rate_pressconf_text содержит непустой текст",
+                                 pressconf_empty_rows is not None and (pressconf_empty_n or 0) == 0,
+                                 f"пустых строк: {pressconf_empty_n}" if pressconf_empty_rows else pressconf_empty[:200])
+
+            for table, label in (("cbr_key_rate_pressconf", "шапка"),
+                                 ("cbr_key_rate_pressconf_cue", "реплики")):
+                raw = text(await session.call_tool("run_query", {"query": f"SELECT count() FROM {table}"}))
+                denied = "ACCESS_DENIED" in raw or "Not enough privileges" in raw
+                failed += not expect(f"сырая {table} закрыта ({label})", denied,
+                                     f"отказ ClickHouse 497 на {table} (ожидаемо)" if denied else raw[:200])
+
             # Контур Росстата (фаза 3 роадмапа, задачи T4–T7): витрина v_rosstat_macro видна
             # и НЕПУСТА, каталог описывает ряды всех пяти импортёров пакета, а пять
             # сырых таблиц — источники витрины — агенту закрыты (как macro_series и
