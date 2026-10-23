@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"math/rand/v2"
 	"strings"
 	"time"
 
@@ -42,9 +43,11 @@ const (
 	domrfAppSelector = "main#app"
 
 	// domrfMaxAttempts / domrfRetryDelay — политика повторов страницы: антибот вероятностный
-	// (2026-10-23: 1–5 успехов из 8–20 попыток), пауза между попытками снижает раздражение WAF.
-	domrfMaxAttempts = 8
-	domrfRetryDelay  = time.Second
+	// (2026-10-23: 1–5 успехов из 8–20 попыток, а окно из 8 попыток подряд может не дать ни одной).
+	// 20 попыток с паузой 2 с и джиттером дают отказ ≈0,1 % при p=0,3 на попытку; джиттер не даёт
+	// повторять запросы синхронно с другими сессиями и с самим WAF.
+	domrfMaxAttempts = 20
+	domrfRetryDelay  = 2 * time.Second
 	// domrfChallengeMaxBytes — верхняя граница размера JS-оболочки (1 787–1 795 байт на
 	// 2026-10-23); реальная страница — 110–130 КБ. Порог отделяет оболочку от любой настоящей
 	// страницы с запасом в 25 раз.
@@ -86,7 +89,7 @@ func domrfGetPage(pageUrl string) ([]byte, error) {
 			return page, nil
 		}
 		if attempt < domrfMaxAttempts {
-			time.Sleep(domrfRetryDelay)
+			time.Sleep(domrfRetryDelay/2 + rand.N(domrfRetryDelay))
 		}
 	}
 	return nil, fmt.Errorf("%s: страница не получена за %d попыток: %w", pageUrl, domrfMaxAttempts, lastErr)
@@ -167,7 +170,7 @@ func domrfPostPriceIndex(payload []byte) ([]byte, error) {
 			return body, nil
 		}
 		if attempt < domrfMaxAttempts {
-			time.Sleep(domrfRetryDelay)
+			time.Sleep(domrfRetryDelay/2 + rand.N(domrfRetryDelay))
 		}
 	}
 	return nil, fmt.Errorf("%s: ответ не получен за %d попыток: %w", domrfPriceIndexUrl, domrfMaxAttempts, lastErr)
