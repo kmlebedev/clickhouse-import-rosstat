@@ -1,4 +1,4 @@
-# План: починка `domrf_mortgage` — повтор страницы при антибот-заглушке
+# План: починка `domrf_mortgage` — ссылка из JSON-API раздела
 
 **Пункт:** `key-rate/phase-2-source-fixes` (фаза 2).
 **Issue:** [#336](https://github.com/kmlebedev/clickhouse-import-rosstat/issues/336).
@@ -9,45 +9,43 @@
 
 ## 1. Задачи
 
-### Task 1 — признак заглушки и цикл повтора
+### Task 1 — источник ссылки: JSON-список раздела
 
 Файл: `bank/domrf_mortgage.go`.
 
-1. Переписать блок комментария констант (`:21-28`): страница за ServicePipe JS-challenge (HTTP 200 + ~1,8 КБ JS-оболочка, вероятностно); повтор тем же клиентом; cookie успешной страницы авторизуют скачивание (без них WAF 403); файл отдаётся 307 → 200.
-2. Добавить `domrfPageAttempts = 8`, `domrfPageRetryDelay = 300 * time.Millisecond`.
-3. Добавить `domrfChallengePage(page []byte) bool` (маркеры `js-challenge-loader`, `servicepipe.tech`).
-4. Добавить `domrfPageSrc(fetch func(string) ([]byte, error), attempts int, delay time.Duration) (string, error)`:
-   - ошибка `fetch` — сразу;
-   - успешный разбор — `src`;
-   - ошибка разбора на странице без маркеров заглушки — сразу (fail fast);
-   - заглушка — `log.Warnf` + пауза + следующая попытка;
-   - исчерпание — ошибка «антибот-заглушка ServicePipe вместо HTML после N попыток».
-5. `Import()` — вызывать `domrfPageSrc(util.GetPage, domrfPageAttempts, domrfPageRetryDelay)` вместо прямого `util.GetPage`; остальной путь (локальная копия шаблона, `DataUrl`, префлайт, архив) не трогать.
-6. Обновить doc-комментарии `domrfXlsSrcFromPage`, `DomrfMortgageStat`.
+1. Переписать блок комментария констант: HTML-страница аналитики закрыта антиботом ServicePipe (HTTP 200 + ~1,8 КБ JS-оболочки вместо HTML, окнами), поэтому ссылка берётся из JSON-API того же раздела; сам файл и HEAD доступны общим клиентом.
+2. Заменить `domrfAnalyticsUrl` на `domrfListUrl = "…/api/v2/content/analytics/list/?section=838&include=Y"`; `domrfDataUrlPrefix` и `domrfPageBlockAnchor` остаются.
+3. Добавить типы ответа `domrfListResponse`, `domrfListItem`, `domrfListProps`, `domrfFile` (только нужные поля).
+4. Добавить чистый разбор `domrfXlsSrcFromList(list domrfListResponse) (string, error)`:
+   - `success=false` — ошибка;
+   - первый элемент с `props.title == "Топ ипотечных банков"` (список от новых к старым);
+   - пустой `props.file2.src` — ошибка;
+   - `extension != "xlsx"` — ошибка;
+   - блока нет — ошибка.
+5. `Import()` — `util.GetJSON(domrfListUrl, &list)` → `domrfXlsSrcFromList` → локальная копия шаблона с `DataUrl`; остальной путь (префлайт, архив, батч) не трогать.
+6. Удалить HTML-разбор: `domrfPageBlock`, `domrfXlsSrcFromPage`, импорты `bytes`/`goquery`; обновить doc-комментарии `DomrfMortgageStat` и `Import`.
 
-### Task 2 — фикстуры
+### Task 2 — фикстура
 
-1. `bank/testdata/domrf_mortgage_page.html` — сохранить живую страницу 2026-10-23 (полный HTML, как отдаёт источник).
-2. `bank/testdata/domrf_mortgage_challenge.html` — сохранить живую заглушку ServicePipe (~1,8 КБ).
-3. Сверить `domrfFixtureSrc`/`domrfFixtureUrl` с `props.file2.src` новой фикстуры; если источник выпустил новый отчёт — обновить константы и spot-значения книги.
+- `bank/testdata/domrf_mortgage_list.json` — живой ответ API `section=838` (2026-10-23), 10 элементов; книга — прежняя `domrf_mortgage.xlsx`.
+- Сверить `domrfFixtureSrc`/`domrfFixtureUrl` с `props.file2.src` текущего блока; если источник выпустил новый отчёт — обновить константы и spot-значения книги.
+- Удалить `bank/testdata/domrf_mortgage_page.html` (HTML-путь больше не используется).
 
 ### Task 3 — тесты
 
 Файл: `bank/domrf_mortgage_test.go`.
 
-1. `TestDomrfPageSrcRetriesChallenge` — заглушка ×2, затем страница: `src` верный, вызовов ровно 3.
-2. `TestDomrfPageSrcChallengeExhausted` — всегда заглушка, `attempts=3`: ошибка содержит `ServicePipe` и `3`, не содержит имени таблицы.
-3. `TestDomrfPageSrcRealPageNoBlock` — реальная страница без блока: вызов ровно 1, ошибка называет блок.
-4. `TestDomrfPageSrcFetchError` — ошибка `fetch` пробрасывается, вызов 1.
-5. Маркеры фикстур: `domrfChallengePage(challenge)=true`, `domrfChallengePage(page)=false`.
-6. Существующие тесты (`TestDomrfXlsSrcFromPage`, `TestParseDomrfSheet`, fail-fast, DDL) — без изменений.
+1. `TestDomrfXlsSrcFromList` — разбор живой фикстуры: `src` текущего блока и абсолютный `DataUrl`.
+2. `TestDomrfXlsSrcFromListFailFast` — `success=false`, пустой список, нет блока, нет `file2`, `file2` не xlsx, пустой `src`: ошибка с причиной, без имени таблицы.
+3. Существующие тесты книги (`TestParseDomrfSheet`, fail-fast, `Append`, DDL) — без изменений.
+4. Удалить тесты HTML-страницы и антибот-повтора.
 
 ### Task 4 — документация
 
-1. `ARCHITECTURE.md:4` — строка «Последнее обновление»: пункт `key-rate/phase-2-source-fixes` (#336).
-2. `ARCHITECTURE.md:299` — в «Ограничении» шаблона А: DOM.RF за ServicePipe, но блок в HTML; импорт повторяет страницу; cookie страницы нужны для скачивания.
+1. `ARCHITECTURE.md:4` — строка «Последнее обновление»: пункт `key-rate/phase-2-source-fixes` (#336), ссылка из JSON-API.
+2. `ARCHITECTURE.md:299` — «Ограничение» шаблона А: DOM.RF за ServicePipe, поэтому `domrf_mortgage` читает ссылку из JSON-API раздела, а не HTML.
 3. `ARCHITECTURE.md:450` — строка `domrf_mortgage`: та же поправка вместо «разведкой не подтвердилась».
-4. `ARCHITECTURE.md:2089` — строка расписания банков: повтор страницы при антибот-заглушке.
+4. `ARCHITECTURE.md:2089` — строка расписания банков: ссылка из JSON-API.
 5. `docs/IMPORTERS.md:23` — описание пакета `bank/`.
 6. `docs/ROADMAP_KEY_RATE.md` — абзац `phase-2-source-fixes` в фазе 2 (после блока рыночных контролей MOEX): issue #336, причина, решение, статус `✅ сделан этим PR`.
 
@@ -58,11 +56,13 @@
 ```bash
 make all
 make import STAT=domrf_mortgage
-ARCHIVE_BACKEND=local ARCHIVE_LOCAL_DIR=$(mktemp -d) make import STAT=domrf_mortgage
+make ARCHIVE_BACKEND=local ARCHIVE_LOCAL_DIR=$(mktemp -d) import STAT=domrf_mortgage
 make mcp-check
 dagu validate dagu/bank.yaml
 make docs-check
 ```
+
+Второй запуск — полный путь (версия известна, но в свежем архиве её нет) → `Imported 15 rows`; повтор с тем же каталогом — no-op. Переменные архива — **make-переменными** (не env перед make): `-include ~/.config/rosstat/env` перекрывает окружение.
 
 MCP: `v_bank_macro` по `source='domrf_mortgage'` — 15 точек / 15 рядов / `max(date)=2026-08-31`; `v_series_catalog` — 15 строк.
 
