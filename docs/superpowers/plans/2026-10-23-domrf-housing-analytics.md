@@ -16,64 +16,64 @@
 
 ## Task 2. Транспорт (`domrf/domrf.go`)
 
-- [ ] `domrfSite`, `domrfDataPrefix` — литералы домена.
-- [ ] `domrfGetPage()` — 8 попыток `util.GetPage`, детект challenge (`< 4096` && `servicepipe`), пауза 1 с, ошибка с числом попыток.
-- [ ] `domrfChallengePage()` — чистая функция детекта (тестируется офлайн).
-- [ ] `domrfPageBlocks()` — разбор `main#app` (goquery/html), карта `имя атрибута → json.RawMessage`; отсутствие `main#app` — ошибка.
-- [ ] `domrfPostJSON()` — `util.PostFileBytes` + `Content-Type: application/json` + разбор challenge.
+- [x] `domrfSite`, `domrfDataPrefix` — литералы домена.
+- [x] `domrfGetPage()` — 8 попыток `util.GetPage`, детект challenge (`< 4096` && `servicepipe`), пауза 1 с, ошибка с числом попыток.
+- [x] `domrfChallengePage()` — чистая функция детекта (тестируется офлайн).
+- [x] `domrfPageBlocks()` — разбор `main#app` (goquery/html), карта `имя атрибута → json.RawMessage`; отсутствие `main#app` — ошибка.
+- [x] `domrfPostJSON()` — `util.PostFileBytes` + `Content-Type: application/json` + разбор challenge.
 
 ## Task 3. Импортёр A (`domrf/market.go`, `domrf/market_parse.go`)
 
-- [ ] `domrfMortgageMarket` — `util.ClickHouseImport{TableName, CreateTable, BeforeImport, ImportFunc, PublicationCountPoints, AfterImport}`.
-- [ ] `BeforeImport`: `domrfGetPage` → блок `statistical_series` → `props.file.src`, `props.file.date` (лог) → `DataUrl`.
-- [ ] `domrfMarketColumns(xlsx, sheet)` — заполнение merged-диапазонов, путь колонки (dedup подряд), карта путь → индекс, 24 ожидаемых пути, проверка «ровно одна колонка».
-- [ ] `domrfMarketPoints` — 24 ряда, пропуск `X`/`x`/`-`/пусто, ошибка на нечисле, дата → первое число месяца.
-- [ ] `domrfMarketSeriesMeta` — описания 24 рядов.
-- [ ] DDL `domrf_mortgage_market`.
+- [x] `domrfMortgageMarket` — `util.ClickHouseImport{TableName, CreateTable, BeforeImport, ImportFunc, PublicationCountPoints, AfterImport}`.
+- [x] `BeforeImport`: `domrfGetPage` → блок `statistical_series` → `props.file.src`, `props.file.date` (лог) → `DataUrl`.
+- [x] `domrfMarketColumns(xlsx, sheet)` — заполнение merged-диапазонов, путь колонки (dedup подряд), карта путь → индекс, 24 ожидаемых пути, проверка «ровно одна колонка».
+- [x] `domrfMarketPoints` — 24 ряда, пропуск `X`/`x`/`-`/пусто, ошибка на нечисле, дата → первое число месяца.
+- [x] `domrfMarketSeriesMeta` — описания 24 рядов.
+- [x] DDL `domrf_mortgage_market`.
 
 ## Task 4. Импортёр B (`domrf/weekly.go`, `domrf/weekly_parse.go`)
 
-- [ ] `domrfMortgageWeekly` — свой `Import()` (нет XLSX): страница → блок `mortgage-dinamika-stavok` → батч.
-- [ ] `domrfWeeklyPoints`: даты по убыванию, 5 продуктов, короткий ряд обрезается, длинный — ошибка, пустое/нечисло — ошибка.
-- [ ] DDL `domrf_mortgage_weekly`, каталог 5 рядов.
+- [x] `domrfMortgageWeekly` — свой `Import()` (нет XLSX): страница → блок `mortgage-dinamika-stavok` → батч.
+- [x] `domrfWeeklyPoints`: даты по убыванию, 5 продуктов, короткий ряд обрезается, длинный — ошибка, пустое/нечисло — ошибка.
+- [x] DDL `domrf_mortgage_weekly`, каталог 5 рядов.
 
 ## Task 5. Импортёр C (`domrf/price_index.go`, `domrf/price_index_parse.go`)
 
-- [ ] `domrfPriceIndex` — свой `Import()`: дешёвый POST (РФ) → `max(month_dt)` vs `max(date)` таблицы → no-op или полный POST (75×4).
-- [ ] Fallback: 4 POST по комнатам при 4xx/413.
-- [ ] `domrfPriceIndexPoints`: маппинг комнат, парсинг строковых чисел, дубли — ошибка, `deals` ≥ 0.
-- [ ] DDL `domrf_price_index`.
+- [x] `domrfPriceIndex` — свой `Import()`: дешёвый POST (РФ) → `max(month_dt)` vs `max(date)` таблицы → no-op или полный POST (75×4).
+- [x] Fallback: 4 POST по комнатам при 4xx/413.
+- [x] `domrfPriceIndexPoints`: маппинг комнат, парсинг строковых чисел, дубли — ошибка, `deals` ≥ 0.
+- [x] DDL `domrf_price_index`.
 
 ## Task 6. Производные (`series_meta.go`, `views.go`, `importers.go`)
 
-- [ ] `domrfSeriesMeta` — 24 + 5 рядов, `afterDomrfMacro` (каталог + две витрины).
-- [ ] `v_domrf_mortgage`, `v_domrf_price_index` с комментариями.
-- [ ] Реестр `importers.go` с литералами таблиц.
+- [x] `domrfSeriesMeta` — 24 + 5 рядов, `afterDomrfMacro` (каталог + две витрины).
+- [x] `v_domrf_mortgage`, `v_domrf_price_index` с комментариями.
+- [x] Реестр `importers.go` с литералами таблиц.
 
 ## Task 7. Тесты и фикстуры
 
-- [ ] `testdata/domrf_mortgage_page.html` — реальный снапшот.
-- [ ] `testdata/stat_series.xlsx` — реальный файл.
-- [ ] `testdata/price_index_mainchart_rf.json` — реальный ответ.
-- [ ] `market_parse_test.go`, `weekly_parse_test.go`, `price_index_parse_test.go`, `domrf_test.go` (challenge), `importers_test.go`.
+- [x] `testdata/domrf_mortgage_page.html` — реальный снапшот.
+- [x] `testdata/stat_series.xlsx` — реальный файл.
+- [x] `testdata/price_index_mainchart_rf.json` — реальный ответ.
+- [x] `market_parse_test.go`, `weekly_parse_test.go`, `price_index_parse_test.go`, `domrf_test.go` (challenge), `importers_test.go`.
 
 ## Task 8. Проводка
 
-- [ ] `main.go` — blank import `domrf`.
-- [ ] `dagu/domrf.yaml` (chain, `47 9 * * 1`, три шага, retry 3×300).
-- [ ] `sql/mcp_kimi_reader.sql` — гранты на две витрины.
-- [ ] `scripts/mcp_check.py` — проверки витрин.
-- [ ] `ARCHITECTURE.md`, `README.md`, `docs/IMPORTERS.md`, `docs/LIMITATIONS.md`, `docs/site-pages.json`.
+- [x] `main.go` — blank import `domrf`.
+- [x] `dagu/domrf.yaml` (chain, `47 9 * * 1`, три шага, retry 3×300).
+- [x] `sql/mcp_kimi_reader.sql` — гранты на две витрины.
+- [x] `scripts/mcp_check.py` — проверки витрин.
+- [x] `ARCHITECTURE.md`, `README.md`, `docs/IMPORTERS.md`, `docs/LIMITATIONS.md`, `docs/site-pages.json`.
 
 ## Task 9. Живая приёмка (2026-10-23)
 
-- [ ] `make all`, `go test -race -count=1 ./domrf/`.
-- [ ] `make import STAT=domrf_mortgage_market` — число точек и крайние даты.
-- [ ] `make import STAT=domrf_mortgage_weekly` — 1 154.
-- [ ] `make import STAT=domrf_price_index` — 20 700; повтор — no-op.
-- [ ] `make mcp-check`, `dagu validate dagu/domrf.yaml`, `make docs-check`.
-- [ ] Протокол — комментарием в PR.
+- [x] `make all`, `go test -race -count=1 ./domrf/`.
+- [x] `make import STAT=domrf_mortgage_market` — `Imported 4612 rows`, 2006-01 … 2026-09; повтор — no-op по версии `2255ad1c…`.
+- [x] `make import STAT=domrf_mortgage_weekly` — `Imported 1154 rows`, 2021-09-03 … 2026-10-16.
+- [x] `make import STAT=domrf_price_index` — `Imported 20700 rows`; повтор — no-op (месяц 2026-09, 69 точек РФ).
+- [x] `make mcp-check`, `dagu validate dagu/domrf.yaml`, `make docs-check`.
+- [x] Протокол — комментарием в PR.
 
 ## Task 10. PR
 
-- [ ] `Closes #<issue>` вне backticks, описание по шаблону, статус пункта в роадмапе — тем же PR.
+- [x] PR [#374](https://github.com/kmlebedev/clickhouse-import-rosstat/pull/374): `Closes #373` вне backticks, протокол приёмки — комментарием, статус пункта в роадмапе — тем же PR.
