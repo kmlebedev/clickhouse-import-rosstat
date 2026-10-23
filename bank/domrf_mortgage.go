@@ -34,10 +34,10 @@ const (
 	// domrfDataUrlPrefix — домен источника: абсолютный адрес файла = домен + src из props.file2
 	// (§5.4 шаг 3). Литерал, а не domrfListUrl: тест сверяет сборку адреса с литералом.
 	domrfDataUrlPrefix = "https://xn--d1aqf.xn--p1ai"
-	// domrfPageBlockAnchor — заголовок блока (props.title в элементе списка), из которого берётся
+	// domrfBlockAnchor — заголовок блока (props.title в элементе списка), из которого берётся
 	// файл (props.file2.src). Признак — заголовок, а не имя блока («…Август 2026 г.»): имя несёт
 	// отчётный месяц и меняется с каждым файлом.
-	domrfPageBlockAnchor = "Топ ипотечных банков"
+	domrfBlockAnchor = "Топ ипотечных банков"
 	// domrfSheetAnchor — фрагмент имени листа книги, который разбирает импортёр: «13 Ставки
 	// предложения». Лист ищется по имени, а не по номеру: добавленный источником лист сдвинул
 	// бы номер (§6.3).
@@ -144,21 +144,21 @@ func domrfXlsSrcFromList(list domrfListResponse) (src string, err error) {
 		return "", fmt.Errorf("список %s: success=false", domrfListUrl)
 	}
 	for _, item := range list.Data {
-		if item.Props.Title != domrfPageBlockAnchor {
+		if item.Props.Title != domrfBlockAnchor {
 			continue
 		}
 		src = strings.TrimSpace(item.Props.File2.Src)
 		if src == "" {
 			return "", fmt.Errorf("список %s: у блока «%s» (%s) нет файла (пустое поле props.file2.src)",
-				domrfListUrl, domrfPageBlockAnchor, item.Name)
+				domrfListUrl, domrfBlockAnchor, item.Name)
 		}
 		if item.Props.File2.Extension != "xlsx" {
 			return "", fmt.Errorf("список %s: у блока «%s» (%s) файл не xlsx: %q",
-				domrfListUrl, domrfPageBlockAnchor, item.Name, item.Props.File2.Extension)
+				domrfListUrl, domrfBlockAnchor, item.Name, item.Props.File2.Extension)
 		}
 		return src, nil
 	}
-	return "", fmt.Errorf("список %s: нет блока «%s»", domrfListUrl, domrfPageBlockAnchor)
+	return "", fmt.Errorf("список %s: нет блока «%s»", domrfListUrl, domrfBlockAnchor)
 }
 
 // domrfSheet — имя листа книги по якорю в имени (§6.3). Ошибка называет таблицу и якорь, а не

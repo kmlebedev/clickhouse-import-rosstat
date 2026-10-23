@@ -148,29 +148,30 @@ func TestDomrfXlsSrcFromListFailFast(t *testing.T) {
 		},
 		"пустой список": {
 			list: domrfListResponse{Success: true},
-			want: domrfPageBlockAnchor,
+			want: domrfBlockAnchor,
 		},
 		"нет блока «Топ ипотечных банков»": {
 			list: domrfListResponse{Success: true, Data: []domrfListItem{
 				item("Ипотека на ИЖС", "/api/v2/content/download/629473/135272299/", "zip"),
 			}},
-			want: domrfPageBlockAnchor,
-		},
-		"у блока нет файла": {
-			list: domrfListResponse{Success: true, Data: []domrfListItem{
-				item(domrfPageBlockAnchor, "", ""),
-			}},
-			want: "file2",
+			want: domrfBlockAnchor,
 		},
 		"файл не xlsx": {
 			list: domrfListResponse{Success: true, Data: []domrfListItem{
-				item(domrfPageBlockAnchor, "/api/v2/content/download/629470/135272299/", "zip"),
+				item(domrfBlockAnchor, "/api/v2/content/download/629470/135272299/", "zip"),
 			}},
 			want: "xlsx",
 		},
 		"пустой file2.src": {
 			list: domrfListResponse{Success: true, Data: []domrfListItem{
-				item(domrfPageBlockAnchor, "", "xlsx"),
+				item(domrfBlockAnchor, "", "xlsx"),
+			}},
+			want: "file2.src",
+		},
+		"первый блок без файла, следующий с файлом": {
+			list: domrfListResponse{Success: true, Data: []domrfListItem{
+				item(domrfBlockAnchor, "", ""),
+				item(domrfBlockAnchor, "/api/v2/content/download/629470/135272296/", "xlsx"),
 			}},
 			want: "file2.src",
 		},
@@ -193,11 +194,11 @@ func TestDomrfXlsSrcFromListFailFast(t *testing.T) {
 // domrfReadFixture читает живую фикстуру источника; ошибка чтения — фатальная.
 func domrfReadFixture(t *testing.T, name string) []byte {
 	t.Helper()
-	page, err := os.ReadFile(filepath.Join("testdata", name))
+	body, err := os.ReadFile(filepath.Join("testdata", name))
 	if err != nil {
 		t.Fatalf("открытие фикстуры %s: %v", name, err)
 	}
-	return page
+	return body
 }
 
 // TestParseDomrfSheet — разбор листа «13 Ставки предложения» книги блока «Топ ипотечных банков»:
