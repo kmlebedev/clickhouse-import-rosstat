@@ -1,9 +1,7 @@
 package bank
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"math"
 	"strconv"
@@ -11,7 +9,6 @@ import (
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
-	"github.com/PuerkitoBio/goquery"
 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
 	"github.com/xuri/excelize/v2"
 )
@@ -19,23 +16,27 @@ import (
 const (
 
 	// Ипотека: ставка предложения топ-20 ипотечных банков по данным ДОМ.РФ. Импортёр читает блок
-	// «Топ ипотечных банков» страницы аналитики (спека §3.2) — месячный снимок: его книга даёт
-	// ставку каждого банка за отчётный месяц. Ссылка на файл берётся со страницы каждый прогон
-	// (имя файла несёт отчётный месяц и меняется), поэтому статичного адреса в коде нет: файл
-	// прежнего литерала (…/upload/iblock/aba/i34…xlsx) отдаёт 404.
+	// «Топ ипотечных банков» раздела аналитики (спека §3.2) — месячный снимок: его книга даёт
+	// ставку каждого банка за отчётный месяц. Ссылка на файл берётся каждый прогон (имя файла
+	// несёт отчётный месяц и меняется), поэтому статичного адреса в коде нет: файл прежнего
+	// литерала (…/upload/iblock/aba/i34…xlsx) отдаёт 404.
 	//
-	// Данные блоков страницы лежат JSON-ом в атрибутах main#app (разбирает domrfXlsSrcFromPage),
-	// а сама страница отвечает обычным серверным HTML — JS-challenge у неё нет.
+	// Источник ссылки — JSON-список раздела «Топ ипотечных банков» (section=838). HTML-страница
+	// аналитики несёт те же блоки атрибутами main#app, но закрыта антиботом ServicePipe: на часть
+	// запросов она отдаёт HTTP 200 с JS-оболочкой вместо HTML, и повторы в том же окне не помогают.
+	// JSON-API того же раздела отдаёт props.file2.src без антибота, а сам файл и HEAD доступны
+	// общим клиентом проекта.
 
-	// domrfAnalyticsUrl — страница аналитики, с которой берётся ссылка на файл; шаг транспорта
-	// делает Import() импортёра (util.GetPage) — разбор обязан оставаться чистым (§6.1).
-	domrfAnalyticsUrl = "https://xn--d1aqf.xn--p1ai/analytics/mortgage/"
-	// domrfDataUrlPrefix — домен источника: абсолютный адрес файла = домен + src из JSON блока
-	// (§5.4 шаг 3). Литерал, а не domrfAnalyticsUrl: тест сверяет сборку адреса с литералом.
+	// domrfListUrl — JSON-список раздела «Топ ипотечных банков»: section=838 — id раздела,
+	// include=Y включает вложенные props с файлами. Шаг транспорта делает Import() (util.GetJSON) —
+	// разбор обязан оставаться чистым (§6.1).
+	domrfListUrl = "https://xn--d1aqf.xn--p1ai/api/v2/content/analytics/list/?section=838&include=Y"
+	// domrfDataUrlPrefix — домен источника: абсолютный адрес файла = домен + src из props.file2
+	// (§5.4 шаг 3). Литерал, а не domrfListUrl: тест сверяет сборку адреса с литералом.
 	domrfDataUrlPrefix = "https://xn--d1aqf.xn--p1ai"
-	// domrfPageBlockAnchor — заголовок блока страницы (props.title в JSON блока), из которого
-	// берётся файл (file2.src). Признак — заголовок, а не имя блока («…Август 2026 г.»): имя
-	// несёт отчётный месяц и меняется с каждым файлом.
+	// domrfPageBlockAnchor — заголовок блока (props.title в элементе списка), из которого берётся
+	// файл (props.file2.src). Признак — заголовок, а не имя блока («…Август 2026 г.»): имя несёт
+	// отчётный месяц и меняется с каждым файлом.
 	domrfPageBlockAnchor = "Топ ипотечных банков"
 	// domrfSheetAnchor — фрагмент имени листа книги, который разбирает импортёр: «13 Ставки
 	// предложения». Лист ищется по имени, а не по номеру: добавленный источником лист сдвинул
@@ -95,65 +96,69 @@ type domrfPoint struct {
 	Value  float64
 }
 
-// domrfPageBlock — блок страницы аналитики: ДОМ.РФ кладёт данные блока JSON-ом в атрибут
-// элемента (main#app), а не в текст страницы, поэтому блок разбирается json.Unmarshal значения
-// атрибута, а не обходом вложенных элементов.
-type domrfPageBlock struct {
-	Props struct {
-		Title string `json:"title"`
-		File2 struct {
-			Src string `json:"src"`
-		} `json:"file2"`
-	} `json:"props"`
+// domrfListResponse — ответ JSON-списка раздела «Топ ипотечных банков» (section=838): элементы
+// раздела в порядке от новых к старым. API отдаёт тот же блок, что лежит атрибутом HTML-страницы,
+// но без антибота ServicePipe; props.file2 — XLSX-приложение блока (у «Ипотеки на ИЖС» его нет).
+type domrfListResponse struct {
+	Success bool            `json:"success"`
+	Data    []domrfListItem `json:"data"`
 }
 
-// domrfXlsSrcFromPage отдаёт src XLSX-файла блока «Топ ипотечных банков» со страницы аналитики.
-// Разбор чистый (§6.1): страницу скачивает вызывающий (Import импортёра, util.GetPage), поэтому
-// функция проверяется офлайн на HTML-фикстуре (§11.3).
+// domrfListItem — элемент списка: id, имя выпуска и props с файлами.
+type domrfListItem struct {
+	ID    string         `json:"id"`
+	Name  string         `json:"name"`
+	Props domrfListProps `json:"props"`
+}
+
+// domrfListProps — поля блока: заголовок (признак ряда), период и file2 (книга). Остальные поля
+// ответа (file — PDF, category, link_to_report) разбору не нужны.
+type domrfListProps struct {
+	Title  string    `json:"title"`
+	Period string    `json:"period"`
+	File2  domrfFile `json:"file2"`
+}
+
+// domrfFile — файл блока: src — путь скачивания, extension — формат, name — имя файла источника.
+type domrfFile struct {
+	Src       string `json:"src"`
+	Extension string `json:"extension"`
+	Name      string `json:"name"`
+	Date      string `json:"date"`
+}
+
+// domrfXlsSrcFromList отдаёт src XLSX-файла текущего блока «Топ ипотечных банков» из JSON-списка
+// раздела. Разбор чистый (§6.1): список качает вызывающий (Import импортёра, util.GetJSON),
+// поэтому функция проверяется офлайн на фикстуре ответа API (§11.3).
 //
-// Блок ищется по заголовку своего JSON (props.title): сама подпись «Топ ипотечных банков» есть
-// и в меню страницы, а у меню нет ни props, ни файла. Признак — заголовок, а не имя блока: имя
-// несёт отчётный месяц («Топ ипотечных банков Август 2026 г.») и меняется с каждым файлом.
+// Блок ищется по заголовку props.title: подпись «Топ ипотечных банков» есть и у пунктов меню, но
+// в списке меню нет. Признак — заголовок, а не имя блока: имя несёт отчётный месяц («Топ
+// ипотечных банков Август 2026 г.») и меняется с каждым файлом. Берётся первый (самый новый)
+// блок: список отсортирован от новых к старым, и текущий отчёт — его первый элемент.
+// file2 — приложение блока, и оно обязано быть XLSX: PDF лежит в file и книгой не является.
 // Пустой src — ошибка: без неё импортёр пошёл бы в GetXlsx("") и упал бы разбором книги, в
-// котором не видно причины (§4.4, §6.4). Ошибки называют страницу и блок, а не таблицу: префикс
-// «domrf_mortgage: <url>:» добавляет Import() — один раз на всю ветку страницы.
-func domrfXlsSrcFromPage(page []byte) (src string, err error) {
-	doc, err := goquery.NewDocumentFromReader(bytes.NewReader(page))
-	if err != nil {
-		return "", fmt.Errorf("страница %s: не разбирается как HTML: %w", domrfAnalyticsUrl, err)
+// котором не видно причины (§4.4, §6.4). Ошибки называют список и блок, а не таблицу: префикс
+// «domrf_mortgage:» добавляет Import() — один раз на всю ветку списка.
+func domrfXlsSrcFromList(list domrfListResponse) (src string, err error) {
+	if !list.Success {
+		return "", fmt.Errorf("список %s: success=false", domrfListUrl)
 	}
-	var block domrfPageBlock
-	found := false
-	doc.Find("*").EachWithBreak(func(_ int, el *goquery.Selection) bool {
-		if len(el.Nodes) == 0 {
-			return true
+	for _, item := range list.Data {
+		if item.Props.Title != domrfPageBlockAnchor {
+			continue
 		}
-		for _, attr := range el.Nodes[0].Attr {
-			if !strings.Contains(attr.Val, domrfPageBlockAnchor) {
-				continue
-			}
-			var candidate domrfPageBlock
-			if json.Unmarshal([]byte(attr.Val), &candidate) != nil {
-				continue
-			}
-			if strings.TrimSpace(candidate.Props.Title) != domrfPageBlockAnchor {
-				continue
-			}
-			block, found = candidate, true
-			return false
+		src = strings.TrimSpace(item.Props.File2.Src)
+		if src == "" {
+			return "", fmt.Errorf("список %s: у блока «%s» (%s) нет файла (пустое поле props.file2.src)",
+				domrfListUrl, domrfPageBlockAnchor, item.Name)
 		}
-		return true
-	})
-	if !found {
-		return "", fmt.Errorf("страница %s: не найден блок «%s» (JSON блока в атрибутах страницы)",
-			domrfAnalyticsUrl, domrfPageBlockAnchor)
+		if item.Props.File2.Extension != "xlsx" {
+			return "", fmt.Errorf("список %s: у блока «%s» (%s) файл не xlsx: %q",
+				domrfListUrl, domrfPageBlockAnchor, item.Name, item.Props.File2.Extension)
+		}
+		return src, nil
 	}
-	src = strings.TrimSpace(block.Props.File2.Src)
-	if src == "" {
-		return "", fmt.Errorf("страница %s: у блока «%s» нет файла (пустое поле file2.src)",
-			domrfAnalyticsUrl, domrfPageBlockAnchor)
-	}
-	return src, nil
+	return "", fmt.Errorf("список %s: нет блока «%s»", domrfListUrl, domrfPageBlockAnchor)
 }
 
 // domrfSheet — имя листа книги по якорю в имени (§6.3). Ошибка называет таблицу и якорь, а не
@@ -309,7 +314,7 @@ func appendDomrfPoints(batch driver.Batch, points []domrfPoint) error {
 }
 
 // DomrfMortgageStat — импортёр domrf_mortgage: ставка предложения по ипотеке на новостройки
-// каждого банка блока «Топ ипотечных банков» страницы аналитики ДОМ.РФ за отчётный месяц (лист
+// каждого банка блока «Топ ипотечных банков» раздела аналитики ДОМ.РФ за отчётный месяц (лист
 // «13 Ставки предложения» книги блока). Источник — месячный снимок: отчётная дата записана
 // строкой в заголовке листа («31.08.2026», одна на всю книгу), значение — сырая доля (0,187 =
 // 18,7 % годовых), ряд — банк источника. В таблицу идёт только продукт «Новостройки» —
@@ -322,25 +327,29 @@ func appendDomrfPoints(batch driver.Batch, points []domrfPoint) error {
 // банка. У таблицы теперь ряд — банк, дата — отчётный месяц; смена названа, чтобы читатель не
 // ждал продолжения прежней раскладки.
 //
-// Транспорт — переопределённый Import() (образец cbr/mo_br.go): страница → ссылка из JSON блока →
-// локальная копия шаблона с DataUrl. Разбор — parseDomrfSheet, запись — appendDomrfPoints
-// (ImportFunc шаблона); точка контроля публикации объявлена в domrfImporter (domrfCountPoints).
+// Транспорт — переопределённый Import() (образец cbr/mo_br.go): JSON-список раздела → ссылка из
+// props.file2 → локальная копия шаблона с DataUrl. Разбор — parseDomrfSheet, запись —
+// appendDomrfPoints (ImportFunc шаблона); точка контроля публикации объявлена в domrfImporter
+// (domrfCountPoints).
 type DomrfMortgageStat struct {
 	util.ClickHouseImport
 }
 
-// Import — транспорт импортёра (стандарт §5.4): страница → ссылка → локальная копия шаблона.
-// Ссылка вычисляется каждый прогон (имя файла несёт отчётный месяц), поэтому DataUrl живёт только
-// в копии: общую структуру импортёра мутировать нельзя — её читают тест реестра и объявление точки
+// Import — транспорт импортёра (стандарт §5.4): список раздела → ссылка → локальная копия шаблона.
+// Источник ссылки — JSON-API, а не HTML-страница: страница аналитики закрыта антиботом ServicePipe
+// и на часть запросов отдаёт JS-оболочку вместо HTML, а тот же раздел в API список отдаёт
+// props.file2.src без антибота; сам файл и HEAD доступны общим клиентом проекта. Ссылка
+// вычисляется каждый прогон (имя файла несёт отчётный месяц), поэтому DataUrl живёт только в
+// копии: общую структуру импортёра мутировать нельзя — её читают тест реестра и объявление точки
 // контроля, а префлайт шаблона видит вычисленный адрес копии.
 func (s *DomrfMortgageStat) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
-	page, err := util.GetPage(domrfAnalyticsUrl)
-	if err != nil {
-		return count, fmt.Errorf("%s: %s: %w", domrfMortgageTable, domrfAnalyticsUrl, err)
+	var list domrfListResponse
+	if err = util.GetJSON(domrfListUrl, &list); err != nil {
+		return count, fmt.Errorf("%s: %s: %w", domrfMortgageTable, domrfListUrl, err)
 	}
-	src, err := domrfXlsSrcFromPage(page)
+	src, err := domrfXlsSrcFromList(list)
 	if err != nil {
-		return count, fmt.Errorf("%s: %s: %w", domrfMortgageTable, domrfAnalyticsUrl, err)
+		return count, fmt.Errorf("%s: %w", domrfMortgageTable, err)
 	}
 	imp := s.ClickHouseImport // локальная копия: общую структуру импортёра мутировать нельзя
 	imp.DataUrl = domrfDataUrlPrefix + src
