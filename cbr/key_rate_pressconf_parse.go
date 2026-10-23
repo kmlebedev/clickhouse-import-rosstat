@@ -26,8 +26,8 @@ import (
 // заседания Совета директоров»: страница отдаёт ytInitialData со списком видео и
 // visitorData для player API. Субтитры — русская дорожка (обычно auto-generated ASR)
 // через POST youtubei/v1/player с клиентом VISIONOS и JSON3-выгрузку по baseUrl.
-// Разбор чистый: сеть трогают util.GetPage/util.PostFileBytes/util.GetJSON в
-// key_rate_pressconf.go, поэтому тесты офлайн на живых фикстурах.
+// Разбор чистый: сетевые обёртки — pressconfGetPage/pressconfPlayer в этом файле и
+// pressconfFetch в key_rate_pressconf.go, поэтому тесты офлайн на живых фикстурах.
 
 const (
 	// pressconfPlaylistURL — плейлист пресс-конференций ЦБ. hl=ru фиксирует локаль
