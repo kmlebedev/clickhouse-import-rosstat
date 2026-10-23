@@ -59,7 +59,7 @@ src, err := domrfXlsSrcFromList(list)
 
 - `DataUrl` вычисляется в `Import()`; статичного URL в коде нет.
 - Точка контроля публикации (`PublicationCountPoints`), HEAD-префлайт, `source_publications`, винтажный архив — без изменений.
-- Схема `domrf_mortgage (name, date, rate)`, имена и единицы рядов, каталог `series_catalog`, витрина `v_bank_macro` — без изменений.
+- Схема `domrf_mortgage (name, date, rate)`, имена и единицы рядов, витрина `v_bank_macro` — без изменений. Состав каталога `series_catalog` (15 рядов) тоже не меняется, но поле `origin` обновляется: оно называет JSON-API раздела, а не удалённый HTML-путь, — иначе MCP-агент видит старую точку входа. Текст origin обновляется полным импортом (no-op-путь `AfterImport` не зовёт).
 - Разбор книги (`parseDomrfSheet`), запись батчем — без изменений.
 - `dagu/bank.yaml`, `Makefile`, `main.go`, реестр `bank/importers.go` — без изменений.
 
@@ -97,6 +97,6 @@ src, err := domrfXlsSrcFromList(list)
 ## 9. Критерий приёмки
 
 - `make import STAT=domrf_mortgage` проходит; полный путь (свежий архив) даёт 15 точек (15 банков «Новостройки», отчётный месяц 2026-08-31), повтор — no-op по версии без скачивания.
-- `make all` — зелёный; `make mcp-check` — ПРОВЕРКА ПРОЙДЕНА; `dagu validate dagu/bank.yaml` — exit 0; `make docs-check` — зелёный.
-- `v_bank_macro` и `v_series_catalog` по `source = 'domrf_mortgage'` — 15 точек / 15 рядов, без изменений против baseline.
+- `make all` — зелёный; `make mcp-check` — все проверки пункта зелёные (248 OK на прогоне 2026-10-23; единственный провал — news LLM bootstrap, вне пункта); `dagu validate dagu/bank.yaml` — exit 0; `make docs-check` — зелёный.
+- `v_bank_macro` по `source = 'domrf_mortgage'` — 15 точек / 15 рядов, без изменений против baseline; `v_series_catalog` — 15 рядов, `origin` называет JSON-API раздела.
 - Протокол живой приёмки — комментарием в PR; строка роадмапа — тем же PR.
