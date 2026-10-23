@@ -58,6 +58,7 @@ SELECT venue, count(), max(date) FROM gold_prices FINAL GROUP BY venue;
 | [`customs`](docs/IMPORTERS.md) | внешняя торговля по странам | `customs_vneshn_torg` | 15-е 11:41 |
 | [`fao`](docs/IMPORTERS.md) | индексы продовольственных цен (6 рядов, включая Sugar) | `fao_food_price_Indices_monthly`; витрина `v_fao_food_price` | 5-е 10:47 |
 | [`bank`](docs/IMPORTERS.md) | ДОМ.РФ, ВТБ, Сбер, СберИндекс, Т-Банк | `domrf_mortgage`, `rus_vtb_group_ifrs`, `sber_*`, `tbank_group_ifrs` | понедельник 09:23 |
+| [`domrf`](docs/IMPORTERS.md) | рынок жилья ДОМ.РФ: месячные выдачи и ДДУ, портфель, просрочка, ставки выдачи; недельная ставка предложения по продуктам; индекс цен первички и сделки по регионам | `domrf_mortgage_market`, `domrf_mortgage_weekly`, `domrf_price_index`; витрины `v_domrf_mortgage`, `v_domrf_price_index` | понедельник 09:47 |
 | [`craw`](docs/IMPORTERS.md) | реестр СБКТС Росстандарта | `gost_vehicle_safety_certificate` | ежечасно :17 |
 | [`edisclosure`](docs/IMPORTERS.md) | документы карточек [e-disclosure.ru](https://e-disclosure.ru/): отчётность IFRS/RAS, списки аффилированных лиц, решения собраний (PLZL, SBER, CHMF); коллектор полуавтоматический, импорт детерминированный | `edisclosure_documents`; витрина `v_edisclosure_documents` | 5-е число 21:17 (шаг `dagu/edisclosure.yaml`); сбор — вручную |
 | [`fred`](docs/IMPORTERS.md), [`bls`](docs/IMPORTERS.md), [`bea`](docs/IMPORTERS.md), [`eia`](docs/IMPORTERS.md) | US macro: ставки, CPI, PCE, NFP, запасы нефти | `macro_series` | ежедневно / среда |
