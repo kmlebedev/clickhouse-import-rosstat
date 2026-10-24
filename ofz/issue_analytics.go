@@ -354,7 +354,7 @@ func buildAnalyticsRows(settle time.Time, securities []securitySource, curve []c
 		}
 		row.AvgTradeSize = &avgTradeSize
 
-		kind := classifyIssue(sec.ShortName, sec.SecName)
+		kind := classifySec(sec.SecCode, sec.ShortName, sec.SecName)
 		if kind == issueUnknown {
 			continue
 		}

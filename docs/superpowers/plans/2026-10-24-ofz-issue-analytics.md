@@ -89,7 +89,7 @@ make import STAT=ofz_issue_analytics
 результат; `make mcp-check` — ПРОВЕРКА ПРОЙДЕНА.
 
 Результат 2026-10-24 (dev-ClickHouse): `make import STAT=ofz_issue_analytics` — 61 строка,
-повтор — 61 строка; `ytm`/`duration`/`spread_to_curve` — 46 из 61; каталог — 12 метрик;
+повтор — 61 строка; `ytm`/`spread_to_curve` — 46 из 61, `duration` — 33 (только fixed/ok); каталог — 12 метрик;
 сырая таблица закрыта (497); блок OFZ в `make mcp-check` — OK. Тестовый Transaq-аккаунт
 не отдаёт `securities_info`, поэтому использован MOEX ISS fallback (`source='moex'`).
 Общий `make mcp-check` — 2 чужих падения (EIA distillate freshness, news LLM backlog),

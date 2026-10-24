@@ -48,9 +48,11 @@
 - если `coupon_date` уже в прошлом или `period <= 0`, расчёт помечается
   `missing_data`/`unsupported`, YTM не считается.
 
-Для ОФЗ-АД/ПК/ИН (определяется по `shortname`/`sec_name`: `ОФЗ-АД`, `ОФЗ-ПК`,
-`ОФЗ-ИН`) `calculation_status` = `unsupported_amortizing`/`unsupported_variable`/
-`unsupported_indexed`, YTM/дюрация — `NULL`.
+Для ОФЗ-АД/ПК/ИН (определяется по коду выпуска: `SU46`/`SU29`/`SU52`, fallback —
+`shortname`/`sec_name`: `ОФЗ-АД`, `ОФЗ-ПК`, `ОФЗ-ИН`) `calculation_status` =
+`unsupported_amortizing`/`unsupported_variable`/`unsupported_indexed`, дюрация — `NULL`.
+В MOEX fallback `ytm` остаётся справочной доходностью ISS (`YIELD`), поэтому для
+`source='moex'` она заполнена и у `unsupported_*`; расчётной (ACT/365) она не является.
 
 ### 3.2. Цена и YTM
 
@@ -157,7 +159,7 @@ interpolated_yield`, п.п. Если точки кривой нет — `NULL`.
 - Живой прогон: `make import STAT=ofz_issue_analytics`, число строк, крайние даты,
   повторный прогон; `make mcp-check`.
 - ✅ 2026-10-24 (dev-ClickHouse): `make import STAT=ofz_issue_analytics` — 61 строка,
-  повтор — те же 61; YTM/дюрация/спред — 46 из 61; каталог — 12 метрик; блок OFZ в
+  повтор — те же 61; YTM/спред — 46 из 61, дюрация — 33 (только fixed/ok); каталог — 12 метрик; блок OFZ в
   `make mcp-check` — OK. Тестовый Transaq-аккаунт не отдаёт `securities_info`, поэтому
   строки помечены `source='moex'` (MOEX ISS fallback: цена/YTM/купон/НКД/погашение).
   Transaq-путь остаётся основным; для его отдельной приёмки нужен `sec_info` от
