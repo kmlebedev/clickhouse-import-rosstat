@@ -17,6 +17,7 @@ body:
         - dcf-metals
         - key-rate
         - infra
+        - ofz-market
     validations:
       required: true
   - type: dropdown
