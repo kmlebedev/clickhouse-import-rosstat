@@ -63,7 +63,7 @@
 | Приоритет | P0 |
 | Зависит от | `transaq-clickhouse-exporter`, `cbr_zcyc` |
 | Статус | 🔶 |
-| Реализация | `ofz/issue_analytics.go`, `ofz/views.go`; ветка `feat/ofz-market-1.1`, PR [#380](https://github.com/kmlebedev/clickhouse-import-rosstat/pull/380); живая приёмка 2026-10-24 — 61 строка, 46 YTM (13 — справочный YIELD MOEX ISS у `unsupported_*`), 33 дюрации по fixed-выпускам (`source='moex'`); Transaq-путь ждёт `sec_info` от тестового аккаунта |
+| Реализация | `ofz/issue_analytics.go`, `ofz/views.go`; ветка `feat/ofz-market-1.1`, PR [#380](https://github.com/kmlebedev/clickhouse-import-rosstat/pull/380); живая приёмка 2026-10-24 — экспортёр записал 4074 строки `transaq_securities_info` (58 ОФЗ), витрина — 64 строки (61 MOEX + 3 Transaq `no_price`), 46 YTM, 33 дюрации; `transaq_trades`/`transaq_candles` пусты — у тестового аккаунта нет подписки на рыночные данные, поэтому цена/ликвидность пока из MOEX ISS fallback |
 
 **Цель.** Дневная витрина `v_ofz_issue_analytics` по каждому активному выпуску ОФЗ.
 
