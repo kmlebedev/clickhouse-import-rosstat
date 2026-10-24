@@ -80,7 +80,7 @@ SELECT venue, count(), max(date) FROM gold_prices FINAL GROUP BY venue;
 main.go              точка входа и фильтр импортёров
 chimport/            интерфейс ImportStat и реестр Stats
 util/                HTTP, шаблон импортёра, батч-вставка
-cbr/ rosstat/ ppi/ weeklysa/ ... доменные импортёры
+cbr/ rosstat/ ppi/ weeklysa/ ofz/ ... доменные импортёры
 views/ dcf/          витрины, DCF/NAV
 ingest/ cmd/ingest/  ingest-endpoint контура прогноза
 dagu/                расписания DAG
