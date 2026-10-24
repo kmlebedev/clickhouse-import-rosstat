@@ -30,6 +30,7 @@ import (
 	_ "github.com/kmlebedev/clickhouse-import-rosstat/mlregistry"
 	_ "github.com/kmlebedev/clickhouse-import-rosstat/moex"
 	_ "github.com/kmlebedev/clickhouse-import-rosstat/news"
+	_ "github.com/kmlebedev/clickhouse-import-rosstat/ofz"
 	_ "github.com/kmlebedev/clickhouse-import-rosstat/polyus"
 	_ "github.com/kmlebedev/clickhouse-import-rosstat/ppi"
 	_ "github.com/kmlebedev/clickhouse-import-rosstat/rosstat"

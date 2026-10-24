@@ -50,14 +50,14 @@ go vet ./ofz/
 ## Task 4. Регистрация, DAG, грант, MCP-check
 
 - `main.go`: blank-import `_ "github.com/kmlebedev/clickhouse-import-rosstat/ofz"`.
-- `dagu/ofz.yaml`: ежедневный шаг `ofz_issue_analytics`.
+- `dagu/ofz_analytics.yaml`: ежедневный шаг `ofz_issue_analytics`.
 - `sql/mcp_kimi_reader.sql`: `GRANT SELECT ON default.v_ofz_issue_analytics`.
 - `scripts/mcp_check.py`: проверка витрины (строки, последняя дата).
 
 Проверка:
 
 ```bash
-dagu validate dagu/ofz.yaml
+dagu validate dagu/ofz_analytics.yaml
 python3 -m py_compile scripts/mcp_check.py
 ```
 
@@ -76,7 +76,7 @@ gofmt -l .
 go vet ./...
 go test -race ./...
 make all
-dagu validate dagu/ofz.yaml
+dagu validate dagu/ofz_analytics.yaml
 ```
 
 Живой прогон (если сырые `transaq_*` доступны):

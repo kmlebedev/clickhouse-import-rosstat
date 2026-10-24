@@ -143,7 +143,7 @@ interpolated_yield`, п.п. Если точки кривой нет — `NULL`.
   `avg_trade_size`, `days_since_last_trade`, `days_to_maturity`, `coupon_rate`);
   `sec_code` — измерение, а не отдельный ряд.
 - `sql/mcp_kimi_reader.sql`: `GRANT SELECT ON default.v_ofz_issue_analytics`.
-- `dagu/ofz.yaml`: ежедневно после закрытия рынка, шаг `ofz_issue_analytics`.
+- `dagu/ofz_analytics.yaml`: ежедневно после закрытия рынка, шаг `ofz_issue_analytics`.
 - `scripts/mcp_check.py`: чтение витрины, число строк и последняя дата.
 
 ## 7. Тесты и приёмка
@@ -151,7 +151,7 @@ interpolated_yield`, п.п. Если точки кривой нет — `NULL`.
 - Чистые тесты: календарь купонов, YTM на эталонном векторе, duration, интерполяция
   кривой, классификация ОФЗ-ПД/АД/ПК/ИН.
 - Тест реестра: `Name()` = `ofz_issue_analytics`, таблица с префиксом `ofz_`.
-- `make all`, `dagu validate dagu/ofz.yaml`.
+- `make all`, `dagu validate dagu/ofz_analytics.yaml`.
 - Живой прогон: `make import STAT=ofz_issue_analytics`, число строк, крайние даты,
   повторный прогон; `make mcp-check`.
 - Если сырых `transaq_*` на dev-ClickHouse нет — явно «не проверено», не выдавать
