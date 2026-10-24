@@ -3,7 +3,8 @@ package ofz
 import "github.com/kmlebedev/clickhouse-import-rosstat/util"
 
 const ofzOrigin = "transaq_securities_info FINAL + transaq_securities FINAL + " +
-	"transaq_trades FINAL + cbr_zcyc FINAL; расчёт ofz_issue_analytics"
+	"transaq_trades FINAL + cbr_zcyc FINAL; fallback MOEX ISS " +
+	"/iss/engines/stock/markets/bonds/boards/{TQCB,TQOB}/securities.json; расчёт ofz_issue_analytics"
 
 func ofzMeta(series, title, unit, description string) util.SeriesMeta {
 	return util.SeriesMeta{

@@ -88,8 +88,13 @@ make import STAT=ofz_issue_analytics
 Ожидаемо: `Imported N rows of ofz_issue_analytics`, N > 0; повтор — идемпотентный
 результат; `make mcp-check` — ПРОВЕРКА ПРОЙДЕНА.
 
-Если `transaq_*` на dev-ClickHouse нет — зафиксировать «живая приёмка не проверена»,
-не ставить ✅ и не выдавать unit-тесты за приёмку.
+Результат 2026-10-24 (dev-ClickHouse): `make import STAT=ofz_issue_analytics` — 61 строка,
+повтор — 61 строка; `ytm`/`duration`/`spread_to_curve` — 46 из 61; каталог — 12 метрик;
+сырая таблица закрыта (497); блок OFZ в `make mcp-check` — OK. Тестовый Transaq-аккаунт
+не отдаёт `securities_info`, поэтому использован MOEX ISS fallback (`source='moex'`).
+Общий `make mcp-check` — 2 чужих падения (EIA distillate freshness, news LLM backlog),
+к этому пункту не относятся. `make docs-check` падает на уже существующем отсутствующем
+изображении weekly-sa-cpi, не из-за этого PR.
 
 ## Task 7. PR
 

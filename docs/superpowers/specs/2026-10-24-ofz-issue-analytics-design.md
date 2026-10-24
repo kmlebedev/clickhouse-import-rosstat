@@ -3,7 +3,7 @@
 **Дата:** 2026-10-24
 **Пункт:** `ofz-market/1.1` (issue #376)
 **Роадмап:** [ROADMAP_OFZ_MARKET.md](../../ROADMAP_OFZ_MARKET.md)
-**Статус:** реализация; живая приёмка — после появления сырых `transaq_*` на dev-ClickHouse
+**Статус:** реализовано; живая приёмка 2026-10-24 на MOEX ISS fallback (Transaq-путь ждёт `sec_info` от тестового аккаунта)
 
 ## 1. Цель и границы
 
@@ -30,6 +30,7 @@
 | `transaq_securities FINAL` | `board` (`TQCB`/`TQOB`), `shortname`, `sectype`, `lotsize` | одна бумага может быть на двух board |
 | `transaq_trades FINAL` | последняя цена, сделки за день, оборот | цена в % от номинала; `quantity` — количество бумаг |
 | `cbr_zcyc FINAL` | КБД ЦБ на дату, 12 теноров | дневная публикация; точки может не быть |
+| MOEX ISS `.../boards/{TQCB,TQOB}/securities.json` | цена последней сессии, `YIELDATPREVWAPRICE`, купон/НКД/погашение | fallback, когда `transaq_securities_info`/сделки пусты; статистики сделок нет |
 
 Цена: последняя сделка на TQCB (приоритет) или TQOB. Если сделок нет — `NULL`, а не
 ноль. `days_since_last_trade` показывает возраст последней сделки.
@@ -97,6 +98,7 @@ interpolated_yield`, п.п. Если точки кривой нет — `NULL`.
 | `sec_code` | LowCardinality(String) | код бумаги |
 | `isin` | String | ISIN |
 | `board` | LowCardinality(String) | TQCB/TQOB |
+| `source` | LowCardinality(String) | `transaq` или `moex` (fallback) |
 | `short_name` | String | короткое имя |
 | `maturity_date` | Date | погашение |
 | `days_to_maturity` | UInt32 | дней до погашения |
@@ -125,8 +127,8 @@ interpolated_yield`, п.п. Если точки кривой нет — `NULL`.
 `ofz/issue_analytics.go`:
 
 1. DDL таблицы.
-2. Запрос справочника и последних сделок/кривой.
-3. Расчёт в Go (чистые функции в `ofz/calc.go`).
+2. Запрос справочника и последних сделок/кривой; если `transaq_securities_info`/сделки пусты — fallback MOEX ISS (цена, `YIELDATPREVWAPRICE`, купон/НКД/погашение) с `source='moex'`.
+3. Расчёт в Go (чистые функции в `ofz/calc.go`); приоритет — `source='transaq'` со статусом `ok`, fallback заполняет пропуски.
 4. Один `PrepareBatch` + `Append` + `Send`.
 5. `AfterImport`: `UpsertSeriesCatalog` + `CreateView`.
 6. Ошибка любого источника — fail-fast с именем таблицы; пустой результат — 0 строк,
@@ -154,8 +156,14 @@ interpolated_yield`, п.п. Если точки кривой нет — `NULL`.
 - `make all`, `dagu validate dagu/ofz_analytics.yaml`.
 - Живой прогон: `make import STAT=ofz_issue_analytics`, число строк, крайние даты,
   повторный прогон; `make mcp-check`.
-- Если сырых `transaq_*` на dev-ClickHouse нет — явно «не проверено», не выдавать
-  unit-тесты за живую приёмку.
+- ✅ 2026-10-24 (dev-ClickHouse): `make import STAT=ofz_issue_analytics` — 61 строка,
+  повтор — те же 61; YTM/дюрация/спред — 46 из 61; каталог — 12 метрик; блок OFZ в
+  `make mcp-check` — OK. Тестовый Transaq-аккаунт не отдаёт `securities_info`, поэтому
+  строки помечены `source='moex'` (MOEX ISS fallback: цена/YTM/купон/НКД/погашение).
+  Transaq-путь остаётся основным; для его отдельной приёмки нужен `sec_info` от
+  тестового аккаунта. `make docs-check` падает на уже существующем отсутствующем
+  изображении `docs/publications/2026-10-22-weekly-sa-cpi/weekly-sa-mm-vs-cbr.svg`,
+  к этому пункту отношения не имеет.
 
 ## 8. Риски
 

@@ -3,6 +3,7 @@ package ofz
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -22,6 +23,7 @@ const (
     sec_code LowCardinality(String),
     isin String,
     board LowCardinality(String),
+    source LowCardinality(String),
     short_name String,
     maturity_date Date,
     days_to_maturity UInt32,
@@ -43,6 +45,8 @@ const (
     updated_at DateTime('Europe/Moscow')
 ) ENGINE = ReplacingMergeTree(updated_at)
 ORDER BY (date, sec_code, board);`
+
+	ofzIssueAnalyticsSourceDdl = `ALTER TABLE %s ADD COLUMN IF NOT EXISTS source LowCardinality(String) AFTER board`
 )
 
 // ofzIssueAnalytics reads the Transaq reference/trade tables and the CBR curve,
@@ -54,6 +58,9 @@ func (s *ofzIssueAnalytics) Name() string { return ofzIssueAnalyticsTable }
 func (s *ofzIssueAnalytics) Import(ctx context.Context, conn driver.Conn) (int64, error) {
 	if err := conn.Exec(ctx, fmt.Sprintf(ofzIssueAnalyticsDdl, ofzIssueAnalyticsTable)); err != nil {
 		return 0, fmt.Errorf("%s: create table: %w", ofzIssueAnalyticsTable, err)
+	}
+	if err := conn.Exec(ctx, fmt.Sprintf(ofzIssueAnalyticsSourceDdl, ofzIssueAnalyticsTable)); err != nil {
+		return 0, fmt.Errorf("%s: add source column: %w", ofzIssueAnalyticsTable, err)
 	}
 
 	settle := dateOnly(time.Now().In(moscowLocation))
@@ -68,7 +75,12 @@ func (s *ofzIssueAnalytics) Import(ctx context.Context, conn driver.Conn) (int64
 	if err != nil {
 		return 0, err
 	}
-	rows := buildAnalyticsRows(settle, securities, curve, time.Now().In(moscowLocation))
+	transaqRows := buildAnalyticsRows(settle, securities, curve, time.Now().In(moscowLocation))
+	moexRows, moexErr := buildMOEXRows(settle, curve, time.Now().In(moscowLocation))
+	if moexErr != nil {
+		log.Warnf("%s: MOEX ISS fallback: %v", ofzIssueAnalyticsTable, moexErr)
+	}
+	rows := mergeAnalyticsRows(transaqRows, moexRows)
 
 	batch, err := conn.PrepareBatch(ctx, "INSERT INTO "+ofzIssueAnalyticsTable)
 	if err != nil {
@@ -80,6 +92,7 @@ func (s *ofzIssueAnalytics) Import(ctx context.Context, conn driver.Conn) (int64
 			row.SecCode,
 			row.Isin,
 			row.Board,
+			row.Source,
 			row.ShortName,
 			row.MaturityDate,
 			row.DaysToMaturity,
@@ -137,6 +150,7 @@ type analyticsRow struct {
 	SecCode            string
 	Isin               string
 	Board              string
+	Source             string
 	ShortName          string
 	MaturityDate       time.Time
 	DaysToMaturity     uint32
@@ -294,6 +308,7 @@ func buildAnalyticsRows(settle time.Time, securities []securitySource, curve []c
 			SecCode:        sec.SecCode,
 			Isin:           sec.Isin,
 			Board:          sec.Board,
+			Source:         "transaq",
 			ShortName:      sec.ShortName,
 			MaturityDate:   maturity,
 			DaysToMaturity: uint32(daysToMaturity),
@@ -396,6 +411,31 @@ func buildAnalyticsRows(settle time.Time, securities []securitySource, curve []c
 		}
 		rows = append(rows, row)
 	}
+	return rows
+}
+
+func mergeAnalyticsRows(primary, fallback []analyticsRow) []analyticsRow {
+	byKey := make(map[string]analyticsRow, len(primary)+len(fallback))
+	for _, row := range primary {
+		byKey[row.SecCode+"|"+row.Board] = row
+	}
+	for _, row := range fallback {
+		key := row.SecCode + "|" + row.Board
+		if existing, ok := byKey[key]; ok && existing.CalculationStatus == "ok" {
+			continue
+		}
+		byKey[key] = row
+	}
+	rows := make([]analyticsRow, 0, len(byKey))
+	for _, row := range byKey {
+		rows = append(rows, row)
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].SecCode != rows[j].SecCode {
+			return rows[i].SecCode < rows[j].SecCode
+		}
+		return rows[i].Board < rows[j].Board
+	})
 	return rows
 }
 
