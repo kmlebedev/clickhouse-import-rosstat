@@ -115,3 +115,9 @@ GRANT SELECT ON default.v_cbr_mp_public_panel TO kimi_reader;
 -- Рыночные ряды MOEX (пункт key-rate/phase-2-brent, #113): Brent-фронт-месяц.
 -- Сырая moex_market агенту не выдана — только витрина.
 GRANT SELECT ON default.v_moex_market TO kimi_reader;
+
+-- Контур недвижимости (пункт real-estate/1.1): рынок ипотеки ДОМ.РФ и индекс цен первички.
+-- Сырые domrf_mortgage_market, domrf_mortgage_weekly и domrf_price_index агенту не выданы —
+-- только витрины с комментариями колонок.
+GRANT SELECT ON default.v_domrf_mortgage TO kimi_reader;
+GRANT SELECT ON default.v_domrf_price_index TO kimi_reader;

@@ -17,6 +17,7 @@ import (
 	_ "github.com/kmlebedev/clickhouse-import-rosstat/craw"
 	_ "github.com/kmlebedev/clickhouse-import-rosstat/customs"
 	_ "github.com/kmlebedev/clickhouse-import-rosstat/dcf"
+	_ "github.com/kmlebedev/clickhouse-import-rosstat/domrf"
 	_ "github.com/kmlebedev/clickhouse-import-rosstat/edisclosure"
 	_ "github.com/kmlebedev/clickhouse-import-rosstat/eia"
 	_ "github.com/kmlebedev/clickhouse-import-rosstat/fao"
