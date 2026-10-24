@@ -2913,6 +2913,44 @@ async def check(params, server_log):
                 failed += not expect(f"сырая {table} закрыта", denied,
                                      f"отказ ClickHouse 497 на {table} (ожидаемо)" if denied else raw[:200])
 
+            # Контур недвижимости (real-estate/1.1): витрина рынка ипотеки и панель индекса цен.
+            # Витрины проверяются запросом к ним (урок bold: имя в тексте list_tables давало
+            # ложное OK), каталог — числом рядов: 24 ряда рынка и 5 продуктов недельных ставок.
+            domrf_view = text(await session.call_tool("run_query", {
+                "query": "SELECT count() AS n FROM v_domrf_mortgage"}))
+            domrf_view_rows = result_rows(domrf_view)
+            domrf_view_n = domrf_view_rows[0].get("n") if domrf_view_rows else None
+            failed += not expect("витрина v_domrf_mortgage читается", bool(domrf_view_rows), domrf_view[:200])
+            failed += not expect("v_domrf_mortgage: 4 612 рынка + 1 154 ставки",
+                                 domrf_view_n == 5766, f"строк: {domrf_view_n}, want 5766")
+
+            domrf_price = text(await session.call_tool("run_query", {
+                "query": "SELECT count() AS n, uniqExact(region) AS regions FROM v_domrf_price_index"}))
+            domrf_price_rows = result_rows(domrf_price)
+            domrf_price_n = domrf_price_rows[0].get("n") if domrf_price_rows else None
+            domrf_regions_n = domrf_price_rows[0].get("regions") if domrf_price_rows else None
+            failed += not expect("витрина v_domrf_price_index читается", bool(domrf_price_rows), domrf_price[:200])
+            failed += not expect("v_domrf_price_index: 20 700 строк / 75 регионов",
+                                 (domrf_price_n or 0) >= 20700 and (domrf_regions_n or 0) == 75,
+                                 f"строк: {domrf_price_n}, регионов: {domrf_regions_n}")
+
+            domrf_catalog = text(await session.call_tool("run_query", {
+                "query": "SELECT source, count() AS n FROM v_series_catalog "
+                         "WHERE source IN ('domrf_mortgage_market', 'domrf_mortgage_weekly') "
+                         "GROUP BY source"}))
+            domrf_catalog_rows = result_rows(domrf_catalog)
+            domrf_catalog_n = {row.get("source"): row.get("n") for row in (domrf_catalog_rows or [])}
+            failed += not expect("каталог domrf: 24 ряда рынка и 5 продуктов ставок",
+                                 domrf_catalog_n.get("domrf_mortgage_market") == 24
+                                 and domrf_catalog_n.get("domrf_mortgage_weekly") == 5,
+                                 domrf_catalog[:200])
+
+            for table in ("domrf_mortgage_market", "domrf_mortgage_weekly", "domrf_price_index"):
+                raw = text(await session.call_tool("run_query", {"query": f"SELECT count() FROM {table}"}))
+                denied = "ACCESS_DENIED" in raw or "Not enough privileges" in raw
+                failed += not expect(f"сырая {table} закрыта", denied,
+                                     f"отказ ClickHouse 497 на {table} (ожидаемо)" if denied else raw[:200])
+
     return failed
 
 
