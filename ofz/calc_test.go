@@ -39,6 +39,30 @@ func TestClassifyIssue(t *testing.T) {
 	}
 }
 
+func TestClassifySec(t *testing.T) {
+	tests := []struct {
+		name    string
+		secCode string
+		names   []string
+		want    issueKind
+	}{
+		{name: "fixed code", secCode: "SU26207RMFS1", names: []string{"ОФЗ 26207"}, want: issueFixed},
+		{name: "variable code", secCode: "SU29008RMFS8", names: []string{"ОФЗ 29008"}, want: issueVariable},
+		{name: "amortizing code", secCode: "SU46020RMFS1", names: []string{"ОФЗ 46020"}, want: issueAmortizing},
+		{name: "indexed code", secCode: "SU52002RMFS1", names: []string{"ОФЗ 52002"}, want: issueIndexed},
+		{name: "null padded code", secCode: "SU29008\x00\x00", names: []string{"ОФЗ 29008"}, want: issueVariable},
+		{name: "fallback to name", secCode: "25070RMFS", names: []string{"ОФЗ-ПД 25070"}, want: issueFixed},
+		{name: "unknown", secCode: "", names: []string{"Газпром БО-01"}, want: issueUnknown},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := classifySec(test.secCode, test.names...); got != test.want {
+				t.Fatalf("classifySec(%q, %q) = %v, want %v", test.secCode, test.names, got, test.want)
+			}
+		})
+	}
+}
+
 func TestBuildScheduleFixedCoupon(t *testing.T) {
 	flows, err := buildSchedule(couponTerms{
 		Settlement:       date(2026, time.October, 24),

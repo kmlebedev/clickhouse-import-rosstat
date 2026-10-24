@@ -97,6 +97,7 @@ func TestBuildAnalyticsRowsUnsupportedAndMissing(t *testing.T) {
 		{
 			name: "variable",
 			mutate: func(sec *securitySource) {
+				sec.SecCode = "SU29006RMFS1"
 				sec.ShortName = "ОФЗ-ПК 29006"
 				sec.SecName = "ОФЗ-ПК 29006"
 			},
@@ -138,6 +139,7 @@ func TestBuildAnalyticsRowsUnsupportedAndMissing(t *testing.T) {
 
 func TestBuildAnalyticsRowsSkipsNonOFZ(t *testing.T) {
 	sec := fixedSource()
+	sec.SecCode = "GAZP01RMFS1"
 	sec.ShortName = "Газпром БО-01"
 	sec.SecName = "Газпром БО-01"
 	rows := buildAnalyticsRows(date(2026, time.October, 24), []securitySource{sec}, nil, time.Now())

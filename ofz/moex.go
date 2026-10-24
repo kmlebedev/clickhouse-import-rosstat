@@ -156,7 +156,7 @@ func buildMOEXAnalyticsRows(settle time.Time, bonds []moexBond, curve []curvePoi
 		if daysToMaturity < 0 {
 			continue
 		}
-		kind := classifyIssue(bond.ShortName)
+		kind := classifySec(bond.SecID, bond.ShortName)
 		if kind == issueUnknown {
 			continue
 		}

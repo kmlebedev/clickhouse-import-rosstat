@@ -31,7 +31,7 @@ var ofzIssueAnalyticsView = util.View{
 		"face_value":            "Номинал, руб.; NULL — нет данных",
 		"accrued_int":           "НКД на одну бумагу, руб.; NULL — нет данных",
 		"price":                 "Последняя цена сделки, % номинала; NULL — сделок не было, а не ноль",
-		"ytm":                   "Доходность к погашению, % годовых, ACT/365; NULL при calculation_status != ok",
+		"ytm":                   "Доходность к погашению, % годовых: для source='transaq' — расчёт ACT/365 при calculation_status='ok'; для source='moex' — YIELD MOEX ISS, в т.ч. справочно при unsupported_*; NULL — нет данных",
 		"duration":              "Дюрация Маколея, годы; NULL при calculation_status != ok",
 		"modified_duration":     "Модифицированная дюрация, годы; NULL при calculation_status != ok",
 		"turnover":              "Оборот сделок за дату расчёта, руб.; 0 — сделок не было",

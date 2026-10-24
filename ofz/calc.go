@@ -59,6 +59,25 @@ func classifyIssue(names ...string) issueKind {
 	return issueUnknown
 }
 
+// classifySec prefers the national security code over the display name: MOEX
+// short names like "ОФЗ 29008" carry no coupon-type marker, while the code
+// prefix identifies the issue family (SU26 fixed, SU29 variable, SU46
+// amortizing, SU52 indexed). Transaq fixed-width codes may contain NULs.
+func classifySec(secCode string, names ...string) issueKind {
+	code := strings.ToUpper(strings.TrimSpace(strings.ReplaceAll(secCode, "\x00", "")))
+	switch {
+	case strings.HasPrefix(code, "SU29"):
+		return issueVariable
+	case strings.HasPrefix(code, "SU46"):
+		return issueAmortizing
+	case strings.HasPrefix(code, "SU52"):
+		return issueIndexed
+	case strings.HasPrefix(code, "SU26"):
+		return issueFixed
+	}
+	return classifyIssue(names...)
+}
+
 type couponTerms struct {
 	Settlement       time.Time
 	Maturity         time.Time
