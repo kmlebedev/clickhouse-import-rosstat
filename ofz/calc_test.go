@@ -27,6 +27,7 @@ func TestClassifyIssue(t *testing.T) {
 		{name: "variable", names: []string{"ОФЗ-ПК 29006"}, want: issueVariable},
 		{name: "indexed", names: []string{"ОФЗ-ИН 52002"}, want: issueIndexed},
 		{name: "corporate", names: []string{"Газпром БО-01"}, want: issueUnknown},
+		{name: "corporate with ofz suffix", names: []string{"СберИОС 001Р-659R 3Y1M ОФЗ"}, want: issueUnknown},
 		{name: "empty", names: nil, want: issueUnknown},
 		{name: "second name", names: []string{"", "ОФЗ-ПД 26238"}, want: issueFixed},
 	}

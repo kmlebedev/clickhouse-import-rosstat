@@ -88,10 +88,12 @@ make import STAT=ofz_issue_analytics
 Ожидаемо: `Imported N rows of ofz_issue_analytics`, N > 0; повтор — идемпотентный
 результат; `make mcp-check` — ПРОВЕРКА ПРОЙДЕНА.
 
-Результат 2026-10-24 (dev-ClickHouse): `make import STAT=ofz_issue_analytics` — 61 строка,
-повтор — 61 строка; `ytm`/`spread_to_curve` — 46 из 61, `duration` — 33 (только fixed/ok); каталог — 12 метрик;
-сырая таблица закрыта (497); блок OFZ в `make mcp-check` — OK. Тестовый Transaq-аккаунт
-не отдаёт `securities_info`, поэтому использован MOEX ISS fallback (`source='moex'`).
+Результат 2026-10-24 (dev-ClickHouse): экспортёр записал 4074 строки
+`transaq_securities_info` (58 ОФЗ) после фикса 28 колонок; `make import` — 64 строки,
+повтор — 64; `ytm`/`spread_to_curve` — 46, `duration` — 33; 61 строка `source='moex'`,
+3 — `source='transaq'` (`no_price`, ОФЗ-CNY). `transaq_trades`/`transaq_candles` пусты:
+у тестового аккаунта нет подписки на рыночные данные, цена/ликвидность — MOEX ISS.
+Каталог — 12 метрик; сырая таблица закрыта (497); блок OFZ в `make mcp-check` — OK.
 Общий `make mcp-check` — 2 чужих падения (EIA distillate freshness, news LLM backlog),
 к этому пункту не относятся. `make docs-check` падает на уже существующем отсутствующем
 изображении weekly-sa-cpi, не из-за этого PR.
