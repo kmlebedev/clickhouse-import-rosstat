@@ -63,6 +63,12 @@ GRANT SELECT ON default.v_cbr_mp_summary_channels TO kimi_reader;
 GRANT SELECT ON default.v_cbr_key_rate_press TO kimi_reader;
 GRANT SELECT ON default.v_cbr_key_rate_press_blocks TO kimi_reader;
 GRANT SELECT ON default.v_cbr_key_rate_press_quarters TO kimi_reader;
+-- Контур стенограмм пресс-конференций по ключевой ставке (пункт
+-- key-rate/phase-4-cbr-key-rate-pressconf, #370): три витрины — шапка, реплики с
+-- таймкодами и полный текст; сырые таблицы агенту закрыты.
+GRANT SELECT ON default.v_cbr_key_rate_pressconf TO kimi_reader;
+GRANT SELECT ON default.v_cbr_key_rate_pressconf_cues TO kimi_reader;
+GRANT SELECT ON default.v_cbr_key_rate_pressconf_text TO kimi_reader;
 GRANT SELECT ON default.v_bank_sber_spending TO kimi_reader;
 GRANT SELECT ON default.v_bank_macro TO kimi_reader;
 GRANT SELECT ON default.v_cbr_bop TO kimi_reader;
