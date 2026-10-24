@@ -158,12 +158,14 @@ interpolated_yield`, п.п. Если точки кривой нет — `NULL`.
 - `make all`, `dagu validate dagu/ofz_analytics.yaml`.
 - Живой прогон: `make import STAT=ofz_issue_analytics`, число строк, крайние даты,
   повторный прогон; `make mcp-check`.
-- ✅ 2026-10-24 (dev-ClickHouse): `make import STAT=ofz_issue_analytics` — 61 строка,
-  повтор — те же 61; YTM/спред — 46 из 61, дюрация — 33 (только fixed/ok); каталог — 12 метрик; блок OFZ в
-  `make mcp-check` — OK. Тестовый Transaq-аккаунт не отдаёт `securities_info`, поэтому
-  строки помечены `source='moex'` (MOEX ISS fallback: цена/YTM/купон/НКД/погашение).
-  Transaq-путь остаётся основным; для его отдельной приёмки нужен `sec_info` от
-  тестового аккаунта. `make docs-check` падает на уже существующем отсутствующем
+- ✅ 2026-10-24 (dev-ClickHouse): экспортёр с `EXPORT_SEC_INFO_NAMES=ALL` записал 4074
+  строки `transaq_securities_info` (58 ОФЗ) после фикса 28 колонок
+  (`transaq-clickhouse-exporter@1757e63`); `make import STAT=ofz_issue_analytics` — 64
+  строки, повтор — те же 64; YTM/спред — 46, дюрация — 33; 61 строка `source='moex'`,
+  3 — `source='transaq'` (`no_price`, ОФЗ-CNY). `transaq_trades`/`transaq_candles` пусты:
+  у тестового аккаунта нет подписки на рыночные данные, поэтому цена/ликвидность пока
+  из MOEX ISS fallback, а Transaq-путь для цены остаётся непроверенным. Каталог — 12
+  метрик; блок OFZ в `make mcp-check` — OK. `make docs-check` падает на уже существующем отсутствующем
   изображении `docs/publications/2026-10-22-weekly-sa-cpi/weekly-sa-mm-vs-cbr.svg`,
   к этому пункту отношения не имеет.
 

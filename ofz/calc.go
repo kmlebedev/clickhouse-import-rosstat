@@ -46,13 +46,13 @@ func classifyIssue(names ...string) issueKind {
 	for _, name := range names {
 		upper := strings.ToUpper(strings.TrimSpace(name))
 		switch {
-		case strings.Contains(upper, "ОФЗ-АД"):
+		case strings.HasPrefix(upper, "ОФЗ-АД"):
 			return issueAmortizing
-		case strings.Contains(upper, "ОФЗ-ПК"):
+		case strings.HasPrefix(upper, "ОФЗ-ПК"):
 			return issueVariable
-		case strings.Contains(upper, "ОФЗ-ИН"):
+		case strings.HasPrefix(upper, "ОФЗ-ИН"):
 			return issueIndexed
-		case strings.Contains(upper, "ОФЗ"):
+		case strings.HasPrefix(upper, "ОФЗ"):
 			return issueFixed
 		}
 	}
