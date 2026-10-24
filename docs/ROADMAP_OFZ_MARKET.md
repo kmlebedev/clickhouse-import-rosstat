@@ -62,7 +62,8 @@
 |---|---|
 | Приоритет | P0 |
 | Зависит от | `transaq-clickhouse-exporter`, `cbr_zcyc` |
-| Статус | ❌ |
+| Статус | 🔶 |
+| Реализация | `ofz/issue_analytics.go`, `ofz/views.go`; ветка `feat/ofz-market-1.1`; живая приёмка — после появления сырых `transaq_*` на dev-ClickHouse |
 
 **Цель.** Дневная витрина `v_ofz_issue_analytics` по каждому активному выпуску ОФЗ.
 
@@ -223,7 +224,7 @@ transaq_quotes/trades ───────────────┼→ 1.3
 
 | Пункт | Статус |
 |---|---|
-| `ofz-market/1.1` | ❌ |
+| `ofz-market/1.1` | 🔶 |
 | `ofz-market/1.2` | ❌ |
 | `ofz-market/1.3` | ❌ |
 | `ofz-market/1.4` | ❌ |

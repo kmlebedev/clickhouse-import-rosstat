@@ -1603,6 +1603,55 @@ async def check(params, server_log):
                                       "(каталог перепубликовывается прогонами)")
             failed += not expect("каталог ОФЗ-контура полон", ofz_catalog_n == 20, ofz_catalog_detail)
 
+            # Аналитика выпусков ОФЗ (пункт ofz-market/1.1, issue #376): витрина
+            # v_ofz_issue_analytics читается, YTM/дюрация посчитаны хотя бы для
+            # части выпусков, спред к КБД есть; каталог описывает 12 метрик;
+            # сырая таблица агенту не выдана. Пустой YTM — не «ноль», а
+            # непрогнанный импортёр или отсутствие сырых transaq_*.
+            ofz_issue = text(await session.call_tool("run_query", {"query":
+                "SELECT count() AS n, countIf(ytm IS NOT NULL) AS ytm, "
+                "countIf(duration IS NOT NULL) AS duration, "
+                "countIf(spread_to_curve IS NOT NULL) AS spread, "
+                "min(date) AS first, max(date) AS last FROM v_ofz_issue_analytics"}))
+            ofz_issue_rows = result_rows(ofz_issue)
+            ofz_issue_n = ofz_issue_rows[0].get("n") if ofz_issue_rows else None
+            ofz_issue_ytm = ofz_issue_rows[0].get("ytm") if ofz_issue_rows else None
+            ofz_issue_duration = ofz_issue_rows[0].get("duration") if ofz_issue_rows else None
+            ofz_issue_spread = ofz_issue_rows[0].get("spread") if ofz_issue_rows else None
+            ofz_issue_first = ofz_issue_rows[0].get("first") if ofz_issue_rows else None
+            ofz_issue_last = ofz_issue_rows[0].get("last") if ofz_issue_rows else None
+            if ofz_issue_rows is None:
+                ofz_issue_detail = (f"витрина не читается: {ofz_issue[:200]} — прогнать "
+                                    "make import STAT=ofz_issue_analytics")
+            else:
+                ofz_issue_detail = (f"строк: {ofz_issue_n}, YTM: {ofz_issue_ytm}, "
+                                    f"дюрация: {ofz_issue_duration}, спред: {ofz_issue_spread}, "
+                                    f"{ofz_issue_first} … {ofz_issue_last}")
+                if (ofz_issue_n or 0) == 0 or (ofz_issue_ytm or 0) == 0 \
+                        or (ofz_issue_duration or 0) == 0 or (ofz_issue_spread or 0) == 0:
+                    ofz_issue_detail += " — прогнать make import STAT=ofz_issue_analytics"
+            failed += not expect("витрина v_ofz_issue_analytics: YTM/дюрация/спред",
+                                 bool(ofz_issue_rows) and (ofz_issue_n or 0) > 0
+                                 and (ofz_issue_ytm or 0) > 0 and (ofz_issue_duration or 0) > 0
+                                 and (ofz_issue_spread or 0) > 0,
+                                 ofz_issue_detail)
+
+            ofz_issue_catalog = text(await session.call_tool("run_query", {"query":
+                "SELECT count() AS n FROM v_series_catalog WHERE source = 'ofz_issue_analytics'"}))
+            ofz_issue_catalog_rows = result_rows(ofz_issue_catalog)
+            ofz_issue_catalog_n = ofz_issue_catalog_rows[0].get("n") if ofz_issue_catalog_rows else None
+            failed += not expect("каталог ofz_issue_analytics: 12 метрик",
+                                 ofz_issue_catalog_n == 12,
+                                 f"рядов: {ofz_issue_catalog_n}, want 12 — прогнать "
+                                 "make import STAT=ofz_issue_analytics")
+
+            raw_ofz_issue = text(await session.call_tool("run_query", {"query":
+                "SELECT count() FROM ofz_issue_analytics"}))
+            raw_ofz_issue_denied = "ACCESS_DENIED" in raw_ofz_issue or "Not enough privileges" in raw_ofz_issue
+            failed += not expect("сырая ofz_issue_analytics закрыта", raw_ofz_issue_denied,
+                                 "отказ ClickHouse 497 (ожидаемо)" if raw_ofz_issue_denied
+                                 else raw_ofz_issue[:200])
+
             for table, label in (("minfin_ofz_auction", "аукционы ОФЗ"),
                                  ("minfin_debt_stock", "запас внутреннего/внешнего долга и ОФЗ"),
                                  ("minfin_debt_service", "обслуживание и факт заимствований")):

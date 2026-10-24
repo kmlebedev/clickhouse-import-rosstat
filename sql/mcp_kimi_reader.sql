@@ -86,6 +86,7 @@ GRANT SELECT ON default.v_cbr_form101_loans TO kimi_reader;
 GRANT SELECT ON default.v_ofz_curve_compare TO kimi_reader;
 GRANT SELECT ON default.v_ofz_signal TO kimi_reader;
 GRANT SELECT ON default.v_ofz_stress TO kimi_reader;
+GRANT SELECT ON default.v_ofz_issue_analytics TO kimi_reader;
 -- Макропруденциальные требования (пункт key-rate/phase-2-ccyb, #115): АЦН-индикаторы,
 -- матрицы надбавок и МПЛ. Сырые cbr_ccyb_indicators/cbr_risk_weight_addons/cbr_mpl
 -- агенту не выданы — только витрины.
