@@ -78,7 +78,7 @@ CH_SETUP_PASSWORD=<пароль default> make mcp-user-staging
 - `ARCHIVE_BACKEND`, `ARCHIVE_YANDEX_TOKEN`, `ARCHIVE_YANDEX_DIR`;
 - `CERT_FILES` — три российских CA из корня репозитория (`russian_trusted_*.crt`) плюс `litessl_rsa_ca_2025.pem` (промежуточный CA `sberindex.ru`); `deploy-staging-dagu-base` копирует их в `/root/dagu/certs/`. Без первых `rosstat.gov.ru` отдаёт `x509: certificate signed by unknown authority`, без LiteSSL — `sber_consumper_spending_index`; dev спасает системное хранилище macOS, staging — только эти файлы.
 
-Уведомления: `smtp` + `mail_on.failure: true`; при падении DAG после 3 ретраев шага dagu
+Уведомления: `smtp` + `mail_on.failure: true`; Dagu 2.18.2 не раскрывает `${…}` в smtp-полях, поэтому `render-dagu-base.py` при установке подставляет литералы из env-файла на хосте (в шаблоне — плейсхолдеры `__SMTP_*__`/`__MAIL_*__`). При падении DAG после 3 ретраев шага dagu
 отправляет письмо с префиксом `[DAGU palmshell]` и логами на `MAIL_TO` — адрес шлюза CMC,
 который пересылает письмо в SMS. Для этого в env-файле обязательны `SMTP_HOST`, `SMTP_PORT`,
 `SMTP_USER`, `SMTP_PASSWORD`, `MAIL_FROM`, `MAIL_TO`; `deploy-staging-preflight` проверяет их

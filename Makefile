@@ -758,26 +758,28 @@ DAGU_URL := https://github.com/dagu-org/dagu/releases/download/$(DAGU_VERSION)/d
 # Base DAG (env шагов + SMTP-уведомления): /root/.config/dagu/base.yaml.
 # Без env шаг `run: "$ROSSTAT_IMPORT_BIN"` — пустая команда: dagu рапортует
 # succeeded, импорт не выполняется (инцидент staging 2026-10-25).
-# Идемпотентно по sha256; старый файл — .bak; перезапуск только активного dagu,
-# чтобы первый deploy не начал выполнять DAG-и до preflight/smoke.
+# SMTP-поля dagu 2.18.2 не раскрывает ${…} (в отличие от env шагов), поэтому
+# шаблон рендерится на хосте из env-файла render-dagu-base.py; секреты не
+# покидают хост и не попадают в git. Идемпотентно по cmp; старый файл — .bak;
+# перезапуск только активного dagu, чтобы первый deploy не начал выполнять
+# DAG-и до preflight/smoke.
 deploy-staging-dagu-base: staging-precheck
 	@ssh $(STAGING_HOST) 'install -d -m 755 /root/dagu/certs'
 	@scp -q russian_trusted_root_ca_pem.crt russian_trusted_sub_ca_pem.crt russian_trusted_sub_ca_2024_pem.crt litessl_rsa_ca_2025.pem $(STAGING_HOST):/root/dagu/certs/
-	@set -e; \
-	test -f $(STAGING_DAGU_BASE) || { echo "нет $(STAGING_DAGU_BASE)"; exit 1; }; \
-	local_sum=$$(shasum -a 256 $(STAGING_DAGU_BASE) | cut -d' ' -f1); \
-	remote_sum=$$(ssh $(STAGING_HOST) 'sha256sum /root/.config/dagu/base.yaml 2>/dev/null | cut -d" " -f1' || true); \
-	if [ "$$local_sum" = "$$remote_sum" ]; then \
-		echo "OK   base.yaml актуален ($$local_sum)"; \
-	else \
-		scp $(STAGING_DAGU_BASE) $(STAGING_HOST):/root/.config/dagu/base.yaml.new; \
-		ssh $(STAGING_HOST) 'set -e; \
+	@scp -q $(STAGING_DAGU_BASE) $(STAGING_HOST):/tmp/dagu-base.template.yaml
+	@scp -q deploy/staging/render-dagu-base.py $(STAGING_HOST):/tmp/render-dagu-base.py
+	@ssh $(STAGING_HOST) 'set -e; \
+		python3 /tmp/render-dagu-base.py /tmp/dagu-base.template.yaml $(STAGING_ENV_FILE) /root/.config/dagu/base.yaml.new; \
+		if cmp -s /root/.config/dagu/base.yaml.new /root/.config/dagu/base.yaml; then \
+			rm -f /root/.config/dagu/base.yaml.new /tmp/dagu-base.template.yaml /tmp/render-dagu-base.py; \
+			echo "OK   base.yaml актуален"; \
+		else \
 			test -f /root/.config/dagu/base.yaml && cp -a /root/.config/dagu/base.yaml /root/.config/dagu/base.yaml.bak || true; \
 			install -o root -g root -m 600 /root/.config/dagu/base.yaml.new /root/.config/dagu/base.yaml; \
-			rm -f /root/.config/dagu/base.yaml.new; \
+			rm -f /root/.config/dagu/base.yaml.new /tmp/dagu-base.template.yaml /tmp/render-dagu-base.py; \
 			if systemctl is-active --quiet dagu; then systemctl restart dagu; echo "base.yaml установлен, dagu перезапущен"; \
-			else echo "base.yaml установлен (dagu ещё не запущен)"; fi'; \
-	fi
+			else echo "base.yaml установлен (dagu ещё не запущен)"; fi; \
+		fi'
 
 # dagu: скачать релизный tarball, подменить бинарник, поставить юнит. Идемпотентно по версии.
 # Старый бинарник сохраняется в .bak — им пользуется откат (см. deploy/staging/README.md).
