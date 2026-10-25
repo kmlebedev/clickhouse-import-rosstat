@@ -63,9 +63,9 @@
 2. `.claude-plugin/plugin.json` — те же метаданные, `"skills": ["./.kimi-code/skills/"]`; без `agents`.
 3. `.claude-plugin/marketplace.json` — `$schema`, `name: clickhouse-import-rosstat`, `owner`, `plugins[0]` с `name`, `source: "./"`, `description`, `version`.
 4. `.codex-plugin/plugin.json` — `skills: "./.kimi-code/skills/"`, `interface` (displayName, shortDescription, longDescription, developerName, category, capabilities `["Read"]`, websiteURL).
-5. `.agents/plugins/marketplace.json` — `name: clickhouse-import-rosstat-marketplace`, `interface.displayName`, `plugins[0].source = {source:"url", url:"https://github.com/kmlebedev/clickhouse-import-rosstat.git", ref:"main"}`, `policy`.
+5. `.agents/plugins/marketplace.json` — `name: clickhouse-import-rosstat`, `interface.displayName`, `plugins[0].source = {source:"url", url:"https://github.com/kmlebedev/clickhouse-import-rosstat.git", ref:"main"}`, `policy`.
 6. `.cursor-plugin/plugin.json` — `skills: "./.kimi-code/skills/"`, `category`, `tags`.
-7. `.cursor-plugin/marketplace.json` — `name: clickhouse-import-rosstat-marketplace`, `owner`, `metadata`, `plugins[0].source: "."`.
+7. `.cursor-plugin/marketplace.json` — `name: clickhouse-import-rosstat`, `owner`, `metadata`, `plugins[0].source: "."`.
 8. `qwen-extension.json` — `name`, `version`, `description`, `skills: "./.kimi-code/skills/"`.
 9. `LICENSE` — MIT, `Copyright (c) 2026 kmlebedev`.
 
@@ -86,7 +86,7 @@ claude plugin validate . --strict
 ## Task 3. Документация
 
 1. `README.md` — после «Роли и скилы» добавить «Подключение как плагин LLM-клиента»:
-   - таблица: Kimi `/plugins install https://github.com/kmlebedev/clickhouse-import-rosstat/tree/main`; Claude `claude plugin marketplace add kmlebedev/clickhouse-import-rosstat` + `claude plugin install clickhouse-import-rosstat@clickhouse-import-rosstat`; Codex `codex plugin marketplace add ...` + `codex plugin add clickhouse-import-rosstat@clickhouse-import-rosstat-marketplace`; Cursor `/add-plugin https://github.com/kmlebedev/clickhouse-import-rosstat`; Qwen `qwen extensions install kmlebedev/clickhouse-import-rosstat`;
+   - таблица: Kimi `/plugins install https://github.com/kmlebedev/clickhouse-import-rosstat/tree/main`; Claude `claude plugin marketplace add kmlebedev/clickhouse-import-rosstat` + `claude plugin install clickhouse-import-rosstat@clickhouse-import-rosstat`; Codex `codex plugin marketplace add ...` + `codex plugin add clickhouse-import-rosstat@clickhouse-import-rosstat`; Cursor `/add-plugin https://github.com/kmlebedev/clickhouse-import-rosstat`; Qwen `qwen extensions install kmlebedev/clickhouse-import-rosstat`;
    - namespace `/skill:clickhouse-import-rosstat:go-engineer`, `/reload`;
    - предупреждение о снапшоте ~86 МБ и о Kimi latest-release;
    - явно: MCP не входит в плагин, в репозитории — `.kimi-code/mcp.json`.
@@ -104,6 +104,8 @@ claude plugin validate . --strict
 
 ```bash
 go test -run TestLLMPluginManifests -v .
+python3 scripts/plugin_manifests_test.py -v
+make plugin-manifests-check
 go test -race ./...
 claude plugin validate . --strict
 make docs-check
@@ -116,7 +118,17 @@ make all
 2. Claude (если возможно, изолированный `CLAUDE_CONFIG_DIR`): `claude plugin marketplace add <worktree>` → `claude plugin install clickhouse-import-rosstat@clickhouse-import-rosstat --scope user` → `claude plugin list`.
 3. Codex/Cursor/Qwen — CLI отсутствуют; записать «не проверено» и причину.
 
-## Task 5. PR и приёмка
+## Task 5. Синхронизация метаданных (follow-up к PR)
+
+1. `scripts/plugin_manifests.py` — `--check`/`--write`; канон: `.claude-plugin/plugin.json` (`name`, `version`, длинное `description`) и `.claude-plugin/marketplace.json` (`name` marketplace, короткое `description`).
+2. `scripts/plugin_manifests_test.py` — 6 офлайн-тестов: synced, drift→fix, all clients, missing canonical/target field, idempotency.
+3. `.github/workflows/sync-manifests.yml` — на PR `--check` + тесты; на push в `main` `--write` + коммит `chore: sync plugin manifests [skip ci]`.
+4. Makefile — `plugin-manifests-check` и `plugin-manifests-sync` в `.PHONY`.
+5. README — команда Codex `...@clickhouse-import-rosstat` и абзац про sync; спека/план/роадмап/ARCHITECTURE обновлены.
+6. Имена marketplace у Claude/Codex/Cursor выровнены на `clickhouse-import-rosstat`; Go-тест и README синхронны.
+7. Проверки: `make plugin-manifests-check`, `python3 scripts/plugin_manifests_test.py -v`, `make all`, `make docs-check`; workflow на PR зелёный.
+
+## Task 6. PR и приёмка
 
 1. Push ветки, PR: заголовок `[infra/5.7] LLM plugin manifests for Kimi, Claude, Codex, Cursor and Qwen`.
 2. В теле: пункт `infra/5.7`, `Closes #382` вне backticks, источник, схема, запуск, проверки.
@@ -126,4 +138,4 @@ make all
 
 ## Rollback
 
-- Удалить 8 JSON, `LICENSE`, `plugin_manifest_test.go`, вернуть README/ARCHITECTURE/AGENTS/роадмап; ветка не мержится. Скилы и `.kimi-code/mcp.json` не затрагиваются.
+- Удалить 8 JSON, `LICENSE`, `plugin_manifest_test.go`, `scripts/plugin_manifests*.py`, `.github/workflows/sync-manifests.yml`, вернуть README/ARCHITECTURE/AGENTS/роадмап/Makefile; ветка не мержится. Скилы и `.kimi-code/mcp.json` не затрагиваются.

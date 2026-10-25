@@ -94,12 +94,19 @@ Marketplace-файлы:
 | Клиент | Файл | Имя marketplace | `source` |
 |---|---|---|---|
 | Claude Code | `.claude-plugin/marketplace.json` | `clickhouse-import-rosstat` | `"./"` |
-| Codex | `.agents/plugins/marketplace.json` | `clickhouse-import-rosstat-marketplace` | git URL + `ref: main` |
-| Cursor | `.cursor-plugin/marketplace.json` | `clickhouse-import-rosstat-marketplace` | `"."` |
+| Codex | `.agents/plugins/marketplace.json` | `clickhouse-import-rosstat` | git URL + `ref: main` |
+| Cursor | `.cursor-plugin/marketplace.json` | `clickhouse-import-rosstat` | `"."` |
 
-### 3.2 Версия
+Имя marketplace у всех клиентов равно имени из `.claude-plugin/marketplace.json`; это проверяет `scripts/plugin_manifests.py`.
 
-`0.1.0` — версия упаковки, а не Go-релиза. Меняется синхронно во всех plugin-манифестах; контрактный тест ловит рассинхрон. Claude pin-ит установленную версию, поэтому при изменении состава скилов версию нужно поднимать.
+### 3.2 Версия и метаданные
+
+`0.1.0` — версия упаковки, а не Go-релиза. Канон метаданных один:
+
+- `.claude-plugin/plugin.json` — `name`, `version`, длинное `description`;
+- `.claude-plugin/marketplace.json` — `name` marketplace и короткое `description`.
+
+`scripts/plugin_manifests.py --check` ловит дрейф, `--write` приводит остальные манифесты к канону; `.github/workflows/sync-manifests.yml` запускает check на PR и write+commit на push в `main`. Claude pin-ит установленную версию, поэтому при изменении состава скилов версию нужно поднимать.
 
 ### 3.3 Секреты и MCP
 
@@ -130,21 +137,24 @@ Marketplace-файлы:
 
 ## 5. Документация
 
-- `README.md` — раздел «Подключение как плагин LLM-клиента»: команды для пяти клиентов, namespace, `/reload`, предупреждение о снапшоте ~86 МБ и о Kimi latest-release.
+- `README.md` — раздел «Подключение как плагин LLM-клиента»: команды для пяти клиентов, namespace, `/reload`, предупреждение о снапшоте ~86 МБ, Kimi latest-release и команды `make plugin-manifests-check/sync`.
 - `ARCHITECTURE.md` — шапка «Последнее обновление», манифесты в структуре каталогов, конвенция №17.
 - `AGENTS.md` — одна строка после таблицы ролей.
 - `docs/ROADMAP_INFRA.md` — пункт 5.7 и статус.
 - `docs/ROADMAP_INDEX.md` — диапазон item-id `5.1`–`5.7`.
+- `scripts/plugin_manifests.py` и `scripts/plugin_manifests_test.py` — синхронизация и офлайн-тесты метаданных.
+- `.github/workflows/sync-manifests.yml` — check на PR, write+commit на push в `main`.
 
 ## 6. Приёмка
 
 1. `go test -run TestLLMPluginManifests -v .` — PASS.
-2. `claude plugin validate . --strict` — exit 0 без warnings.
-3. `make docs-check` — exit 0, ссылки разрешаются.
-4. `make all` — gofmt, lint, vet, `go test -race`, обе сборки.
-5. Kimi: `/plugins install <worktree>` → `/plugins info clickhouse-import-rosstat` без diagnostics; скилы видны. Выполняет владелец в TUI, протокол — в PR.
-6. Claude: живая установка из локального marketplace в изолированный `CLAUDE_CONFIG_DIR` — если CLI позволяет; иначе `validate` достаточно, живая установка помечается «не проверено».
-7. Codex/Cursor/Qwen: CLI локально отсутствуют; живые установки не заявляются, манифесты проверены структурно и по документации.
+2. `make plugin-manifests-check` — `OK: plugin manifests in sync`, 6 Python-тестов OK.
+3. `claude plugin validate . --strict` — exit 0 без warnings.
+4. `make docs-check` — exit 0, ссылки разрешаются.
+5. `make all` — gofmt, lint, vet, `go test -race`, обе сборки.
+6. Kimi: `/plugins install <worktree>` → `/plugins info clickhouse-import-rosstat` без diagnostics; скилы видны. Выполняет владелец в TUI, протокол — в PR.
+7. Claude: живая установка из локального marketplace в изолированный `CLAUDE_CONFIG_DIR` — если CLI позволяет; иначе `validate` достаточно, живая установка помечается «не проверено».
+8. Codex/Cursor/Qwen: CLI локально отсутствуют; живые установки не заявляются, манифесты проверены структурно и по документации.
 
 ## 7. Риски
 
@@ -153,7 +163,8 @@ Marketplace-файлы:
 | Снапшот ~86 МБ, ссылки в скилах ведут в снапшот, а не в рабочее дерево | Предупреждение в README; переустановка после изменения docs/скилов |
 | Kimi короткий URL ставит latest release без манифеста | В README — `/tree/main`; после мержа — тег `v*` |
 | Клиент не принимает скрытую `.kimi-code/skills` | Fallback: корневой `skills/` как symlink на `.kimi-code/skills`, правка только проблемного манифеста; без дублирования |
-| Рассинхрон версий/имён | Контрактный тест |
+| Рассинхрон версий/имён/описаний | Контрактный Go-тест + `plugin_manifests.py --check` на PR; на `main` — автосинхронизация и коммит бота |
+| `main` защищён от push бота | Ветка не защищена (проверено); при появлении защиты sync-job заменить на PR-based |
 | Codex/Cursor/Qwen не проверены живьём | Явно фиксируется в PR; структурная проверка + официальная документация |
 
 ## 8. Отклонённые варианты
