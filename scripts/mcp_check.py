@@ -1087,6 +1087,42 @@ async def check(params, server_log):
                 failed += not expect(f"сырая {table} закрыта ({label})", denied,
                                      f"отказ ClickHouse 497 на {table} (ожидаемо)" if denied else raw[:200])
 
+            # Контур стенограмм пресс-конференций по ключевой ставке (пункт
+            # key-rate/phase-4-cbr-key-rate-pressconf, #370): три витрины — шапка, реплики
+            # с таймкодами и полный текст — читаются агентом и непусты. Текстовая витрина
+            # дополнительно проверяется на непустой text: count() > 0 прошёл бы и на шапках
+            # без реплик. Две сырые таблицы закрыты, как у остальных текстовых контуров.
+            for view, label in (("v_cbr_key_rate_pressconf", "шапка"),
+                                ("v_cbr_key_rate_pressconf_cues", "реплики"),
+                                ("v_cbr_key_rate_pressconf_text", "полный текст")):
+                pressconf_view = text(await session.call_tool("run_query", {"query": f"SELECT count() FROM {view}"}))
+                pressconf_view_rows = result_rows(pressconf_view)
+                pressconf_view_n = pressconf_view_rows[0].get("count()") if pressconf_view_rows else None
+                if pressconf_view_rows is None:
+                    pressconf_view_detail = f"витрина не читается: {pressconf_view[:200]}"
+                elif (pressconf_view_n or 0) > 0:
+                    pressconf_view_detail = f"строк: {pressconf_view_n}"
+                else:
+                    pressconf_view_detail = (f"строк: {pressconf_view_n} — прогнать импортёр контура "
+                                             "(make import STAT=cbr_key_rate_pressconf)")
+                failed += not expect(f"витрина {view} существует и читается ({label})",
+                                     (pressconf_view_n or 0) > 0, pressconf_view_detail)
+
+            pressconf_empty = text(await session.call_tool("run_query", {
+                "query": "SELECT countIf(length(text) = 0) AS empty FROM v_cbr_key_rate_pressconf_text"}))
+            pressconf_empty_rows = result_rows(pressconf_empty)
+            pressconf_empty_n = pressconf_empty_rows[0].get("empty") if pressconf_empty_rows else None
+            failed += not expect("витрина v_cbr_key_rate_pressconf_text содержит непустой текст",
+                                 pressconf_empty_rows is not None and (pressconf_empty_n or 0) == 0,
+                                 f"пустых строк: {pressconf_empty_n}" if pressconf_empty_rows else pressconf_empty[:200])
+
+            for table, label in (("cbr_key_rate_pressconf", "шапка"),
+                                 ("cbr_key_rate_pressconf_cue", "реплики")):
+                raw = text(await session.call_tool("run_query", {"query": f"SELECT count() FROM {table}"}))
+                denied = "ACCESS_DENIED" in raw or "Not enough privileges" in raw
+                failed += not expect(f"сырая {table} закрыта ({label})", denied,
+                                     f"отказ ClickHouse 497 на {table} (ожидаемо)" if denied else raw[:200])
+
             # Контур Росстата (фаза 3 роадмапа, задачи T4–T7): витрина v_rosstat_macro видна
             # и НЕПУСТА, каталог описывает ряды всех пяти импортёров пакета, а пять
             # сырых таблиц — источники витрины — агенту закрыты (как macro_series и
@@ -1566,6 +1602,55 @@ async def check(params, server_log):
                                       "make import STAT=minfin_ofz_auction,minfin_debt_stock,minfin_debt_service "
                                       "(каталог перепубликовывается прогонами)")
             failed += not expect("каталог ОФЗ-контура полон", ofz_catalog_n == 20, ofz_catalog_detail)
+
+            # Аналитика выпусков ОФЗ (пункт ofz-market/1.1, issue #376): витрина
+            # v_ofz_issue_analytics читается, YTM/дюрация посчитаны хотя бы для
+            # части выпусков, спред к КБД есть; каталог описывает 12 метрик;
+            # сырая таблица агенту не выдана. Пустой YTM — не «ноль», а
+            # непрогнанный импортёр или отсутствие сырых transaq_*.
+            ofz_issue = text(await session.call_tool("run_query", {"query":
+                "SELECT count() AS n, countIf(ytm IS NOT NULL) AS ytm, "
+                "countIf(duration IS NOT NULL) AS duration, "
+                "countIf(spread_to_curve IS NOT NULL) AS spread, "
+                "min(date) AS first, max(date) AS last FROM v_ofz_issue_analytics"}))
+            ofz_issue_rows = result_rows(ofz_issue)
+            ofz_issue_n = ofz_issue_rows[0].get("n") if ofz_issue_rows else None
+            ofz_issue_ytm = ofz_issue_rows[0].get("ytm") if ofz_issue_rows else None
+            ofz_issue_duration = ofz_issue_rows[0].get("duration") if ofz_issue_rows else None
+            ofz_issue_spread = ofz_issue_rows[0].get("spread") if ofz_issue_rows else None
+            ofz_issue_first = ofz_issue_rows[0].get("first") if ofz_issue_rows else None
+            ofz_issue_last = ofz_issue_rows[0].get("last") if ofz_issue_rows else None
+            if ofz_issue_rows is None:
+                ofz_issue_detail = (f"витрина не читается: {ofz_issue[:200]} — прогнать "
+                                    "make import STAT=ofz_issue_analytics")
+            else:
+                ofz_issue_detail = (f"строк: {ofz_issue_n}, YTM: {ofz_issue_ytm}, "
+                                    f"дюрация: {ofz_issue_duration}, спред: {ofz_issue_spread}, "
+                                    f"{ofz_issue_first} … {ofz_issue_last}")
+                if (ofz_issue_n or 0) == 0 or (ofz_issue_ytm or 0) == 0 \
+                        or (ofz_issue_duration or 0) == 0 or (ofz_issue_spread or 0) == 0:
+                    ofz_issue_detail += " — прогнать make import STAT=ofz_issue_analytics"
+            failed += not expect("витрина v_ofz_issue_analytics: YTM/дюрация/спред",
+                                 bool(ofz_issue_rows) and (ofz_issue_n or 0) > 0
+                                 and (ofz_issue_ytm or 0) > 0 and (ofz_issue_duration or 0) > 0
+                                 and (ofz_issue_spread or 0) > 0,
+                                 ofz_issue_detail)
+
+            ofz_issue_catalog = text(await session.call_tool("run_query", {"query":
+                "SELECT count() AS n FROM v_series_catalog WHERE source = 'ofz_issue_analytics'"}))
+            ofz_issue_catalog_rows = result_rows(ofz_issue_catalog)
+            ofz_issue_catalog_n = ofz_issue_catalog_rows[0].get("n") if ofz_issue_catalog_rows else None
+            failed += not expect("каталог ofz_issue_analytics: 12 метрик",
+                                 ofz_issue_catalog_n == 12,
+                                 f"рядов: {ofz_issue_catalog_n}, want 12 — прогнать "
+                                 "make import STAT=ofz_issue_analytics")
+
+            raw_ofz_issue = text(await session.call_tool("run_query", {"query":
+                "SELECT count() FROM ofz_issue_analytics"}))
+            raw_ofz_issue_denied = "ACCESS_DENIED" in raw_ofz_issue or "Not enough privileges" in raw_ofz_issue
+            failed += not expect("сырая ofz_issue_analytics закрыта", raw_ofz_issue_denied,
+                                 "отказ ClickHouse 497 (ожидаемо)" if raw_ofz_issue_denied
+                                 else raw_ofz_issue[:200])
 
             for table, label in (("minfin_ofz_auction", "аукционы ОФЗ"),
                                  ("minfin_debt_stock", "запас внутреннего/внешнего долга и ОФЗ"),
@@ -2872,6 +2957,44 @@ async def check(params, server_log):
             failed += not expect("v_rosstat_ppi: core saar3 2026-08-31 = 6,0788", ppi_spot_ok, ppi_spot[:200])
 
             for table in ("rosstat_ppi_ved", "rosstat_ppi_product", "rosstat_ppi_weights", "ppi_sa"):
+                raw = text(await session.call_tool("run_query", {"query": f"SELECT count() FROM {table}"}))
+                denied = "ACCESS_DENIED" in raw or "Not enough privileges" in raw
+                failed += not expect(f"сырая {table} закрыта", denied,
+                                     f"отказ ClickHouse 497 на {table} (ожидаемо)" if denied else raw[:200])
+
+            # Контур недвижимости (real-estate/1.1): витрина рынка ипотеки и панель индекса цен.
+            # Витрины проверяются запросом к ним (урок bold: имя в тексте list_tables давало
+            # ложное OK), каталог — числом рядов: 24 ряда рынка и 5 продуктов недельных ставок.
+            domrf_view = text(await session.call_tool("run_query", {
+                "query": "SELECT count() AS n FROM v_domrf_mortgage"}))
+            domrf_view_rows = result_rows(domrf_view)
+            domrf_view_n = domrf_view_rows[0].get("n") if domrf_view_rows else None
+            failed += not expect("витрина v_domrf_mortgage читается", bool(domrf_view_rows), domrf_view[:200])
+            failed += not expect("v_domrf_mortgage: 4 612 рынка + 1 154 ставки",
+                                 domrf_view_n == 5766, f"строк: {domrf_view_n}, want 5766")
+
+            domrf_price = text(await session.call_tool("run_query", {
+                "query": "SELECT count() AS n, uniqExact(region) AS regions FROM v_domrf_price_index"}))
+            domrf_price_rows = result_rows(domrf_price)
+            domrf_price_n = domrf_price_rows[0].get("n") if domrf_price_rows else None
+            domrf_regions_n = domrf_price_rows[0].get("regions") if domrf_price_rows else None
+            failed += not expect("витрина v_domrf_price_index читается", bool(domrf_price_rows), domrf_price[:200])
+            failed += not expect("v_domrf_price_index: 20 700 строк / 75 регионов",
+                                 (domrf_price_n or 0) >= 20700 and (domrf_regions_n or 0) == 75,
+                                 f"строк: {domrf_price_n}, регионов: {domrf_regions_n}")
+
+            domrf_catalog = text(await session.call_tool("run_query", {
+                "query": "SELECT source, count() AS n FROM v_series_catalog "
+                         "WHERE source IN ('domrf_mortgage_market', 'domrf_mortgage_weekly') "
+                         "GROUP BY source"}))
+            domrf_catalog_rows = result_rows(domrf_catalog)
+            domrf_catalog_n = {row.get("source"): row.get("n") for row in (domrf_catalog_rows or [])}
+            failed += not expect("каталог domrf: 24 ряда рынка и 5 продуктов ставок",
+                                 domrf_catalog_n.get("domrf_mortgage_market") == 24
+                                 and domrf_catalog_n.get("domrf_mortgage_weekly") == 5,
+                                 domrf_catalog[:200])
+
+            for table in ("domrf_mortgage_market", "domrf_mortgage_weekly", "domrf_price_index"):
                 raw = text(await session.call_tool("run_query", {"query": f"SELECT count() FROM {table}"}))
                 denied = "ACCESS_DENIED" in raw or "Not enough privileges" in raw
                 failed += not expect(f"сырая {table} закрыта", denied,
