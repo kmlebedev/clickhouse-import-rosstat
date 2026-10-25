@@ -37,15 +37,18 @@ env:
 # Письмо при падении DAG (после 3 ретраев шага). SMTP_* и MAIL_* — в
 # /etc/clickhouse-import-rosstat.env; MAIL_TO — адрес шлюза CMC (email→SMS).
 # attach_logs прикладывает .out/.err шага, чтобы причина была видна без SSH.
+# Dagu 2.18.2 не раскрывает ${…} в smtp-полях (в отличие от env шагов),
+# поэтому значения подставляет render-dagu-base.py при установке из
+# /etc/clickhouse-import-rosstat.env. Плейсхолдеры в репозитории — не секреты.
 smtp:
-  host: "${SMTP_HOST}"
-  port: "${SMTP_PORT}"
-  username: "${SMTP_USER}"
-  password: "${SMTP_PASSWORD}"
+  host: "__SMTP_HOST__"
+  port: __SMTP_PORT__
+  username: "__SMTP_USER__"
+  password: "__SMTP_PASSWORD__"
 
 error_mail:
-  from: "${MAIL_FROM}"
-  to: "${MAIL_TO}"
+  from: "__MAIL_FROM__"
+  to: "__MAIL_TO__"
   prefix: "[DAGU palmshell]"
   attach_logs: true
 

@@ -31,7 +31,7 @@ Issue: [#384](https://github.com/kmlebedev/clickhouse-import-rosstat/issues/384)
 
 ### 3.2. Уведомления
 
-SMTP-параметры — в env-файле: `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `MAIL_FROM`, `MAIL_TO` (адрес шлюза CMC email→SMS). `error_mail.attach_logs: true` прикладывает логи шага. Проверка — отдельная цель `deploy-staging-notify-test` с заведомо падающим DAG; в каждый deploy она не входит.
+SMTP-параметры — в env-файле: `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `MAIL_FROM`, `MAIL_TO` (адрес шлюза CMC email→SMS). Dagu 2.18.2 раскрывает `${…}` в env шагов, но **не в smtp-полях**: `deploy/staging/render-dagu-base.py` при установке подставляет литералы из env-файла на хосте, поэтому секреты не попадают ни в git, ни в шаблон. `error_mail.attach_logs: true` прикладывает логи шага. Проверка — отдельная цель `deploy-staging-notify-test` с заведомо падающим DAG; в каждый deploy она не входит. Живой тест с локальным SMTP-sink подтвердил письмо `[DAGU palmshell]` (осталась реальная доставка через шлюз CMC).
 
 ### 3.3. Защита от регрессии
 
