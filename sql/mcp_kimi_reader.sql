@@ -109,3 +109,7 @@ GRANT SELECT ON default.v_cbr_mp_public_panel TO kimi_reader;
 -- Рыночные ряды MOEX (пункт key-rate/phase-2-brent, #113): Brent-фронт-месяц.
 -- Сырая moex_market агенту не выдана — только витрина.
 GRANT SELECT ON default.v_moex_market TO kimi_reader;
+
+-- e-disclosure (dcf-polyus/phase-3, #182): документы карточек PLZL/SBER/CHMF.
+-- Сырая edisclosure_documents агенту не выдана — только витрина с версией и архивом.
+GRANT SELECT ON default.v_edisclosure_documents TO kimi_reader;

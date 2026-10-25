@@ -85,13 +85,14 @@ MLFLOW_PREFLIGHT := $(if $(filter 1,$(MLFLOW)),python3 scripts/mlflow_preflight.
 STAGING_HOST     ?= palmshell
 STAGING_BIN_DIR  ?= /root/.local/bin
 STAGING_ENV_FILE ?= /etc/clickhouse-import-rosstat.env
+STAGING_DAGU_BASE ?= deploy/staging/dagu-base.yaml
 DAGU_VERSION     ?= v2.18.2
 
 # Docs-портал GitHub Pages: версия mkdocs-material общая с .github/workflows/pages.yml.
 MKDOCS_VERSION ?= 9.7.7
 MKDOCS := uv run --with mkdocs-material==$(MKDOCS_VERSION) --python 3.12 mkdocs
 
-.PHONY: all lint fmt vet test build run deps clean info ch-up ch-down ch-status ch-sql mlflow-up mlflow-down mlflow-status mlflow-export mlflow-backfill mlflow-backfill-test mlflow-preflight mlflow-register mlflow-promote mlflow-models ml-gate ml-gate-test ml-live-check ml-live-check-test dev-check env-check import mp-llm-eval archive-registry archive-list archive-restore mcp-run mcp-user mcp-check build-ingest run-ingest deploy-staging deploy-staging-binary deploy-staging-dagu deploy-staging-mcp deploy-staging-mlflow deploy-staging-preflight deploy-staging-smoke upgrade-staging mcp-user-staging staging-precheck grafana-build grafana-validate grafana-up grafana-down grafana-deploy-test grafana-deploy-staging grafana-provision-staging grafana-check grafana-test-token grafana-provision-alerting-staging key-rate-model key-rate-cbr-rule key-rate-cbr-rule-test key-rate-scenario-fan key-rate-scenario-fan-test key-rate-scenario-fan-v2 key-rate-scenario-fan-v2-test key-rate-scenario-fan-v3 key-rate-scenario-fan-v3-test key-rate-cpi-v3-experiment key-rate-cpi-v3-experiment-test cpi-live3-horizons cpi-live3-horizons-test shock-classifier shock-classifier-test key-rate-llm-forecast key-rate-forecast-log cpi-nowcast cpi-monthly cpi-monthly-v3 cpi-monthly-v3-test cpi-monthly-industry cpi-monthly-industry-test cpi-public-audit cpi-public-audit-test cpi-weekly-panel cpi-weekly-panel-test weekly-core-proxy weekly-core-proxy-test cpi-pipeline-stage1 cpi-pipeline-stage1-test cpi-pipeline-stage2 cpi-pipeline-stage2-test cpi-pipeline-sa-test publication-calendar-test cb-comp-parity cb-comp-parity-test cb-comp-live cb-comp-live-test cb-comp-live-compare cb-comp-proxy ppi-sa-weights-panel ppi-sa-weights-panel-test ppi-sa-parity ppi-sa-parity-test edisclosure-login edisclosure-collect docs-check docs-build docs-serve
+.PHONY: all lint fmt vet test build run deps clean info ch-up ch-down ch-status ch-sql mlflow-up mlflow-down mlflow-status mlflow-export mlflow-backfill mlflow-backfill-test mlflow-preflight mlflow-register mlflow-promote mlflow-models ml-gate ml-gate-test ml-live-check ml-live-check-test dev-check env-check import mp-llm-eval archive-registry archive-list archive-restore mcp-run mcp-user mcp-check build-ingest run-ingest deploy-staging deploy-staging-binary deploy-staging-dagu deploy-staging-dagu-base deploy-staging-notify-test deploy-staging-data deploy-staging-mcp deploy-staging-mlflow deploy-staging-preflight deploy-staging-smoke upgrade-staging mcp-user-staging staging-precheck grafana-build grafana-validate grafana-up grafana-down grafana-deploy-test grafana-deploy-staging grafana-provision-staging grafana-check grafana-test-token grafana-provision-alerting-staging key-rate-model key-rate-cbr-rule key-rate-cbr-rule-test key-rate-scenario-fan key-rate-scenario-fan-test key-rate-scenario-fan-v2 key-rate-scenario-fan-v2-test key-rate-scenario-fan-v3 key-rate-scenario-fan-v3-test key-rate-cpi-v3-experiment key-rate-cpi-v3-experiment-test cpi-live3-horizons cpi-live3-horizons-test shock-classifier shock-classifier-test key-rate-llm-forecast key-rate-forecast-log cpi-nowcast cpi-monthly cpi-monthly-v3 cpi-monthly-v3-test cpi-monthly-industry cpi-monthly-industry-test cpi-public-audit cpi-public-audit-test cpi-weekly-panel cpi-weekly-panel-test weekly-core-proxy weekly-core-proxy-test cpi-pipeline-stage1 cpi-pipeline-stage1-test cpi-pipeline-stage2 cpi-pipeline-stage2-test cpi-pipeline-sa-test publication-calendar-test cb-comp-parity cb-comp-parity-test cb-comp-live cb-comp-live-test cb-comp-live-compare cb-comp-proxy ppi-sa-weights-panel ppi-sa-weights-panel-test ppi-sa-parity ppi-sa-parity-test edisclosure-login edisclosure-collect docs-check docs-build docs-serve
 
 all: lint test build build-ingest
 
@@ -754,6 +755,30 @@ clean:
 
 DAGU_URL := https://github.com/dagu-org/dagu/releases/download/$(DAGU_VERSION)/dagu_$(DAGU_VERSION:v%=%)_linux_amd64.tar.gz
 
+# Base DAG (env шагов + SMTP-уведомления): /root/.config/dagu/base.yaml.
+# Без env шаг `run: "$ROSSTAT_IMPORT_BIN"` — пустая команда: dagu рапортует
+# succeeded, импорт не выполняется (инцидент staging 2026-10-25).
+# Идемпотентно по sha256; старый файл — .bak; перезапуск только активного dagu,
+# чтобы первый deploy не начал выполнять DAG-и до preflight/smoke.
+deploy-staging-dagu-base: staging-precheck
+	@ssh $(STAGING_HOST) 'install -d -m 755 /root/dagu/certs'
+	@scp -q russian_trusted_root_ca_pem.crt russian_trusted_sub_ca_pem.crt russian_trusted_sub_ca_2024_pem.crt litessl_rsa_ca_2025.pem $(STAGING_HOST):/root/dagu/certs/
+	@set -e; \
+	test -f $(STAGING_DAGU_BASE) || { echo "нет $(STAGING_DAGU_BASE)"; exit 1; }; \
+	local_sum=$$(shasum -a 256 $(STAGING_DAGU_BASE) | cut -d' ' -f1); \
+	remote_sum=$$(ssh $(STAGING_HOST) 'sha256sum /root/.config/dagu/base.yaml 2>/dev/null | cut -d" " -f1' || true); \
+	if [ "$$local_sum" = "$$remote_sum" ]; then \
+		echo "OK   base.yaml актуален ($$local_sum)"; \
+	else \
+		scp $(STAGING_DAGU_BASE) $(STAGING_HOST):/root/.config/dagu/base.yaml.new; \
+		ssh $(STAGING_HOST) 'set -e; \
+			test -f /root/.config/dagu/base.yaml && cp -a /root/.config/dagu/base.yaml /root/.config/dagu/base.yaml.bak || true; \
+			install -o root -g root -m 600 /root/.config/dagu/base.yaml.new /root/.config/dagu/base.yaml; \
+			rm -f /root/.config/dagu/base.yaml.new; \
+			if systemctl is-active --quiet dagu; then systemctl restart dagu; echo "base.yaml установлен, dagu перезапущен"; \
+			else echo "base.yaml установлен (dagu ещё не запущен)"; fi'; \
+	fi
+
 # dagu: скачать релизный tarball, подменить бинарник, поставить юнит. Идемпотентно по версии.
 # Старый бинарник сохраняется в .bak — им пользуется откат (см. deploy/staging/README.md).
 deploy-staging-dagu: staging-precheck
@@ -777,6 +802,7 @@ deploy-staging-dagu: staging-precheck
 	fi
 	scp deploy/staging/dagu.service $(STAGING_HOST):/etc/systemd/system/dagu.service
 	ssh $(STAGING_HOST) 'systemctl daemon-reload'
+	@$(MAKE) deploy-staging-dagu-base --no-print-directory
 
 # mcp-clickhouse: юнит + прогрев кэша uv (пакет разрешается при старте сервиса).
 # Отдельного «скачивания» нет: uv разрешает пакет по пину MCP_VERSION.
@@ -800,12 +826,22 @@ deploy-staging-mlflow: staging-precheck
 	@echo "прогрев кэша uv (скачивание mlflow==$(MLFLOW_VERSION))..."
 	@ssh $(STAGING_HOST) '$(STAGING_BIN_DIR)/uv run --with mlflow==$(MLFLOW_VERSION) --python 3.12 python -c "pass" >/dev/null 2>&1 || true'
 
+# Данные-артефакты DCF/датапаков: без них падают databook_polyus и databook_ugk
+# (импортёры читают относительный путь polyus/data/... и financial/data/...).
+# Копируются в оба возможных рабочих каталога: CLI-прогон из /root и сервисный
+# WorkingDirectory=/root/dagu.
+deploy-staging-data: staging-precheck
+	@ssh $(STAGING_HOST) 'install -d -m 755 /root/polyus/data /root/financial/data /root/dagu/polyus/data /root/dagu/financial/data'
+	@scp -q polyus/data/polyus_datapack_fy2025_new.xlsx $(STAGING_HOST):/root/polyus/data/
+	@scp -q 'financial/data/ЮГК_databook_2024.xlsx' $(STAGING_HOST):/root/financial/data/
+	@ssh $(STAGING_HOST) 'cp /root/polyus/data/polyus_datapack_fy2025_new.xlsx /root/dagu/polyus/data/ && cp "/root/financial/data/ЮГК_databook_2024.xlsx" "/root/dagu/financial/data/" && echo "OK   датапаки Polyus/ЮГК на месте"'
+
 # Полный деплой: бинарь → dagu → mcp → mlflow → DAG'и → проверка ДО включения → включение → smoke.
 #
 # Порядок критичен. Сервисы включаются последними: dagu после `enable --now` немедленно
 # начинает выполнять DAG'и по расписанию, поэтому сначала проверяется, что бинарь и
 # DAG-файлы на месте (deploy-staging-preflight), и только потом сервисы запускаются.
-deploy-staging: deploy-staging-binary deploy-staging-dagu deploy-staging-mcp deploy-staging-mlflow
+deploy-staging: deploy-staging-binary deploy-staging-dagu deploy-staging-data deploy-staging-mcp deploy-staging-mlflow
 	ssh $(STAGING_HOST) 'install -d -m 755 /root/dagu'
 	scp dagu/*.yaml $(STAGING_HOST):/root/dagu/
 	# scp копирует, но не удаляет: снятый с репозитория DAG остался бы на хосте и продолжил бы
@@ -831,11 +867,25 @@ deploy-staging-preflight:
 	@ssh $(STAGING_HOST) 'test -f /root/dagu/cbr.yaml && echo "OK   DAG-файлы на месте"' || { echo "FAIL /root/dagu/cbr.yaml отсутствует"; exit 1; }
 	@ssh $(STAGING_HOST) 'set -a; . $(STAGING_ENV_FILE); set +a; \
 		test -n "$$CLICKHOUSE_MCP_AUTH_TOKEN" && echo "OK   CLICKHOUSE_MCP_AUTH_TOKEN задан" || { echo "FAIL CLICKHOUSE_MCP_AUTH_TOKEN пуст — mcp-clickhouse не стартует в HTTP-режиме"; exit 1; }'
+	@ssh $(STAGING_HOST) 'grep -q "ROSSTAT_IMPORT_BIN" /root/.config/dagu/base.yaml && echo "OK   base.yaml задаёт ROSSTAT_IMPORT_BIN"' || { echo "FAIL base.yaml не задаёт ROSSTAT_IMPORT_BIN — шаги dagu выполнят пустую команду"; exit 1; }
+	@ssh $(STAGING_HOST) 'test -f /root/dagu/certs/russian_trusted_root_ca_pem.crt && test -f /root/dagu/certs/litessl_rsa_ca_2025.pem && echo "OK   сертификаты РФ и LiteSSL на месте"' || { echo "FAIL нет сертификатов в /root/dagu/certs — rosstat.gov.ru/sberindex.ru упадут на x509"; exit 1; }
+	@ssh $(STAGING_HOST) 'set -a; . $(STAGING_ENV_FILE); set +a; \
+		missing=""; \
+		for v in SMTP_HOST SMTP_PORT SMTP_USER SMTP_PASSWORD MAIL_FROM MAIL_TO; do \
+			eval "val=\$$v"; [ -n "$$val" ] || missing="$$missing $$v"; \
+		done; \
+		[ -z "$$missing" ] && echo "OK   SMTP-переменные заданы" || { echo "FAIL не заданы:$$missing — письма dagu не уйдут на шлюз CMC"; exit 1; }'
 
 # Smoke после включения сервисов. Токен читается на хосте и не выводится.
 deploy-staging-smoke:
 	@echo "--- smoke: dagu ---"
 	@ssh $(STAGING_HOST) 'systemctl is-active --quiet dagu && curl -sf -m 5 -o /dev/null http://127.0.0.1:8080/ && echo "OK   dagu отвечает"' || { echo "FAIL dagu: journalctl -u dagu -n 50"; exit 1; }
+	@echo "--- smoke: dagu видит окружение шага ---"
+	@scp -q deploy/staging/dagu-env-smoke.yaml $(STAGING_HOST):/tmp/dagu-env-smoke.yaml
+	@ssh $(STAGING_HOST) 'set -a; . $(STAGING_ENV_FILE); set +a; cd /root; \
+		$(STAGING_BIN_DIR)/dagu start /tmp/dagu-env-smoke.yaml >/tmp/dagu-env-smoke.log 2>&1; rc=$$?; \
+		grep -q "ENV_OK" /tmp/dagu-env-smoke.log && echo "OK   dagu видит ROSSTAT_IMPORT_BIN и CLICKHOUSE_URL" || { echo "FAIL env-smoke: шаг не увидел окружение"; cat /tmp/dagu-env-smoke.log; rc=1; }; \
+		rm -f /tmp/dagu-env-smoke.yaml /tmp/dagu-env-smoke.log; exit $$rc'
 	@echo "--- smoke: mcp-clickhouse /health ---"
 	@ssh $(STAGING_HOST) 'systemctl is-active --quiet mcp-clickhouse && curl -sf -m 5 -o /dev/null http://127.0.0.1:8000/health && echo "OK   MCP /health = 200"' || { \
 		echo "FAIL mcp-clickhouse /health — сервис не отвечает или не видит ClickHouse."; \
@@ -860,6 +910,17 @@ deploy-staging-smoke:
 			sleep 2; \
 		done; \
 		echo "FAIL mlflow /health: последний ответ HTTP $$code после 10 попыток — смотрите journalctl -u mlflow -n 50"; exit 1'
+
+# Контролируемое падение DAG: проверка письма на шлюз CMC (email→SMS).
+# В deploy не входит: запускается вручную после заполнения SMTP_* в env-файле.
+deploy-staging-notify-test: staging-precheck
+	@scp -q deploy/staging/dagu-notify-test.yaml $(STAGING_HOST):/tmp/dagu-notify-test.yaml
+	@ssh $(STAGING_HOST) 'set -a; . $(STAGING_ENV_FILE); set +a; cd /root; \
+		$(STAGING_BIN_DIR)/dagu start /tmp/dagu-notify-test.yaml >/tmp/dagu-notify-test.log 2>&1; rc=$$?; \
+		rm -f /tmp/dagu-notify-test.yaml; \
+		if [ $$rc -eq 0 ]; then echo "FAIL тестовый DAG не упал — проверка письма недействительна"; cat /tmp/dagu-notify-test.log; exit 1; fi; \
+		echo "OK   тестовый DAG упал (код $$rc); проверьте письмо [DAGU palmshell] на MAIL_TO (CMC→SMS)"; \
+		rm -f /tmp/dagu-notify-test.log'
 
 # Обновление ТОЛЬКО dagu, mcp-clickhouse и mlflow до версий из репозитория.
 # apt upgrade сюда НЕ входит: ClickHouse (данные) и Grafana обновляются вручную.

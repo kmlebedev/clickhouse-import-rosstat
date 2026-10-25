@@ -1,0 +1,7 @@
+# Проверка уведомлений: DAG заведомо падает, dagu должен отправить
+# error_mail на MAIL_TO (шлюз CMC → SMS). Запускается только вручную:
+# make deploy-staging-notify-test. В расписание и deploy не входит.
+type: chain
+steps:
+  - id: intentional_failure
+    run: 'echo "intentional failure for notification test"; exit 1'
