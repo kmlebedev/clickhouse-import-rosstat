@@ -106,7 +106,7 @@ Marketplace-файлы:
 - `.claude-plugin/plugin.json` — `name`, `version`, длинное `description`;
 - `.claude-plugin/marketplace.json` — `name` marketplace и короткое `description`.
 
-`scripts/plugin_manifests.py --check` ловит дрейф, `--write` приводит остальные манифесты к канону; `.github/workflows/sync-manifests.yml` запускает check на PR и write+commit на push в `main`. Claude pin-ит установленную версию, поэтому при изменении состава скилов версию нужно поднимать.
+Пункт `infra/5.8` (follow-up к 5.7): `scripts/plugin_manifests.py --check` ловит дрейф, `--write` приводит остальные манифесты к канону; `.github/workflows/sync-manifests.yml` запускает check на PR и write+commit на push в `main`. Claude pin-ит установленную версию, поэтому при изменении состава скилов версию нужно поднимать.
 
 ### 3.3 Секреты и MCP
 

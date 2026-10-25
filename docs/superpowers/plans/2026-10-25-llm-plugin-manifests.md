@@ -118,7 +118,7 @@ make all
 2. Claude (если возможно, изолированный `CLAUDE_CONFIG_DIR`): `claude plugin marketplace add <worktree>` → `claude plugin install clickhouse-import-rosstat@clickhouse-import-rosstat --scope user` → `claude plugin list`.
 3. Codex/Cursor/Qwen — CLI отсутствуют; записать «не проверено» и причину.
 
-## Task 5. Синхронизация метаданных (follow-up к PR)
+## Task 5. Синхронизация метаданных (`infra/5.8`, follow-up к 5.7)
 
 1. `scripts/plugin_manifests.py` — `--check`/`--write`; канон: `.claude-plugin/plugin.json` (`name`, `version`, длинное `description`) и `.claude-plugin/marketplace.json` (`name` marketplace, короткое `description`).
 2. `scripts/plugin_manifests_test.py` — 6 офлайн-тестов: synced, drift→fix, all clients, missing canonical/target field, idempotency.
