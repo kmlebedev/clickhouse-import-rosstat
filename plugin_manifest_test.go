@@ -101,7 +101,7 @@ func TestLLMPluginManifests(t *testing.T) {
 			wantSourceRaw string
 		}{
 			{".claude-plugin/marketplace.json", "clickhouse-import-rosstat", `"./"`},
-			{".cursor-plugin/marketplace.json", "clickhouse-import-rosstat-marketplace", `"."`},
+			{".cursor-plugin/marketplace.json", "clickhouse-import-rosstat", `"."`},
 		}
 
 		for _, tc := range cases {
@@ -138,8 +138,8 @@ func TestLLMPluginManifests(t *testing.T) {
 			}
 			readJSON(t, ".agents/plugins/marketplace.json", &m)
 
-			if m.Name != "clickhouse-import-rosstat-marketplace" {
-				t.Errorf("marketplace name = %q, want clickhouse-import-rosstat-marketplace", m.Name)
+			if m.Name != "clickhouse-import-rosstat" {
+				t.Errorf("marketplace name = %q, want clickhouse-import-rosstat", m.Name)
 			}
 			if len(m.Plugins) != 1 {
 				t.Fatalf("plugins = %d, want 1", len(m.Plugins))
