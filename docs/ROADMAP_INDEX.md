@@ -15,9 +15,11 @@
 | `gold-thesis` | [GOLD_THESIS_DATA_ROADMAP.md](GOLD_THESIS_DATA_ROADMAP.md) | данные и витрины тезисов по золоту; WGC/EIA/bold/news/фрахт/аналитические витрины | `phase-N`, `phase-N-followup-M`, `analytics-<витрина>` |
 | `dcf-metals` | [ROADMAP_DCF_METALS.md](ROADMAP_DCF_METALS.md) | CHMF/MAGN/NLMK в `company_financials`; металлурги и `dashboard/chmf.json` | `step-1`–`step-8` |
 | `key-rate` | [ROADMAP_KEY_RATE.md](ROADMAP_KEY_RATE.md) | контур прогноза ключевой ставки; ЦБ-источники, модель ставки, news-ленты контура | `1.1`–`1.11`, `phase-2-<тема>`, `phase-4-<тема>` |
-| `infra` | [ROADMAP_INFRA.md](ROADMAP_INFRA.md) | общая инфраструктура, не принадлежит ни одному треку | `1.1`–`1.5`, `2.1`–`2.3`, `3.1`–`3.5`, `4.1`–`4.5`, `5.1`–`5.5` |
+| `infra` | [ROADMAP_INFRA.md](ROADMAP_INFRA.md) | общая инфраструктура, не принадлежит ни одному треку | `1.1`–`1.5`, `2.1`–`2.3`, `3.1`–`3.5`, `4.1`–`4.5`, `5.1`–`5.8` |
+| `real-estate` | [ROADMAP_REAL_ESTATE.md](ROADMAP_REAL_ESTATE.md) | недвижимость как канал трансмиссии кредита: цена кредита, объёмы и ДДУ, индекс цен и сделки, доходность инвестиции | `1.1`–`1.5` |
+| `ofz-market` | [ROADMAP_OFZ_MARKET.md](ROADMAP_OFZ_MARKET.md) | публичные данные и витрины рынка ОФЗ/ВДО; без стратегии, позиций и лимитов | `1.1`–`1.4` |
 
-Слаг выведен из имени файла (у `GOLD_THESIS_DATA_ROADMAP.md` — `gold-thesis`). Шестой роадмап не заводится без решения владельца.
+Слаг выведен из имени файла (у `GOLD_THESIS_DATA_ROADMAP.md` — `gold-thesis`). Шестой роадмап (`real-estate`) заведён решением владельца 2026-10-23; `ofz-market` — решением владельца 2026-10-24; следующий новый роадмап — снова только решением владельца.
 
 **Правило владения:** пункт живёт ровно в одном роадмапе — том, чья шапка или §1 объявляет его своим. В других файлах — только ссылка. Если работа упомянута в двух файлах, канонический владелец определяется по этому правилу, а второй файл получает ссылку на issue владельца.
 
@@ -84,5 +86,6 @@ Labels: `roadmap:<slug>` — группировка до появления Proj
 - **Inbox:** 11 issue без роадмапа — #90, #89, #88, #85, #81, #77, #76, #58, #52, #51, #48.
 - **Закрыты как принятые:** #86, #75, #74, #42; в Project отмечены `Done`.
 - **Поля и виды:** по спеке [2026-10-18-github-project-v2-design.md](superpowers/specs/2026-10-18-github-project-v2-design.md) §3–§4.
+- **`ofz-market`:** пункты этого роадмапа ведутся в отдельном приватном Project V2 `Treasury Autopilot — Roadmap`; ссылка не публикуется, состав и статусы — в GitHub issue с label `roadmap:ofz-market`.
 
 До появления Project issue и labels работали без него; live-режим — шаг `infra/3.2`.

@@ -1,0 +1,12 @@
+type: chain
+schedule: "47 19 * * *"
+overlap_policy: skip
+
+steps:
+  - id: ofz_issue_analytics
+    run: "$ROSSTAT_IMPORT_BIN"
+    env:
+      - CLICKHOUSE_IMPORT_STAT=ofz_issue_analytics
+    retry_policy:
+      limit: 3
+      interval_sec: 300

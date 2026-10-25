@@ -1,6 +1,7 @@
 package bank
 
 import (
+	"encoding/json"
 	"fmt"
 	"math"
 	"os"
@@ -13,11 +14,11 @@ import (
 	"github.com/xuri/excelize/v2"
 )
 
-// Фикстуры — живые артефакты источника (стандарт §11.1): страница раздела аналитики ДОМ.РФ как
-// есть и книга блока «Топ ипотечных банков» после хирургии zip
+// Фикстуры — живые артефакты источника (стандарт §11.1): JSON-список раздела «Топ ипотечных
+// банков» как его отдаёт API, и книга блока после хирургии zip
 // (§11.2: оставлен лист-анкор с шапкой, строками банков, заметками и числовыми форматами).
 const (
-	domrfPageFixture = "domrf_mortgage_page.html"
+	domrfListFixture = "domrf_mortgage_list.json"
 	domrfBookFixture = "domrf_mortgage.xlsx"
 )
 
@@ -26,8 +27,8 @@ const (
 // источником лист сдвинул бы номер.
 const domrfSheetFixture = "13 Ставки предложения"
 
-// domrfFixtureSrc — src файла блока «Топ ипотечных банков»: разбор страницы обязан вернуть тот
-// же путь, что лежит в file2.src JSON блока.
+// domrfFixtureSrc — src файла блока «Топ ипотечных банков»: разбор JSON-списка раздела обязан
+// вернуть тот же путь, что лежит в props.file2.src текущего блока (август 2026).
 const domrfFixtureSrc = "/api/v2/content/download/629470/135272296/"
 
 // domrfFixtureUrl — абсолютный адрес файла: домен плюс src (так его собирает импортёр, §5.4).
@@ -99,20 +100,21 @@ func domrfAt(t *testing.T, points []domrfPoint, series string) float64 {
 	return 0
 }
 
-// TestDomrfXlsSrcFromPage: ссылка на файл берётся со страницы аналитики (стандарт §4.4, §5.4) —
-// из JSON блока «Топ ипотечных банков». Тест идёт по живому пути на HTML-фикстуре (§11.3):
-// страница качается не тестом, а импортёром, разбор страницы чистый.
-func TestDomrfXlsSrcFromPage(t *testing.T) {
-	page, err := os.ReadFile(filepath.Join("testdata", domrfPageFixture))
-	if err != nil {
-		t.Fatalf("открытие фикстуры %s: %v", domrfPageFixture, err)
+// TestDomrfXlsSrcFromList: ссылка на файл берётся из JSON-списка раздела «Топ ипотечных банков»
+// (стандарт §4.4, §5.4) — API отдаёт те же блоки, что лежат атрибутами HTML-страницы, но без
+// антибота ServicePipe. Тест идёт по живому пути на фикстуре ответа API (§11.3): список качает
+// импортёр, разбор чистый.
+func TestDomrfXlsSrcFromList(t *testing.T) {
+	var list domrfListResponse
+	if err := json.Unmarshal(domrfReadFixture(t, domrfListFixture), &list); err != nil {
+		t.Fatalf("разбор фикстуры %s: %v", domrfListFixture, err)
 	}
-	src, err := domrfXlsSrcFromPage(page)
+	src, err := domrfXlsSrcFromList(list)
 	if err != nil {
-		t.Fatalf("domrfXlsSrcFromPage: %v", err)
+		t.Fatalf("domrfXlsSrcFromList: %v", err)
 	}
 	if src != domrfFixtureSrc {
-		t.Errorf("src = %q, want %q (file2.src блока «Топ ипотечных банков»)", src, domrfFixtureSrc)
+		t.Errorf("src = %q, want %q (file2.src текущего блока «Топ ипотечных банков»)", src, domrfFixtureSrc)
 	}
 	// Сборку абсолютного адреса пинит литерал: префикс домена — константа пакета, которую
 	// подставляет импортёр (§5.4 шаг 3).
@@ -121,34 +123,61 @@ func TestDomrfXlsSrcFromPage(t *testing.T) {
 	}
 }
 
-// TestDomrfXlsSrcFromPageNoBlock: страница без блока выпусков — ошибка с именем блока, а не
-// пустой src (стандарт §4.4, §6.4). Пустая ссылка ушла бы в GetXlsx(""), и вызывающий увидел
-// бы только ошибку разбора книги, в которой ни причины, ни источника.
-func TestDomrfXlsSrcFromPageNoBlock(t *testing.T) {
-	const blockPage = `<html><body><main id="app" data-props='{"props":{"title":"Топ ипотечных банков","file2":{"src":%s}}}'></main></body></html>`
+// TestDomrfXlsSrcFromListFailFast: список без блока/файла, пустой ответ и отказ API — ошибка с
+// причиной, а не пустая ссылка (стандарт §4.4, §6.4). Пустая ссылка ушла бы в GetXlsx(""), и
+// вызывающий увидел бы только ошибку разбора книги, в которой ни причины, ни источника.
+func TestDomrfXlsSrcFromListFailFast(t *testing.T) {
+	item := func(title, src, extension string) domrfListItem {
+		return domrfListItem{
+			ID:   "629470",
+			Name: title + " Август 2026 г.",
+			Props: domrfListProps{
+				Title:  title,
+				Period: "Август 2026",
+				File2:  domrfFile{Src: src, Extension: extension, Name: "book." + extension},
+			},
+		}
+	}
 	for name, tc := range map[string]struct {
-		page []byte
+		list domrfListResponse
 		want string
 	}{
-		"минимальная страница": {
-			page: []byte(`<html><body><main id="app"></main></body></html>`),
-			want: "Топ ипотечных банков",
+		"отказ API": {
+			list: domrfListResponse{},
+			want: "success=false",
 		},
-		"пустое тело": {
-			page: nil,
-			want: "Топ ипотечных банков",
+		"пустой список": {
+			list: domrfListResponse{Success: true},
+			want: domrfBlockAnchor,
 		},
-		"file2:null": {
-			page: []byte(fmt.Sprintf(blockPage, "null")),
-			want: "file2.src",
+		"нет блока «Топ ипотечных банков»": {
+			list: domrfListResponse{Success: true, Data: []domrfListItem{
+				item("Ипотека на ИЖС", "/api/v2/content/download/629473/135272299/", "zip"),
+			}},
+			want: domrfBlockAnchor,
+		},
+		"файл не xlsx": {
+			list: domrfListResponse{Success: true, Data: []domrfListItem{
+				item(domrfBlockAnchor, "/api/v2/content/download/629470/135272299/", "zip"),
+			}},
+			want: "xlsx",
 		},
 		"пустой file2.src": {
-			page: []byte(fmt.Sprintf(blockPage, `""`)),
+			list: domrfListResponse{Success: true, Data: []domrfListItem{
+				item(domrfBlockAnchor, "", "xlsx"),
+			}},
+			want: "file2.src",
+		},
+		"первый блок без файла, следующий с файлом": {
+			list: domrfListResponse{Success: true, Data: []domrfListItem{
+				item(domrfBlockAnchor, "", ""),
+				item(domrfBlockAnchor, "/api/v2/content/download/629470/135272296/", "xlsx"),
+			}},
 			want: "file2.src",
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
-			_, err := domrfXlsSrcFromPage(tc.page)
+			_, err := domrfXlsSrcFromList(tc.list)
 			if err == nil {
 				t.Fatal("ожидалась ошибка, а src найден")
 			}
@@ -156,10 +185,20 @@ func TestDomrfXlsSrcFromPageNoBlock(t *testing.T) {
 				t.Errorf("ошибка %q не называет %q", err, tc.want)
 			}
 			if strings.Contains(err.Error(), domrfMortgageTable) {
-				t.Errorf("ошибка страницы %q называет таблицу %q: префикс добавляет Import()", err, domrfMortgageTable)
+				t.Errorf("ошибка списка %q называет таблицу %q: префикс добавляет Import()", err, domrfMortgageTable)
 			}
 		})
 	}
+}
+
+// domrfReadFixture читает живую фикстуру источника; ошибка чтения — фатальная.
+func domrfReadFixture(t *testing.T, name string) []byte {
+	t.Helper()
+	body, err := os.ReadFile(filepath.Join("testdata", name))
+	if err != nil {
+		t.Fatalf("открытие фикстуры %s: %v", name, err)
+	}
+	return body
 }
 
 // TestParseDomrfSheet — разбор листа «13 Ставки предложения» книги блока «Топ ипотечных банков»:

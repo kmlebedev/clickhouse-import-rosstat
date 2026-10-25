@@ -63,6 +63,12 @@ GRANT SELECT ON default.v_cbr_mp_summary_channels TO kimi_reader;
 GRANT SELECT ON default.v_cbr_key_rate_press TO kimi_reader;
 GRANT SELECT ON default.v_cbr_key_rate_press_blocks TO kimi_reader;
 GRANT SELECT ON default.v_cbr_key_rate_press_quarters TO kimi_reader;
+-- Контур стенограмм пресс-конференций по ключевой ставке (пункт
+-- key-rate/phase-4-cbr-key-rate-pressconf, #370): три витрины — шапка, реплики с
+-- таймкодами и полный текст; сырые таблицы агенту закрыты.
+GRANT SELECT ON default.v_cbr_key_rate_pressconf TO kimi_reader;
+GRANT SELECT ON default.v_cbr_key_rate_pressconf_cues TO kimi_reader;
+GRANT SELECT ON default.v_cbr_key_rate_pressconf_text TO kimi_reader;
 GRANT SELECT ON default.v_bank_sber_spending TO kimi_reader;
 GRANT SELECT ON default.v_bank_macro TO kimi_reader;
 GRANT SELECT ON default.v_cbr_bop TO kimi_reader;
@@ -80,6 +86,7 @@ GRANT SELECT ON default.v_cbr_form101_loans TO kimi_reader;
 GRANT SELECT ON default.v_ofz_curve_compare TO kimi_reader;
 GRANT SELECT ON default.v_ofz_signal TO kimi_reader;
 GRANT SELECT ON default.v_ofz_stress TO kimi_reader;
+GRANT SELECT ON default.v_ofz_issue_analytics TO kimi_reader;
 -- Макропруденциальные требования (пункт key-rate/phase-2-ccyb, #115): АЦН-индикаторы,
 -- матрицы надбавок и МПЛ. Сырые cbr_ccyb_indicators/cbr_risk_weight_addons/cbr_mpl
 -- агенту не выданы — только витрины.
@@ -113,3 +120,9 @@ GRANT SELECT ON default.v_moex_market TO kimi_reader;
 -- e-disclosure (dcf-polyus/phase-3, #182): документы карточек PLZL/SBER/CHMF.
 -- Сырая edisclosure_documents агенту не выдана — только витрина с версией и архивом.
 GRANT SELECT ON default.v_edisclosure_documents TO kimi_reader;
+
+-- Контур недвижимости (пункт real-estate/1.1): рынок ипотеки ДОМ.РФ и индекс цен первички.
+-- Сырые domrf_mortgage_market, domrf_mortgage_weekly и domrf_price_index агенту не выданы —
+-- только витрины с комментариями колонок.
+GRANT SELECT ON default.v_domrf_mortgage TO kimi_reader;
+GRANT SELECT ON default.v_domrf_price_index TO kimi_reader;
