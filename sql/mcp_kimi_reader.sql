@@ -117,6 +117,10 @@ GRANT SELECT ON default.v_cbr_mp_public_panel TO kimi_reader;
 -- Сырая moex_market агенту не выдана — только витрина.
 GRANT SELECT ON default.v_moex_market TO kimi_reader;
 
+-- e-disclosure (dcf-polyus/phase-3, #182): документы карточек PLZL/SBER/CHMF.
+-- Сырая edisclosure_documents агенту не выдана — только витрина с версией и архивом.
+GRANT SELECT ON default.v_edisclosure_documents TO kimi_reader;
+
 -- Контур недвижимости (пункт real-estate/1.1): рынок ипотеки ДОМ.РФ и индекс цен первички.
 -- Сырые domrf_mortgage_market, domrf_mortgage_weekly и domrf_price_index агенту не выданы —
 -- только витрины с комментариями колонок.
