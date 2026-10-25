@@ -1,5 +1,5 @@
 {
-  "name": "clickhouse-import-rosstat-marketplace",
+  "name": "clickhouse-import-rosstat",
   "interface": {
     "displayName": "ClickHouse Import Rosstat"
   },

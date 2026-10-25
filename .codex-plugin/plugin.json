@@ -24,7 +24,7 @@
   "interface": {
     "displayName": "ClickHouse Import Rosstat",
     "shortDescription": "Repo role skills for the Rosstat/CBR data platform",
-    "longDescription": "Ten repo-specific skills for Go, Python, ML, research, publications, dashboards, news onboarding and the GitHub tracker. Install to work with the clickhouse-import-rosstat repository.",
+    "longDescription": "Repo-specific skills for the clickhouse-import-rosstat data platform: Rosstat, CBR, MOEX, macro and financial ETL, ML nowcasts, publications and dashboards.",
     "developerName": "kmlebedev",
     "category": "Data",
     "capabilities": [
