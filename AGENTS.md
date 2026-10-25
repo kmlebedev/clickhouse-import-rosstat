@@ -21,7 +21,7 @@
 
 Скилы не отменяют правила 1–12 и [стандарт пакета импортёров](docs/IMPORTER_PACKAGE_STANDARD.md). Смешанный пункт (например, #184) делится по ролям в спеке/плане; Go-часть ревьюит Go-разработчик, ML-часть — ML-инженер.
 
-Плагин: этот же набор скилов публикуется как LLM-плагин; манифесты — в корне (`kimi.plugin.json`, `.claude-plugin/`, `.codex-plugin/`, `.agents/plugins/`, `.cursor-plugin/`, `qwen-extension.json`), источник скилов один — `.kimi-code/skills/`.
+Плагин: этот же набор скилов публикуется как LLM-плагин; манифесты — в корне (`kimi.plugin.json`, `.claude-plugin/`, `.codex-plugin/`, `.agents/plugins/`, `.cursor-plugin/`, `qwen-extension.json`), источник скилов один — `.kimi-code/skills/`; метаданные — `make plugin-manifests-check` / `make plugin-manifests-sync`.
 
 ## Обязательный порядок в начале сессии
 

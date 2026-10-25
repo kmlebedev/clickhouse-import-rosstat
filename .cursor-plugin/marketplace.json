@@ -1,10 +1,10 @@
 {
-  "name": "clickhouse-import-rosstat-marketplace",
+  "name": "clickhouse-import-rosstat",
   "owner": {
     "name": "kmlebedev"
   },
   "metadata": {
-    "description": "Repo-specific skills for the clickhouse-import-rosstat data platform.",
+    "description": "Repo role skills for the Rosstat/CBR data platform",
     "version": "0.1.0"
   },
   "plugins": [
