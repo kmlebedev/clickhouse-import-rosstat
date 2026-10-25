@@ -200,13 +200,15 @@ make mlflow-down
 |---|---|
 | Kimi Code | `/plugins install https://github.com/kmlebedev/clickhouse-import-rosstat/tree/main` |
 | Claude Code | `claude plugin marketplace add kmlebedev/clickhouse-import-rosstat`<br>`claude plugin install clickhouse-import-rosstat@clickhouse-import-rosstat` |
-| Codex | `codex plugin marketplace add kmlebedev/clickhouse-import-rosstat`<br>`codex plugin add clickhouse-import-rosstat@clickhouse-import-rosstat-marketplace` |
+| Codex | `codex plugin marketplace add kmlebedev/clickhouse-import-rosstat`<br>`codex plugin add clickhouse-import-rosstat@clickhouse-import-rosstat` |
 | Cursor | `/add-plugin https://github.com/kmlebedev/clickhouse-import-rosstat` |
 | Qwen Code | `qwen extensions install kmlebedev/clickhouse-import-rosstat` |
 
 После установки — `/reload` или новая сессия. Скилы вызываются с namespace: `/skill:clickhouse-import-rosstat:go-engineer`; Kimi дополнительно получает агента `coder`.
 
 Ограничения: установка копирует снапшот репозитория (~86 МБ), и относительные ссылки в скилах ведут в этот снапшот, а не в рабочее дерево — после изменения docs/скилов плагин нужно переустановить. Короткий GitHub-URL Kimi (`/plugins install https://github.com/...`) ставит последний релиз; пока в нём нет манифеста, используйте `/tree/main`. MCP в плагин не входит: в репозитории ClickHouse-доступ даёт [`.kimi-code/mcp.json`](.kimi-code/mcp.json).
+
+Метаданные манифестов (`name`, `version`, длинное и короткое описание) синхронизируются из `.claude-plugin/plugin.json` и `.claude-plugin/marketplace.json`: на PR [`.github/workflows/sync-manifests.yml`](.github/workflows/sync-manifests.yml) проверяет дрейф, на push в `main` — дописывает и коммитит. Локально — `make plugin-manifests-check` и `make plugin-manifests-sync`.
 
 Полный набор целей, Python-тесты, зависимости и CI — [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
