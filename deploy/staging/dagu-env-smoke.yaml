@@ -1,0 +1,8 @@
+# Smoke-проверка deploy-staging-smoke: шаг dagu обязан видеть окружение,
+# которое systemd передаёт процессу dagu. Если base.yaml потерял env, шаг
+# `run: "$ROSSTAT_IMPORT_BIN"` в остальных DAG — пустая команда, и DAG
+# рапортует succeeded без импорта. Этот DAG падает, если переменных нет.
+type: chain
+steps:
+  - id: check_env
+    run: 'test -n "$ROSSTAT_IMPORT_BIN" && test -n "$CLICKHOUSE_URL" && echo ENV_OK'
