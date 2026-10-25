@@ -1,0 +1,17 @@
+{
+  "name": "clickhouse-import-rosstat-marketplace",
+  "owner": {
+    "name": "kmlebedev"
+  },
+  "metadata": {
+    "description": "Repo-specific skills for the clickhouse-import-rosstat data platform.",
+    "version": "0.1.0"
+  },
+  "plugins": [
+    {
+      "name": "clickhouse-import-rosstat",
+      "source": ".",
+      "description": "Repo-specific skills for the clickhouse-import-rosstat data platform: Rosstat, CBR, MOEX, macro and financial ETL, ML nowcasts, publications and dashboards."
+    }
+  ]
+}
