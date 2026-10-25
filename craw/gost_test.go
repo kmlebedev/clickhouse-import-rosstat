@@ -473,7 +473,10 @@ func TestGostWriteDayOneBatch(t *testing.T) {
 	}
 }
 
-func TestGostRunDaysSkipsEmptyAndAggregatesErrors(t *testing.T) {
+// TestGostRunDaysToleratesTransientDay — 500 одного дня не роняет часовой прогон:
+// день уходит в warning и будет повторён следующим прогоном, а данные остальных
+// дней записываются. Постоянные ошибки проверяет TestGostRunDaysFailsOnPermanentDay.
+func TestGostRunDaysToleratesTransientDay(t *testing.T) {
 	days := []time.Time{
 		gostTime(t, "2026-10-05"),
 		gostTime(t, "2026-10-06"),
@@ -488,25 +491,49 @@ func TestGostRunDaysSkipsEmptyAndAggregatesErrors(t *testing.T) {
 	logs := gostCaptureLog(t)
 
 	count, err := gostRunDays(context.Background(), conn, ta.api, days)
-	if err == nil {
-		t.Fatal("сбойный день не попал в ошибку прогона")
-	}
-	if !strings.Contains(err.Error(), "2026-10-06") || !strings.Contains(err.Error(), "не прочитаны дни (1)") {
-		t.Errorf("ошибка %q не перечисляет упавший день", err)
+	if err != nil {
+		t.Fatalf("временный 500 дня не должен ронять прогон: %v", err)
 	}
 	if count != 1 {
 		t.Errorf("записано строк %d, ожидалась 1 (день с данными)", count)
 	}
 	batches := conn.batchList()
 	if len(batches) != 1 {
-		t.Fatalf("батчей %d, ожидался один (пустой день и сбойный день без записи): %v", len(batches), conn.callList())
+		t.Fatalf("батчей %d, ожидался один (пустой день и временно недоступный день без записи): %v", len(batches), conn.callList())
 	}
 	inserted := batches[0].inserted(t)
 	if len(inserted) != 1 || !inserted[0].PublicationDate.Equal(gostTime(t, "2026-10-07")) {
 		t.Errorf("в батче %+v, ожидалась одна строка дня 2026-10-07", inserted)
 	}
-	if !strings.Contains(logs.String(), "публикаций нет") {
-		t.Errorf("пустой день не отмечен в логе: %s", logs.String())
+	for _, want := range []string{"публикаций нет", "временно не прочитан", "2026-10-06", "повтор в следующем прогоне"} {
+		if !strings.Contains(logs.String(), want) {
+			t.Errorf("лог не содержит %q: %s", want, logs.String())
+		}
+	}
+}
+
+// TestGostRunDaysFailsOnPermanentDay — 400 не лечится повтором и обязан ронять прогон:
+// временная терпимость не должна превращаться в молчаливый пропуск постоянной ошибки.
+func TestGostRunDaysFailsOnPermanentDay(t *testing.T) {
+	days := []time.Time{
+		gostTime(t, "2026-10-05"),
+		gostTime(t, "2026-10-06"),
+	}
+	ta := gostNewTestAPI(t, gostDayServer(t, map[string]gostDaySpec{
+		"05.10.2026": {Status: http.StatusBadRequest},
+		"06.10.2026": {Count: 1},
+	}))
+	conn := &gostFakeConn{}
+
+	count, err := gostRunDays(context.Background(), conn, ta.api, days)
+	if err == nil {
+		t.Fatal("постоянная 400 не попала в ошибку прогона")
+	}
+	if !strings.Contains(err.Error(), "2026-10-05") || !strings.Contains(err.Error(), "не прочитаны дни (1)") {
+		t.Errorf("ошибка %q не перечисляет постоянный сбой дня", err)
+	}
+	if count != 1 {
+		t.Errorf("записано строк %d, ожидалась 1 (успешный день)", count)
 	}
 }
 
