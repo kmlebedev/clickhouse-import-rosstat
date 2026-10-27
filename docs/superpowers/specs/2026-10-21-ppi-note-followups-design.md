@@ -87,30 +87,42 @@
 
 ---
 
-## 5. Task 2: метод
+## 5. Task 2: предрегистрированный метод
 
-1. **Baselines.**
-   - CPI: текущий `cpi_monthly`/`cpi_monthly_v3` (или упрощённый AR/ARIMA, если модели недоступны).
-   - PPI: AR/ARIMA на `ppi_sa` (total, food, non-food, core) или VAR на `rosstat_ppi_ved`; h1/h3/h6.
-2. **Признаки.** `cbr_survey`:
-   - агрегатные: `price_expectations`, `price_expectations_sa`, `price_growth_expected`;
-   - отраслевые: `industry_*_price_expectations(_sa)` — 16 листов; лаги 0/1/2/3;
-   - as-of: публикация мониторинга ~10–15-е следующего месяца; для старых точек — `series_publication`/fallback.
-3. **Walk-forward.** Origin `O`, target `O+h`, train `≤ O−h−1`; h1/h3/h6; не использовать будущие ревизии.
-4. **Метрики.** RMSE/MAE, DM-HLN, bootstrap CI, MDE; отдельно потребительский сектор (food, beverages, clothing / consumer goods).
-5. **Решение.**
-   - **go:** значимый выигрыш (DM p<0.05 и CI исключает 0) хотя бы на h1/h3 в потребительском секторе → кандидат в фичи модели ставки/PPI-nowcast, отдельный follow-up;
-   - **no-go:** выигрыша нет → фиксируем, survey-ожидания не заменяем.
-6. **Оговорки.** 2022–2023 шоки; малая выборка; PIT/ревизии; записка — предварительная.
+Протокол фиксируется до просмотра живых метрик. Это research-only эксперимент: production CPI/PPI, `forecast_log`, model registry/promotion, DDL, витрины, гранты, DAG и спецификация `ppi_sa` не меняются.
+
+1. **Таргеты и горизонты.**
+   - CPI all: NSA m/m из `rosstat_ipc_mes.percent`, значение `percent - 100`, п.п.;
+   - PPI `total`, `food`, `nonfood`, `core`: `ppi_sa.mm_sa`, п.п. м/м, только `spec_version='ppi-sa-2026-v1'`;
+   - origin `O`, таргет — месячное значение `O+h`; h1/h3/h6 — три отдельные direct-модели, не `saar3` и не накопленный темп.
+2. **Cutoff и as-of survey.** Для origin `O` cutoff — 8-е число месяца M+1 после `O`, 23:59:59 MSK. Признак доступен только при `published_at < cutoff` в `v_series_publication` для `source='cbr_survey'`: публикация ровно в cutoff запрещена. `quality='date'` означает точную дату публикации с effective 23:59:59 MSK; `quality='fallback'` — конец M+1. Отсутствие publication row означает пропуск/fail closed, а не фиксированный лаг.
+3. **Признаки.** Агрегатные `price_expectations`, `price_expectations_sa`, `price_growth_expected` с календарными лагами 0/1/2/3 от последнего доступного к cutoff месяца. Отраслевые `industry_*_price_expectations(_sa)` используются только в secondary. Изменение ещё не опубликованных или будущих survey-точек не должно влиять на прогноз.
+4. **Walk-forward.** Expanding window; для test origin `O` и горизонта `h` supervised train origins строго `t <= O-h-1` (включая один месяц embargo). Первый test fold имеет `MIN_TRAIN=36` origins. Base и expectations в каждой паре используют одинаковый calendar boundary и общие origins; парные метрики считаются только на пересечении `(target,horizon,origin)`.
+5. **Модели и primary-контрасты.**
+   - `b1_last`: последний доступный таргет, справочный benchmark, не входит в primary-семейство;
+   - `b2_ar1`: OLS AR(1) с 11 monthly dummies;
+   - `b3_enet`: ElasticNetCV на AR/month-dummy блоке, median imputation и scaling подгоняются только на train; полностью пустая train-колонка получает 0 только после явного правила, NaN не заменяется нулём заранее;
+   - primary pairs: `b2_ar1_expectations` против `b2_ar1` и `b3_enet_expectations` против `b3_enet`; парные версии отличаются только aggregate survey-блоком;
+   - primary targets: CPI all и PPI `total/food/nonfood/core`; horizons h1/h3/h6.
+6. **Secondary.** Consumer industry target и industry survey-признаки восстанавливаются только из проверенного pinned research-винтажа Task 1. B3 `industry-only` и `aggregate+industry` сравниваются с тем же `b3_enet`; primary-семейство не расширяется. При отсутствии industry publication calendar secondary fail closed с явным limitation; aggregate primary продолжается независимо.
+7. **Метрики.** RMSE/MAE для B1–B3; для каждой primary-пары `delta=RMSE(base)-RMSE(expectations)`, DM-HLN и 95% paired circular block bootstrap CI delta с `block=3`, `n=2000`, `seed=20261027`. Библиотечный DM использует HAC `max(h-1,ceil(T^(1/3)))`. MDE: `2.802*sd(d)/sqrt(n)/(RMSE_A+RMSE_B)`; при `n<2` или вырожденном differential фиктивная значимость не создаётся. Holm с α=0.05 применяется только к primary DM p-values внутри заранее зафиксированного primary-семейства; secondary и robustness отчитываются отдельно.
+8. **Мощность и robustness.** Минимум 12 общих folds для primary и 6 для robustness; при меньшем n вердикт `INSUFFICIENT`/недостаточная мощность, не содержательный `promote`/`reject`. Окно 2022–2023 анализируется отдельно как robustness и не меняет primary-вывод; шоки не удаляются.
+9. **Правило решения.**
+   - `promote` — только research-рекомендация открыть follow-up, не production promotion: в primary consumer-контрасте PPI `food` хотя бы на h1 или h3 одновременно `delta>0`, Holm-adjusted DM p<0.05 и весь 95% CI delta строго выше 0. Secondary consumer сам по себе не переводит вердикт в `promote`, а служит проверкой механизма;
+   - иначе `iterate` при положительном, но недоказанном эффекте/недостаточной мощности либо `reject` при отсутствии положительного эффекта по совокупности RMSE/MDE; при недостатке folds — `INSUFFICIENT`;
+   - нулевой или отрицательный результат допустим. После просмотра метрик таргет, окна, признаки, primary-семейство и seed не меняются без нового явно post-hoc эксперимента.
+10. **Винтажи.** Survey строго as-of; CPI/PPI targets — latest-vintage. Полный real-time/PIT по ревизиям таргета не проверяется и не заявляется. Официальный run логируется с `ML_LOG=1 MLFLOW=1`; паспорт содержит run id, config/sample hashes и SHA-256 артефактов, без registry/promote.
 
 ---
 
 ## 6. Критерий приёмки
 
 - [ ] Task 1: research-документ с точными кодами/рядами, покрытием, SA-агрегатом, таблицей 11 exact + 14 qualitative, решением go/no-go.
-- [ ] Task 2: воспроизводимый walk-forward-эксперимент, отчёт с RMSE/MAE/DM/CI, as-of/PIT, решением.
-- [ ] `make docs-check` зелёный; Python-тесты (если добавлены) — зелёные.
-- [ ] Прод-код, DDL, витрины и гранты не менялись; `ppi_sa` не пересчитывался.
+- [ ] Task 2: воспроизводимый expanding walk-forward h1/h3/h6 с `MIN_TRAIN=36`, strict survey as-of и общими origins у пар; отчёт содержит RMSE/MAE всех B1–B3, primary DM/Holm/CI/MDE, secondary и robustness 2022–2023.
+- [ ] Официальный run имеет паспорт с run id, config/sample hashes, SHA-256 артефактов и детерминированный replay; verdict соответствует предрегистрированному правилу и минимальному числу folds.
+- [ ] Явно раскрыты latest-vintage CPI/PPI targets и отсутствие полного PIT ревизий; publication coverage и качество survey dates задокументированы.
+- [ ] `make docs-check`, offline Python-тесты и `make all` зелёные; независимый recalc из predictions CSV совпадает с JSON.
+- [ ] Прод-код, DDL, витрины и гранты не менялись; `ppi_sa` не пересчитывался; production promotion не выполнялся.
 - [ ] Решение записано в #266 (Task 1) и #76/#318 (Task 2).
 
 ---
