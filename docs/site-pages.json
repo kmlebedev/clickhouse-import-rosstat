@@ -330,6 +330,12 @@
     "section": "Исследования"
   },
   {
+    "source": "docs/research/2026-10-21-fedstat-ppi-57608-methodology.md",
+    "page": "research-2026-10-21-fedstat-ppi-57608-methodology.md",
+    "title": "ЕМИСС 57608: причина расхождений с XLSX и политика стыка",
+    "section": "Исследования"
+  },
+  {
     "source": "docs/research/2026-10-21-typesafe-use-case-map.md",
     "page": "research-2026-10-21-typesafe-use-case-map.md",
     "title": "TypeSafe/Jev: применимость и пилот",
