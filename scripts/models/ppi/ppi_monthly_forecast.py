@@ -800,7 +800,10 @@ def render_report(data: dict) -> str:
     lines += ["", f"Survey points: {data['data_passport']['survey_values']['points']}; "
               f"publication quality: {data['data_passport']['publication_quality']}.", ""]
     lines += ["## Покрытие фолдов", ""]
-    lines += _table(data["fold_counts"], ("target", "horizon", "folds", "skipped", "train_end"))
+    lines += _table(
+        data["fold_counts"],
+        ("target", "horizon", "folds", "first_target", "last_target", "skipped", "train_end"),
+    )
     lines += ["", "## Модели: RMSE / MAE", ""]
     lines += _table(
         evaluation["models"],
@@ -900,11 +903,14 @@ def _fold_counts(predictions: list[Prediction]) -> list[dict]:
     for target, horizon in keys:
         rows = [row for row in predictions if row.target == target and row.horizon == horizon]
         origins = sorted({row.origin for row in rows})
+        target_dates = sorted({shift_month(row.origin, horizon) for row in rows})
         skipped = sum(1 for row in rows if row.status == "skipped")
         result.append({
             "target": target,
             "horizon": horizon,
             "folds": len(origins),
+            "first_target": min(target_dates, default=None),
+            "last_target": max(target_dates, default=None),
             "skipped": skipped,
             "train_end": max((row.train_end for row in rows), default=None),
         })
@@ -1130,10 +1136,14 @@ def main(argv=None) -> int:
     except (DataError, ch.ClickHouseError) as error:
         print(f"ошибка данных: {error}", file=sys.stderr)
         return 1
-    folds = len(result["predictions"])
+    fold_total = sum(item["folds"] for item in result["data"]["fold_counts"])
+    first_target = min(item["first_target"] for item in result["data"]["fold_counts"])
+    last_target = max(item["last_target"] for item in result["data"]["fold_counts"])
     print(
         f"run_id={result['run_id']} horizons={','.join(map(str, horizons))} "
-        f"predictions={folds} verdict={result['evaluation']['verdict']} "
+        f"folds={fold_total} windows={first_target}..{last_target} "
+        f"predictions={len(result['predictions'])} "
+        f"verdict={result['evaluation']['verdict']} "
         f"artifacts={result['artifact_json'].parent}"
     )
     return 0
