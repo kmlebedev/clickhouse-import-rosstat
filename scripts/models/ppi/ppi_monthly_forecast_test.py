@@ -423,6 +423,12 @@ class ArtifactTest(unittest.TestCase):
             [{key: value for key, value in pair.items() if key != "origins"} for pair in second["evaluation"]["pairs"]],
         )
 
+    def test_predictions_csv_uses_lf_line_endings(self):
+        path = Path(self.temp.name) / "line-endings.csv"
+        row = EvaluationTest.prediction("b2_ar1", 0, 0.5)
+        pm.write_predictions_csv(path, [row])
+        self.assertNotIn(b"\r", path.read_bytes())
+
     def test_csv_round_trip_preserves_skipped_prediction(self):
         path = Path(self.temp.name) / "skipped.csv"
         row = EvaluationTest.prediction("b2_ar1", 0, float("nan"), y_true=1.0)
