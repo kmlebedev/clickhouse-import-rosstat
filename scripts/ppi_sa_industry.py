@@ -231,7 +231,7 @@ def levels_from_mm(points: dict[date, float], base: float = 100.0) -> dict[date,
     previous = None
     for day in days:
         if previous is not None:
-            level *= 1 + values[day] / 100
+            level *= values[day] / 100
         if level <= 0 or not math.isfinite(level):
             raise ValueError(f"уровень должен быть положительным: {day}={level}")
         result[day] = level
@@ -447,23 +447,24 @@ def load_anchors(path: Path) -> list[dict]:
     return rows
 
 
-def _previous_available(points: dict[str, float], target: str) -> float | None:
+def _previous_available(points: dict[date, float], target: date) -> float | None:
     earlier = [day for day in points if day < target]
     return points[max(earlier)] if earlier else None
 
 
-def _comparison_rows(anchors: list[dict], values: dict[str, dict[str, float]]) -> list[dict]:
+def _comparison_rows(anchors: list[dict], values: dict[str, dict[date, float]]) -> list[dict]:
     rows = []
     for anchor in anchors:
         series = anchor["series"]
         target = anchor["target"]
+        target_day = date.fromisoformat(target)
         points = values.get(series)
         if points is None:
             raise ValueError(f"нет saar3: series {series}")
-        current = points.get(target)
+        current = points.get(target_day)
         if current is None:
             raise ValueError(f"нет saar3: {series} {target}")
-        previous = _previous_available(points, target) if anchor["kind"] == "direction_up" else None
+        previous = _previous_available(points, target_day) if anchor["kind"] == "direction_up" else None
         result, threshold = evaluate(anchor["kind"], current, previous)
         rows.append({
             "variant": "",
@@ -505,14 +506,14 @@ def _metric_block(rows: list[dict]) -> dict:
 
 
 def baseline_metrics(anchors: list[dict]) -> dict:
-    values: dict[str, dict[str, float]] = {}
+    values: dict[str, dict[date, float]] = {}
     for anchor in anchors:
-        values.setdefault(anchor["series"], {})[anchor["target"]] = anchor["ours"]
+        values.setdefault(anchor["series"], {})[date.fromisoformat(anchor["target"])] = anchor["ours"]
     return _metric_block(_comparison_rows(anchors, values))
 
 
 def compare_anchors(
-    variants: dict[str, dict[str, dict[str, float]]],
+    variants: dict[str, dict[str, dict[date, float]]],
     anchors_path: Path,
 ) -> dict:
     anchors = load_anchors(anchors_path)
