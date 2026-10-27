@@ -16,8 +16,8 @@ import (
 // labourForceFixturePath — реальная (урезанная zip-хирургией) выгрузка Росстата со листами
 // «Содержание» и «5»: шапка в строках 5–6, подписи месяцев со сносками («январь1)»,
 // «октябрь1)2)»), перевод строки внутри подписи «Уровень занятости, \nв %», текст сносок в
-// строках 132–133. Разметка урезания не меняет (§11.2), поэтому фикстура проверяет разметку
-// источника, а не допущения парсера (§11.1).
+// строках 133–134. Редакция файла от 14.10.2026: месяцы 2017-01 … 2026-08. Разметка урезания не
+// меняет (§11.2), поэтому фикстура проверяет разметку источника, а не допущения парсера (§11.1).
 const labourForceFixturePath = "testdata/labour_force.xlsx"
 
 // openLabourForceFixture открывает книгу фикстуры — так же, как salariesMesImport в
@@ -76,13 +76,13 @@ func mutateLabourForceFixture(t *testing.T, mutate func(f *excelize.File)) *exce
 	return saved
 }
 
-// TestLabourForceReadsFixture — разбор реальной выгрузки: лист «5», месяцы 2017-01 … 2026-07
-// (115 месяцев) по шести колонкам шапки — 690 точек; дата точки — последний день отчётного
-// месяца (спека §3.4), поэтому крайние даты 2017-01-31 и 2026-07-31.
+// TestLabourForceReadsFixture — разбор реальной выгрузки: лист «5», месяцы 2017-01 … 2026-08
+// (116 месяцев) по шести колонкам шапки — 696 точек; дата точки — последний день отчётного
+// месяца (спека §3.4), поэтому крайние даты 2017-01-31 и 2026-08-31.
 func TestLabourForceReadsFixture(t *testing.T) {
 	points := parseLabourForceFixture(t)
-	if len(points) != 690 {
-		t.Fatalf("точек %d, ожидалось 690", len(points))
+	if len(points) != 696 {
+		t.Fatalf("точек %d, ожидалось 696", len(points))
 	}
 	series := make(map[string]int, 6)
 	first, last := points[0].date, points[0].date
@@ -99,14 +99,14 @@ func TestLabourForceReadsFixture(t *testing.T) {
 		t.Errorf("рядов %d, ожидалось 6: %v", len(series), series)
 	}
 	for name, count := range series {
-		if count != 115 {
-			t.Errorf("ряд %q: точек %d, ожидалось 115 (2017-01 … 2026-07)", name, count)
+		if count != 116 {
+			t.Errorf("ряд %q: точек %d, ожидалось 116 (2017-01 … 2026-08)", name, count)
 		}
 	}
 	if want := time.Date(2017, time.January, 31, 0, 0, 0, 0, time.UTC); !first.Equal(want) {
 		t.Errorf("минимальная дата %s, ожидалась %s", first.Format("2006-01-02"), want.Format("2006-01-02"))
 	}
-	if want := time.Date(2026, time.July, 31, 0, 0, 0, 0, time.UTC); !last.Equal(want) {
+	if want := time.Date(2026, time.August, 31, 0, 0, 0, 0, time.UTC); !last.Equal(want) {
 		t.Errorf("максимальная дата %s, ожидалась %s", last.Format("2006-01-02"), want.Format("2006-01-02"))
 	}
 }
@@ -124,11 +124,11 @@ func TestLabourForceSpotValues(t *testing.T) {
 		{"Рабочая сила", time.Date(2017, time.January, 31, 0, 0, 0, 0, time.UTC), 76489.193},
 		// G8 = 5.6 — уровень безработицы января 2017.
 		{"Уровень безработицы", time.Date(2017, time.January, 31, 0, 0, 0, 0, time.UTC), 5.6},
-		// B131 = 76389.482 — последний месяц выгрузки, июль 2026.
+		// B131 = 76389.482 — июль 2026.
 		{"Рабочая сила", time.Date(2026, time.July, 31, 0, 0, 0, 0, time.UTC), 76389.482},
 		// C131 = 74660.473, D131 = 1729.009 и E131 = 62.9 — занятые, безработные и уровень
 		// участия июля 2026. Рабочая сила за этот месяц пинтится строкой выше, но остальные
-		// колонки последнего месяца иначе не закреплены тестом, а урезание фикстуры или сдвиг
+		// колонки того же месяца иначе не закреплены тестом, а урезание фикстуры или сдвиг
 		// строки-секции года меняет именно их.
 		{"Занятые", time.Date(2026, time.July, 31, 0, 0, 0, 0, time.UTC), 74660.473},
 		{"Безработные", time.Date(2026, time.July, 31, 0, 0, 0, 0, time.UTC), 1729.009},
@@ -136,6 +136,10 @@ func TestLabourForceSpotValues(t *testing.T) {
 		// F131 = 61.5 и G131 = 2.3 — уровни занятости и безработицы июля 2026.
 		{"Уровень занятости", time.Date(2026, time.July, 31, 0, 0, 0, 0, time.UTC), 61.5},
 		{"Уровень безработицы", time.Date(2026, time.July, 31, 0, 0, 0, 0, time.UTC), 2.3},
+		// B132 = 76668.705 и G132 = 2.2 — свежая редакция книги (14.10.2026) добавила август
+		// 2026 восьмой строкой года; без этих спотов новая строка осталась бы непроверенной.
+		{"Рабочая сила", time.Date(2026, time.August, 31, 0, 0, 0, 0, time.UTC), 76668.705},
+		{"Уровень безработицы", time.Date(2026, time.August, 31, 0, 0, 0, 0, time.UTC), 2.2},
 	}
 	for _, spot := range spots {
 		found := 0
@@ -234,14 +238,15 @@ func TestLabourForceNonNumericCellFails(t *testing.T) {
 
 // TestLabourForceEmptyCellIsNotPoint — пустые ячейки последнего месяца выгрузки (данных ещё
 // нет, источник печатает месяц заранее) точками не становятся: Review Focus 1. Книга — копия
-// реальной фикстуры с очищенными ячейками июля 2026; нулей в ряду при этом быть не должно (§6.7).
+// реальной фикстуры с очищенными ячейками августа 2026 (последняя строка редакции); нулей в
+// ряду при этом быть не должно (§6.7).
 func TestLabourForceEmptyCellIsNotPoint(t *testing.T) {
-	// Ожидание — литерал (690 точек), а не пересчёт по фикстуре: иначе потерянный при разборе
+	// Ожидание — литерал (696 точек), а не пересчёт по фикстуре: иначе потерянный при разборе
 	// месяц уехал бы вместе с ожиданием и тест остался бы зелёным.
-	const baseline = 690
+	const baseline = 696
 	const emptied = 6
 	xlsx := mutateLabourForceFixture(t, func(f *excelize.File) {
-		for _, cell := range []string{"B131", "C131", "D131", "E131", "F131", "G131"} {
+		for _, cell := range []string{"B132", "C132", "D132", "E132", "F132", "G132"} {
 			if err := f.SetCellValue(labourForceSheet, cell, ""); err != nil {
 				t.Fatal(err)
 			}
@@ -254,14 +259,14 @@ func TestLabourForceEmptyCellIsNotPoint(t *testing.T) {
 	if len(points) != baseline-emptied {
 		t.Errorf("точек %d, ожидалось %d: пустая ячейка — не точка", len(points), baseline-emptied)
 	}
-	july := time.Date(2026, time.July, 31, 0, 0, 0, 0, time.UTC)
+	august := time.Date(2026, time.August, 31, 0, 0, 0, 0, time.UTC)
 	for _, point := range points {
 		if point.value == 0 {
 			t.Errorf("%s %s: записана нулевая точка — пустая ячейка означает «данных нет»",
 				point.series, point.date.Format("2006-01-02"))
 		}
-		if point.date.Equal(july) {
-			t.Errorf("%s: точка %s записана по пустой ячейке", point.series, july.Format("2006-01-02"))
+		if point.date.Equal(august) {
+			t.Errorf("%s: точка %s записана по пустой ячейке", point.series, august.Format("2006-01-02"))
 		}
 	}
 }
@@ -280,7 +285,7 @@ func TestLabourForceMisspelledMonthFails(t *testing.T) {
 	})
 	points, err := parseLabourForce(xlsx)
 	if err == nil {
-		t.Fatalf("подпись %q разобрана без ошибки: %d точек вместо 690", broken, len(points))
+		t.Fatalf("подпись %q разобрана без ошибки: %d точек вместо 696", broken, len(points))
 	}
 	if !strings.Contains(err.Error(), rosstatLabourForceTable) || !strings.Contains(err.Error(), labourForceSheet) {
 		t.Errorf("ошибка %q не называет таблицу %q и лист %q", err, rosstatLabourForceTable, labourForceSheet)
@@ -294,26 +299,27 @@ func TestLabourForceMisspelledMonthFails(t *testing.T) {
 }
 
 // TestLabourForceGarbageLabelOnLastMonthFails — та же поломка в последней строке таблицы: подпись
-// июля 2026 (A131) заменена мусором при заполненных значениях. Прежняя проверка начиналась со
-// следующей строки и пропускала саму строку-замыкание, поэтому июль исчезал молча (684 точки,
-// err=nil). Теперь строка-замыкание проверяется наравне с остальными, и ошибка называет её номер.
+// августа 2026 (A132) заменена мусором при заполненных значениях. Прежняя проверка начиналась со
+// следующей строки и пропускала саму строку-замыкание, поэтому последний месяц исчезал молча
+// (месяц исчезал молча, err=nil). Теперь строка-замыкание проверяется наравне с остальными, и ошибка
+// называет её номер.
 func TestLabourForceGarbageLabelOnLastMonthFails(t *testing.T) {
 	const broken = "xxx"
 	xlsx := mutateLabourForceFixture(t, func(f *excelize.File) {
-		// A131 — подпись июля 2026; значения июля (B131:G131) остаются на месте.
-		if err := f.SetCellValue(labourForceSheet, "A131", broken); err != nil {
+		// A132 — подпись августа 2026; значения августа (B132:G132) остаются на месте.
+		if err := f.SetCellValue(labourForceSheet, "A132", broken); err != nil {
 			t.Fatal(err)
 		}
 	})
 	points, err := parseLabourForce(xlsx)
 	if err == nil {
-		t.Fatalf("подпись %q последней строки разобрана без ошибки: %d точек вместо 690", broken, len(points))
+		t.Fatalf("подпись %q последней строки разобрана без ошибки: %d точек вместо 696", broken, len(points))
 	}
 	if !strings.Contains(err.Error(), rosstatLabourForceTable) || !strings.Contains(err.Error(), labourForceSheet) {
 		t.Errorf("ошибка %q не называет таблицу %q и лист %q", err, rosstatLabourForceTable, labourForceSheet)
 	}
-	if !strings.Contains(err.Error(), "строка 131") {
-		t.Errorf("ошибка %q не называет строку-замыкание 131", err)
+	if !strings.Contains(err.Error(), "строка 132") {
+		t.Errorf("ошибка %q не называет строку-замыкание 132", err)
 	}
 	if !strings.Contains(err.Error(), broken) || !strings.Contains(err.Error(), "не распознана") {
 		t.Errorf("ошибка %q не называет нераспознанную подпись %q", err, broken)
@@ -337,7 +343,7 @@ func TestLabourForceUnparsedLabelWithDataBelowFails(t *testing.T) {
 	})
 	points, err := parseLabourForce(xlsx)
 	if err == nil {
-		t.Fatalf("подпись %q без значений разобрана без ошибки: %d точек вместо 690", broken, len(points))
+		t.Fatalf("подпись %q без значений разобрана без ошибки: %d точек вместо 696", broken, len(points))
 	}
 	if !strings.Contains(err.Error(), "данные продолжаются ниже строки 9") {
 		t.Errorf("ошибка %q не называет строку с нераспознанной подписью и продолжение данных ниже", err)
@@ -358,7 +364,7 @@ func TestLabourForceLostMonthLabelFails(t *testing.T) {
 	})
 	points, err := parseLabourForce(xlsx)
 	if err == nil {
-		t.Fatalf("строка значений без подписи месяца разобрана без ошибки: %d точек вместо 690", len(points))
+		t.Fatalf("строка значений без подписи месяца разобрана без ошибки: %d точек вместо 696", len(points))
 	}
 	if !strings.Contains(err.Error(), rosstatLabourForceTable) || !strings.Contains(err.Error(), labourForceSheet) {
 		t.Errorf("ошибка %q не называет таблицу %q и лист %q", err, rosstatLabourForceTable, labourForceSheet)
@@ -402,9 +408,9 @@ func TestLabourForceRemovedMonthRowFails(t *testing.T) {
 }
 
 // TestLabourForceMismatchedYearSectionFails — в строке-секции года напечатано «2025» вместо
-// «2026» (A124): январь–июль 2026 записались бы датами 2025-01-31 … 2025-07-31 и по ключу
+// «2026» (A124): январь–август 2026 записались бы датами 2025-01-31 … 2025-08-31 и по ключу
 // (name, date) затёрли бы корректные точки тех же месяцев 2025 — тихая порча, а не ошибка.
-// До проверки последовательности разбор отдавал 690 точек и err=nil.
+// До проверки последовательности разбор отдавал полный набор точек и err=nil.
 func TestLabourForceMismatchedYearSectionFails(t *testing.T) {
 	xlsx := mutateLabourForceFixture(t, func(f *excelize.File) {
 		if err := f.SetCellValue(labourForceSheet, "A124", "2025"); err != nil {
@@ -505,15 +511,15 @@ func TestLabourForceEmptyParseFails(t *testing.T) {
 	}
 }
 
-// TestLabourForceIgnoresTrailingFootnoteRows — после последней строки месяца (131) идут строки
-// 132–133 с текстом сносок источника: разбор на них завершается, а не падает и не читает их
-// точками (Review Focus 4). Ожидания — литералы (115 строк-месяцев, 690 точек), а не пересчёт
+// TestLabourForceIgnoresTrailingFootnoteRows — после последней строки месяца (132) идут строки
+// 133–134 с текстом сносок источника: разбор на них завершается, а не падает и не читает их
+// точками (Review Focus 4). Ожидания — литералы (116 строк-месяцев, 696 точек), а не пересчёт
 // через тот же util.MonthsToNum, что и разбор: иначе исчезнувший из выгрузки месяц уехал бы
 // вместе с ожиданием и тест остался бы зелёным. Число строк-месяцев в книге считается отдельно —
 // так тест ловит и «лишнюю» точку из строки сносок, и потерянный месяц.
 func TestLabourForceIgnoresTrailingFootnoteRows(t *testing.T) {
-	const wantMonths = 115
-	const wantPoints = 690
+	const wantMonths = 116
+	const wantPoints = 696
 	xlsx := openLabourForceFixture(t)
 	points, err := parseLabourForce(xlsx)
 	if err != nil {
@@ -538,7 +544,7 @@ func TestLabourForceIgnoresTrailingFootnoteRows(t *testing.T) {
 	if len(points) != wantPoints {
 		t.Errorf("точек %d, ожидалось %d (%d месяцев × 6 рядов)", len(points), wantPoints, wantMonths)
 	}
-	last := time.Date(2026, time.July, 31, 0, 0, 0, 0, time.UTC)
+	last := time.Date(2026, time.August, 31, 0, 0, 0, 0, time.UTC)
 	for _, point := range points {
 		if point.date.After(last) {
 			t.Errorf("%s: точка %s позже последнего месяца выгрузки — строка сноски прочитана точкой",
@@ -548,8 +554,10 @@ func TestLabourForceIgnoresTrailingFootnoteRows(t *testing.T) {
 }
 
 // TestLabourForceFindLink — селектор ссылки проверяется на HTML-фикстуре тем же util.FindLink,
-// что и в Import() (§11.3, Review Focus 5). В фикстуре лежат обе соседние выгрузки: «trud-1_15-s»
-// (дефис) и «trud_1_15-72» (подчёркивание), поэтому селектор с суффиксом действительно
+// что и в Import() (§11.3, Review Focus 5). Фикстура снята после смены регистра: наша выгрузка
+// лежит как «Trud-1_15-s.xlsx» (заглавная T), а селектор строчный — совпадение доказывает флаг
+// `i`. Рядом соседние выгрузки карточки: «trud_1_15-72» (подчёркивание и другой диапазон),
+// «Trud-2_15-s», «Trud-3_15-s» (другие разрезы), поэтому селектор с суффиксом действительно
 // проверяется — общая маска по «trud» вернула бы не тот файл. На странице без ссылки разбор
 // обязан упасть, а не отдать пустую строку в GetXlsx("").
 func TestLabourForceFindLink(t *testing.T) {
@@ -563,15 +571,19 @@ func TestLabourForceFindLink(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Contains(page, []byte("/storage/mediabank/trud_1_15-72.xlsx")) {
-		t.Fatal("в HTML-фикстуре нет соседнего файла trud_1_15-72.xlsx — селектор ничем не проверяется")
+	// Обе строки обязательны: без «Trud-» фикстура не доказывала бы регистронезависимость
+	// селектора, а без соседа — что селектор не цепляет чужую выгрузку карточки.
+	for _, want := range []string{"/storage/mediabank/Trud-1_15-s.xlsx", "/storage/mediabank/trud_1_15-72.xlsx"} {
+		if !bytes.Contains(page, []byte(want)) {
+			t.Fatalf("в HTML-фикстуре нет ссылки %s — селектор ничем не проверяется", want)
+		}
 	}
 	href, err := util.FindLink(page, labourForceLinkSelector)
 	if err != nil {
 		t.Fatalf("FindLink: %v", err)
 	}
-	if href != "/storage/mediabank/trud-1_15-s.xlsx" {
-		t.Errorf("FindLink() = %q, ожидалось %q", href, "/storage/mediabank/trud-1_15-s.xlsx")
+	if href != "/storage/mediabank/Trud-1_15-s.xlsx" {
+		t.Errorf("FindLink() = %q, ожидалось %q", href, "/storage/mediabank/Trud-1_15-s.xlsx")
 	}
 	// Реальная фикстура другой страницы Росстата (рынок труда и зарплаты) ссылки на файл не несёт.
 	other, err := os.ReadFile("testdata/salaries_page.html")
@@ -583,7 +595,7 @@ func TestLabourForceFindLink(t *testing.T) {
 	}
 }
 
-// TestLabourForceImportAppendsFloat64 — импортёр на реальной фикстуре пишет 690 точек шести рядов,
+// TestLabourForceImportAppendsFloat64 — импортёр на реальной фикстуре пишет 696 точек шести рядов,
 // и каждая запись — float64: это пинит схему колонки Float64 новой таблицы (§5.3). Запись float32
 // прошла бы в колонку Float64 молча, потеряв точность на шаге представления, и заметен такой
 // сдвиг только по типу значения в харнессе (§11.6).
@@ -592,8 +604,8 @@ func TestLabourForceImportAppendsFloat64(t *testing.T) {
 	if err := labourForceImport(openLabourForceFixture(t), rec); err != nil {
 		t.Fatalf("labourForceImport: %v", err)
 	}
-	if len(rec.rows) != 690 {
-		t.Fatalf("точек записано %d, ожидалось 690", len(rec.rows))
+	if len(rec.rows) != 696 {
+		t.Fatalf("точек записано %d, ожидалось 696", len(rec.rows))
 	}
 	series := make(map[string]int, 6)
 	for _, row := range rec.rows {
@@ -607,8 +619,8 @@ func TestLabourForceImportAppendsFloat64(t *testing.T) {
 		t.Errorf("записано рядов %d, ожидалось 6: %v", len(series), series)
 	}
 	for name, count := range series {
-		if count != 115 {
-			t.Errorf("ряд %q: точек %d, ожидалось 115 (2017-01 … 2026-07)", name, count)
+		if count != 116 {
+			t.Errorf("ряд %q: точек %d, ожидалось 116 (2017-01 … 2026-08)", name, count)
 		}
 	}
 }
