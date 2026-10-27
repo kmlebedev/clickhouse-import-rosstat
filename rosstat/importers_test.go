@@ -109,7 +109,10 @@ func TestDaguStatsIgnoreComments(t *testing.T) {
 //     импортёров и запросом из expectedPublicationCountPoints: колонка countPoints
 //     реестра сверяется с объявлением самого импортёра (метод Publication()
 //     встроенного util.ClickHouseImport), а у rosstat_ipc_weeks и
-//     rosstat_bi_cpi_weekly объявления нет ни в реестре, ни у импортёра.
+//     rosstat_bi_cpi_weekly объявления нет ни в реестре, ни у импортёра. У BI при этом
+//     есть строка версии в source_publications — её пишет собственный Import() по хешу
+//     содержимого (объявление префлайта тут не при чём: HEAD по одноразовому URL
+//     невозможен).
 func TestRosstatImportersPrefixedAndRegistered(t *testing.T) {
 	if len(rosstatImporters) == 0 {
 		t.Fatal("реестр rosstatImporters пуст: ни один импортёр пакета не зарегистрирован")
@@ -173,7 +176,8 @@ func TestRosstatImportersPrefixedAndRegistered(t *testing.T) {
 			// объявлении. rosstat_ipc_weeks не должен обзавестись им «на всякий
 			// случай»: его файл перезаписывается по тому же URL в недельном темпе,
 			// равном темпу шага, — HEAD был бы чистыми накладными расходами.
-			// rosstat_bi_cpi_weekly — по той же причине: export-URL динамический.
+			// rosstat_bi_cpi_weekly — по той же причине: HEAD по одноразовому tmp-URL
+			// невозможен, а версию содержимого он пишет сам (см. Import).
 			if imp.countPoints != "" {
 				t.Errorf("реестр записал импортёру %q запрос чека %q, хотя префлайт ему не положен", name, imp.countPoints)
 			}
