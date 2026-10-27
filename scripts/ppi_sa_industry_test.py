@@ -145,6 +145,30 @@ class AuditTest(WorkbookCase):
             "core_no_alcohol": ("10",) + nonfood,
         })
 
+    def test_audit_includes_used_codes_and_food_subcodes(self) -> None:
+        rows = [
+            {"date": date(2026, 1, 1), "code": "20", "name": "Производство химических веществ", "value": 100.0},
+            {"date": date(2026, 1, 1), "code": "10.2", "name": "Переработка и консервирование рыбы", "value": 101.0},
+            {"date": date(2026, 1, 1), "code": "99", "name": "Посторонний ряд", "value": 102.0},
+        ]
+        candidates = {row["code"]: row for row in m.audit_candidates(rows, {})}
+        self.assertEqual(set(candidates), {"10.2", "20"})
+        self.assertTrue(candidates["20"]["used"])
+        self.assertFalse(candidates["10.2"]["used"])
+
+
+class ProvenanceTest(unittest.TestCase):
+    def test_verify_sha256_rejects_changed_vintage(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "vintage.xlsx"
+            path.write_bytes(b"abc")
+            self.assertEqual(
+                m.verify_sha256(path, "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"),
+                "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+            )
+            with self.assertRaisesRegex(ValueError, "SHA-256"):
+                m.verify_sha256(path, "0" * 64)
+
 
 def add_months(day: date, months: int) -> date:
     month = day.month - 1 + months
