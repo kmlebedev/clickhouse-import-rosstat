@@ -734,7 +734,7 @@ def _read_prediction_record(record: dict) -> Prediction:
 
 def write_predictions_csv(path: Path, predictions: list[Prediction]) -> None:
     with Path(path).open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=PREDICTION_SCHEMA)
+        writer = csv.DictWriter(handle, fieldnames=PREDICTION_SCHEMA, lineterminator="\n")
         writer.writeheader()
         for row in predictions:
             writer.writerow(mlx.json_safe(_prediction_record(row)))
