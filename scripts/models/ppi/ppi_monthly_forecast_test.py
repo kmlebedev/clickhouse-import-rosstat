@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Офлайн-тесты research-прогноза CPI/PPI по ценовым ожиданиям."""
 
+import json
 import math
 import sys
+import tempfile
 import unittest
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -326,6 +328,115 @@ class EvaluationTest(unittest.TestCase):
         self.assertEqual(pm.research_verdict([{**base, "ci_low": 0.0}]), "iterate")
         self.assertEqual(pm.research_verdict([{**base, "delta": -0.1}]), "reject")
         self.assertEqual(pm.research_verdict([{**base, "n": 11}]), "INSUFFICIENT")
+
+
+class ArtifactTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.temp = tempfile.TemporaryDirectory()
+        root = Path(cls.temp.name)
+        cls.out1 = root / "run1"
+        cls.out2 = root / "run2"
+        cls.targets, cls.values, cls.publications = cls.synthetic()
+        cls.result = pm.run_research(
+            cls.targets, cls.values, cls.publications,
+            out_dir=cls.out1, horizons=(1,), min_train=36, logger_enabled=False,
+        )
+        cls.second = pm.run_research(
+            cls.targets, cls.values, cls.publications,
+            out_dir=cls.out2, horizons=(1,), min_train=36, logger_enabled=False,
+        )
+        cls.report = (cls.out1 / f"{pm.ARTIFACT_STEM}.md").read_text()
+        cls.data = json.loads((cls.out1 / f"{pm.ARTIFACT_STEM}.json").read_text())
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.temp.cleanup()
+
+    @staticmethod
+    def synthetic():
+        targets = {name: {} for name in ("cpi_all", "ppi_total", "ppi_food", "ppi_nonfood", "ppi_core")}
+        values = {}
+        publications = []
+        for index in range(44):
+            month = pm.shift_month(date(2019, 1, 1), index)
+            for offset, name in enumerate(targets):
+                targets[name][month] = math.sin((index + offset) / 4.0)
+            for series_index, series in enumerate(pm.AGGREGATE_SURVEY_SERIES):
+                values[(series, month)] = 10.0 + series_index + math.cos((index + series_index) / 5.0)
+                publications.append({
+                    "series": series,
+                    "period_date": month,
+                    "published_at": pm.shift_month(month, 1).replace(day=1) - timedelta(days=1),
+                    "quality": "date",
+                })
+        return targets, values, publications
+
+    def test_artifacts_and_passport_are_complete(self):
+        for suffix in (".md", ".json", "-predictions.csv"):
+            self.assertTrue((self.out1 / f"{pm.ARTIFACT_STEM}{suffix}").is_file())
+        for key in (
+            "schema_version", "run_id", "experiment", "run_name", "git", "spec_path",
+            "plan_path", "config", "config_hash", "data_asof", "sample_meta",
+            "sample_hash", "data_passport", "fold_counts", "predictions_schema",
+            "evaluation", "robustness", "limitations", "verdict", "artifacts",
+        ):
+            self.assertIn(key, self.data)
+        self.assertEqual(self.data["verdict"], "INSUFFICIENT")
+        self.assertIn("latest-vintage", self.report)
+        self.assertIn("RMSE", self.report)
+        self.assertIn("INSUFFICIENT", self.report)
+        hashes = {entry["name"]: entry["sha256"] for entry in self.data["artifacts"]}
+        self.assertIn(f"{pm.ARTIFACT_STEM}-predictions.csv", hashes)
+        self.assertIn(f"{pm.ARTIFACT_STEM}.md", hashes)
+
+    def test_csv_round_trip_reproduces_metrics(self):
+        path = self.out1 / f"{pm.ARTIFACT_STEM}-predictions.csv"
+        predictions = pm.read_predictions_csv(path)
+        evaluation = pm.evaluate(predictions, n=200)
+        official = pm.evaluate(self.result["predictions"], n=200)
+        fields = ("target", "horizon", "base_model", "n", "delta", "dm_pvalue", "ci_low", "ci_high", "mde")
+        self.assertEqual(
+            [[pair.get(field) for field in fields] for pair in evaluation["pairs"]],
+            [[pair.get(field) for field in fields] for pair in official["pairs"]],
+        )
+
+    def test_replay_matches_predictions_and_metrics(self):
+        second = json.loads((self.out2 / f"{pm.ARTIFACT_STEM}.json").read_text())
+        fields = ("target", "horizon", "origin", "model", "y_true", "y_pred", "train_start", "train_end", "status")
+        self.assertEqual(
+            [[row.get(field) for field in fields] for row in self.data["predictions"]],
+            [[row.get(field) for field in fields] for row in second["predictions"]],
+        )
+        self.assertEqual(self.data["evaluation"]["models"], second["evaluation"]["models"])
+        self.assertEqual(
+            [{key: value for key, value in pair.items() if key != "origins"} for pair in self.data["evaluation"]["pairs"]],
+            [{key: value for key, value in pair.items() if key != "origins"} for pair in second["evaluation"]["pairs"]],
+        )
+
+    def test_csv_round_trip_preserves_skipped_prediction(self):
+        path = Path(self.temp.name) / "skipped.csv"
+        row = EvaluationTest.prediction("b2_ar1", 0, float("nan"), y_true=1.0)
+        skipped = pm.Prediction(
+            row.target, row.horizon, row.origin, row.model, row.y_true,
+            row.y_pred, row.train_start, row.train_end, "skipped", "degenerate",
+        )
+        pm.write_predictions_csv(path, [skipped])
+        loaded = pm.read_predictions_csv(path)[0]
+        self.assertEqual(loaded.status, "skipped")
+        self.assertEqual(loaded.diagnostic, "degenerate")
+        self.assertTrue(math.isnan(loaded.y_pred))
+
+    def test_missing_target_writes_no_success_artifact(self):
+        broken = {name: dict(points) for name, points in self.targets.items()}
+        broken["ppi_core"] = {}
+        out = Path(self.temp.name) / "broken"
+        with self.assertRaises(pm.DataError):
+            pm.run_research(
+                broken, self.values, self.publications,
+                out_dir=out, horizons=(1,), min_train=36, logger_enabled=False,
+            )
+        self.assertFalse((out / f"{pm.ARTIFACT_STEM}.json").exists())
 
 
 if __name__ == "__main__":

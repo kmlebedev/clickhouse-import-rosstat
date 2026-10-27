@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 """Предрегистрированный research-эксперимент ценовых ожиданий для CPI/PPI."""
 
+import argparse
 import calendar
+import csv
+import hashlib
+import json
 import math
 import sys
 from dataclasses import dataclass
@@ -12,8 +16,20 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from lib import clickhouse as ch
 from lib import eval_utils as eu
+from lib import ml_experiment as mlx
 
 ch_query = ch.ch_query
+
+EXPERIMENT = "ppi_expectations_forecast"
+RUN_NAME = "ppi_expectations_forecast__direct_h136"
+ARTIFACT_STEM = "2026-10-21-ppi-expectations-forecast"
+SPEC_PATH = "docs/superpowers/specs/2026-10-21-ppi-note-followups-design.md"
+PLAN_PATH = "docs/superpowers/plans/2026-10-21-ppi-note-followups.md"
+PRIMARY_METRIC = "paired_rmse_delta"
+PREDICTION_SCHEMA = (
+    "target", "horizon", "origin", "model", "y_true", "y_pred",
+    "train_start", "train_end", "status", "diagnostic",
+)
 
 CPI_ALL_NAME = "Индексы потребительских цен на товары и услуги по Российской Федерации"
 PPI_SERIES = ("total", "food", "nonfood", "core")
@@ -585,3 +601,479 @@ def research_verdict(pairs: list, min_primary: int = 12) -> str:
         ):
             return "promote"
     return "iterate" if any(row.get("delta", 0.0) > 0.0 for row in primary) else "reject"
+
+
+class DataError(Exception):
+    """Недостаточное или несогласованное покрытие research-данных."""
+
+
+def _date_range(points) -> dict:
+    if not points:
+        return {"first": None, "last": None, "n": 0}
+    ordered = sorted(points)
+    return {"first": ordered[0], "last": ordered[-1], "n": len(ordered)}
+
+
+def build_data_passport(targets: dict, values: dict, publications: list) -> dict:
+    quality = {}
+    for row in publications:
+        name = str(row.get("quality", "missing"))
+        quality[name] = quality.get(name, 0) + 1
+    sources = {
+        "cpi_all": "rosstat_ipc_mes.percent - 100 (NSA m/m, pp)",
+        "ppi_total": "ppi_sa.mm_sa (ppi-sa-2026-v1, pp)",
+        "ppi_food": "ppi_sa.mm_sa (ppi-sa-2026-v1, pp)",
+        "ppi_nonfood": "ppi_sa.mm_sa (ppi-sa-2026-v1, pp)",
+        "ppi_core": "ppi_sa.mm_sa (ppi-sa-2026-v1, pp)",
+    }
+    survey_ranges = {}
+    for series in sorted({name for name, _ in values}):
+        survey_ranges[series] = _date_range(
+            period for name, period in values if name == series
+        )
+    return {
+        "targets": {
+            name: {"source": sources.get(name, name), **_date_range(points)}
+            for name, points in sorted(targets.items())
+        },
+        "survey_values": {
+            "series": survey_ranges,
+            "points": len(values),
+        },
+        "publication_quality": quality,
+        "publication_periods": _date_range(
+            row["period_date"] for row in publications
+        ),
+    }
+
+
+def build_horizon_rows(
+    target: str,
+    points: dict,
+    values: dict,
+    publications: list,
+    horizon: int,
+) -> list[Row]:
+    if not points:
+        raise DataError(f"{target}: обязательный ряд таргета пуст")
+    ordered = sorted(points)
+    rows = []
+    for origin in ordered:
+        prior = shift_month(origin, -1)
+        target_date = shift_month(origin, horizon)
+        if prior not in points or target_date not in points:
+            continue
+        expectations = latest_survey_features(
+            origin, values, publications, AGGREGATE_SURVEY_SERIES
+        )
+        if not expectations:
+            continue
+        rows.append(
+            Row(
+                target=target,
+                origin=origin,
+                actual=points[target_date],
+                base_features={"y_lag1": points[prior]},
+                expectation_features=expectations,
+            )
+        )
+    if len(rows) <= 36 + horizon:
+        raise DataError(
+            f"{target}/h{horizon}: доступно {len(rows)} origins — недостаточно для walk-forward"
+        )
+    return rows
+
+
+def _prediction_record(row: Prediction) -> dict:
+    record = {
+        field: getattr(row, field) for field in PREDICTION_SCHEMA
+    }
+    for name in ("origin", "train_start", "train_end"):
+        record[name] = record[name].isoformat()
+    return record
+
+
+def _csv_float(value) -> float:
+    return float("nan") if value in (None, "") else float(value)
+
+
+def _read_prediction_record(record: dict) -> Prediction:
+    return Prediction(
+        target=record["target"],
+        horizon=int(record["horizon"]),
+        origin=date.fromisoformat(record["origin"]),
+        model=record["model"],
+        y_true=_csv_float(record["y_true"]),
+        y_pred=_csv_float(record["y_pred"]),
+        train_start=date.fromisoformat(record["train_start"]),
+        train_end=date.fromisoformat(record["train_end"]),
+        status=record.get("status", "ok"),
+        diagnostic=record.get("diagnostic", ""),
+    )
+
+
+def write_predictions_csv(path: Path, predictions: list[Prediction]) -> None:
+    with Path(path).open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=PREDICTION_SCHEMA)
+        writer.writeheader()
+        for row in predictions:
+            writer.writerow(mlx.json_safe(_prediction_record(row)))
+
+
+def read_predictions_csv(path: Path) -> list[Prediction]:
+    with Path(path).open(newline="", encoding="utf-8") as handle:
+        records = list(csv.DictReader(handle))
+    if not records:
+        raise DataError(f"{path}: CSV predictions пуст")
+    return [_read_prediction_record(record) for record in records]
+
+
+def _fmt(value) -> str:
+    if value is None:
+        return "n/a"
+    if isinstance(value, float):
+        return "n/a" if not math.isfinite(value) else f"{value:.6g}"
+    return str(value)
+
+
+def _table(rows: list[dict], columns: tuple[str, ...]) -> list[str]:
+    if not rows:
+        return ["_Нет строк._"]
+    lines = [
+        "| " + " | ".join(columns) + " |",
+        "|" + "|".join("---" for _ in columns) + "|",
+    ]
+    for row in rows:
+        lines.append("| " + " | ".join(_fmt(row.get(column)) for column in columns) + " |")
+    return lines
+
+
+def render_report(data: dict) -> str:
+    evaluation = data["evaluation"]
+    primary = evaluation["primary_family"]
+    secondary = [row for row in evaluation["pairs"] if not row["primary"]]
+    robustness = data["robustness"]
+    lines = [
+        "# Ценовые ожидания как признаки прогноза ИПЦ/ИЦП",
+        "",
+        "Research-эксперимент Task 2 issue #318. Протокол предрегистрирован в "
+        f"[{SPEC_PATH}](../../{SPEC_PATH}) и [{PLAN_PATH}](../../{PLAN_PATH}); "
+        "production-модели, `forecast_log`, DDL/витрины и `ppi_sa` не меняются.",
+        "",
+        "## Паспорт прогона",
+        "",
+        f"- run id: `{data['run_id']}`",
+        f"- experiment / run: `{data['experiment']}` / `{data['run_name']}`",
+        f"- branch / SHA / dirty: `{data['git'].get('git_branch')}` / "
+        f"`{data['git'].get('git_sha')}` / `{data['git'].get('git_dirty')}`",
+        f"- config hash: `{data['config_hash']}`; sample hash: `{data['sample_hash']}`",
+        f"- data as-of: `{_fmt(data['data_asof'])}`",
+        "",
+        "## Данные",
+        "",
+    ]
+    target_rows = [
+        {"target": name, **passport}
+        for name, passport in data["data_passport"]["targets"].items()
+    ]
+    lines += _table(target_rows, ("target", "source", "first", "last", "n"))
+    lines += ["", f"Survey points: {data['data_passport']['survey_values']['points']}; "
+              f"publication quality: {data['data_passport']['publication_quality']}.", ""]
+    lines += ["## Покрытие фолдов", ""]
+    lines += _table(data["fold_counts"], ("target", "horizon", "folds", "skipped", "train_end"))
+    lines += ["", "## Модели: RMSE / MAE", ""]
+    lines += _table(
+        evaluation["models"],
+        ("target", "horizon", "model", "n", "rmse", "mae"),
+    )
+    lines += ["", "## Primary-контрасты", ""]
+    lines += _table(
+        primary,
+        ("target", "horizon", "base_model", "expectations_model", "n", "delta",
+         "dm_pvalue", "holm_pvalue", "ci_low", "ci_high", "mde"),
+    )
+    lines += ["", "## Secondary consumer", ""]
+    lines += _table(
+        secondary,
+        ("target", "horizon", "base_model", "expectations_model", "n", "delta",
+         "dm_pvalue", "ci_low", "ci_high", "mde"),
+    )
+    lines += ["", "## Robustness 2022–2023", ""]
+    lines += _table(
+        robustness.get("pairs", []),
+        ("target", "horizon", "base_model", "expectations_model", "n", "delta",
+         "dm_pvalue", "ci_low", "ci_high", "mde"),
+    )
+    lines += [
+        "",
+        f"Robustness status: `{robustness.get('label')}`; минимум 6 folds на пару.",
+        "",
+        "## Ограничения",
+        "",
+        "- Survey as-of соблюдён строго: `published_at < cutoff`, boundary 8-е M+1 23:59:59 MSK.",
+        "- CPI/PPI targets — **latest-vintage**: полный real-time/PIT по ревизиям таргета не проверен.",
+        "- `quality='fallback'` сохраняется в аудите и не выдаётся за точную дату публикации.",
+        "- Secondary consumer доступен только при проверенном industry calendar; иначе fail closed.",
+        "- Robustness 2022–2023 описательная и не меняет primary-вывод.",
+        "",
+        "## Вердикт",
+        "",
+        f"`{data['verdict']}`. Это research-рекомендация по предрегистрированному правилу, "
+        "не production promotion; registry/alias и `forecast_log` не затрагивались.",
+        "",
+    ]
+    return "\n".join(lines)
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _fold_counts(predictions: list[Prediction]) -> list[dict]:
+    result = []
+    keys = sorted({(row.target, row.horizon) for row in predictions})
+    for target, horizon in keys:
+        rows = [row for row in predictions if row.target == target and row.horizon == horizon]
+        origins = sorted({row.origin for row in rows})
+        skipped = sum(1 for row in rows if row.status == "skipped")
+        result.append({
+            "target": target,
+            "horizon": horizon,
+            "folds": len(origins),
+            "skipped": skipped,
+            "train_end": max((row.train_end for row in rows), default=None),
+        })
+    return result
+
+
+def _sample_payload(targets: dict, values: dict, publications: list) -> dict:
+    return {
+        "targets": targets,
+        "survey_values": values,
+        "publications": publications,
+    }
+
+
+def run_research(
+    targets: dict,
+    values: dict,
+    publications: list,
+    out_dir: Path = Path("build/ppi-expectations-forecast"),
+    horizons: tuple[int, ...] = (1, 3, 6),
+    min_train: int = 36,
+    allow_data_revision: bool = False,
+    logger_enabled=None,
+) -> dict:
+    required = ("cpi_all",) + tuple(f"ppi_{series}" for series in PPI_SERIES)
+    missing = [name for name in required if not targets.get(name)]
+    if missing:
+        raise DataError(f"обязательные ряды таргета пусты: {', '.join(missing)}")
+    rows_by_target = {}
+    for target in required:
+        for horizon in horizons:
+            rows_by_target[(target, horizon)] = build_horizon_rows(
+                target, targets[target], values, publications, horizon
+            )
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    config = {
+        "experiment": EXPERIMENT,
+        "targets": list(required),
+        "horizons": list(horizons),
+        "min_train": min_train,
+        "primary_pairs": [list(pair) for pair in PRIMARY_PAIRS],
+        "secondary_pairs": [list(pair) for pair in SECONDARY_PAIRS],
+        "survey_series": list(AGGREGATE_SURVEY_SERIES),
+        "survey_lags": [0, 1, 2, 3],
+        "cutoff_day": 8,
+        "cutoff_time": "23:59:59 MSK",
+        "bootstrap_block": 3,
+        "bootstrap_runs": 2000,
+        "seed": 20261027,
+        "allow_data_revision": bool(allow_data_revision),
+        "spec_path": SPEC_PATH,
+        "plan_path": PLAN_PATH,
+    }
+    config_hash = mlx.sha256_text(mlx.canonical_json(config))
+    sample = _sample_payload(targets, values, publications)
+    sample_meta = {
+        "targets": {name: _date_range(points) for name, points in sorted(targets.items())},
+        "survey_points": len(values),
+        "publications": len(publications),
+        "folds": {
+            f"{target}__h{horizon}": len(rows)
+            for (target, horizon), rows in sorted(rows_by_target.items())
+        },
+    }
+    sample_hash = mlx.sha256_text(mlx.canonical_json(sample))
+    data_asof = max(
+        point for name in required for point in targets[name]
+    )
+    passport = build_data_passport(targets, values, publications)
+    logger = mlx.start_run(
+        experiment=EXPERIMENT,
+        run_name=RUN_NAME,
+        config=config,
+        data_asof=data_asof,
+        sample_meta=sample_meta,
+        sample=sample,
+        spec_path=SPEC_PATH,
+        enabled=logger_enabled,
+    )
+    predictions = []
+    for (target, horizon), rows in rows_by_target.items():
+        predictions.extend(walk_forward(rows, horizons=(horizon,)))
+    if not any(row.status != "skipped" for row in predictions):
+        raise DataError("все fold-предсказания пропущены — нет пригодной выборки")
+    evaluation = evaluate(predictions)
+    robustness_predictions = [
+        row for row in predictions if 2022 <= row.origin.year <= 2023
+    ]
+    if robustness_predictions:
+        robustness = evaluate(robustness_predictions, primary=False)
+        robustness["label"] = (
+            "INSUFFICIENT"
+            if any(pair["n"] < 6 for pair in robustness["pairs"])
+            else "reported (descriptive only)"
+        )
+    else:
+        robustness = {"pairs": [], "label": "INSUFFICIENT", "models": []}
+    fold_counts = _fold_counts(predictions)
+    predictions_path = out_dir / f"{ARTIFACT_STEM}-predictions.csv"
+    report_path = out_dir / f"{ARTIFACT_STEM}.md"
+    json_path = out_dir / f"{ARTIFACT_STEM}.json"
+    write_predictions_csv(predictions_path, predictions)
+    data = {
+        "schema_version": 1,
+        "run_id": logger.run_id,
+        "experiment": EXPERIMENT,
+        "run_name": logger.run_name,
+        "generated_at": datetime.now(),
+        "git": logger.git,
+        "spec_path": SPEC_PATH,
+        "plan_path": PLAN_PATH,
+        "config": config,
+        "config_hash": config_hash,
+        "data_asof": data_asof,
+        "sample_meta": sample_meta,
+        "sample_hash": sample_hash,
+        "data_passport": passport,
+        "fold_counts": fold_counts,
+        "predictions_schema": list(PREDICTION_SCHEMA),
+        "predictions": [_prediction_record(row) for row in predictions],
+        "evaluation": evaluation,
+        "robustness": robustness,
+        "limitations": [
+            "CPI/PPI targets are latest-vintage; full real-time/PIT revision history is not tested",
+            "survey as-of is strict published_at < cutoff",
+            "secondary consumer fails closed without an industry publication calendar",
+        ],
+        "verdict": evaluation["verdict"],
+        "primary_metric": PRIMARY_METRIC,
+        "artifacts": [],
+    }
+    report_path.write_text(render_report(data), encoding="utf-8")
+    data["artifacts"] = [
+        {
+            "name": predictions_path.name,
+            "sha256": _sha256_file(predictions_path),
+            "bytes": predictions_path.stat().st_size,
+        },
+        {
+            "name": report_path.name,
+            "sha256": _sha256_file(report_path),
+            "bytes": report_path.stat().st_size,
+        },
+    ]
+    json_path.write_text(
+        json.dumps(mlx.json_safe(data), ensure_ascii=False, indent=2, sort_keys=True, allow_nan=False)
+        + "\n",
+        encoding="utf-8",
+    )
+    logger.log_metrics({
+        "primary_metric": PRIMARY_METRIC,
+        "decision": evaluation["verdict"],
+        "folds": sum(item["folds"] for item in fold_counts),
+        "skipped_predictions": sum(item["skipped"] for item in fold_counts),
+    })
+    logger.log_predictions([
+        mlx.PredictionRow(
+            model=row.model,
+            window=f"h{row.horizon}",
+            target_date=shift_month(row.origin, row.horizon),
+            predicted=row.y_pred,
+            actual=row.y_true,
+            unit="pp",
+            meta={
+                "target": row.target,
+                "origin": row.origin.isoformat(),
+                "train_start": row.train_start.isoformat(),
+                "train_end": row.train_end.isoformat(),
+                "status": row.status,
+            },
+        )
+        for row in predictions
+        if row.status != "skipped"
+        and math.isfinite(row.y_pred)
+        and math.isfinite(row.y_true)
+    ])
+    logger.log_artifacts([predictions_path, report_path, json_path])
+    log_result = logger.finish("ok", notes=f"verdict={evaluation['verdict']}")
+    return {
+        "run_id": logger.run_id,
+        "log_result": log_result,
+        "artifact_json": json_path,
+        "predictions_path": predictions_path,
+        "report_path": report_path,
+        "predictions": predictions,
+        "evaluation": evaluation,
+        "data": data,
+    }
+
+
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser(
+        description="Research-прогноз CPI/PPI по ценовым ожиданиям (Task 2 #318)."
+    )
+    parser.add_argument("--out-dir", default="build/ppi-expectations-forecast")
+    parser.add_argument("--horizons", default="1,3,6")
+    parser.add_argument("--min-train", type=int, default=36)
+    parser.add_argument("--allow-data-revision", action="store_true")
+    args = parser.parse_args(argv)
+    try:
+        horizons = tuple(int(value) for value in args.horizons.split(",") if value.strip())
+    except ValueError:
+        print(f"ошибка --horizons: {args.horizons!r}", file=sys.stderr)
+        return 2
+    if not horizons or any(horizon < 1 for horizon in horizons):
+        print("ошибка --horizons: нужны положительные горизонты", file=sys.stderr)
+        return 2
+    try:
+        targets, values, publications = load_inputs()
+        result = run_research(
+            targets,
+            values,
+            publications,
+            out_dir=Path(args.out_dir),
+            horizons=horizons,
+            min_train=args.min_train,
+            allow_data_revision=args.allow_data_revision,
+        )
+    except (DataError, ch.ClickHouseError) as error:
+        print(f"ошибка данных: {error}", file=sys.stderr)
+        return 1
+    folds = len(result["predictions"])
+    print(
+        f"run_id={result['run_id']} horizons={','.join(map(str, horizons))} "
+        f"predictions={folds} verdict={result['evaluation']['verdict']} "
+        f"artifacts={result['artifact_json'].parent}"
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
