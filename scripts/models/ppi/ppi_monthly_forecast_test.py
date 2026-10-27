@@ -159,5 +159,174 @@ class DirectFoldTest(unittest.TestCase):
             pm.direct_folds(rows, 1)
 
 
+class ModelTest(unittest.TestCase):
+    @staticmethod
+    def rows(count=38):
+        return [
+            pm.Row(
+                target="cpi_all",
+                origin=pm.shift_month(date(2020, 1, 1), index),
+                actual=math.sin(index / 3.0),
+                base_features={"y_lag1": math.sin((index - 1) / 3.0)},
+                expectation_features={
+                    "price_expectations_lag0": float(index % 7),
+                    "price_expectations_lag1": float((index - 1) % 7),
+                    "price_expectations_lag2": float((index - 2) % 7),
+                    "price_expectations_lag3": float((index - 3) % 7),
+                },
+            )
+            for index in range(count)
+        ]
+
+    def test_b1_returns_last_actual(self):
+        rows = self.rows()
+        predictions = pm.walk_forward(rows, horizons=(1,))
+        b1 = [row for row in predictions if row.model == "b1_last"]
+        self.assertEqual(len(b1), 1)
+        self.assertEqual(b1[0].y_pred, rows[35].actual)
+
+    def test_b2_uses_ar1_and_month_dummies(self):
+        row = self.rows()[36]
+        features = pm.feature_values(row, horizon=1, expectations=False)
+        self.assertIn("y_lag1", features)
+        dummies = {name for name in features if name.startswith("month_")}
+        self.assertEqual(len(dummies), 11)
+        target_month = pm.shift_month(row.origin, 1).month
+        active = [name for name in dummies if features[name] == 1.0]
+        self.assertEqual(active, [f"month_{target_month:02d}"] if target_month != 1 else [])
+
+    def test_b3_pair_differs_only_by_expectation_columns(self):
+        row = self.rows()[36]
+        base = pm.feature_values(row, horizon=3, expectations=False)
+        with_expectations = pm.feature_values(row, horizon=3, expectations=True)
+        self.assertEqual({key: with_expectations[key] for key in base}, base)
+        self.assertEqual(
+            set(with_expectations) - set(base),
+            set(row.expectation_features),
+        )
+
+    def test_future_survey_does_not_change_prediction(self):
+        rows = self.rows()
+        before = [
+            row for row in pm.walk_forward(rows, horizons=(1,))
+            if row.model == "b3_enet_expectations"
+        ][0]
+        future = rows[-1]
+        rows[-1] = pm.Row(
+            future.target, future.origin, future.actual, future.base_features,
+            {key: value + 1000.0 for key, value in future.expectation_features.items()},
+        )
+        after = [
+            row for row in pm.walk_forward(rows, horizons=(1,))
+            if row.model == "b3_enet_expectations"
+        ][0]
+        self.assertEqual(before.y_pred, after.y_pred)
+
+    def test_imputation_and_scaling_are_train_only(self):
+        train = [
+            pm.Row("cpi_all", pm.shift_month(date(2020, 1, 1), index), float(index),
+                   {"x": value}, {})
+            for index, value in enumerate([1.0, 2.0, float("nan"), 3.0, 4.0, 5.0])
+        ]
+        imputer, scaler, _ = pm._fit_b3(train, horizon=1, expectations=False)
+        self.assertEqual(imputer.statistics_[0], 3.0)
+        self.assertAlmostEqual(scaler.mean_[0], 3.0)
+
+    def test_degenerate_train_fold_is_reported_not_silently_dropped(self):
+        rows = self.rows()
+        rows = [
+            pm.Row(row.target, row.origin, row.actual, {"y_lag1": float("nan")}, {})
+            for row in rows
+        ]
+        predictions = [
+            row for row in pm.walk_forward(rows, horizons=(1,))
+            if row.model == "b2_ar1"
+        ]
+        self.assertEqual(len(predictions), 1)
+        self.assertEqual(predictions[0].status, "skipped")
+        self.assertTrue(predictions[0].diagnostic)
+
+
+class EvaluationTest(unittest.TestCase):
+    @staticmethod
+    def prediction(model, origin_month, y_pred, y_true=0.0, target="ppi_food", horizon=1):
+        origin = pm.shift_month(date(2020, 1, 1), origin_month)
+        return pm.Prediction(
+            target=target, horizon=horizon, origin=origin, model=model,
+            y_true=y_true, y_pred=y_pred, train_start=date(2017, 1, 1),
+            train_end=pm.shift_month(origin, -horizon - 1),
+        )
+
+    def test_pair_metrics_use_identical_origins(self):
+        predictions = [
+            self.prediction("b2_ar1", 0, 1.0), self.prediction("b2_ar1", 1, 1.0),
+            self.prediction("b2_ar1", 2, 1.0), self.prediction("b2_ar1", 3, 1.0),
+            self.prediction("b2_ar1_expectations", 1, 0.5),
+            self.prediction("b2_ar1_expectations", 2, 0.5),
+            self.prediction("b2_ar1_expectations", 3, 0.5),
+        ]
+        result = pm.evaluate(predictions, n=50)
+        pair = [row for row in result["pairs"] if row["base_model"] == "b2_ar1"][0]
+        self.assertEqual(pair["n"], 3)
+        self.assertEqual([row.isoformat() for row in pair["origins"]], ["2020-02-01", "2020-03-01", "2020-04-01"])
+
+    def test_delta_sign_and_manual_rmse_mae(self):
+        predictions = [
+            self.prediction("b3_enet", 0, 1.0), self.prediction("b3_enet", 1, -1.0),
+            self.prediction("b3_enet_expectations", 0, 0.5),
+            self.prediction("b3_enet_expectations", 1, -0.5),
+        ]
+        result = pm.evaluate(predictions, n=50)
+        pair = [row for row in result["pairs"] if row["base_model"] == "b3_enet"][0]
+        self.assertAlmostEqual(pair["base_rmse"], 1.0)
+        self.assertAlmostEqual(pair["base_mae"], 1.0)
+        self.assertAlmostEqual(pair["expectations_rmse"], 0.5)
+        self.assertAlmostEqual(pair["delta"], 0.5)
+
+    def test_identical_errors_are_not_significant(self):
+        predictions = []
+        for index in range(4):
+            predictions.extend([
+                self.prediction("b2_ar1", index, 1.0),
+                self.prediction("b2_ar1_expectations", index, 1.0),
+            ])
+        pair = pm.evaluate(predictions, n=50)["pairs"][0]
+        self.assertEqual(pair["delta"], 0.0)
+        self.assertEqual(pair["dm_pvalue"], 1.0)
+        self.assertEqual((pair["ci_low"], pair["ci_high"]), (0.0, 0.0))
+
+    def test_bootstrap_is_deterministic(self):
+        predictions = []
+        for index in range(8):
+            predictions.extend([
+                self.prediction("b2_ar1", index, 1.0 + index / 10),
+                self.prediction("b2_ar1_expectations", index, 0.7 + index / 20),
+            ])
+        first = pm.evaluate(predictions, n=200)
+        second = pm.evaluate(predictions, n=200)
+        self.assertEqual(
+            [(row["ci_low"], row["ci_high"], row["dm_pvalue"]) for row in first["pairs"]],
+            [(row["ci_low"], row["ci_high"], row["dm_pvalue"]) for row in second["pairs"]],
+        )
+
+    def test_mde_requires_two_pairs(self):
+        self.assertIsNone(pm.mde_ratio([1.0], [1.0]))
+        self.assertEqual(pm.mde_ratio([1.0, 2.0], [1.0, 2.0]), 0.0)
+
+    def test_holm_adjustment_is_ordered(self):
+        adjusted = pm.holm_adjust([0.01, 0.03, 0.04])
+        self.assertEqual(adjusted, [0.03, 0.06, 0.06])
+
+    def test_verdict_requires_positive_delta_dm_and_ci(self):
+        base = {
+            "target": "ppi_food", "horizon": 1, "primary": True, "n": 12,
+            "delta": 0.5, "holm_pvalue": 0.01, "ci_low": 0.1, "dm_pvalue": 0.01,
+        }
+        self.assertEqual(pm.research_verdict([base]), "promote")
+        self.assertEqual(pm.research_verdict([{**base, "ci_low": 0.0}]), "iterate")
+        self.assertEqual(pm.research_verdict([{**base, "delta": -0.1}]), "reject")
+        self.assertEqual(pm.research_verdict([{**base, "n": 11}]), "INSUFFICIENT")
+
+
 if __name__ == "__main__":
     unittest.main()
