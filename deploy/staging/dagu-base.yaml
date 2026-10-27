@@ -1,0 +1,57 @@
+# Base DAG для staging (palmshell). Устанавливается make deploy-staging-dagu-base
+# в /root/.config/dagu/base.yaml. Значения наследуются всеми DAG из /root/dagu.
+#
+# Секретов в файле нет: env-значения — ссылки на переменные, которые systemd
+# передаёт процессу dagu из /etc/clickhouse-import-rosstat.env (600). Без секции
+# env шаги dagu не видят ROSSTAT_IMPORT_BIN: `run: "$ROSSTAT_IMPORT_BIN"`
+# раскрывается в пустую команду, шаг завершается кодом 0 без вывода, а DAG
+# рапортует succeeded — тихий отказ импорта (инцидент staging 2026-10-25).
+type: graph
+overlap_policy: skip
+log_output: separate
+hist_retention_days: 30
+max_clean_up_time_sec: 5
+max_active_steps: 10
+max_output_size: 1048576  # 1MB (bytes)
+catchup_window: "6h"
+
+env:
+  - ROSSTAT_IMPORT_BIN: /root/.local/bin/clickhouse-import-rosstat
+  # Российские корневые/промежуточные CA: без них rosstat.gov.ru отдаёт
+  # x509: certificate signed by unknown authority (util.init читает CERT_FILES).
+  # LiteSSL RSA CA 2025 — промежуточный CA sberindex.ru (сервер не отдаёт его
+  # в цепочке; без него sber_consumper_spending_index падает на x509).
+  - CERT_FILES: /root/dagu/certs/russian_trusted_root_ca_pem.crt,/root/dagu/certs/russian_trusted_sub_ca_pem.crt,/root/dagu/certs/russian_trusted_sub_ca_2024_pem.crt,/root/dagu/certs/litessl_rsa_ca_2025.pem
+  - CLICKHOUSE_URL: "${CLICKHOUSE_URL}"
+  - BEA_API_KEY: "${BEA_API_KEY}"
+  - BLS_API_KEY: "${BLS_API_KEY}"
+  - EIA_API_KEY: "${EIA_API_KEY}"
+  - GOST_APP_ID: "${GOST_APP_ID}"
+  - LLM_API_KEY: "${LLM_API_KEY}"
+  - LLM_BASE_URL: "${LLM_BASE_URL}"
+  - MP_SUMMARY_LLM_MODEL: "${MP_SUMMARY_LLM_MODEL}"
+  - ARCHIVE_BACKEND: "${ARCHIVE_BACKEND}"
+  - ARCHIVE_YANDEX_TOKEN: "${ARCHIVE_YANDEX_TOKEN}"
+  - ARCHIVE_YANDEX_DIR: "${ARCHIVE_YANDEX_DIR}"
+
+# Письмо при падении DAG (после 3 ретраев шага). SMTP_* и MAIL_* — в
+# /etc/clickhouse-import-rosstat.env; MAIL_TO — адрес шлюза CMC (email→SMS).
+# attach_logs прикладывает .out/.err шага, чтобы причина была видна без SSH.
+# Dagu 2.18.2 не раскрывает ${…} в smtp-полях (в отличие от env шагов),
+# поэтому значения подставляет render-dagu-base.py при установке из
+# /etc/clickhouse-import-rosstat.env. Плейсхолдеры в репозитории — не секреты.
+smtp:
+  host: "__SMTP_HOST__"
+  port: __SMTP_PORT__
+  username: "__SMTP_USER__"
+  password: "__SMTP_PASSWORD__"
+
+error_mail:
+  from: "__MAIL_FROM__"
+  to: "__MAIL_TO__"
+  prefix: "[DAGU palmshell]"
+  attach_logs: true
+
+mail_on:
+  failure: true
+  success: false

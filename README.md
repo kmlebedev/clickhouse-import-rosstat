@@ -19,6 +19,7 @@ Docs-портал: **https://kmlebedev.github.io/clickhouse-import-rosstat/** �
 | [docs/LIMITATIONS.md](docs/LIMITATIONS.md) | ограничения и известные проблемы |
 | [docs/GRAFANA.md](docs/GRAFANA.md) | дашборды как код, стенды и приёмка |
 | [docs/GOLD_CONTOUR.md](docs/GOLD_CONTOUR.md) | контур прогноза золота, ingest-endpoint, плагин |
+| [docs/publications/README.md](docs/publications/README.md) | публикационный прогон по ключевой ставке: импорт источников, модели ИПЦ и ставки, журнал, витрина, графики |
 | [docs/IMPORTER_PACKAGE_STANDARD.md](docs/IMPORTER_PACKAGE_STANDARD.md) | нормативный стандарт пакета импортёров |
 | [docs/ROADMAP_INDEX.md](docs/ROADMAP_INDEX.md) | реестр роадмапов, слаги и GitHub-трекер |
 | [AGENTS.md](AGENTS.md) | правила работы AI-ассистентов |
@@ -48,14 +49,16 @@ SELECT venue, count(), max(date) FROM gold_prices FINAL GROUP BY venue;
 
 | Домен | Что импортирует | Основные таблицы | Расписание (МСК) |
 |---|---|---|---|
-| [`cbr`](docs/IMPORTERS.md) | ЦБ РФ: ставка, курс, M2, золото, кредиты, ставки, ИПЦ, RUONIA, мониторинг предприятий (16 отраслевых листов), макроопрос, резюме ДКП, платёжный баланс, ДИП, среднесрочный прогноз, форма 101, кривая бескупонной доходности (КБД), макропруденциальные требования (АЦН-индикаторы, надбавки к коэффициентам риска, МПЛ), публичный кроссворд 87 BSU-кодов на отраслевые листы, график публикаций ЦБ и исторические `published_at` | `cbr_*`, `macro_series`, `cbr_mp_summary*`, `cbr_bop_*`, `cbr_dip_bulletin`, `cbr_mt_forecast`, `cbr_form101`, `cbr_zcyc`, `cbr_ccyb_indicators`, `cbr_risk_weight_addons`, `cbr_mpl`, `cbr_mp_bsu_map`, `cbr_publication_calendar`, generic `series_publication`; слой ДИП — витрины `v_point_in_time`, `v_point_in_time_asof` (срез `as_of='YYYY-MM-DD'`), `v_point_in_time_version`; КБД — витрины `v_ofz_curve_compare`, `v_ofz_signal`; макропруденциальные требования — витрины `v_cbr_ccyb_indicators`, `v_cbr_risk_weight_addons`, `v_cbr_mpl`; Task 7 #248 — витрины `v_cbr_mp_bsu_map`, `v_cbr_mp_public_panel`; календарь — `v_cbr_publication_calendar`, `v_series_publication` | ежедневно 09:17 |
+| [`cbr`](docs/IMPORTERS.md) | ЦБ РФ: ставка, курс, M2, золото, кредиты, ставки, ИПЦ, RUONIA, мониторинг предприятий (16 отраслевых листов), макроопрос, резюме ДКП, пресс-релизы и стенограммы пресс-конференций по ключевой ставке, платёжный баланс, ДИП, среднесрочный прогноз, форма 101, кривая бескупонной доходности (КБД), макропруденциальные требования (АЦН-индикаторы, надбавки к коэффициентам риска, МПЛ), публичный кроссворд 87 BSU-кодов на отраслевые листы, график публикаций ЦБ и исторические `published_at` | `cbr_*`, `macro_series`, `cbr_mp_summary*`, `cbr_key_rate_press*`, `cbr_key_rate_pressconf*`, `cbr_bop_*`, `cbr_dip_bulletin`, `cbr_mt_forecast`, `cbr_form101`, `cbr_zcyc`, `cbr_ccyb_indicators`, `cbr_risk_weight_addons`, `cbr_mpl`, `cbr_mp_bsu_map`, `cbr_publication_calendar`, generic `series_publication`; слой ДИП — витрины `v_point_in_time`, `v_point_in_time_asof` (срез `as_of='YYYY-MM-DD'`), `v_point_in_time_version`; КБД — витрины `v_ofz_curve_compare`, `v_ofz_signal`; макропруденциальные требования — витрины `v_cbr_ccyb_indicators`, `v_cbr_risk_weight_addons`, `v_cbr_mpl`; Task 7 #248 — витрины `v_cbr_mp_bsu_map`, `v_cbr_mp_public_panel`; календарь — `v_cbr_publication_calendar`, `v_series_publication` | ежедневно 09:17 |
 | [`rosstat`](docs/IMPORTERS.md) | ИПЦ (месяц, неделя, до 2022), недельный агрегат ИПЦ 2019+ из BI, зарплаты, ВВП, рынок труда, ИЦП по ВЭД (совокупный ряд, 1998+, m/m / ytd / y/y / period), ИЦП по товарам/ОКПД2 (1 327 кодов, 2021–2026, 4 типа), веса ИЦП по ВЭД (38 кодов, 2017–2026, domestic и domestic+export), публичный классификатор ОКВЭД2 (3 102 строки, 87/87 BSU-кодов) | `rosstat_*`; Task 7 #248 — `rosstat_okved2` и витрина `v_rosstat_okved2`; `rosstat_bi_cpi_weekly` — 398 точек 2019-01-09…2026-10-12; T1 #276 — `rosstat_ppi_ved`; T2 #277 — `rosstat_ppi_product` (336 512 точек 2021-01…2026-08) и `rosstat_ppi_weights` (758 точек, 2017–2026); витрина `v_rosstat_ppi` (339 585 строк / 5 408 рядов)| четверг 12:17 |
 | [`ppi`](docs/IMPORTERS.md) | Производный слой ИЦП SA: X-13ARIMA-SEATS `seats_log_cal`, 5 рядов (`total`, `food`, `nonfood`, `all`, `core`), `sa`/`mm_sa`/`saar`/`saar3`; `spec_version`/`taxonomy_version` в каждой строке; требует `Rscript` + `seasonal` | `ppi_sa`; каталог `series_catalog` (`source='ppi_sa'`, 25 рядов); витрина `v_rosstat_ppi` (339 585 строк / 5 408 рядов)| четверг 14:17 |
-| [`fedstat`](docs/IMPORTERS.md) | ЕМИСС 37426: еженедельные средние потребительские цены (тарифы) на 158 товаров и услуг, рубли; 2008–2022 по РФ и 2026 недели 39–40 по РФ без новых субъектов; 2023–2025 в источнике отсутствуют | `fedstat_weekly_prices` (56 133 точки); витрина `v_fedstat_weekly_prices` | пятница 13:43 |
+| [`weeklysa`](docs/IMPORTERS.md) | Производный недельный SA-агрегат ИПЦ: X-13ARIMA-SEATS `seats_log_cal` на 4-нед. индексе официального недельного агрегата (бюллетени 2009–2021 + BI 2019+), 3 метрики `sa_index`/`sa_4w`/`saar`; требует `Rscript` + `seasonal` | `weekly_cpi_sa` (209 полных + 1 nowcast 2009-05…2026-10); каталог `series_catalog` (`source='weekly_cpi_sa'`, 3 ряда); витрина `v_weekly_cpi_sa` (630 строк / 3 ряда) | четверг 14:17 |
+| [`fedstat`](docs/IMPORTERS.md) | ЕМИСС: еженедельные средние потребительские цены (37426, 158 товаров, 2008–2022 + 2026) и пять макро-блоков — ИПП (43046/57806), розница (31066/31260), сельхоз (34128/59001/31062/43337), инвестиции (58089/58090/34129/40562/34475), ИПЦ 31074 (1 105 товаров) | `fedstat_weekly_prices` (56 133 точки), `fedstat_ipp` (55 968), `fedstat_retail` (4 638), `fedstat_agri` (565), `fedstat_investment` (153), `fedstat_ipc` (204 038); витрины `v_fedstat_*` | пятница 13:43 |
 | [`minfin`](docs/IMPORTERS.md) | исполнение федерального и консолидированного бюджета (включая федеральный дефицит), нефтегазовые доходы и НДПИ; общий шаблон импортёра, значения Float64 | `minfin_fed_bud_*`, `minfin_oil_gas_mes` | 10-е 10:41 |
 | [`customs`](docs/IMPORTERS.md) | внешняя торговля по странам | `customs_vneshn_torg` | 15-е 11:41 |
 | [`fao`](docs/IMPORTERS.md) | индексы продовольственных цен (6 рядов, включая Sugar) | `fao_food_price_Indices_monthly`; витрина `v_fao_food_price` | 5-е 10:47 |
 | [`bank`](docs/IMPORTERS.md) | ДОМ.РФ, ВТБ, Сбер, СберИндекс, Т-Банк | `domrf_mortgage`, `rus_vtb_group_ifrs`, `sber_*`, `tbank_group_ifrs` | понедельник 09:23 |
+| [`domrf`](docs/IMPORTERS.md) | рынок жилья ДОМ.РФ: месячные выдачи и ДДУ, портфель, просрочка, ставки выдачи; недельная ставка предложения по продуктам; индекс цен первички и сделки по регионам | `domrf_mortgage_market`, `domrf_mortgage_weekly`, `domrf_price_index`; витрины `v_domrf_mortgage`, `v_domrf_price_index` | понедельник 09:47 |
 | [`craw`](docs/IMPORTERS.md) | реестр СБКТС Росстандарта | `gost_vehicle_safety_certificate` | ежечасно :17 |
 | [`edisclosure`](docs/IMPORTERS.md) | документы карточек [e-disclosure.ru](https://e-disclosure.ru/): отчётность IFRS/RAS, списки аффилированных лиц, решения собраний (PLZL, SBER, CHMF); коллектор полуавтоматический, импорт детерминированный | `edisclosure_documents`; витрина `v_edisclosure_documents` | 5-е число 21:17 (шаг `dagu/edisclosure.yaml`); сбор — вручную |
 | [`fred`](docs/IMPORTERS.md), [`bls`](docs/IMPORTERS.md), [`bea`](docs/IMPORTERS.md), [`eia`](docs/IMPORTERS.md) | US macro: ставки, CPI, PCE, NFP, запасы нефти | `macro_series` | ежедневно / среда |
@@ -77,7 +80,7 @@ SELECT venue, count(), max(date) FROM gold_prices FINAL GROUP BY venue;
 main.go              точка входа и фильтр импортёров
 chimport/            интерфейс ImportStat и реестр Stats
 util/                HTTP, шаблон импортёра, батч-вставка
-cbr/ rosstat/ ppi/ ... доменные импортёры
+cbr/ rosstat/ ppi/ weeklysa/ ofz/ ... доменные импортёры
 views/ dcf/          витрины, DCF/NAV
 ingest/ cmd/ingest/  ingest-endpoint контура прогноза
 dagu/                расписания DAG
@@ -150,7 +153,7 @@ make mlflow-down
 | `make all` | gofmt, lint, vet, `go test -race`, сборка |
 | `make test` / `make lint` | тесты / линт |
 | `make build` | бинарник `linux/amd64` в `build/` |
-| `make import STAT=<имя>` | локальный прогон импортёра |
+| `make import STAT=<имя|группа>` | локальный прогон импортёра; `STAT=key_rate_sources` — все 50 источников контура ключевой ставки одной командой (группа раскрывается Makefile, порядок — регистрация в `chimport.Stats`) |
 | `make cpi-nowcast` | nowcast ИПЦ; `ML_LOG=1 MLFLOW=1` включает журнал и MLflow |
 | `make key-rate-model` / `make key-rate-forecast-log` | прогноз ставки (локальные артефакты; консенсус-бенчмарк №4 — годовая средняя + B4-проекция) / запись прогноза в `forecast_log` через ingest; `ML_LOG=1 MLFLOW=1` включает журнал и MLflow |
 | `make key-rate-cbr-rule` / `make key-rate-cbr-rule-test` | экспериментальный трек `cbr_rule` — калиброванное правило ДДКП ЦБ: 108 заседаний, 84/68 фолдов, DM/CI, Brier/log loss против B1–B3 и `ordered_logit`; локальные артефакты `key_rate_cbr_rule_*`, **в `forecast_log` не пишет**, вердикт — `reject` (issue #268) / офлайн-тесты без ClickHouse и сети |
@@ -185,8 +188,27 @@ make mlflow-down
 | Python-инженер (не-ML) | [`python-engineer`](.kimi-code/skills/python-engineer/SKILL.md) |
 | ML-инженер | [`ml-engineer`](.kimi-code/skills/ml-engineer/SKILL.md) |
 | Research-инженер | [`research-engineer`](.kimi-code/skills/research-engineer/SKILL.md) |
+| Главный редактор | [`editor-in-chief`](.kimi-code/skills/editor-in-chief/SKILL.md) |
 
 Общий роутер — [AGENTS.md](AGENTS.md); диспатч субагентов — [`subagent-dispatch`](.kimi-code/skills/subagent-dispatch/SKILL.md). Скилы не отменяют Go-стандарт для DDL/импортёров.
+
+### Подключение как плагин LLM-клиента
+
+Репозиторий устанавливается как плагин в Kimi Code, Claude Code, Codex, Cursor и Qwen Code. Единственный источник скилов — [`.kimi-code/skills/`](.kimi-code/skills/); манифесты в корне только ссылаются на него, поэтому состав плагина совпадает с составом ролевых скилов.
+
+| Клиент | Установка |
+|---|---|
+| Kimi Code | `/plugins install https://github.com/kmlebedev/clickhouse-import-rosstat/tree/main` |
+| Claude Code | `claude plugin marketplace add kmlebedev/clickhouse-import-rosstat`<br>`claude plugin install clickhouse-import-rosstat@clickhouse-import-rosstat` |
+| Codex | `codex plugin marketplace add kmlebedev/clickhouse-import-rosstat`<br>`codex plugin add clickhouse-import-rosstat@clickhouse-import-rosstat` |
+| Cursor | `/add-plugin https://github.com/kmlebedev/clickhouse-import-rosstat` |
+| Qwen Code | `qwen extensions install kmlebedev/clickhouse-import-rosstat` |
+
+После установки — `/reload` или новая сессия. Скилы вызываются с namespace: `/skill:clickhouse-import-rosstat:go-engineer`; Kimi дополнительно получает агента `coder`.
+
+Ограничения: установка копирует снапшот репозитория (~86 МБ), и относительные ссылки в скилах ведут в этот снапшот, а не в рабочее дерево — после изменения docs/скилов плагин нужно переустановить. Короткий GitHub-URL Kimi (`/plugins install https://github.com/...`) ставит последний релиз; пока в нём нет манифеста, используйте `/tree/main`. MCP в плагин не входит: в репозитории ClickHouse-доступ даёт [`.kimi-code/mcp.json`](.kimi-code/mcp.json).
+
+Метаданные манифестов (`name`, `version`, длинное и короткое описание) синхронизируются из `.claude-plugin/plugin.json` и `.claude-plugin/marketplace.json`: на PR [`.github/workflows/sync-manifests.yml`](.github/workflows/sync-manifests.yml) проверяет дрейф, на push в `main` — дописывает и коммитит. Локально — `make plugin-manifests-check` и `make plugin-manifests-sync`.
 
 Полный набор целей, Python-тесты, зависимости и CI — [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 

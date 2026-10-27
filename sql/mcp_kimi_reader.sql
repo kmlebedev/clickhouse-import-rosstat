@@ -12,8 +12,18 @@ GRANT SELECT ON default.v_rosstat_macro TO kimi_reader;
 -- ИЦП: сырые ряды по ВЭД, товарам/ОКПД2, веса и производный SA-слой (T5 #280).
 -- Сырые rosstat_ppi_ved/product/weights и ppi_sa агенту не выданы — только витрина.
 GRANT SELECT ON default.v_rosstat_ppi TO kimi_reader;
+-- Недельный SA-агрегат ИПЦ (пункт key-rate/phase-4-weekly-sa-aggregate, #353):
+-- производный ряд weekly_cpi_sa; сырая таблица агенту не выдана — только витрина.
+GRANT SELECT ON default.v_weekly_cpi_sa TO kimi_reader;
 -- ЕМИСС 37426: недельные средние потребительские цены (импортёр fedstat_weekly_prices)
 GRANT SELECT ON default.v_fedstat_weekly_prices TO kimi_reader;
+-- ЕМИСС макро-блоки: ИПП, розница, сельхоз, инвестиции, ИПЦ 31074 (импортёры fedstat_ipp,
+-- fedstat_retail, fedstat_agri, fedstat_investment, fedstat_ipc)
+GRANT SELECT ON default.v_fedstat_ipp TO kimi_reader;
+GRANT SELECT ON default.v_fedstat_retail TO kimi_reader;
+GRANT SELECT ON default.v_fedstat_agri TO kimi_reader;
+GRANT SELECT ON default.v_fedstat_investment TO kimi_reader;
+GRANT SELECT ON default.v_fedstat_ipc TO kimi_reader;
 GRANT SELECT ON default.v_minfin_budget TO kimi_reader;
 GRANT SELECT ON default.v_gold_prices TO kimi_reader;
 GRANT SELECT ON default.v_stock_prices TO kimi_reader;
@@ -48,6 +58,17 @@ GRANT SELECT ON default.v_cbr_mo_br TO kimi_reader;
 GRANT SELECT ON default.v_cbr_mp_summary TO kimi_reader;
 GRANT SELECT ON default.v_cbr_mp_summary_blocks TO kimi_reader;
 GRANT SELECT ON default.v_cbr_mp_summary_channels TO kimi_reader;
+-- Контур пресс-релизов по ключевой ставке (пункт key-rate/phase-4-cbr-key-rate-press, #368):
+-- три витрины — шапка релиза, абзацы и квартальные блоки; сырые таблицы агенту закрыты.
+GRANT SELECT ON default.v_cbr_key_rate_press TO kimi_reader;
+GRANT SELECT ON default.v_cbr_key_rate_press_blocks TO kimi_reader;
+GRANT SELECT ON default.v_cbr_key_rate_press_quarters TO kimi_reader;
+-- Контур стенограмм пресс-конференций по ключевой ставке (пункт
+-- key-rate/phase-4-cbr-key-rate-pressconf, #370): три витрины — шапка, реплики с
+-- таймкодами и полный текст; сырые таблицы агенту закрыты.
+GRANT SELECT ON default.v_cbr_key_rate_pressconf TO kimi_reader;
+GRANT SELECT ON default.v_cbr_key_rate_pressconf_cues TO kimi_reader;
+GRANT SELECT ON default.v_cbr_key_rate_pressconf_text TO kimi_reader;
 GRANT SELECT ON default.v_bank_sber_spending TO kimi_reader;
 GRANT SELECT ON default.v_bank_macro TO kimi_reader;
 GRANT SELECT ON default.v_cbr_bop TO kimi_reader;
@@ -65,6 +86,7 @@ GRANT SELECT ON default.v_cbr_form101_loans TO kimi_reader;
 GRANT SELECT ON default.v_ofz_curve_compare TO kimi_reader;
 GRANT SELECT ON default.v_ofz_signal TO kimi_reader;
 GRANT SELECT ON default.v_ofz_stress TO kimi_reader;
+GRANT SELECT ON default.v_ofz_issue_analytics TO kimi_reader;
 -- Макропруденциальные требования (пункт key-rate/phase-2-ccyb, #115): АЦН-индикаторы,
 -- матрицы надбавок и МПЛ. Сырые cbr_ccyb_indicators/cbr_risk_weight_addons/cbr_mpl
 -- агенту не выданы — только витрины.
@@ -94,3 +116,13 @@ GRANT SELECT ON default.v_cbr_mp_public_panel TO kimi_reader;
 -- Рыночные ряды MOEX (пункт key-rate/phase-2-brent, #113): Brent-фронт-месяц.
 -- Сырая moex_market агенту не выдана — только витрина.
 GRANT SELECT ON default.v_moex_market TO kimi_reader;
+
+-- e-disclosure (dcf-polyus/phase-3, #182): документы карточек PLZL/SBER/CHMF.
+-- Сырая edisclosure_documents агенту не выдана — только витрина с версией и архивом.
+GRANT SELECT ON default.v_edisclosure_documents TO kimi_reader;
+
+-- Контур недвижимости (пункт real-estate/1.1): рынок ипотеки ДОМ.РФ и индекс цен первички.
+-- Сырые domrf_mortgage_market, domrf_mortgage_weekly и domrf_price_index агенту не выданы —
+-- только витрины с комментариями колонок.
+GRANT SELECT ON default.v_domrf_mortgage TO kimi_reader;
+GRANT SELECT ON default.v_domrf_price_index TO kimi_reader;

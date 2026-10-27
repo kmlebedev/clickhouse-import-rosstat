@@ -1,5 +1,7 @@
 package news
 
+import "strings"
+
 // Реестр тегов LLM-разметки видимого потока новостей (Telegram и RSS, спека §4.3). Реестр — единственный источник
 // правды о допустимых тегах: промпт перечисляет его модели, а validateNewsAnnotations
 // отбрасывает всё, чего в нём нет. Поэтому новый тег появляется здесь, а не в промпте.
@@ -39,8 +41,10 @@ const (
 // newsPromptVersion — редакция промпта разметки. Входит в ключ news_annotation
 // (prompt_version), поэтому новая редакция добавляет строки рядом со старой, а не затирает
 // её. Значение дублируется меткой в system-промпте и закреплено тестом: менять только
-// сознательно, вместе с правкой инструкции.
-const newsPromptVersion = 2
+// сознательно, вместе с правкой инструкции. Редакция 3 выровняла слаги cb_channel по канону
+// cbr/mp_summary_channels.go (KEY_RATE_CHANNELS.md §3.1): реестр и промпт видят только канон,
+// а строки редакций ≤2 читаются через newsTagAliases.
+const newsPromptVersion = 3
 
 // newsTags — реестр из спеки §4.3: 8 персон, 7 стран, 8 секторов, 12 событий и
 // 11 каналов ключевой ставки из docs/KEY_RATE_CHANNELS.md §3 (всего 46). Порядок — порядок
@@ -94,13 +98,13 @@ var newsTags = []newsTag{
 	{Dimension: newsDimCBChannel, Slug: "core_inflation", Title: "Устойчивая («базовая») инфляция", Direction: newsDirectionPro},
 	{Dimension: newsDimCBChannel, Slug: "expectations", Title: "Инфляционные и ценовые ожидания", Direction: newsDirectionPro},
 	{Dimension: newsDimCBChannel, Slug: "labor_market", Title: "Рынок труда", Direction: newsDirectionPro},
-	{Dimension: newsDimCBChannel, Slug: "credit_transmission", Title: "Кредитование и трансмиссия ДКП", Direction: newsDirectionDez},
+	{Dimension: newsDimCBChannel, Slug: "lending_transmission", Title: "Кредитование и трансмиссия ДКП", Direction: newsDirectionDez},
 	{Dimension: newsDimCBChannel, Slug: "output_gap", Title: "Разрыв выпуска / перегрев спроса", Direction: newsDirectionPro},
 	{Dimension: newsDimCBChannel, Slug: "budget_impulse", Title: "Бюджетный импульс", Direction: newsDirectionPro},
 	{Dimension: newsDimCBChannel, Slug: "money_supply", Title: "Денежная масса", Direction: newsDirectionPro},
-	{Dimension: newsDimCBChannel, Slug: "external_conditions", Title: "Внешние условия и курс", Direction: newsDirectionPro},
-	{Dimension: newsDimCBChannel, Slug: "savings", Title: "Сберегательное поведение", Direction: newsDirectionDez},
-	{Dimension: newsDimCBChannel, Slug: "macroprudential", Title: "Макропруденциальные требования", Direction: newsDirectionDez},
+	{Dimension: newsDimCBChannel, Slug: "external_fx", Title: "Внешние условия и курс", Direction: newsDirectionPro},
+	{Dimension: newsDimCBChannel, Slug: "savings_behavior", Title: "Сберегательное поведение", Direction: newsDirectionDez},
+	{Dimension: newsDimCBChannel, Slug: "autonomous_factors", Title: "Автономные (немонетарные) факторы", Direction: newsDirectionDez},
 }
 
 // newsTagByKey ищет тег по паре (dimension, slug). Вторая величина — признак наличия:
@@ -113,4 +117,41 @@ func newsTagByKey(dimension, slug string) (newsTag, bool) {
 		}
 	}
 	return newsTag{}, false
+}
+
+// newsTagAlias — legacy-слаг канала в уже размеченных строках news_annotation. До унификации
+// (#329) реестр тегов хранил credit_transmission, external_conditions, savings и
+// macroprudential, тогда как каноном были слаги cbr/mp_summary_channels.go. Алиасы не входят
+// в newsTags: промпт и валидация видят только канон, а витрины нормализуют историю на чтении.
+type newsTagAlias struct {
+	Dimension string
+	Legacy    string
+	Canonical string
+}
+
+// newsTagAliases — единственный источник маппинга legacy-слагов для v_news_events и
+// v_news_flash. Строки news_annotation не переписываются: prompt_version входит в ключ, и
+// старая разметка остаётся рядом с новой редакцией. Dimension проверяется в SQL, потому что
+// слаги повторяются между измерениями (labor_market, budget_impulse).
+var newsTagAliases = []newsTagAlias{
+	{Dimension: newsDimCBChannel, Legacy: "credit_transmission", Canonical: "lending_transmission"},
+	{Dimension: newsDimCBChannel, Legacy: "external_conditions", Canonical: "external_fx"},
+	{Dimension: newsDimCBChannel, Legacy: "savings", Canonical: "savings_behavior"},
+	{Dimension: newsDimCBChannel, Legacy: "macroprudential", Canonical: "autonomous_factors"},
+}
+
+// newsTagCanonicalSQL собирает SQL-выражение, заменяющее legacy-слаг канала на канон в
+// витринах. expr — ссылка на колонку тега (в витринах это t.tag); измерение сверяется с
+// t.dimension, чтобы алиас не сработал в другом измерении. Без алиасов выражение — сам expr.
+func newsTagCanonicalSQL(expr string) string {
+	if len(newsTagAliases) == 0 {
+		return expr
+	}
+	var b strings.Builder
+	b.WriteString("multiIf(")
+	for _, alias := range newsTagAliases {
+		b.WriteString("t.dimension = " + newsSQLString(alias.Dimension) + " AND " + expr + " = " + newsSQLString(alias.Legacy) + ", " + newsSQLString(alias.Canonical) + ", ")
+	}
+	b.WriteString(expr + ")")
+	return b.String()
 }

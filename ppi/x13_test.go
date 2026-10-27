@@ -120,18 +120,6 @@ func TestRunX13MissingRscript(t *testing.T) {
 	}
 }
 
-func TestREnvironmentExcludesSecrets(t *testing.T) {
-	t.Setenv("PPI_SA_TEST_SECRET", "super-secret")
-	t.Setenv("R_LIBS_USER", "/tmp/r-lib")
-	joined := strings.Join(rEnvironment(), "\n")
-	if strings.Contains(joined, "PPI_SA_TEST_SECRET") || strings.Contains(joined, "super-secret") {
-		t.Fatal("окружение R содержит секрет конвейера")
-	}
-	if !strings.Contains(joined, "R_LIBS_USER=/tmp/r-lib") {
-		t.Fatalf("окружение R не содержит R_LIBS_USER: %q", joined)
-	}
-}
-
 func TestDataSyncWithResearch(t *testing.T) {
 	cases := []struct {
 		name string

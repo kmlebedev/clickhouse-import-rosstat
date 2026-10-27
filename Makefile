@@ -85,13 +85,14 @@ MLFLOW_PREFLIGHT := $(if $(filter 1,$(MLFLOW)),python3 scripts/mlflow_preflight.
 STAGING_HOST     ?= palmshell
 STAGING_BIN_DIR  ?= /root/.local/bin
 STAGING_ENV_FILE ?= /etc/clickhouse-import-rosstat.env
+STAGING_DAGU_BASE ?= deploy/staging/dagu-base.yaml
 DAGU_VERSION     ?= v2.18.2
 
 # Docs-портал GitHub Pages: версия mkdocs-material общая с .github/workflows/pages.yml.
 MKDOCS_VERSION ?= 9.7.7
 MKDOCS := uv run --with mkdocs-material==$(MKDOCS_VERSION) --python 3.12 mkdocs
 
-.PHONY: all lint fmt vet test build run deps clean info ch-up ch-down ch-status ch-sql mlflow-up mlflow-down mlflow-status mlflow-export mlflow-backfill mlflow-backfill-test mlflow-preflight mlflow-register mlflow-promote mlflow-models ml-gate ml-gate-test ml-live-check ml-live-check-test dev-check env-check import mp-llm-eval archive-registry archive-list archive-restore mcp-run mcp-user mcp-check build-ingest run-ingest deploy-staging deploy-staging-binary deploy-staging-dagu deploy-staging-mcp deploy-staging-mlflow deploy-staging-preflight deploy-staging-smoke upgrade-staging mcp-user-staging staging-precheck grafana-build grafana-validate grafana-up grafana-down grafana-deploy-test grafana-deploy-staging grafana-provision-staging grafana-check grafana-test-token grafana-provision-alerting-staging key-rate-model key-rate-cbr-rule key-rate-cbr-rule-test key-rate-scenario-fan key-rate-scenario-fan-test key-rate-scenario-fan-v2 key-rate-scenario-fan-v2-test key-rate-scenario-fan-v3 key-rate-scenario-fan-v3-test key-rate-cpi-v3-experiment key-rate-cpi-v3-experiment-test cpi-live3-horizons cpi-live3-horizons-test shock-classifier shock-classifier-test key-rate-llm-forecast key-rate-forecast-log cpi-nowcast cpi-monthly cpi-monthly-v3 cpi-monthly-v3-test cpi-monthly-industry cpi-monthly-industry-test cpi-public-audit cpi-public-audit-test cpi-weekly-panel cpi-weekly-panel-test cpi-pipeline-stage1 cpi-pipeline-stage1-test cpi-pipeline-stage2 cpi-pipeline-stage2-test cpi-pipeline-sa-test publication-calendar-test cb-comp-parity cb-comp-parity-test cb-comp-live cb-comp-live-test cb-comp-live-compare cb-comp-proxy ppi-sa-weights-panel ppi-sa-weights-panel-test ppi-sa-parity ppi-sa-parity-test ppi-sa-text-anchors ppi-sa-text-anchors-test edisclosure-login edisclosure-collect docs-check docs-build docs-serve
+.PHONY: all lint fmt vet test build run deps clean info ch-up ch-down ch-status ch-sql mlflow-up mlflow-down mlflow-status mlflow-export mlflow-backfill mlflow-backfill-test mlflow-preflight mlflow-register mlflow-promote mlflow-models ml-gate ml-gate-test ml-live-check ml-live-check-test dev-check env-check import mp-llm-eval archive-registry archive-list archive-restore mcp-run mcp-user mcp-check build-ingest run-ingest deploy-staging deploy-staging-binary deploy-staging-dagu deploy-staging-mcp deploy-staging-mlflow deploy-staging-preflight deploy-staging-smoke upgrade-staging mcp-user-staging staging-precheck grafana-build grafana-validate grafana-up grafana-down grafana-deploy-test grafana-deploy-staging grafana-provision-staging grafana-check grafana-test-token grafana-provision-alerting-staging key-rate-model key-rate-cbr-rule key-rate-cbr-rule-test key-rate-scenario-fan key-rate-scenario-fan-test key-rate-scenario-fan-v2 key-rate-scenario-fan-v2-test key-rate-scenario-fan-v3 key-rate-scenario-fan-v3-test key-rate-cpi-v3-experiment key-rate-cpi-v3-experiment-test cpi-live3-horizons cpi-live3-horizons-test shock-classifier shock-classifier-test key-rate-llm-forecast key-rate-forecast-log cpi-nowcast cpi-monthly cpi-monthly-v3 cpi-monthly-v3-test cpi-monthly-industry cpi-monthly-industry-test cpi-public-audit cpi-public-audit-test cpi-weekly-panel cpi-weekly-panel-test weekly-core-proxy weekly-core-proxy-test weekly-core-components weekly-core-components-test cpi-pipeline-stage1 cpi-pipeline-stage1-test cpi-pipeline-stage2 cpi-pipeline-stage2-test cpi-pipeline-sa-test publication-calendar-test cb-comp-parity cb-comp-parity-test cb-comp-live cb-comp-live-test cb-comp-live-compare cb-comp-proxy ppi-sa-weights-panel ppi-sa-weights-panel-test ppi-sa-parity ppi-sa-parity-test edisclosure-login edisclosure-collect docs-check docs-build docs-serve plugin-manifests-check plugin-manifests-sync
 
 all: lint test build build-ingest
 
@@ -331,13 +332,43 @@ env-check:
 	@if [ -n "$$GRAFANA_TEST_TOKEN" ]; then echo "OK   GRAFANA_TEST_TOKEN задан"; else echo "НЕТ  GRAFANA_TEST_TOKEN не задан (нужен для make grafana-deploy-test: сервис-аккаунт Editor на $(GRAFANA_TEST_URL))"; fi
 	@if [ -n "$$GRAFANA_STAGING_TOKEN" ]; then echo "OK   GRAFANA_STAGING_TOKEN задан"; else echo "НЕТ  GRAFANA_STAGING_TOKEN не задан (нужен для make grafana-deploy-staging: сервис-аккаунт Editor на staging, доступ через туннель $(GRAFANA_STAGING_URL))"; fi
 
-# Локальный прогон одного импортёра: make import STAT=bea (нужны CLICKHOUSE_URL и ключ импортёра из $(ROSSTAT_ENV)).
+# Локальный прогон одного импортёра или группы: make import STAT=bea / STAT=key_rate_sources
+# (нужны CLICKHOUSE_URL и ключи источников из $(ROSSTAT_ENV)).
 STAT ?=
+
+# Группа «источники контура ключевой ставки»: make import STAT=key_rate_sources.
+# Группа — не импортёр, а именованный список Name() через запятую: main.go принимает
+# список (CLICKHOUSE_IMPORT_STAT=a,b), запускает выбранные импортёры в одном процессе и
+# одном соединении, а ошибка одного не останавливает остальные (итоговый код — 1).
+# Порядок исполнения — порядок регистрации в chimport.Stats, а не порядок списка; пробелы
+# после запятых (перенос строки) parseImportFilter срезает TrimSpace. Новая группа — новая
+# переменная STATS_<имя>, рецепт import её подхватывает без правок.
+# Состав — контракт публикации (docs/KEY_RATE_PUBLICATIONS.md §6) и карта каналов
+# (docs/KEY_RATE_CHANNELS.md §8/§8.1); обоснование состава — docs/publications/README.md.
+STATS_key_rate_sources := \
+	cbr_key_rate,cbr_currency_usd,cbr_m2,cbr_credit_m2x,\
+	cbr_loans_to_corporations,cbr_loans_to_individuals,cbr_households_b_mes,\
+	cbr_infl_exp,cbr_bank_int_rate,cbr_int_rate_loans,cbr_ruania,cbr_indicators_cpd,\
+	cbr_zcyc,cbr_mp_survey,cbr_mo_br,cbr_mp_summary,cbr_bop_est,cbr_bop_standard,\
+	cbr_dip_bulletin,cbr_mt_forecast,cbr_form101,cbr_ccyb_indicators,\
+	cbr_risk_weight_addons,cbr_mpl,cbr_mp_bsu_map,cbr_publication_calendar,\
+	rosstat_ipc_mes,rosstat_ipc_weeks,rosstat_bi_cpi_weekly,rosstat_ipc_weeks_bulletins,\
+	rosstat_labour_force_mes,rosstat_salaries_mes,rosstat_vvp_kvartal,\
+	minfin_fed_bud_mes,minfin_fed_bud_mesyats,minfin_oil_gas_mes,\
+	minfin_debt_stock,minfin_debt_service,minfin_ofz_auction,\
+	moex_market,keyrate_futures,ofz_curve,\
+	sber_consumper_spending_index,sber_izmenenie_trat,bank_company_metrics,domrf_mortgage,\
+	fedstat_weekly_prices,fedstat_ipc,news_watch,events_calendar
+# В Makefile выше стоит голый export (строка 2): без unexport имя группы с запятыми и
+# пробелами уехало бы в окружение дочернего процесса.
+unexport STATS_key_rate_sources
+
 import:
 	@test -n "$(STAT)" || { echo "укажите импортёр: make import STAT=bea"; exit 1; }
+	@if [ -n "$(STATS_$(STAT))" ]; then echo "группа $(STAT): $(STATS_$(STAT))"; fi
 	@mkdir -p $(BUILD_DIR)
 	go build -o $(BUILD_DIR)/$(BINARY)-native .
-	CLICKHOUSE_IMPORT_STAT=$(STAT) ./$(BUILD_DIR)/$(BINARY)-native
+	CLICKHOUSE_IMPORT_STAT="$(or $(STATS_$(STAT)),$(STAT))" ./$(BUILD_DIR)/$(BINARY)-native
 
 # Живой harness сравнения LLM-моделей разметки cbr_mp_summary (спека §3.4): читает документы
 # ЦБ и ClickHouse, пишет артефакты в $(CURDIR)/build/mp-llm-eval (MP_LLM_EVAL_OUT).
@@ -586,6 +617,24 @@ cpi-public-audit:
 cpi-public-audit-test:
 	uv run --with openpyxl --python 3.12 python3 scripts/models/cpi/cpi_public_panel_audit_test.py -v
 
+# #348: недельный прокси базовой инфляции — 4-нед. средняя, календарная
+# регрессия, STL(52) и Gate 0 X-13. Читает ClickHouse, в БД не пишет;
+# JSON — docs/research/2026-10-22-weekly-core-proxy.json.
+weekly-core-proxy:
+	uv run --with "statsmodels>=0.15" --with numpy --with scipy --with "holidays>=0.60" --python 3.12 python3 scripts/models/cpi/weekly_core_proxy.py $(ARGS)
+
+weekly-core-proxy-test:
+	uv run --with "statsmodels>=0.15" --with numpy --with scipy --with "holidays>=0.60" --python 3.12 python3 scripts/models/cpi/weekly_core_proxy_test.py -v
+
+# Issue #364: core-прокси ИПЦ из недельных компонент 2021+ и короткие модели
+# (M1 raw, M2 Fourier-OLS, M3 UCM, M4 ridge-бридж, M5 seasonal naive).
+# Читает CSV-панель и ClickHouse, в БД не пишет; JSON — docs/research/.
+weekly-core-components:
+	uv run --with "statsmodels>=0.15" --with numpy --with scipy --with "holidays>=0.60" --python 3.12 python3 scripts/models/cpi/weekly_core_components.py $(ARGS)
+
+weekly-core-components-test:
+	uv run --with "statsmodels>=0.15" --with numpy --with scipy --with "holidays>=0.60" --python 3.12 python3 scripts/models/cpi/weekly_core_components_test.py -v
+
 # Task 3 #236: недельная компонентная панель ИПЦ — месячный m/m товаров,
 # реконструкция food/nonfood/services, покрытие весов и гейт bottom-up.
 # Читает ClickHouse, в БД не пишет; артефакты — docs/research/.
@@ -724,6 +773,32 @@ clean:
 
 DAGU_URL := https://github.com/dagu-org/dagu/releases/download/$(DAGU_VERSION)/dagu_$(DAGU_VERSION:v%=%)_linux_amd64.tar.gz
 
+# Base DAG (env шагов + SMTP-уведомления): /root/.config/dagu/base.yaml.
+# Без env шаг `run: "$ROSSTAT_IMPORT_BIN"` — пустая команда: dagu рапортует
+# succeeded, импорт не выполняется (инцидент staging 2026-10-25).
+# SMTP-поля dagu 2.18.2 не раскрывает ${…} (в отличие от env шагов), поэтому
+# шаблон рендерится на хосте из env-файла render-dagu-base.py; секреты не
+# покидают хост и не попадают в git. Идемпотентно по cmp; старый файл — .bak;
+# перезапуск только активного dagu, чтобы первый deploy не начал выполнять
+# DAG-и до preflight/smoke.
+deploy-staging-dagu-base: staging-precheck
+	@ssh $(STAGING_HOST) 'install -d -m 755 /root/dagu/certs'
+	@scp -q russian_trusted_root_ca_pem.crt russian_trusted_sub_ca_pem.crt russian_trusted_sub_ca_2024_pem.crt litessl_rsa_ca_2025.pem $(STAGING_HOST):/root/dagu/certs/
+	@scp -q $(STAGING_DAGU_BASE) $(STAGING_HOST):/tmp/dagu-base.template.yaml
+	@scp -q deploy/staging/render-dagu-base.py $(STAGING_HOST):/tmp/render-dagu-base.py
+	@ssh $(STAGING_HOST) 'set -e; \
+		python3 /tmp/render-dagu-base.py /tmp/dagu-base.template.yaml $(STAGING_ENV_FILE) /root/.config/dagu/base.yaml.new; \
+		if cmp -s /root/.config/dagu/base.yaml.new /root/.config/dagu/base.yaml; then \
+			rm -f /root/.config/dagu/base.yaml.new /tmp/dagu-base.template.yaml /tmp/render-dagu-base.py; \
+			echo "OK   base.yaml актуален"; \
+		else \
+			test -f /root/.config/dagu/base.yaml && cp -a /root/.config/dagu/base.yaml /root/.config/dagu/base.yaml.bak || true; \
+			install -o root -g root -m 600 /root/.config/dagu/base.yaml.new /root/.config/dagu/base.yaml; \
+			rm -f /root/.config/dagu/base.yaml.new /tmp/dagu-base.template.yaml /tmp/render-dagu-base.py; \
+			if systemctl is-active --quiet dagu; then systemctl restart dagu; echo "base.yaml установлен, dagu перезапущен"; \
+			else echo "base.yaml установлен (dagu ещё не запущен)"; fi; \
+		fi'
+
 # dagu: скачать релизный tarball, подменить бинарник, поставить юнит. Идемпотентно по версии.
 # Старый бинарник сохраняется в .bak — им пользуется откат (см. deploy/staging/README.md).
 deploy-staging-dagu: staging-precheck
@@ -747,6 +822,7 @@ deploy-staging-dagu: staging-precheck
 	fi
 	scp deploy/staging/dagu.service $(STAGING_HOST):/etc/systemd/system/dagu.service
 	ssh $(STAGING_HOST) 'systemctl daemon-reload'
+	@$(MAKE) deploy-staging-dagu-base --no-print-directory
 
 # mcp-clickhouse: юнит + прогрев кэша uv (пакет разрешается при старте сервиса).
 # Отдельного «скачивания» нет: uv разрешает пакет по пину MCP_VERSION.
@@ -770,12 +846,22 @@ deploy-staging-mlflow: staging-precheck
 	@echo "прогрев кэша uv (скачивание mlflow==$(MLFLOW_VERSION))..."
 	@ssh $(STAGING_HOST) '$(STAGING_BIN_DIR)/uv run --with mlflow==$(MLFLOW_VERSION) --python 3.12 python -c "pass" >/dev/null 2>&1 || true'
 
+# Данные-артефакты DCF/датапаков: без них падают databook_polyus и databook_ugk
+# (импортёры читают относительный путь polyus/data/... и financial/data/...).
+# Копируются в оба возможных рабочих каталога: CLI-прогон из /root и сервисный
+# WorkingDirectory=/root/dagu.
+deploy-staging-data: staging-precheck
+	@ssh $(STAGING_HOST) 'install -d -m 755 /root/polyus/data /root/financial/data /root/dagu/polyus/data /root/dagu/financial/data'
+	@scp -q polyus/data/polyus_datapack_fy2025_new.xlsx $(STAGING_HOST):/root/polyus/data/
+	@scp -q 'financial/data/ЮГК_databook_2024.xlsx' $(STAGING_HOST):/root/financial/data/
+	@ssh $(STAGING_HOST) 'cp /root/polyus/data/polyus_datapack_fy2025_new.xlsx /root/dagu/polyus/data/ && cp "/root/financial/data/ЮГК_databook_2024.xlsx" "/root/dagu/financial/data/" && echo "OK   датапаки Polyus/ЮГК на месте"'
+
 # Полный деплой: бинарь → dagu → mcp → mlflow → DAG'и → проверка ДО включения → включение → smoke.
 #
 # Порядок критичен. Сервисы включаются последними: dagu после `enable --now` немедленно
 # начинает выполнять DAG'и по расписанию, поэтому сначала проверяется, что бинарь и
 # DAG-файлы на месте (deploy-staging-preflight), и только потом сервисы запускаются.
-deploy-staging: deploy-staging-binary deploy-staging-dagu deploy-staging-mcp deploy-staging-mlflow
+deploy-staging: deploy-staging-binary deploy-staging-dagu deploy-staging-data deploy-staging-mcp deploy-staging-mlflow
 	ssh $(STAGING_HOST) 'install -d -m 755 /root/dagu'
 	scp dagu/*.yaml $(STAGING_HOST):/root/dagu/
 	# scp копирует, но не удаляет: снятый с репозитория DAG остался бы на хосте и продолжил бы
@@ -801,11 +887,25 @@ deploy-staging-preflight:
 	@ssh $(STAGING_HOST) 'test -f /root/dagu/cbr.yaml && echo "OK   DAG-файлы на месте"' || { echo "FAIL /root/dagu/cbr.yaml отсутствует"; exit 1; }
 	@ssh $(STAGING_HOST) 'set -a; . $(STAGING_ENV_FILE); set +a; \
 		test -n "$$CLICKHOUSE_MCP_AUTH_TOKEN" && echo "OK   CLICKHOUSE_MCP_AUTH_TOKEN задан" || { echo "FAIL CLICKHOUSE_MCP_AUTH_TOKEN пуст — mcp-clickhouse не стартует в HTTP-режиме"; exit 1; }'
+	@ssh $(STAGING_HOST) 'grep -q "ROSSTAT_IMPORT_BIN" /root/.config/dagu/base.yaml && echo "OK   base.yaml задаёт ROSSTAT_IMPORT_BIN"' || { echo "FAIL base.yaml не задаёт ROSSTAT_IMPORT_BIN — шаги dagu выполнят пустую команду"; exit 1; }
+	@ssh $(STAGING_HOST) 'test -f /root/dagu/certs/russian_trusted_root_ca_pem.crt && test -f /root/dagu/certs/litessl_rsa_ca_2025.pem && echo "OK   сертификаты РФ и LiteSSL на месте"' || { echo "FAIL нет сертификатов в /root/dagu/certs — rosstat.gov.ru/sberindex.ru упадут на x509"; exit 1; }
+	@ssh $(STAGING_HOST) 'set -a; . $(STAGING_ENV_FILE); set +a; \
+		missing=""; \
+		for v in SMTP_HOST SMTP_PORT SMTP_USER SMTP_PASSWORD MAIL_FROM MAIL_TO; do \
+			eval "val=\$$v"; [ -n "$$val" ] || missing="$$missing $$v"; \
+		done; \
+		[ -z "$$missing" ] && echo "OK   SMTP-переменные заданы" || { echo "FAIL не заданы:$$missing — письма dagu не уйдут на шлюз CMC"; exit 1; }'
 
 # Smoke после включения сервисов. Токен читается на хосте и не выводится.
 deploy-staging-smoke:
 	@echo "--- smoke: dagu ---"
 	@ssh $(STAGING_HOST) 'systemctl is-active --quiet dagu && curl -sf -m 5 -o /dev/null http://127.0.0.1:8080/ && echo "OK   dagu отвечает"' || { echo "FAIL dagu: journalctl -u dagu -n 50"; exit 1; }
+	@echo "--- smoke: dagu видит окружение шага ---"
+	@scp -q deploy/staging/dagu-env-smoke.yaml $(STAGING_HOST):/tmp/dagu-env-smoke.yaml
+	@ssh $(STAGING_HOST) 'set -a; . $(STAGING_ENV_FILE); set +a; cd /root; \
+		$(STAGING_BIN_DIR)/dagu start /tmp/dagu-env-smoke.yaml >/tmp/dagu-env-smoke.log 2>&1; rc=$$?; \
+		grep -q "ENV_OK" /tmp/dagu-env-smoke.log && echo "OK   dagu видит ROSSTAT_IMPORT_BIN и CLICKHOUSE_URL" || { echo "FAIL env-smoke: шаг не увидел окружение"; cat /tmp/dagu-env-smoke.log; rc=1; }; \
+		rm -f /tmp/dagu-env-smoke.yaml /tmp/dagu-env-smoke.log; exit $$rc'
 	@echo "--- smoke: mcp-clickhouse /health ---"
 	@ssh $(STAGING_HOST) 'systemctl is-active --quiet mcp-clickhouse && curl -sf -m 5 -o /dev/null http://127.0.0.1:8000/health && echo "OK   MCP /health = 200"' || { \
 		echo "FAIL mcp-clickhouse /health — сервис не отвечает или не видит ClickHouse."; \
@@ -830,6 +930,17 @@ deploy-staging-smoke:
 			sleep 2; \
 		done; \
 		echo "FAIL mlflow /health: последний ответ HTTP $$code после 10 попыток — смотрите journalctl -u mlflow -n 50"; exit 1'
+
+# Контролируемое падение DAG: проверка письма на шлюз CMC (email→SMS).
+# В deploy не входит: запускается вручную после заполнения SMTP_* в env-файле.
+deploy-staging-notify-test: staging-precheck
+	@scp -q deploy/staging/dagu-notify-test.yaml $(STAGING_HOST):/tmp/dagu-notify-test.yaml
+	@ssh $(STAGING_HOST) 'set -a; . $(STAGING_ENV_FILE); set +a; cd /root; \
+		$(STAGING_BIN_DIR)/dagu start /tmp/dagu-notify-test.yaml >/tmp/dagu-notify-test.log 2>&1; rc=$$?; \
+		rm -f /tmp/dagu-notify-test.yaml; \
+		if [ $$rc -eq 0 ]; then echo "FAIL тестовый DAG не упал — проверка письма недействительна"; cat /tmp/dagu-notify-test.log; exit 1; fi; \
+		echo "OK   тестовый DAG упал (код $$rc); проверьте письмо [DAGU palmshell] на MAIL_TO (CMC→SMS)"; \
+		rm -f /tmp/dagu-notify-test.log'
 
 # Обновление ТОЛЬКО dagu, mcp-clickhouse и mlflow до версий из репозитория.
 # apt upgrade сюда НЕ входит: ClickHouse (данные) и Grafana обновляются вручную.
@@ -1099,6 +1210,16 @@ info:
 docs-check:
 	python3 scripts/docs_build.py --check
 	python3 scripts/docs_build_test.py
+
+# Метаданные LLM-плагина: канон — .claude-plugin/plugin.json (version,
+# длинное description) и .claude-plugin/marketplace.json (name, короткое
+# description); sync-manifests.yml проверяет дрейф на PR и дописывает на main.
+plugin-manifests-check:
+	python3 scripts/plugin_manifests.py --check
+	python3 scripts/plugin_manifests_test.py
+
+plugin-manifests-sync:
+	python3 scripts/plugin_manifests.py --write
 
 docs-build:
 	python3 scripts/docs_build.py --out build/site-docs
