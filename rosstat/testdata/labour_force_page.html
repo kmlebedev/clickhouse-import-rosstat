@@ -1,14 +1,17 @@
 <!--
   Фикстура страницы источника: фрагмент реальной страницы
-  https://rosstat.gov.ru/labour_force?print=1 (снята 2026-10-14, 95 306 байт), карточка
+  https://rosstat.gov.ru/labour_force?print=1 (снята 2026-10-27, 84 841 байт), карточка
   «Занятость и безработица» целиком, классы и структура ссылок не менялись (§11.1, §11.3).
-  Нужна селектору a[href$="trud-1_15-s.xlsx"]: рядом лежит соседний файл trud_1_15-72.xlsx
-  (подчёркивание вместо дефиса), который этот селектор цеплять не должен.
+  Нужна селектору a[href$="trud-1_15-s.xlsx" i]: Росстат сменил регистр первой буквы, и на
+  странице теперь /storage/mediabank/Trud-1_15-s.xlsx — строчный селектор без флага `i` такой
+  ссылки не находит (дефект 2026-10-21). Рядом лежат соседние выгрузки карточки:
+  trud_1_15-72.xlsx (подчёркивание вместо дефиса) и Trud-2/3_15-s.xlsx (другие разрезы),
+  которые селектор цеплять не должен.
 -->
 <!DOCTYPE html>
 <html lang="ru">
 <body>
-                                        <div class="list__item">
+<div class="list__item">
         <div class="toggle-card toggle-card--small toggle-card--arr open">
             <div class="toggle-card__header">
                 <a class="toggle-card__header-link" href="#">
@@ -23,14 +26,14 @@
                             
                                                             <div class="document-list__item document-list__item--row">
         <div class="document-list__item-link">
-            <a class="btn btn-icon btn-white btn-br btn-sm" href="/storage/mediabank/trud-1_15-s.xlsx">
+            <a class="btn btn-icon btn-white btn-br btn-sm" href="/storage/mediabank/Trud-1_15-s.xlsx">
                 <i class="material-icons">&#xE2C0;</i>XLSX</a>
         </div>
         <div class="document-list__item-desc">
             <div class="document-list__item-title">
                 Численность и состав рабочей силы в возрасте 15 лет и старше
             </div>
-            <div class="document-list__item-info">335.65 Кб, 16.09.2026</div>
+            <div class="document-list__item-info">337.23 Кб, 14.10.2026</div>
         </div>
     </div>
 
@@ -43,59 +46,59 @@
             <div class="document-list__item-title">
                 Численность и состав рабочей силы в возрасте 15 - 72 лет
             </div>
-            <div class="document-list__item-info">251.31 Кб, 16.09.2026</div>
+            <div class="document-list__item-info">252.71 Кб, 14.10.2026</div>
         </div>
     </div>
 
             <div class="document-list__item document-list__item--row">
         <div class="document-list__item-link">
-            <a class="btn btn-icon btn-white btn-br btn-sm" href="/storage/mediabank/trud_2_15-s.xlsx">
+            <a class="btn btn-icon btn-white btn-br btn-sm" href="/storage/mediabank/Trud-2_15-s.xlsx">
                 <i class="material-icons">&#xE2C0;</i>XLSX</a>
         </div>
         <div class="document-list__item-desc">
             <div class="document-list__item-title">
                 Численность занятых в возрасте 15 лет и старше и уровень занятости
             </div>
-            <div class="document-list__item-info">388.39 Кб, 16.09.2026</div>
+            <div class="document-list__item-info">390.89 Кб, 14.10.2026</div>
         </div>
     </div>
 
             <div class="document-list__item document-list__item--row">
         <div class="document-list__item-link">
-            <a class="btn btn-icon btn-white btn-br btn-sm" href="/storage/mediabank/trud_2_15-72.xlsx">
+            <a class="btn btn-icon btn-white btn-br btn-sm" href="/storage/mediabank/Trud-2_15-72.xlsx">
                 <i class="material-icons">&#xE2C0;</i>XLSX</a>
         </div>
         <div class="document-list__item-desc">
             <div class="document-list__item-title">
                 Численность занятых в возрасте 15 - 72 лет и уровень занятости
             </div>
-            <div class="document-list__item-info">428.28 Кб, 16.09.2026</div>
+            <div class="document-list__item-info">429.79 Кб, 14.10.2026</div>
         </div>
     </div>
 
             <div class="document-list__item document-list__item--row">
         <div class="document-list__item-link">
-            <a class="btn btn-icon btn-white btn-br btn-sm" href="/storage/mediabank/trud_3_15-s.xlsx">
+            <a class="btn btn-icon btn-white btn-br btn-sm" href="/storage/mediabank/Trud-3_15-s.xlsx">
                 <i class="material-icons">&#xE2C0;</i>XLSX</a>
         </div>
         <div class="document-list__item-desc">
             <div class="document-list__item-title">
                 Численность безработных в возрасте 15 лет и старше и уровень безработицы
             </div>
-            <div class="document-list__item-info">294.75 Кб, 16.09.2026</div>
+            <div class="document-list__item-info">295.8 Кб, 14.10.2026</div>
         </div>
     </div>
 
             <div class="document-list__item document-list__item--row">
         <div class="document-list__item-link">
-            <a class="btn btn-icon btn-white btn-br btn-sm" href="/storage/mediabank/trud_3_15-72.xlsx">
+            <a class="btn btn-icon btn-white btn-br btn-sm" href="/storage/mediabank/Trud-3_15-72.xlsx">
                 <i class="material-icons">&#xE2C0;</i>XLSX</a>
         </div>
         <div class="document-list__item-desc">
             <div class="document-list__item-title">
                 Численность безработных в возрасте 15 - 72 лет и уровень безработицы
             </div>
-            <div class="document-list__item-info">233.29 Кб, 16.09.2026</div>
+            <div class="document-list__item-info">234.58 Кб, 14.10.2026</div>
         </div>
     </div>
 
@@ -311,5 +314,7 @@
             </div>
         </div>
     </div>
+
+                                        
 </body>
 </html>
