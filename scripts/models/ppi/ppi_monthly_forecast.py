@@ -824,9 +824,46 @@ def render_report(data: dict) -> str:
         ("target", "horizon", "base_model", "expectations_model", "n", "delta",
          "dm_pvalue", "ci_low", "ci_high", "mde"),
     )
+    def describe(rows: list) -> str:
+        if not rows:
+            return "нет доступных пар"
+        deltas = [row["delta"] for row in rows]
+        positive = sum(delta > 0 for delta in deltas)
+        significant = sum(
+            row["delta"] > 0
+            and row.get("holm_pvalue") is not None
+            and row["holm_pvalue"] < 0.05
+            and row.get("ci_low", 0.0) > 0.0
+            for row in rows
+        )
+        return (
+            f"delta {min(deltas):+.4f}…{max(deltas):+.4f} п.п.; "
+            f"положительных {positive}/{len(rows)}; "
+            f"Holm-значимых положительных {significant}/{len(rows)}"
+        )
+
+    cpi_primary = [row for row in primary if row["target"] == "cpi_all"]
+    food_primary = [row for row in primary if row["target"] == "ppi_food"]
+    note_supported = any(
+        row["delta"] > 0
+        and row.get("holm_pvalue") is not None
+        and row["holm_pvalue"] < 0.05
+        and row.get("ci_low", 0.0) > 0.0
+        for row in food_primary
+    )
     lines += [
         "",
         f"Robustness status: `{robustness.get('label')}`; минимум 6 folds на пару.",
+        "",
+        "## Сравнение с запиской",
+        "",
+        f"- CPI all: {describe(cpi_primary)}.",
+        f"- PPI food (primary consumer): {describe(food_primary)}.",
+        "- Записка ЦБ ожидает выигрыш от ценовых ожиданий, особенно в потребительском "
+        "секторе. В этом предрегистрированном прогоне consumer-выигрыш "
+        + ("подтверждается." if note_supported else "не подтверждается."),
+        "- Результат относится к aggregate survey-блокам и latest-vintage targets; "
+        "industry consumer и полный PIT ревизий не проверены.",
         "",
         "## Ограничения",
         "",

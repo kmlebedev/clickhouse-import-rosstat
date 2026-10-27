@@ -387,6 +387,11 @@ class ArtifactTest(unittest.TestCase):
         self.assertIn("latest-vintage", self.report)
         self.assertIn("RMSE", self.report)
         self.assertIn("INSUFFICIENT", self.report)
+        self.assertIn("Сравнение с запиской", self.report)
+        self.assertEqual(
+            self.data["data_passport"]["secondary_consumer"]["status"],
+            "FAIL_CLOSED",
+        )
         hashes = {entry["name"]: entry["sha256"] for entry in self.data["artifacts"]}
         self.assertIn(f"{pm.ARTIFACT_STEM}-predictions.csv", hashes)
         self.assertIn(f"{pm.ARTIFACT_STEM}.md", hashes)
