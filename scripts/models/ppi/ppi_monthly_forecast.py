@@ -11,6 +11,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from lib import clickhouse as ch
+from lib import eval_utils as eu
 
 ch_query = ch.ch_query
 
@@ -263,3 +264,324 @@ def direct_folds(rows: list[Row], horizon: int, min_train: int = 36) -> list[Fol
         )
         for index in range(min_train + horizon, len(ordered))
     ]
+
+
+@dataclass(frozen=True)
+class Prediction:
+    target: str
+    horizon: int
+    origin: date
+    model: str
+    y_true: float
+    y_pred: float
+    train_start: date
+    train_end: date
+    status: str = "ok"
+    diagnostic: str = ""
+
+
+def feature_values(row: Row, horizon: int, expectations: bool = False) -> dict:
+    features = {str(key): float(value) for key, value in row.base_features.items()}
+    target_month = shift_month(row.origin, horizon).month
+    for month_number in range(2, 13):
+        features[f"month_{month_number:02d}"] = 1.0 if target_month == month_number else 0.0
+    if expectations:
+        features.update(
+            {str(key): float(value) for key, value in row.expectation_features.items()}
+        )
+    return features
+
+
+def _feature_names(rows: tuple, horizon: int, expectations: bool) -> list[str]:
+    names = []
+    seen = set()
+    for row in rows:
+        for name in feature_values(row, horizon, expectations):
+            if name not in seen:
+                seen.add(name)
+                names.append(name)
+    return names
+
+
+def _matrix(rows: tuple, horizon: int, expectations: bool, names: list[str]):
+    import numpy as np
+
+    return np.asarray(
+        [[feature_values(row, horizon, expectations).get(name, float("nan")) for name in names]
+         for row in rows],
+        dtype=float,
+    )
+
+
+def _fit_b3(train: tuple, horizon: int, expectations: bool):
+    from sklearn.impute import SimpleImputer
+    from sklearn.linear_model import ElasticNetCV
+    from sklearn.pipeline import make_pipeline
+    from sklearn.preprocessing import StandardScaler
+
+    names = _feature_names(train, horizon, expectations)
+    matrix = _matrix(train, horizon, expectations, names)
+    if matrix.shape[0] < 2:
+        raise ValueError("вырожденный фолд: меньше двух train origins")
+    target = [row.actual for row in train]
+    steps = [
+        SimpleImputer(strategy="median", keep_empty_features=True),
+        StandardScaler(),
+        ElasticNetCV(
+            cv=min(5, len(train)),
+            random_state=20261027,
+            max_iter=5000,
+            tol=1e-3,
+        ),
+    ]
+    model = make_pipeline(*steps)
+    model.fit(matrix, target)
+    model.feature_names_ = names
+    return model[0], model[1], model
+
+
+def _predict_b3(fitted, test: Row, horizon: int, expectations: bool) -> float:
+    model = fitted[2]
+    names = list(model.feature_names_)
+    row = (test,)
+    matrix = _matrix(row, horizon, expectations, names)
+    return float(model.predict(matrix)[0])
+
+
+def _fit_b2(train: tuple, horizon: int, expectations: bool):
+    import numpy as np
+    from sklearn.impute import SimpleImputer
+
+    names = _feature_names(train, horizon, expectations)
+    if "y_lag1" not in names:
+        raise ValueError("вырожденный фолд: y_lag1 отсутствует")
+    matrix = _matrix(train, horizon, expectations, names)
+    lag_index = names.index("y_lag1")
+    if not np.isfinite(matrix[:, lag_index]).any():
+        raise ValueError("вырожденный фолд: y_lag1 полностью отсутствует в train")
+    imputer = SimpleImputer(strategy="median", keep_empty_features=True)
+    prepared = imputer.fit_transform(matrix)
+    design = np.column_stack([np.ones(len(train)), prepared])
+    target = np.asarray([row.actual for row in train], dtype=float)
+    coefficients, _, _, _ = np.linalg.lstsq(design, target, rcond=None)
+    return imputer, coefficients, names
+
+
+def _predict_b2(fitted, test: Row, horizon: int, expectations: bool) -> float:
+    import numpy as np
+
+    imputer, coefficients, names = fitted
+    matrix = _matrix((test,), horizon, expectations, names)
+    prepared = imputer.transform(matrix)
+    design = np.column_stack([np.ones(1), prepared])
+    return float((design @ coefficients)[0])
+
+
+def _make_prediction(fold: Fold, model_name: str, value: float, status="ok", diagnostic="") -> Prediction:
+    return Prediction(
+        target=fold.test.target,
+        horizon=fold.horizon,
+        origin=fold.test.origin,
+        model=model_name,
+        y_true=fold.test.actual,
+        y_pred=value,
+        train_start=fold.train[0].origin,
+        train_end=fold.train[-1].origin,
+        status=status,
+        diagnostic=diagnostic,
+    )
+
+
+def walk_forward(rows: list[Row], horizons: tuple[int, ...] = (1, 3, 6)) -> list[Prediction]:
+    import warnings
+
+    import numpy as np
+
+    predictions = []
+    for horizon in horizons:
+        for fold in direct_folds(rows, horizon):
+            predictions.append(_make_prediction(fold, "b1_last", float(fold.train[-1].actual)))
+            estimators = (
+                ("b2_ar1", _fit_b2, _predict_b2, False),
+                ("b2_ar1_expectations", _fit_b2, _predict_b2, True),
+                ("b3_enet", _fit_b3, _predict_b3, False),
+                ("b3_enet_expectations", _fit_b3, _predict_b3, True),
+            )
+            for name, fit, predict, expectations in estimators:
+                try:
+                    with warnings.catch_warnings(record=True) as caught:
+                        warnings.simplefilter("always")
+                        fitted = fit(fold.train, horizon, expectations)
+                        value = predict(fitted, fold.test, horizon, expectations)
+                    unique = []
+                    for warning in caught:
+                        text = f"{warning.category.__name__}: {warning.message}"
+                        if text not in unique:
+                            unique.append(text)
+                    status = "warning" if unique else "ok"
+                    predictions.append(
+                        _make_prediction(fold, name, value, status, "; ".join(unique[:3]))
+                    )
+                except (ValueError, FloatingPointError, np.linalg.LinAlgError) as exc:
+                    predictions.append(
+                        _make_prediction(fold, name, float("nan"), "skipped", str(exc))
+                    )
+    return predictions
+
+
+PRIMARY_PAIRS = (
+    ("b2_ar1", "b2_ar1_expectations"),
+    ("b3_enet", "b3_enet_expectations"),
+)
+SECONDARY_PAIRS = (
+    ("b3_enet", "b3_enet_industry"),
+    ("b3_enet", "b3_enet_aggregate_industry"),
+)
+
+
+def mde_ratio(err_a: list, err_b: list):
+    import numpy as np
+
+    if len(err_a) != len(err_b):
+        raise ValueError(f"MDE: {len(err_a)} ошибок против {len(err_b)}")
+    if len(err_a) < 2:
+        return None
+    differences = np.asarray(
+        [a * a - b * b for a, b in zip(err_a, err_b)], dtype=float
+    )
+    denominator = eu.rmse(err_a) + eu.rmse(err_b)
+    if denominator == 0.0:
+        return None
+    return float(2.802 * float(np.std(differences, ddof=1)) / math.sqrt(len(differences)) / denominator)
+
+
+def holm_adjust(pvalues: list) -> list:
+    adjusted = [float("nan")] * len(pvalues)
+    finite = sorted(
+        (value, index) for index, value in enumerate(pvalues) if math.isfinite(value)
+    )
+    running = 0.0
+    total = len(finite)
+    for rank, (value, index) in enumerate(finite):
+        running = max(running, min(1.0, (total - rank) * value))
+        adjusted[index] = running
+    return adjusted
+
+
+def _model_metrics(predictions: list) -> list:
+    groups = {}
+    for row in predictions:
+        if not math.isfinite(row.y_pred) or not math.isfinite(row.y_true):
+            continue
+        groups.setdefault((row.target, row.horizon, row.model), []).append(row)
+    result = []
+    for (target, horizon, model), rows in sorted(groups.items()):
+        errors = [row.y_pred - row.y_true for row in rows]
+        result.append({
+            "target": target,
+            "horizon": horizon,
+            "model": model,
+            "n": len(errors),
+            "rmse": eu.rmse(errors),
+            "mae": eu.mae(errors),
+        })
+    return result
+
+
+def evaluate(
+    predictions: list[Prediction],
+    block: int = 3,
+    n: int = 2000,
+    seed: int = 20261027,
+    primary: bool = True,
+) -> dict:
+    grouped = {}
+    for row in predictions:
+        key = (row.target, row.horizon, row.model, row.origin)
+        if key in grouped:
+            raise ValueError(f"дубль prediction: {key}")
+        grouped[key] = row
+    pairs = []
+    definitions = [
+        (base, expected, True) for base, expected in PRIMARY_PAIRS
+    ] + [(base, expected, False) for base, expected in SECONDARY_PAIRS]
+    for base_model, expectations_model, primary_family in definitions:
+        pair_groups = {}
+        for (target, horizon, model, origin), row in grouped.items():
+            if model in (base_model, expectations_model):
+                pair_groups.setdefault((target, horizon), {}).setdefault(model, {})[origin] = row
+        for (target, horizon), models in sorted(pair_groups.items()):
+            base_rows = models.get(base_model, {})
+            expectation_rows = models.get(expectations_model, {})
+            common = sorted(
+                origin for origin in base_rows.keys() & expectation_rows.keys()
+                if math.isfinite(base_rows[origin].y_pred)
+                and math.isfinite(expectation_rows[origin].y_pred)
+            )
+            if not common:
+                continue
+            base_errors = [
+                base_rows[origin].y_pred - base_rows[origin].y_true for origin in common
+            ]
+            expectation_errors = [
+                expectation_rows[origin].y_pred - expectation_rows[origin].y_true
+                for origin in common
+            ]
+            if len(common) >= 2:
+                dm_stat, dm_pvalue = eu.diebold_mariano(base_errors, expectation_errors, horizon)
+                bootstrap = eu.block_bootstrap_rmse_diff(
+                    base_errors, expectation_errors, block, n, seed
+                )
+                ci_low, ci_high = bootstrap.low, bootstrap.high
+            else:
+                dm_stat, dm_pvalue = float("nan"), float("nan")
+                ci_low = ci_high = float("nan")
+            base_rmse = eu.rmse(base_errors)
+            expectation_rmse = eu.rmse(expectation_errors)
+            pairs.append({
+                "target": target,
+                "horizon": horizon,
+                "base_model": base_model,
+                "expectations_model": expectations_model,
+                "primary": bool(primary and primary_family),
+                "n": len(common),
+                "origins": common,
+                "base_rmse": base_rmse,
+                "expectations_rmse": expectation_rmse,
+                "base_mae": eu.mae(base_errors),
+                "expectations_mae": eu.mae(expectation_errors),
+                "delta": base_rmse - expectation_rmse,
+                "dm_stat": dm_stat,
+                "dm_pvalue": dm_pvalue,
+                "ci_low": ci_low,
+                "ci_high": ci_high,
+                "mde": mde_ratio(base_errors, expectation_errors),
+                "holm_pvalue": None,
+            })
+    family = [row for row in pairs if row["primary"]]
+    adjusted = holm_adjust([row["dm_pvalue"] for row in family])
+    for row, value in zip(family, adjusted):
+        row["holm_pvalue"] = value
+    return {
+        "models": _model_metrics(predictions),
+        "pairs": pairs,
+        "primary_family": family,
+        "verdict": research_verdict(pairs),
+    }
+
+
+def research_verdict(pairs: list, min_primary: int = 12) -> str:
+    primary = [row for row in pairs if row.get("primary")]
+    if not primary or any(row.get("n", 0) < min_primary for row in primary):
+        return "INSUFFICIENT"
+    for row in primary:
+        if (
+            row.get("target") == "ppi_food"
+            and row.get("horizon") in (1, 3)
+            and row.get("delta", 0.0) > 0.0
+            and math.isfinite(row.get("holm_pvalue") or float("nan"))
+            and row["holm_pvalue"] < 0.05
+            and row.get("ci_low", 0.0) > 0.0
+        ):
+            return "promote"
+    return "iterate" if any(row.get("delta", 0.0) > 0.0 for row in primary) else "reject"
