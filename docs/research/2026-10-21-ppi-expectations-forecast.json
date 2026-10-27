@@ -1,14 +1,14 @@
 {
   "artifacts": [
     {
-      "bytes": 663413,
+      "bytes": 656772,
       "name": "2026-10-21-ppi-expectations-forecast-predictions.csv",
-      "sha256": "a56b773d7f525d60b260fe2b4a12c1571a35bc298df35d84be9cf8b73381b62b"
+      "sha256": "224b667de333f59c0bf813e4a50fe9d68ff10a579701d61e33e9f01ffd7fa1ba"
     },
     {
       "bytes": 14143,
       "name": "2026-10-21-ppi-expectations-forecast.md",
-      "sha256": "6eb301893bad60a68a2736846e2141d46862d3278e2564dee46248135d71a490"
+      "sha256": "9edc80c21313e961478f68bfbd9714208e01d52f86165cfb5388c6756e3072c3"
     }
   ],
   "config": {
@@ -9345,12 +9345,12 @@
       "train_end": "2025-07-01"
     }
   ],
-  "generated_at": "2026-10-27T18:45:55.276600",
+  "generated_at": "2026-10-27T18:55:41.061789",
   "git": {
     "author": "whitefox",
     "git_branch": "feat/ppi-expectations-forecast",
-    "git_dirty": 1,
-    "git_sha": "e20dfc41ef0069aa8f25832da89a1e224daf1b5f"
+    "git_dirty": 0,
+    "git_sha": "7f494062ead5c98162afe8d55f5037892a5c8f5d"
   },
   "limitations": [
     "CPI/PPI targets are latest-vintage; full real-time/PIT revision history is not tested",
@@ -89842,7 +89842,7 @@
     "primary_family": [],
     "verdict": "INSUFFICIENT"
   },
-  "run_id": "4ee4a03f-5532-4f21-8164-f8c8093a86c4",
+  "run_id": "9121928b-2c45-47a6-b889-68a7926a410a",
   "run_name": "ppi_expectations_forecast__direct_h136",
   "sample_hash": "32299db6d2019ce4634fafa4fb7691eef2eb487312ca71aab86e4435bb669330",
   "sample_meta": {
