@@ -684,6 +684,15 @@ ppi-sa-parity:
 ppi-sa-parity-test:
 	python3 scripts/ppi_sa_parity_test.py -v
 
+# T3/T4: сверка ppi_sa с текстовыми якорями 12 выпусков «Инфляции в России»
+# (2025-10…2026-09). Точные числа — где они есть; качественные формулировки —
+# отдельный класс проверок. Читает ClickHouse read-only, пишет CSV/JSON в docs/research/.
+ppi-sa-text-anchors:
+	python3 scripts/ppi_sa_text_anchors.py --print
+
+ppi-sa-text-anchors-test:
+	python3 scripts/ppi_sa_text_anchors_test.py -v
+
 # Live-диагностика per_sheet: экспорт v_cbr_mp_public_panel (87 кодов × 3
 # индикатора, но 33 различные серии) и v_cbr_mp_bsu_map (код → industry_slug)
 # в build/cb-comp-parity. Только чтение ClickHouse.
