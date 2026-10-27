@@ -1,0 +1,21 @@
+{
+  "name": "clickhouse-import-rosstat",
+  "interface": {
+    "displayName": "ClickHouse Import Rosstat"
+  },
+  "plugins": [
+    {
+      "name": "clickhouse-import-rosstat",
+      "source": {
+        "source": "url",
+        "url": "https://github.com/kmlebedev/clickhouse-import-rosstat.git",
+        "ref": "main"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_USE"
+      },
+      "category": "Data"
+    }
+  ]
+}

@@ -1,0 +1,34 @@
+type: chain
+schedule: "47 9 * * 1"
+overlap_policy: skip
+
+# Контур недвижимости (real-estate/1.1): машиночитаемая аналитика ДОМ.РФ.
+# Шаги идут после банковской цепочки (dagu/bank.yaml, 09:23): у domrf_mortgage_weekly и
+# domrf_mortgage_market общий вход — страница /analytics/mortgage/, и разнесение по времени
+# снижает частоту JS-challenge ServicePipe, на который импортёры отвечают повторами.
+# Каденция недельная: ставки обновляются в пятницу, месячная книга и индекс цен — раз в месяц
+# (повторные прогоны уходят в идемпотентный полный импорт или в no-op по гейту месяца).
+steps:
+  - id: domrf_mortgage_weekly
+    run: "$ROSSTAT_IMPORT_BIN"
+    env:
+      - CLICKHOUSE_IMPORT_STAT=domrf_mortgage_weekly
+    retry_policy:
+      limit: 3
+      interval_sec: 300
+
+  - id: domrf_mortgage_market
+    run: "$ROSSTAT_IMPORT_BIN"
+    env:
+      - CLICKHOUSE_IMPORT_STAT=domrf_mortgage_market
+    retry_policy:
+      limit: 3
+      interval_sec: 300
+
+  - id: domrf_price_index
+    run: "$ROSSTAT_IMPORT_BIN"
+    env:
+      - CLICKHOUSE_IMPORT_STAT=domrf_price_index
+    retry_policy:
+      limit: 3
+      interval_sec: 300

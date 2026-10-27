@@ -78,14 +78,18 @@ ENGINE = ReplacingMergeTree ORDER BY (okved_version, okved, indicator_type, regi
 
 ```sql
 series        LowCardinality(String),  -- 'index' | 'turnover'
+indicator_type LowCardinality(String), -- 'К предыдущему месяцу' | 'К соответствующему периоду предыдущего года' | 'Оборот розничной торговли'
 subject       LowCardinality(String),  -- 'Всего' | 'Розничные рынки и ярмарки' | 'Торгующие организации'
 region        LowCardinality(String),
 period_type   LowCardinality(String),  -- 'M' | 'CUM'
+period        LowCardinality(String),  -- подпись периода источника: 'январь', 'январь-март', …
 date          Date,
 value         Float64,
 unit          LowCardinality(String)   -- 'процент' | 'миллион рублей'
-ENGINE = ReplacingMergeTree ORDER BY (series, subject, region, period_type, date)
+ENGINE = ReplacingMergeTree ORDER BY (series, indicator_type, subject, region, period_type, period, date)
 ```
+
+`period` — не украшение: у накопительных периодов дата начала одна (1 января), и без подписи `ReplacingMergeTree` схлопнул бы `январь-март`, `январь-июнь`, `январь-сентябрь` и `январь-декабрь` в одну строку. `indicator_type` различает два вида показателя `31066`; у `31260` он постоянный.
 
 ### 4.3. `fedstat_agri`
 
@@ -106,14 +110,17 @@ ENGINE = ReplacingMergeTree ORDER BY (series, activity, category, region, date)
 ```sql
 series        LowCardinality(String),  -- 'index' | 'value'
 indicator_id  LowCardinality(String),  -- '58089' | '58090' | '34129' | '40562' | '34475'
-summary_type  LowCardinality(String),  -- 'Полный круг' | 'Крупные и средние'
+summary_type  LowCardinality(String),  -- 'Полный круг' | 'Всего'
 region        LowCardinality(String),
 period_type   LowCardinality(String),  -- 'Q' | 'CUM' | 'Y'
+period        LowCardinality(String),  -- подпись периода источника: 'январь-июнь', 'II квартал', …
 date          Date,
 value         Float64,
 unit          LowCardinality(String)   -- 'процент' | 'тысяча рублей' | 'миллион рублей'
-ENGINE = ReplacingMergeTree ORDER BY (series, indicator_id, summary_type, region, period_type, date)
+ENGINE = ReplacingMergeTree ORDER BY (series, indicator_id, summary_type, region, period_type, period, date)
 ```
+
+`period` обязателен по той же причине, что в §4.2: у `58089`/`58090` накопительные периоды одного года имеют одну дату начала, и без подписи они схлопнулись бы в одну строку.
 
 ### 4.5. `fedstat_ipc`
 
@@ -147,9 +154,9 @@ ENGINE = ReplacingMergeTree ORDER BY (product, indicator_type, region, date)
 
 ### 5.3. Розница (`retail.go`)
 
-- `31066`: 2000–2026, оба кода РФ, 2 типа × 3 субъекта, только месячные периоды (12), `period_type='M'`.
-- `31260`: 2000–2026, оба кода РФ, 3 субъекта, месячные + накопительные периоды; `period_type='M'`/`CUM`.
-- No-op по `max(date)`; накопительные периоды не смешивать с месячными.
+- `31066`: 2000–2026, оба кода РФ, 2 типа × 3 субъекта; тип «к предыдущему месяцу» — 12 месяцев (`period_type='M'`), тип «к соответствующему периоду предыдущего года» — месяцы и накопительные периоды (`M`/`CUM`); в ключ входят `indicator_type` и `period`.
+- `31260`: 2000–2026, оба кода РФ, 3 субъекта, месячные + накопительные периоды; `period_type='M'`/`CUM`, `period` — подпись периода.
+- No-op по `max(date)`; накопительные периоды не смешивать с месячными и не терять: `date` у них — 1 января, различает их `period`.
 
 ### 5.4. Сельхоз (`agri.go`)
 

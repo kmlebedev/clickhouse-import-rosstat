@@ -377,14 +377,21 @@ func gostWriteDay(ctx context.Context, conn driver.Conn, rows []gostRow) (int64,
 // (первые десять и остаток счётчиком: «упало 3 дня из 5000» без имён не разобрать, а полный
 // список утопил бы первопричину).
 //
+// Временный сбой дня (429/5xx/таймаут, gostDayTransient) не роняет прогон, если хотя бы
+// один день окна прочитан: день уходит в warning и будет повторён следующим прогоном
+// (якорь since не уходит за дыру). Если временно недоступны все дни — это системный отказ
+// источника, и прогон падает. Постоянные ошибки (4xx, разбор, запись) падают всегда.
+//
 // Исключение — отказ авторизации (401/403, gostAuthError): он систематический (неверный или
 // отозванный GOST_APP_ID повторы не лечат), и продолжать обход тысяч дней, зная, что каждый
 // следующий запрос так же безнадёжен, — значит жечь часы впустую и хоронить подсказку про
 // GOST_APP_ID в мегабайтном агрегате. Такой прогон прерывается на первом же дне.
 func gostRunDays(ctx context.Context, conn driver.Conn, api *gostAPI, days []time.Time) (int64, error) {
 	var (
-		total  int64
-		failed []string
+		total     int64
+		failed    []string
+		transient []string
+		readDays  int
 	)
 	for i, day := range days {
 		if i > 0 {
@@ -407,6 +414,14 @@ func gostRunDays(ctx context.Context, conn driver.Conn, api *gostAPI, days []tim
 				log.Errorf("%s: %s: %v", gostTable, errText, err)
 				return total, fmt.Errorf("%s: %s: %w", gostTable, errText, err)
 			}
+			if gostDayTransient(err) {
+				// Перегрузка портала/дедлайн попытки — не поломка импортёра: день повторит
+				// следующий прогон, а часовой DAG не должен падать из-за одного 500.
+				log.Warnf("%s: день %s временно не прочитан (429/5xx или таймаут; повтор в следующем прогоне): %v",
+					gostTable, label, err)
+				transient = append(transient, fmt.Sprintf("%s: %v", label, err))
+				continue
+			}
 			log.Errorf("%s: день %s не прочитан: %v", gostTable, label, err)
 			failed = append(failed, fmt.Sprintf("%s: %v", label, err))
 			continue
@@ -414,6 +429,7 @@ func gostRunDays(ctx context.Context, conn driver.Conn, api *gostAPI, days []tim
 		if slice.Count == 0 {
 			// Пустой день — норма (публикаций не было): батч не открываем, но и это факт дня.
 			log.Infof("%s: день %s: публикаций нет", gostTable, label)
+			readDays++
 			continue
 		}
 		if slice.Skipped > 0 {
@@ -444,6 +460,7 @@ func gostRunDays(ctx context.Context, conn driver.Conn, api *gostAPI, days []tim
 			// иначе одиночный мусорный документ не отличить от чужой даты.
 			log.Warnf("%s: день %s: публикаций нет — отброшено %d из %d (чужой даты: %d, невалидных: %d)",
 				gostTable, label, slice.Skipped, slice.Count, slice.Skipped-slice.Invalid, slice.Invalid)
+			readDays++
 			continue
 		}
 
@@ -454,10 +471,20 @@ func gostRunDays(ctx context.Context, conn driver.Conn, api *gostAPI, days []tim
 			continue
 		}
 		total += written
+		readDays++
 		log.Infof("%s: день %s: записано %d строк", gostTable, label, written)
 	}
 	if len(failed) > 0 {
 		return total, fmt.Errorf("%s: не прочитаны дни (%d): %s", gostTable, len(failed), gostDaysHint(failed))
+	}
+	if len(transient) > 0 {
+		if readDays == 0 {
+			// Ни один день окна не прочитан: это не единичный сбой, а системный отказ
+			// источника — молчаливый успех скрыл бы полную потерю покрытия.
+			return total, fmt.Errorf("%s: не прочитаны дни (%d): %s", gostTable, len(transient), gostDaysHint(transient))
+		}
+		log.Warnf("%s: временно не прочитаны дни (%d): %s; повтор в следующем прогоне",
+			gostTable, len(transient), gostDaysHint(transient))
 	}
 	return total, nil
 }

@@ -274,6 +274,15 @@ func gostRetryAfter(d time.Duration) error {
 	return &backoff.RetryAfterError{Duration: d}
 }
 
+// gostDayTransient — временный сбой дня: 429/5xx или таймаут попытки. Оба класса
+// помечены backoff.RetryAfterError; постоянные 4xx, 401/403 и ошибки разбора — нет.
+// Повтор такого дня оставлен следующему прогону: якорь since не уходит за дыру,
+// а часовой DAG не должен падать из-за перегрузки портала.
+func gostDayTransient(err error) bool {
+	var retryAfter *backoff.RetryAfterError
+	return errors.As(err, &retryAfter)
+}
+
 // gostNoURL убирает URL из ошибки транспорта: net/http заворачивает всё в *url.Error и
 // печатает адрес вместе с query целиком. URL-контекст добавляет вызывающий — как в util.GetJSON.
 func gostNoURL(err error) error {

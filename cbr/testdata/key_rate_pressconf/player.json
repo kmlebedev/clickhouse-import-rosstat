@@ -1,0 +1,33 @@
+{
+  "playabilityStatus": {
+    "status": "OK",
+    "reason": ""
+  },
+  "videoDetails": {
+    "videoId": "Ubes_5oLQEU",
+    "title": "Пресс-конференция по ключевой ставке 11 сентября 2026 года",
+    "lengthSeconds": "4486"
+  },
+  "captions": {
+    "playerCaptionsTracklistRenderer": {
+      "captionTracks": [
+        {
+          "baseUrl": "https://example.test/captions?lang=en-US",
+          "languageCode": "en-US",
+          "kind": "asr",
+          "name": {
+            "simpleText": ""
+          }
+        },
+        {
+          "baseUrl": "https://example.test/captions?lang=ru",
+          "languageCode": "ru",
+          "kind": "asr",
+          "name": {
+            "simpleText": ""
+          }
+        }
+      ]
+    }
+  }
+}
