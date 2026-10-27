@@ -614,6 +614,25 @@ def _date_range(points) -> dict:
     return {"first": ordered[0], "last": ordered[-1], "n": len(ordered)}
 
 
+def secondary_consumer_status(publications: list) -> dict:
+    industry = [
+        row for row in publications
+        if str(row.get("series", "")).startswith("industry_")
+        and "price_expectations" in str(row.get("series", ""))
+    ]
+    if not industry:
+        return {
+            "status": "FAIL_CLOSED",
+            "reason": "industry publication calendar is missing; secondary consumer is not evaluated",
+            "publication_rows": 0,
+        }
+    return {
+        "status": "CALENDAR_PRESENT",
+        "reason": "industry calendar present; secondary consumer target still requires pinned reconstruction",
+        "publication_rows": len(industry),
+    }
+
+
 def build_data_passport(targets: dict, values: dict, publications: list) -> dict:
     quality = {}
     for row in publications:
@@ -644,6 +663,7 @@ def build_data_passport(targets: dict, values: dict, publications: list) -> dict
         "publication_periods": _date_range(
             row["period_date"] for row in publications
         ),
+        "secondary_consumer": secondary_consumer_status(publications),
     }
 
 
@@ -813,7 +833,11 @@ def render_report(data: dict) -> str:
         "- Survey as-of соблюдён строго: `published_at < cutoff`, boundary 8-е M+1 23:59:59 MSK.",
         "- CPI/PPI targets — **latest-vintage**: полный real-time/PIT по ревизиям таргета не проверен.",
         "- `quality='fallback'` сохраняется в аудите и не выдаётся за точную дату публикации.",
-        "- Secondary consumer доступен только при проверенном industry calendar; иначе fail closed.",
+        "- Secondary consumer: `"
+        + data["data_passport"]["secondary_consumer"]["status"]
+        + "` — "
+        + data["data_passport"]["secondary_consumer"]["reason"]
+        + ".",
         "- Robustness 2022–2023 описательная и не меняет primary-вывод.",
         "",
         "## Вердикт",
@@ -970,7 +994,10 @@ def run_research(
         "limitations": [
             "CPI/PPI targets are latest-vintage; full real-time/PIT revision history is not tested",
             "survey as-of is strict published_at < cutoff",
-            "secondary consumer fails closed without an industry publication calendar",
+            "secondary consumer: "
+            + passport["secondary_consumer"]["status"]
+            + " — "
+            + passport["secondary_consumer"]["reason"],
         ],
         "verdict": evaluation["verdict"],
         "primary_metric": PRIMARY_METRIC,
@@ -1002,7 +1029,7 @@ def run_research(
     })
     logger.log_predictions([
         mlx.PredictionRow(
-            model=row.model,
+            model=f"{row.target}::{row.model}",
             window=f"h{row.horizon}",
             target_date=shift_month(row.origin, row.horizon),
             predicted=row.y_pred,

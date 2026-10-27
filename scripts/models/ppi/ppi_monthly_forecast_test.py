@@ -7,6 +7,7 @@ import sys
 import tempfile
 import unittest
 from datetime import date, datetime, timedelta
+from unittest import mock
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
@@ -437,6 +438,41 @@ class ArtifactTest(unittest.TestCase):
                 out_dir=out, horizons=(1,), min_train=36, logger_enabled=False,
             )
         self.assertFalse((out / f"{pm.ARTIFACT_STEM}.json").exists())
+
+    def test_logged_models_are_target_qualified(self):
+        captured = {}
+        original = pm.mlx.start_run
+
+        def wrapped(*args, **kwargs):
+            kwargs["enabled"] = False
+            logger = original(*args, **kwargs)
+            captured["logger"] = logger
+            return logger
+
+        with mock.patch.object(pm.mlx, "start_run", side_effect=wrapped):
+            pm.run_research(
+                self.targets, self.values, self.publications,
+                out_dir=Path(self.temp.name) / "logging",
+                horizons=(1,), min_train=36,
+            )
+        names = {row.model for row in captured["logger"].predictions}
+        self.assertTrue(names)
+        self.assertTrue(all("::" in name for name in names), names)
+        self.assertEqual(len(names), 5 * 5)
+
+
+class SecondaryStatusTest(unittest.TestCase):
+    def test_missing_industry_calendar_fails_closed(self):
+        status = pm.secondary_consumer_status([])
+        self.assertEqual(status["status"], "FAIL_CLOSED")
+        self.assertIn("calendar", status["reason"])
+
+    def test_industry_calendar_presence_is_reported(self):
+        status = pm.secondary_consumer_status([
+            {"series": "industry_manufacturing_consumer_price_expectations",
+             "period_date": "2026-08-01", "quality": "date"},
+        ])
+        self.assertEqual(status["status"], "CALENDAR_PRESENT")
 
 
 if __name__ == "__main__":
