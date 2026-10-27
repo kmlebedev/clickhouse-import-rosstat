@@ -73,46 +73,35 @@ ORDER BY code
 
 ## Task 2. Ценовые ожидания как признаки прогноза ИПЦ/ИЦП
 
-### Шаг 1. Baselines
+Протокол ниже предрегистрирован до живых метрик. Реализация — research-only `scripts/models/ppi/ppi_monthly_forecast.py`; production CPI/PPI, `forecast_log`, registry/promotion, DDL, витрины, гранты, DAG и `ppi_sa` не меняются.
 
-1. **CPI:** использовать существующий nowcast #235/#76 (`scripts/models/cpi/cpi_monthly.py`, `cpi_monthly_v3.py`) как точку отсчёта; если модели слишком тяжёлые — упрощённый AR/ARIMA на `rosstat_ipc_mes` (m/m SAAR).
-2. **PPI:** новый baseline `scripts/models/ppi/ppi_monthly_forecast.py`:
-   - AR/ARIMA на `ppi_sa` (total, food, non-food, core) или VAR на `rosstat_ppi_ved`;
-   - h1/h3/h6; target — `saar3` или m/m SA (зафиксировать до прогона).
-3. Зафиксировать фолды, train/test, as-of; не использовать будущие ревизии.
+### Шаг 1. Таргеты, cutoff и фолды
 
-### Шаг 2. Признаки `cbr_survey`
+1. CPI all — NSA m/m `rosstat_ipc_mes.percent - 100`, п.п.; PPI `total/food/nonfood/core` — `ppi_sa.mm_sa`, п.п. м/м, `spec_version='ppi-sa-2026-v1'`.
+2. Origin `O`, target `O+h`; h1/h3/h6 — отдельные direct monthly targets, не `saar3`. Expanding train origins `t <= O-h-1`, `MIN_TRAIN=36`; первый test fold имеет 36 origins.
+3. Cutoff — 8-е M+1 после `O`, 23:59:59 MSK. Survey берётся из `v_series_publication`, `source='cbr_survey'`, строго `published_at < cutoff`: `quality='date'` — точная дата с effective 23:59:59 MSK, `quality='fallback'` — конец M+1. Нет publication row — пропуск/fail closed, не фиксированный лаг.
+4. Base и expectations получают одинаковые calendar boundaries; парные метрики — только на общих `(target,horizon,origin)`. Минимум 12 folds primary и 6 robustness, иначе `INSUFFICIENT`.
 
-1. Агрегатные: `price_expectations`, `price_expectations_sa`, `price_growth_expected`.
-2. Отраслевые: `industry_*_price_expectations`, `industry_*_price_expectations_sa` (16 листов).
-3. Лаги 0/1/2/3 месяца; as-of по `series_publication`/`cbr_publication_calendar` (мониторинг ~10–15-е следующего месяца).
-4. Для старых точек — `fallback` с `quality`; оговорка.
+### Шаг 2. Признаки и парные модели
 
-### Шаг 3. Walk-forward
+1. Aggregate: `price_expectations`, `price_expectations_sa`, `price_growth_expected`; лаги 0/1/2/3 от последнего опубликованного к cutoff месяца.
+2. `b1_last` — последний доступный target, справочный benchmark. `b2_ar1` — OLS AR(1)+11 monthly dummies. `b3_enet` — ElasticNetCV на AR/month-dummy блоке; median imputation/scaling/CV строго внутри train, NaN не превращается в 0 заранее.
+3. Primary pairs: `b2_ar1_expectations vs b2_ar1`, `b3_enet_expectations vs b3_enet`; парные модели отличаются только aggregate survey-блоком. Primary targets: CPI all и PPI `total/food/nonfood/core`.
+4. Secondary consumer: B3 `industry-only` и `aggregate+industry` против того же `b3_enet`, без расширения primary-семейства. Consumer target — только проверенный pinned research-винтаж Task 1; нет industry publication calendar — secondary fail closed, aggregate primary не ломается.
 
-1. Origin `O`, target `O+h`, train `≤ O−h−1`; h1/h3/h6.
-2. Сравнить:
-   - baseline;
-   - +aggregate expectations;
-   - +industry expectations;
-   - +aggregate+industry.
-3. Метрики: RMSE/MAE, DM-HLN, bootstrap CI, MDE.
-4. Отдельно потребительский сектор: food, beverages, clothing / consumer goods.
+### Шаг 3. Метрики и правило решения
 
-### Шаг 4. Решение
+1. RMSE/MAE для B1–B3; `delta=RMSE(base)-RMSE(expectations)`; DM-HLN с HAC `max(h-1,ceil(T^(1/3)))`; 95% paired circular block bootstrap CI delta, `block=3`, `n=2000`, `seed=20261027`.
+2. MDE `2.802*sd(d)/sqrt(n)/(RMSE_A+RMSE_B)`; `n<2` и нулевая дисперсия differential не дают фиктивной значимости. Holm α=0.05 — только для primary DM p-values; secondary и robustness отдельно.
+3. `promote` — только рекомендация открыть research follow-up: primary consumer PPI `food` хотя бы на h1/h3 имеет `delta>0`, Holm-adjusted DM p<0.05 и весь 95% CI delta выше 0. Secondary consumer подтверждает механизм, но сам не даёт `promote`. Production promotion запрещён.
+4. Иначе `iterate` или `reject` по знаку эффекта и MDE; при n ниже минимума — `INSUFFICIENT`. Robustness 2022–2023 отчитывается отдельно и не меняет primary-вывод. После метрик не менять таргет, окна, признаки, primary-семейство или seed без нового post-hoc эксперимента.
 
-- **go:** значимый выигрыш (DM p<0.05, CI исключает 0) хотя бы на h1/h3 в потребительском секторе → кандидат в фичи модели ставки/PPI-nowcast; отдельный follow-up.
-- **no-go:** выигрыша нет → фиксируем; survey-ожидания не заменяем.
-- **Оговорки:** 2022–2023 шоки, малая выборка, PIT/ревизии, записка предварительная.
+### Шаг 4. Официальный run и документ
 
-### Шаг 5. Документ
-
-`docs/research/2026-10-21-ppi-expectations-forecast.md` + JSON:
-- данные/фолды/as-of;
-- таблица RMSE/MAE/DM/CI по h1/h3/h6 и секторам;
-- сравнение с baseline и с результатом записки;
-- решение go/no-go;
-- «что не проверено».
+1. Выполнить `ML_LOG=1 MLFLOW=1 make ppi-monthly-forecast ARGS="--out-dir docs/research"`; сохранить run id, config/sample hashes, SHA-256 артефактов и проверить run/folds в `v_ml_runs`/`v_ml_error_by_fold`. Registry/promote не использовать.
+2. Создать `docs/research/2026-10-21-ppi-expectations-forecast.md`, `.json` и `-predictions.csv`: данные/винтажи/SHA, окна и n по target×h, RMSE/MAE B1–B3, primary DM/Holm/CI/MDE, secondary consumer, robustness 2022–2023, сравнение с запиской и research-вердикт.
+3. Явно указать: survey as-of соблюдён; CPI/PPI targets latest-vintage; полный PIT ревизий не проверен. Независимо пересчитать метрики из CSV и повторить CLI для проверки детерминизма без дублирования официального лога.
+4. Записать результат в #318 и информативно в #76, не закрывая umbrella и не обещая production-интеграцию.
 
 ---
 
@@ -120,13 +109,12 @@ ORDER BY code
 
 ```bash
 make docs-check
-python3 scripts/ppi_industry_sensitivity_test.py -v   # Task 1, если добавлен
-python3 scripts/models/ppi/ppi_monthly_forecast_test.py -v  # Task 2, если добавлен
-make all  # только если менялись Go-файлы; в этих задачах не должны
+make ppi-monthly-forecast-test
+make all
 ```
 
 - Прод-код, DDL, витрины и гранты не меняются; `ppi_sa` не пересчитывается.
-- `make docs-check` — зелёный; Python-тесты — зелёные.
+- `make docs-check`, offline Python-тесты и `make all` — зелёные; independent recalc и deterministic replay совпадают с официальными артефактами.
 - Решения — в #266 (Task 1) и #318/#76 (Task 2).
 
 ---
