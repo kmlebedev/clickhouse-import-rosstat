@@ -3,10 +3,13 @@
 
 from __future__ import annotations
 
+import csv
+import math
 import tempfile
 import unittest
 from datetime import date
 from pathlib import Path
+from unittest import mock
 
 from openpyxl import Workbook
 
@@ -141,6 +144,193 @@ class AuditTest(WorkbookCase):
             "food_no_alcohol": ("10",),
             "core_no_alcohol": ("10",) + nonfood,
         })
+
+
+def add_months(day: date, months: int) -> date:
+    month = day.month - 1 + months
+    return date(day.year + month // 12, month % 12 + 1, 1)
+
+
+def monthly_rows(codes: tuple[str, ...], values: dict[str, float], months: int = 36) -> list[dict]:
+    return [
+        {
+            "date": add_months(date(2021, 1, 1), month), "code": code,
+            "name": code, "value": values.get(code, 1.0),
+        }
+        for code in codes
+        for month in range(months)
+    ]
+
+
+def anchors_path() -> Path:
+    return Path(__file__).resolve().parent.parent / "docs" / "research" / "2026-10-21-ppi-sa-text-anchors-12.csv"
+
+
+class AggregateTest(unittest.TestCase):
+    def test_aggregate_full_panel_with_weights(self) -> None:
+        rows = monthly_rows(("10", "11"), {"10": 1.0, "11": 3.0})
+        weights = {(2026, "10"): 60.0, (2026, "11"): 40.0}
+        result = m.aggregate_mm(rows, weights, year=2026)
+        self.assertEqual(len(result), 36)
+        self.assertAlmostEqual(result[date(2021, 1, 1)], 1.8)
+
+    def test_aggregate_rejects_missing_component_month(self) -> None:
+        rows = monthly_rows(("10", "11"), {"10": 1.0, "11": 3.0})
+        rows = [row for row in rows if not (row["code"] == "11" and row["date"] == date(2021, 5, 1))]
+        weights = {(2026, "10"): 60.0, (2026, "11"): 40.0}
+        with self.assertRaisesRegex(ValueError, "полн"):
+            m.aggregate_mm(rows, weights, year=2026)
+
+    def test_levels_require_continuous_36_months_and_positive(self) -> None:
+        points = {add_months(date(2021, 1, 1), month): 1.0 for month in range(36)}
+        levels = m.levels_from_mm(points)
+        self.assertEqual(levels[date(2021, 1, 1)], 100.0)
+        self.assertAlmostEqual(levels[date(2021, 2, 1)], 101.0)
+
+        short = dict(list(points.items())[:35])
+        with self.assertRaisesRegex(ValueError, "36"):
+            m.levels_from_mm(short)
+
+        gapped = {add_months(date(2021, 1, 1), month): 1.0 for month in range(37)}
+        gapped.pop(date(2021, 5, 1))
+        with self.assertRaisesRegex(ValueError, "непрерыв"):
+            m.levels_from_mm(gapped)
+
+        broken = dict(points)
+        broken[date(2021, 2, 1)] = -100.0
+        with self.assertRaisesRegex(ValueError, "положительн"):
+            m.levels_from_mm(broken)
+
+
+class FormulaTest(unittest.TestCase):
+    def test_mm_and_saar(self) -> None:
+        levels = {
+            date(2021, 1, 1): 100.0,
+            date(2021, 2, 1): 110.0,
+            date(2021, 3, 1): 132.0,
+        }
+        mm_sa = m.mm_from_levels(levels)
+        self.assertEqual(mm_sa[date(2021, 1, 1)], None)
+        self.assertAlmostEqual(mm_sa[date(2021, 2, 1)], 10.0)
+        self.assertAlmostEqual(mm_sa[date(2021, 3, 1)], 20.0)
+        saar = m.saar_from_mm(mm_sa)
+        self.assertAlmostEqual(saar[date(2021, 2, 1)], ((1.1**12) - 1) * 100)
+
+    def test_saar3_is_mean_of_available_not_cagr(self) -> None:
+        levels = {
+            date(2021, 1, 1): 100.0,
+            date(2021, 2, 1): 100.0,
+            date(2021, 3, 1): 110.0,
+            date(2021, 4, 1): 132.0,
+        }
+        mm_sa = m.mm_from_levels(levels)
+        saar = m.saar_from_mm(mm_sa)
+        saar3 = m.saar3_from_mm(mm_sa)
+        self.assertNotIn(date(2021, 1, 1), saar3)
+        self.assertAlmostEqual(saar3[date(2021, 2, 1)], saar[date(2021, 2, 1)])
+        expected = (saar[date(2021, 2, 1)] + saar[date(2021, 3, 1)]) / 2
+        self.assertAlmostEqual(saar3[date(2021, 3, 1)], expected)
+        self.assertNotAlmostEqual(saar3[date(2021, 3, 1)], ((1.32 ** 6) - 1) * 100)
+
+
+class X13Test(unittest.TestCase):
+    def test_uses_seats_log_cal_output(self) -> None:
+        levels = {add_months(date(2021, 1, 1), month): 100.0 + month for month in range(36)}
+
+        def fake_run(command, **kwargs):
+            output = Path(command[-1])
+            with output.open("w", encoding="utf-8", newline="") as fh:
+                writer = csv.writer(fh)
+                writer.writerow(["series", "variant", "date", "sa", "mm_sa", "saar", "saar3"])
+                for day, value in levels.items():
+                    writer.writerow(["industry", "seats_level_cal", day.isoformat(), value + 1000, "", "", ""])
+                    writer.writerow(["industry", "seats_log_cal", day.isoformat(), value, "", "", ""])
+
+        with mock.patch.object(m.subprocess, "run", side_effect=fake_run) as run:
+            result = m.seasonal_adjust(levels)
+        self.assertEqual(result, levels)
+        self.assertIn("ppi_sa_x13.R", " ".join(run.call_args.args[0]))
+        self.assertIn("R_LIBS_USER", run.call_args.kwargs["env"])
+
+    def test_rejects_empty_r_output(self) -> None:
+        levels = {add_months(date(2021, 1, 1), month): 100.0 for month in range(36)}
+
+        def fake_run(command, **kwargs):
+            Path(command[-1]).write_text(
+                "series,variant,date,sa,mm_sa,saar,saar3\n", encoding="utf-8"
+            )
+
+        with mock.patch.object(m.subprocess, "run", side_effect=fake_run):
+            with self.assertRaisesRegex(ValueError, "пуст"):
+                m.seasonal_adjust(levels)
+
+
+class VariantOrderTest(unittest.TestCase):
+    def test_direct_and_indirect_apply_adjustment_in_different_order(self) -> None:
+        rows = monthly_rows(("10", "11"), {"10": 2.0, "11": 4.0}, months=68)
+        weights = {(2026, "10"): 60.0, (2026, "11"): 40.0}
+
+        def nonlinear(levels: dict[date, float]) -> dict[date, float]:
+            return {day: value * value / 100.0 for day, value in levels.items()}
+
+        direct = m.direct_saar3(rows, weights, ("10", "11"), 2026, adjust=nonlinear)
+        indirect = m.indirect_saar3(rows, weights, ("10", "11"), 2026, adjust=nonlinear)
+        self.assertEqual(set(direct), set(indirect))
+        self.assertNotEqual(direct[date(2026, 8, 1)], indirect[date(2026, 8, 1)])
+        self.assertTrue(all(math.isfinite(value) for value in indirect.values()))
+
+    def test_build_variants_maps_no_alcohol_sensitivity(self) -> None:
+        codes = m.VARIANT_CODES["core"]
+        rows = monthly_rows(codes, {"10": 2.0, "11": 4.0}, months=68)
+        weights = {(2026, code): 1.0 for code in codes}
+        variants = m.build_variants(rows, weights, 2026, adjust=lambda levels: levels)
+        self.assertEqual(
+            set(variants),
+            {"direct", "indirect", "direct_no_alcohol", "indirect_no_alcohol"},
+        )
+        self.assertEqual(set(variants["direct"]), {"food", "nonfood", "core"})
+        self.assertNotEqual(
+            variants["direct"]["food"][date(2026, 8, 1)],
+            variants["direct_no_alcohol"]["food"][date(2026, 8, 1)],
+        )
+
+
+class AnchorContractTest(unittest.TestCase):
+    def test_contract_counts_and_baseline(self) -> None:
+        anchors = m.load_anchors(anchors_path())
+        self.assertEqual(len(anchors), 37)
+        self.assertEqual(sum(row["kind"] == "exact" for row in anchors), 11)
+        self.assertEqual(sum(row["kind"] not in ("exact", "not_stated") for row in anchors), 14)
+        self.assertEqual(sum(row["kind"] == "not_stated" for row in anchors), 12)
+
+        baseline = m.baseline_metrics(anchors)
+        self.assertAlmostEqual(baseline["exact"]["overall"]["mae"], 1.538, places=3)
+        self.assertEqual(baseline["exact"]["overall"]["n"], 11)
+        self.assertEqual(baseline["qualitative"]["summary"], {"pass": 6, "fail": 8, "n/a": 0})
+
+    def test_compare_excludes_qualitative_from_exact_and_rejects_missing_value(self) -> None:
+        anchors = m.load_anchors(anchors_path())
+        values: dict[str, dict[str, float]] = {}
+        for row in anchors:
+            values.setdefault(row["series"], {})[row["target"]] = 0.0
+        report = m.compare_anchors({"fake": values}, anchors_path())["variants"]["fake"]
+        self.assertEqual(report["exact"]["overall"]["n"], 11)
+        self.assertEqual(sum(report["qualitative"]["summary"].values()), 14)
+
+        broken = {series: dict(points) for series, points in values.items()}
+        broken["food"].pop("2026-04-01")
+        with self.assertRaisesRegex(ValueError, "нет saar3"):
+            m.compare_anchors({"broken": broken}, anchors_path())
+
+    def test_rejects_incompatible_anchor_csv(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "anchors.csv"
+            path.write_text(
+                "issue,url,target,window,series,kind,text,anchor_value,ours,diff,threshold,result,note\n",
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, "якор"):
+                m.load_anchors(path)
 
 
 if __name__ == "__main__":
