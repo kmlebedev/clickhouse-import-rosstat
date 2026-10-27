@@ -77,7 +77,8 @@ steps:
 
   # Девятый шаг — недельный агрегат ИПЦ из BI Росстата: в хвосте цепочки, чтобы падение
   # нового шага не лишало данных проверенные восемь. Export-URL динамический (новый
-  # tmp/exp<uuid> на каждый POST), поэтому preflight нет; повтор идемпотентен по данным.
+  # tmp/exp<uuid> на каждый POST), поэтому HEAD-preflight нет; версия содержимого считается
+  # по SHA-256 точек и пишется в source_publications, повтор — no-op (`Imported 0 rows`).
   - id: rosstat_bi_cpi_weekly
     run: "$ROSSTAT_IMPORT_BIN"
     env:

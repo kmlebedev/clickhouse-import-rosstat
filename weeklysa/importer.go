@@ -29,9 +29,9 @@ WHERE series = ?
 ORDER BY date`
 	// weeklySAPublishedQuery — as-of входа: когда конвейер впервые увидел версии
 	// обоих источников. maxOrNull обязателен: max() по пустой выборке в ClickHouse
-	// даёт NULL, а toDate(NULL)-семантика разных версий различна. У BI
-	// source_publications может не быть вовсе (динамический export-URL), поэтому
-	// published_at — Nullable и NULL здесь штатен.
+	// даёт NULL, а toDate(NULL)-семантика разных версий различна. У BI строка версии
+	// есть с 2026-10-27 (SHA-256 содержимого), но на старых стендах её может не быть
+	// вовсе — тогда published_at остаётся NULL, поэтому колонка Nullable.
 	weeklySAPublishedQuery = `SELECT toDate(maxOrNull(first_seen))
 FROM source_publications FINAL
 WHERE source IN (?, ?)`
