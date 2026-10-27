@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import json
 import math
 import os
@@ -24,6 +25,14 @@ ROOT = Path(__file__).resolve().parent
 R_SCRIPT = ROOT / "ppi_sa_x13.R"
 R_LIB = ROOT.parent / "build" / "r-lib"
 ANCHORS_PATH = ROOT.parent / "docs" / "research" / "2026-10-21-ppi-sa-text-anchors-12.csv"
+VED_URL = "https://rosstat.gov.ru/storage/mediabank/Proizvoditeli_Ind_VED_08-2026.xlsx"
+VED_SHA256 = "4694a5bb50fa2c7985be53c7c2c43975fd71eddeea7f914d6a6e1228e1c0c576"
+VED_LAST_MODIFIED = "Fri, 18 Sep 2026 13:15:14 GMT"
+VED_ETAG = '"6aad3962-642aa1"'
+WEIGHTS_URL = "https://rosstat.gov.ru/storage/mediabank/vesa_2006-2026.xlsx"
+WEIGHTS_SHA256 = "ca4212576da8b7566e3bc08cebe99cd16b45652579def6b1b951eaf3162741ee"
+WEIGHTS_LAST_MODIFIED = "Wed, 25 Mar 2026 07:27:00 GMT"
+WEIGHTS_ETAG = '"69c38e44-d76b"'
 TOTAL_CODE = "1323500.029.31"
 MONTHS = {
     "январь": 1, "февраль": 2, "март": 3, "апрель": 4,
@@ -35,6 +44,7 @@ CONSUMER_WORDS = (
     "потребительск", "пищев", "напит", "одежд", "текстиль", "кож",
     "табач", "мебел", "полиграф", "фармацевт", "бытов",
 )
+AUDIT_PREFIXES = ("10.", "11.", "13.", "14.", "15.", "17.", "18.", "21.", "31.", "32.")
 NONFOOD_CODES = tuple(str(code) for code in range(13, 34) if code != 19)
 VARIANT_CODES = {
     "food": ("10", "11"),
@@ -43,6 +53,7 @@ VARIANT_CODES = {
     "food_no_alcohol": ("10",),
     "core_no_alcohol": ("10",) + NONFOOD_CODES,
 }
+USED_CODES = frozenset(code for codes in VARIANT_CODES.values() for code in codes)
 
 
 def _month(value: object) -> int | None:
@@ -66,6 +77,21 @@ def _number(value: object) -> float | None:
         return float(normalized)
     except ValueError as exc:
         raise ValueError(f"нечисловое значение ИЦП: {value!r}") from exc
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as fh:
+        for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def verify_sha256(path: Path, expected: str) -> str:
+    actual = sha256_file(path)
+    if actual != expected:
+        raise ValueError(f"{path}: SHA-256 {actual} не совпадает с pinned {expected}")
+    return actual
 
 
 def _sheet_year(rows: list[tuple], sheet: str) -> int:
@@ -142,17 +168,23 @@ def weight_map(weights: dict[tuple[int, str], float], codes: tuple[str, ...], ye
 def audit_candidates(rows: list[dict], weights: dict[tuple[int, str], float]) -> list[dict]:
     grouped: dict[tuple[str, str], list[date]] = defaultdict(list)
     for row in rows:
-        if row["code"] == TOTAL_CODE:
+        code = row["code"]
+        if code == TOTAL_CODE:
             continue
-        if any(word in row["name"].lower() for word in CONSUMER_WORDS):
-            grouped[(row["code"], row["name"])].append(row["date"])
+        selected = (
+            code in USED_CODES
+            or code.startswith(AUDIT_PREFIXES)
+            or any(word in row["name"].lower() for word in CONSUMER_WORDS)
+        )
+        if selected:
+            grouped[(code, row["name"])].append(row["date"])
     result = []
     for (code, name), dates in sorted(grouped.items()):
         expected = (max(dates).year - min(dates).year) * 12 + max(dates).month - min(dates).month + 1
         result.append({
             "code": code, "name": name, "from": min(dates).isoformat(),
             "to": max(dates).isoformat(), "n": len(dates), "missing": expected - len(set(dates)),
-            "has_weights_2026": (2026, code) in weights,
+            "has_weights_2026": (2026, code) in weights, "used": code in USED_CODES,
         })
     return result
 
@@ -162,7 +194,7 @@ def write_candidates(path: Path, rows: list[dict]) -> None:
     with path.open("w", encoding="utf-8", newline="") as fh:
         writer = csv.DictWriter(
             fh,
-            fieldnames=["code", "name", "from", "to", "n", "missing", "has_weights_2026"],
+            fieldnames=["code", "name", "from", "to", "n", "missing", "has_weights_2026", "used"],
             lineterminator="\n",
         )
         writer.writeheader()
@@ -551,20 +583,44 @@ def write_comparison_json(path: Path, comparison: dict) -> None:
     )
 
 
+def _display_path(path: Path) -> str:
+    resolved = Path(path).resolve()
+    try:
+        return str(resolved.relative_to(ROOT.parent))
+    except ValueError:
+        return str(resolved)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--ved-xlsx", type=Path, default=Path("build/ppi-industry-sensitivity/raw/ved.xlsx"))
     parser.add_argument("--weights-xlsx", type=Path, default=Path("build/ppi-industry-sensitivity/raw/vesa.xlsx"))
+    parser.add_argument("--ved-sha256", default=VED_SHA256)
+    parser.add_argument("--weights-sha256", default=WEIGHTS_SHA256)
     parser.add_argument("--anchors", type=Path, default=ANCHORS_PATH)
     parser.add_argument("--output-prefix", type=Path, default=Path("docs/research/2026-10-21-ppi-industry-sensitivity"))
     parser.add_argument("--print", action="store_true")
     args = parser.parse_args()
+    ved_sha = verify_sha256(args.ved_xlsx, args.ved_sha256)
+    weights_sha = verify_sha256(args.weights_xlsx, args.weights_sha256)
     rows = load_ved_mm(args.ved_xlsx)
     weights = load_weights(args.weights_xlsx)
     candidates = audit_candidates(rows, weights)
     write_candidates(args.output_prefix.parent / "2026-10-21-ppi-ved-candidates.csv", candidates)
     variants = build_variants(rows, weights)
     comparison = compare_anchors(variants, args.anchors)
+    comparison["inputs"] = {
+        "vintage": "08-2026",
+        "ved": {
+            "url": VED_URL, "sha256": ved_sha,
+            "last_modified": VED_LAST_MODIFIED, "etag": VED_ETAG,
+        },
+        "weights": {
+            "url": WEIGHTS_URL, "sha256": weights_sha,
+            "last_modified": WEIGHTS_LAST_MODIFIED, "etag": WEIGHTS_ETAG,
+        },
+        "anchors": {"path": _display_path(args.anchors), "sha256": sha256_file(args.anchors)},
+    }
     write_comparison_csv(args.output_prefix.with_suffix(".csv"), comparison)
     write_comparison_json(args.output_prefix.with_suffix(".json"), comparison)
     if args.print:
