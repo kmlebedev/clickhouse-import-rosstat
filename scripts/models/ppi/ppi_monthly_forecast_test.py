@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Офлайн-тесты research-прогноза CPI/PPI по ценовым ожиданиям."""
 
+import contextlib
+import io
 import json
 import math
 import sys
@@ -487,6 +489,27 @@ class SecondaryStatusTest(unittest.TestCase):
              "period_date": "2026-08-01", "quality": "date"},
         ])
         self.assertEqual(status["status"], "CALENDAR_PRESENT")
+
+
+class CliBoundaryTest(unittest.TestCase):
+    def test_horizon_rows_honour_custom_min_train(self):
+        targets, values, publications = ArtifactTest.synthetic()
+        horizon = pm.shift_month(date(2019, 1, 1), 30)
+        points = {day: value for day, value in targets["cpi_all"].items() if day < horizon}
+        survey = {key: value for key, value in values.items() if key[1] < horizon}
+        pubs = [row for row in publications if row["period_date"] < horizon]
+        rows = pm.build_horizon_rows(
+            "cpi_all", points, survey, pubs, horizon=1, min_train=24
+        )
+        self.assertEqual(len(rows), 28)
+
+    def test_main_turns_data_value_error_into_clean_failure(self):
+        stderr = io.StringIO()
+        with mock.patch.object(pm, "load_inputs", side_effect=ValueError("bad data")):
+            with contextlib.redirect_stderr(stderr):
+                code = pm.main([])
+        self.assertEqual(code, 1)
+        self.assertIn("bad data", stderr.getvalue())
 
 
 if __name__ == "__main__":
