@@ -3,7 +3,9 @@ package rosstat
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/csv"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -43,6 +45,15 @@ const (
 	biCpiWeeklyExportPayload = `7|0|29|https://bi.rosstat.gov.ru/biportal/ddb/|4E54CCD3C262C2F21A605D6A0465BA40|com.contourcomponents.ddb.client.GridViewService|exportGrid|com.contourcomponents.ddb.client.DashboardRequest/2249903702|I|java.lang.String/2004016611|[Z/1413617015|java.lang.Long/4227064769|[I/2970817851|Индекс_потребительских_цен/slice1|java.util.HashMap/1797211028|report15|3|report18|allsol|1|solution|Dashboard|project|/Dashboard/Prices_week|report|Индекс_потребительских_цен|slice|slice1|tabindex|grid|view1|csv|1|2|3|4|3|5|6|7|5|0|0|0|0|8|2|0|0|0|0|0|9|cRD6OKFw|10|2|-1|-1|0|0|0|0|0|0|11|0|12|0|0|0|0|96|96|0|0|0|0|0|0|0|0|-1|-1|0|0|0|0|0|0|0|0|0|0|13|0|0|0|0|0|14|0|0|15|12|7|7|16|7|17|7|18|7|19|7|20|7|21|7|22|7|23|7|24|7|25|7|26|-8|7|27|7|28|0|2|0|0|0|aFYxoIL|0|15|0|0|0|0|0|0|0|0|27|0|0|0|0|0|1|29|`
 	// biCpiWeeklyMinDate — первая публикация BI; более ранних недель источник не отдаёт.
 	biCpiWeeklyMinDate = "2019-01-09"
+	// biCpiWeeklyVersionName — имя артефакта в source_publications. Литерал, а не basename
+	// публичного URL: URL percent-encoded, и basename из него нестабилен по виду.
+	biCpiWeeklyVersionName = "Индекс потребительских цен.csv"
+	// biCpiWeeklyCountPoints — количественный чек версии: тот же запрос служит и проверкой
+	// no-op, и значением points записываемой версии (ARCHITECTURE §8 п. 13).
+	biCpiWeeklyCountPoints = "SELECT count() FROM rosstat_bi_cpi_weekly FINAL"
+	// biCpiWeeklyFingerprintScheme — префикс канонического представления: смена схемы
+	// отпечатка не должна совпадать с прежними версиями.
+	biCpiWeeklyFingerprintScheme = "rosstat_bi_cpi_weekly-v1"
 )
 
 // biCpiWeeklyExportURL — GWT-RPC endpoint BI, который готовит CSV по карточке
@@ -52,6 +63,25 @@ var biCpiWeeklyExportURL = "https://bi.rosstat.gov.ru/biportal/grid"
 
 // biCpiWeeklyPublicBase — схема и хост публичного tmp-CSV; var для теста.
 var biCpiWeeklyPublicBase = "https://bi.rosstat.gov.ru"
+
+// biCpiWeeklyAttempts, biCpiWeeklyBackoff и biCpiWeeklySleep — политика повторов транспорта.
+// Переменные, а не константы: тест подменяет паузу, не растягивая прогон (прецедент
+// util.fileTimeout). Претензия 2026-10-21: портал оборвал export-RPC (EOF), и прогон упал
+// целиком — у экспорта не было ни одной повторной попытки (спека §2).
+var (
+	biCpiWeeklyAttempts = 3
+	biCpiWeeklyBackoff  = []time.Duration{2 * time.Second, 5 * time.Second}
+	biCpiWeeklySleep    = func(ctx context.Context, delay time.Duration) error {
+		timer := time.NewTimer(delay)
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-timer.C:
+			return nil
+		}
+	}
+)
 
 // biCpiWeeklyPoint — точка ряда: дата регистрации и значение индекса.
 type biCpiWeeklyPoint struct {
@@ -65,40 +95,144 @@ type BICpiWeeklyStat struct {
 }
 
 // biCpiWeeklyImporter регистрируется в rosstat/importers.go. PublicationCountPoints не
-// заполняется: export-URL динамический (новый exp<uuid> на каждый POST), HEAD-префлайт и
-// архив версий недостижимы; идемпотентность обеспечивает ReplacingMergeTree (спека §6).
+// заполняется: экспорт идёт в обход шаблона (URL выдаёт RPC и меняется на каждый прогон),
+// поэтому шаблонного HEAD-префлайта нет. Версия содержимого пишется вручную — SHA-256
+// разобранных точек в source_publications (см. Import); идемпотентность обеспечивает
+// ReplacingMergeTree, повтор — no-op по версии (спека §3.2).
 var biCpiWeeklyImporter = &BICpiWeeklyStat{ClickHouseImport: util.ClickHouseImport{
 	TableName:   rosstatBICpiWeeklyTable,
 	CreateTable: []string{biCpiWeeklyDdl},
-	BodyFunc:    biCpiWeeklyImport,
 	AfterImport: afterRosstatMacro(biCpiWeeklySeriesMeta()),
 }}
 
-// Import сначала готовит CSV через GWT-RPC BI, затем отдаёт скачивание шаблону: шаблон
-// качает байты по DataUrl, BodyFunc их разбирает, AfterImport публикует каталог и витрину.
-// Свой Import() — прецедент rosstat_ipc_weeks: DataUrl вычисляется во время прогона, а не
-// в init(), и без сети в init().
+// Import — полный цикл импортёра: DDL → export-RPC → CSV → разбор → отпечаток → гейт версии
+// → батч → производные → строка версии. Свой цикл вместо шаблонного
+// util.ClickHouseImport.Import (прецеденты weeklysa, fedstat_ipc): гейту нужен отпечаток
+// содержимого, а не HEAD по URL, и no-op обязан вернуть 0, а не число точек версии.
+// DataUrl вычисляется во время прогона: в init() сети нет (ARCHITECTURE §8.6).
 func (s *BICpiWeeklyStat) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
-	csvURL, err := biCpiWeeklyCSVURL()
+	for _, ddl := range s.CreateTable {
+		if err = conn.Exec(ctx, fmt.Sprintf(ddl, s.TableName)); err != nil {
+			return 0, fmt.Errorf("%s: DDL: %w", rosstatBICpiWeeklyTable, err)
+		}
+	}
+	csvURL, err := biCpiWeeklyCSVURL(ctx)
 	if err != nil {
 		return 0, err
 	}
 	s.DataUrl = csvURL
-	return s.ClickHouseImport.Import(ctx, conn)
-}
-
-// biCpiWeeklyCSVURL выполняет export-RPC и превращает относительный tmp-путь в публичный
-// URL. Ошибка RPC не проглатывается: без CSV прогон обязан упасть до записи, а не
-// отчитаться «0 строк».
-func biCpiWeeklyCSVURL() (string, error) {
-	body, err := util.PostFileBytes(biCpiWeeklyExportURL, []byte(biCpiWeeklyExportPayload), map[string]string{
-		"Content-Type":      "text/x-gwt-rpc; charset=UTF-8",
-		"X-GWT-Permutation": biCpiWeeklyPermutation,
-		"X-GWT-Module-Base": biCpiWeeklyModuleBase,
-		"Referer":           biCpiWeeklyDashboardURL,
+	body, err := biCpiWeeklyRetry(ctx, "CSV", func() ([]byte, error) {
+		return util.GetFileBytes(csvURL)
 	})
 	if err != nil {
-		return "", fmt.Errorf("%s: export RPC: %w", rosstatBICpiWeeklyTable, err)
+		return 0, err
+	}
+	points, err := biCpiWeeklyParseCSV(body)
+	if err != nil {
+		return 0, fmt.Errorf("%s: %w", rosstatBICpiWeeklyTable, err)
+	}
+	fingerprint := biCpiWeeklyFingerprint(points)
+	// Производные (каталог ряда + витрина) публикуются и на no-op-пути: их отсутствие после
+	// ручной чистки не повод идти в сеть (прецедент weeklysa).
+	publish := func() error {
+		if s.AfterImport == nil {
+			return nil
+		}
+		return s.AfterImport(ctx, conn)
+	}
+	if err = util.EnsurePublications(ctx, conn); err != nil {
+		return 0, err
+	}
+	knownPoints, known, err := util.PublicationKnown(ctx, conn, rosstatBICpiWeeklyTable, biCpiWeeklyVersionName, fingerprint)
+	if err != nil {
+		return 0, fmt.Errorf("%s: версия %s: %w", rosstatBICpiWeeklyTable, fingerprint, err)
+	}
+	if known {
+		dbPoints, countErr := util.CountPoints(ctx, conn, biCpiWeeklyCountPoints)
+		if countErr != nil {
+			return 0, countErr
+		}
+		if biCpiWeeklyShouldSkip(known, knownPoints, dbPoints) {
+			if err = publish(); err != nil {
+				return 0, err
+			}
+			log.Infof("%s: no-op, версия %s уже импортирована, %d точек на месте", rosstatBICpiWeeklyTable, fingerprint, dbPoints)
+			return 0, nil
+		}
+		log.Warnf("%s: версия %s известна, но в таблице %d точек вместо %d — полный импорт", rosstatBICpiWeeklyTable, fingerprint, dbPoints, knownPoints)
+	}
+	inserted, err := biCpiWeeklyInsert(ctx, conn, points)
+	if err != nil {
+		return 0, err
+	}
+	if inserted == 0 {
+		// Инвариант приёмки: полный прогон, не записавший ни одной точки, — ошибка, а не
+		// «Imported 0 rows». Парсер такой выгрузке пройти не даёт, но гейт выше мог бы
+		// пропустить пустой список в будущем — прогон обязан упасть.
+		return 0, fmt.Errorf("%s: полный прогон не дал точек — источник недодал историю", rosstatBICpiWeeklyTable)
+	}
+	if err = publish(); err != nil {
+		return inserted, err
+	}
+	dbPoints, err := util.CountPoints(ctx, conn, biCpiWeeklyCountPoints)
+	if err != nil {
+		return inserted, err
+	}
+	if err = util.SavePublication(ctx, conn, util.Publication{
+		Source:      rosstatBICpiWeeklyTable,
+		Name:        biCpiWeeklyVersionName,
+		Fingerprint: fingerprint,
+		Url:         csvURL,
+		FirstSeen:   time.Now(),
+		Points:      dbPoints,
+	}); err != nil {
+		return inserted, err
+	}
+	log.Infof("%s: %s..%s, версия %s", rosstatBICpiWeeklyTable,
+		points[0].date.Format("2006-01-02"), points[len(points)-1].date.Format("2006-01-02"), fingerprint)
+	return inserted, nil
+}
+
+// biCpiWeeklyRetry повторяет транспортный вызов: обрыв соединения — свойство источника, а не
+// ошибка разбора, и одна попытка из-за него валила весь недельный прогон. Повторяются только
+// вызовы сети — битый //OK или CSV повтором не лечится, его ошибку возвращает вызывающий.
+// Дедлайн запроса задаёт сам util-хелпер (fileTimeout); ctx здесь отменяет ожидание между
+// попытками.
+func biCpiWeeklyRetry[T any](ctx context.Context, what string, call func() (T, error)) (T, error) {
+	var zero T
+	for attempt := 1; ; attempt++ {
+		value, err := call()
+		if err == nil {
+			return value, nil
+		}
+		if attempt >= biCpiWeeklyAttempts {
+			return zero, fmt.Errorf("%s: %s: %w (%d попыток)", rosstatBICpiWeeklyTable, what, err, attempt)
+		}
+		delay := biCpiWeeklyBackoff[len(biCpiWeeklyBackoff)-1]
+		if attempt <= len(biCpiWeeklyBackoff) {
+			delay = biCpiWeeklyBackoff[attempt-1]
+		}
+		log.Warnf("%s: %s: попытка %d из %d: %v — повтор через %s", rosstatBICpiWeeklyTable, what, attempt, biCpiWeeklyAttempts, err, delay)
+		if sleepErr := biCpiWeeklySleep(ctx, delay); sleepErr != nil {
+			return zero, fmt.Errorf("%s: %s: %v (повтор отменён: %w)", rosstatBICpiWeeklyTable, what, err, sleepErr)
+		}
+	}
+}
+
+// biCpiWeeklyCSVURL выполняет export-RPC (с повторами) и превращает относительный tmp-путь в
+// публичный URL. Ошибка RPC не проглатывается: без CSV прогон обязан упасть до записи, а не
+// отчитаться «0 строк».
+func biCpiWeeklyCSVURL(ctx context.Context) (string, error) {
+	body, err := biCpiWeeklyRetry(ctx, "export RPC", func() ([]byte, error) {
+		return util.PostFileBytes(biCpiWeeklyExportURL, []byte(biCpiWeeklyExportPayload), map[string]string{
+			"Content-Type":      "text/x-gwt-rpc; charset=UTF-8",
+			"X-GWT-Permutation": biCpiWeeklyPermutation,
+			"X-GWT-Module-Base": biCpiWeeklyModuleBase,
+			"Referer":           biCpiWeeklyDashboardURL,
+		})
+	})
+	if err != nil {
+		return "", err
 	}
 	path, err := biCpiWeeklyExportPath(body)
 	if err != nil {
@@ -162,19 +296,59 @@ func biCpiWeeklyPublicURL(path string) (string, error) {
 	return escaped, nil
 }
 
-// biCpiWeeklyImport разбирает CSV и пишет точки в batch. Разбор идёт целиком до первой
-// записи: ошибка оставляет батч пустым, а не пишет половину выгрузки.
-func biCpiWeeklyImport(body []byte, batch driver.Batch) error {
-	points, err := biCpiWeeklyParseCSV(body)
+// biCpiWeeklyInsert — один PrepareBatch на прогон, Append с проверкой, Abort на пути ошибки
+// до Send (правило 2 AGENTS.md): незакрытый батч держит соединение драйвера.
+func biCpiWeeklyInsert(ctx context.Context, conn driver.Conn, points []biCpiWeeklyPoint) (int64, error) {
+	batch, err := conn.PrepareBatch(ctx, "INSERT INTO "+rosstatBICpiWeeklyTable)
 	if err != nil {
-		return fmt.Errorf("%s: %w", rosstatBICpiWeeklyTable, err)
+		return 0, fmt.Errorf("%s: %w", rosstatBICpiWeeklyTable, err)
 	}
+	if err = biCpiWeeklyAppend(points, batch); err != nil {
+		if abortErr := batch.Abort(); abortErr != nil {
+			log.Warnf("%s: не удалось закрыть батч после ошибки: %v", rosstatBICpiWeeklyTable, abortErr)
+		}
+		return 0, err
+	}
+	count := int64(batch.Rows())
+	if err = batch.Send(); err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
+// biCpiWeeklyAppend пишет разобранные точки в батч. Разбор идёт целиком до первой записи,
+// поэтому половина выгрузки в таблицу не попадает.
+func biCpiWeeklyAppend(points []biCpiWeeklyPoint, batch driver.Batch) error {
 	for _, point := range points {
 		if err := batch.Append(ipcWeeksBulletinsAggregateSeries, point.date, point.value); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// biCpiWeeklyFingerprint — SHA-256 канонического представления ряда: версия содержимого, а не
+// файла. Заголовки экспорта для этого не годятся (ETag вшивает mtime и меняется на каждом
+// POST), а сами точки стабильны: два независимых экспорта 2026-10-27 совпали байт-в-байт.
+// Порядок на входе не важен — функция сортирует копию, поэтому перестановка строк в выгрузке
+// не делает версию новой; смена локали тоже не влияет, отпечаток считается по значениям.
+func biCpiWeeklyFingerprint(points []biCpiWeeklyPoint) string {
+	canonical := append([]biCpiWeeklyPoint(nil), points...)
+	sort.SliceStable(canonical, func(i, j int) bool { return canonical[i].date.Before(canonical[j].date) })
+	hash := sha256.New()
+	_, _ = hash.Write([]byte(biCpiWeeklyFingerprintScheme + "\n"))
+	for _, point := range canonical {
+		_, _ = hash.Write([]byte(point.date.Format("2006-01-02") + "\t" +
+			strconv.FormatFloat(point.value, 'g', -1, 64) + "\n"))
+	}
+	return hex.EncodeToString(hash.Sum(nil))
+}
+
+// biCpiWeeklyShouldSkip — решение no-op: версия известна и точек в таблице ровно столько,
+// сколько записала эта версия. Расхождение — self-heal полным импортом (ручная чистка,
+// недоехавший батч), а не тихий no-op; прецедент weeklysa.
+func biCpiWeeklyShouldSkip(known bool, knownPoints, dbPoints uint64) bool {
+	return known && knownPoints == dbPoints
 }
 
 // biCpiWeeklyParseCSV разбирает CSV BI. Выгрузка меняет локаль: английская даёт M/D/YY,
