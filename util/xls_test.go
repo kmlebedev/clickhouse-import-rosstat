@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 )
@@ -93,6 +94,43 @@ func TestGetFileBytes(t *testing.T) {
 	}
 	if string(got) != body {
 		t.Errorf("тело %q, ожидалось %q", got, body)
+	}
+}
+
+// GetFileBytesChecked — тот же GET, но со статусом: нужен источнику, который берёт
+// одноразовый URL и повторяет запрос (BI Росстата). GetFileBytes 5xx-заглушку вернул бы
+// «успешными» байтами, и ошибка всплыла бы уже в разборе, вне ретрая.
+func TestGetFileBytesChecked(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("User-Agent") == "" {
+			t.Error("запрос ушёл без User-Agent — хелпер обязан слать randomUA, как GetFile")
+		}
+		switch r.URL.Path {
+		case "/ok":
+			_, _ = io.WriteString(w, "a,b\n")
+		case "/empty":
+			w.WriteHeader(http.StatusOK)
+		default:
+			http.Error(w, "boom", http.StatusBadGateway)
+		}
+	}))
+	defer server.Close()
+
+	body, err := GetFileBytesChecked(server.URL + "/ok")
+	if err != nil {
+		t.Fatalf("GetFileBytesChecked 200: %v", err)
+	}
+	if string(body) != "a,b\n" {
+		t.Errorf("тело %q, ожидалось a,b", body)
+	}
+
+	if _, err = GetFileBytesChecked(server.URL + "/bad"); err == nil {
+		t.Error("ожидалась ошибка на не-2xx")
+	} else if !strings.Contains(err.Error(), "502") {
+		t.Errorf("ошибка %q не называет статус", err)
+	}
+	if _, err = GetFileBytesChecked(server.URL + "/empty"); err == nil {
+		t.Error("ожидалась ошибка на пустое тело")
 	}
 }
 
