@@ -388,6 +388,9 @@ class ArtifactTest(unittest.TestCase):
         self.assertIn("RMSE", self.report)
         self.assertIn("INSUFFICIENT", self.report)
         self.assertIn("Сравнение с запиской", self.report)
+        for row in self.data["fold_counts"]:
+            self.assertIn("first_target", row)
+            self.assertIn("last_target", row)
         self.assertEqual(
             self.data["data_passport"]["secondary_consumer"]["status"],
             "FAIL_CLOSED",
