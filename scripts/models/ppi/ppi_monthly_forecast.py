@@ -673,6 +673,7 @@ def build_horizon_rows(
     values: dict,
     publications: list,
     horizon: int,
+    min_train: int = 36,
 ) -> list[Row]:
     if not points:
         raise DataError(f"{target}: обязательный ряд таргета пуст")
@@ -697,7 +698,7 @@ def build_horizon_rows(
                 expectation_features=expectations,
             )
         )
-    if len(rows) <= 36 + horizon:
+    if len(rows) <= min_train + horizon:
         raise DataError(
             f"{target}/h{horizon}: доступно {len(rows)} origins — недостаточно для walk-forward"
         )
@@ -943,7 +944,8 @@ def run_research(
     for target in required:
         for horizon in horizons:
             rows_by_target[(target, horizon)] = build_horizon_rows(
-                target, targets[target], values, publications, horizon
+                target, targets[target], values, publications, horizon,
+                min_train=min_train,
             )
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -1133,7 +1135,7 @@ def main(argv=None) -> int:
             min_train=args.min_train,
             allow_data_revision=args.allow_data_revision,
         )
-    except (DataError, ch.ClickHouseError) as error:
+    except (DataError, ch.ClickHouseError, ValueError) as error:
         print(f"ошибка данных: {error}", file=sys.stderr)
         return 1
     fold_total = sum(item["folds"] for item in result["data"]["fold_counts"])
