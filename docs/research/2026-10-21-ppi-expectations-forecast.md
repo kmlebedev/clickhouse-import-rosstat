@@ -4,9 +4,9 @@ Research-эксперимент Task 2 issue #318. Протокол предре
 
 ## Паспорт прогона
 
-- run id: `4ee4a03f-5532-4f21-8164-f8c8093a86c4`
+- run id: `9121928b-2c45-47a6-b889-68a7926a410a`
 - experiment / run: `ppi_expectations_forecast` / `ppi_expectations_forecast__direct_h136`
-- branch / SHA / dirty: `feat/ppi-expectations-forecast` / `e20dfc41ef0069aa8f25832da89a1e224daf1b5f` / `1`
+- branch / SHA / dirty: `feat/ppi-expectations-forecast` / `7f494062ead5c98162afe8d55f5037892a5c8f5d` / `0`
 - config hash: `e8d5ec1dff038e625b671a1fd9a671bf307edf4c974518c572a6a5f5a1675d5b`; sample hash: `32299db6d2019ce4634fafa4fb7691eef2eb487312ca71aab86e4435bb669330`
 - data as-of: `2026-09-01`
 
