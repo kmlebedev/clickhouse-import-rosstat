@@ -184,6 +184,38 @@ func GetFileBytes(url string) ([]byte, error) {
 	return body, nil
 }
 
+// GetFileBytesChecked — GetFileBytes с проверкой статуса: не-2xx и пустое тело — ошибка,
+// тело не-2xx попадает в текст ошибки обрезанным (диагностика, а не данные). Отличие от
+// GetFileBytes намеренное: GetFile статус не проверяет, потому что его потребители качают
+// XLSX/HTML по стабильным ссылкам и заглушку WAF там ловит разбор. Источнику, который берёт
+// свежесгенерированный одноразовый URL и повторяет запрос, нужен статус в ошибке: заглушка
+// «успешными» байтами ушла бы в разбор и упала бы уже вне ретрая.
+func GetFileBytesChecked(url string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), fileTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", randomUA)
+	resp, err := HttpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return nil, fmt.Errorf("GET %s: статус %d: %s", url, resp.StatusCode, ErrorSnippet(body))
+	}
+	if len(body) == 0 {
+		return nil, fmt.Errorf("GET %s: пустое тело", url)
+	}
+	return body, nil
+}
+
 // PostFileBytes — POST через общий HttpClient (тот же UA и дедлайн fileTimeout, что у
 // GetFile) с произвольными заголовками. Нужен источникам, которые отдают файл не по
 // прямому GET, а через RPC: GWT-RPC BI Росстата возвращает путь к temp-CSV, а сам файл

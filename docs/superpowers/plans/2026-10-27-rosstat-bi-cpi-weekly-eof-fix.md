@@ -21,10 +21,17 @@
 ## Шаг 3. Гейт версии и полный цикл `Import()`
 
 1. Константы: `biCpiWeeklyVersionName`, `biCpiWeeklyCountPoints = "SELECT count() FROM rosstat_bi_cpi_weekly FINAL"`.
-2. `biCpiWeeklyFingerprint(points []biCpiWeeklyPoint) string` — `sha256` по `2006-01-02\t<strconv 'g' -1>`.
+2. `biCpiWeeklyFingerprint(points []biCpiWeeklyPoint) string` — `sha256` по `2006-01-02\t<strconv 'g' -1>`; каноническая строка закреплена пином в тесте.
 3. `biCpiWeeklyShouldSkip(known bool, knownPoints, dbPoints uint64) bool`.
-4. `Import()` = DDL → URL (ретраи) → тело (ретраи) → `biCpiWeeklyParseCSV` → отпечаток → `EnsurePublications` → `PublicationKnown` → no-op (`AfterImport` + `0, nil`) или полный путь (батч, `Abort` на ошибке, `AfterImport`, `SavePublication`, `count`).
+4. `Import()` = отказ `ARCHIVE_ACTION=restore` (архива нет) → DDL → URL (ретраи) → тело (`util.GetFileBytesChecked`: статус в ошибке и в ретрае) → `biCpiWeeklyParseCSV` → отпечаток → `EnsurePublications` → `PublicationKnown` → no-op (`AfterImport` + `0, nil`) или полный путь (батч по `s.TableName`, `Abort` на ошибке, `AfterImport`, `SavePublication`, `count`).
 5. Инвариант: полный путь с `count == 0` → ошибка.
+6. Тесты `Import()` на фейковом `driver.Conn`: no-op без INSERT, пустой батч → ошибка, `Abort` на сбое `Append`, отказ в режиме restore.
+
+## Шаг 3.1. `util.GetFileBytesChecked`
+
+Статус-проверяющий GET для одноразового `tmp/exp<uuid>`: `GetFile`/`GetFileBytes` статус не проверяют
+(их потребители качают XLSX по стабильным ссылкам), а здесь 5xx-заглушка выглядела бы «успешными»
+байтами и падала бы уже в разборе, вне ретрая. Тест — `util/xls_test.go`.
 
 ## Шаг 4. Фикстуры
 

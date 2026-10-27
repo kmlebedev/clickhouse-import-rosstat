@@ -54,7 +54,7 @@ DDL → export-RPC (ретраи) → GET CSV (ретраи) → разбор �
 ```
 
 - `biCpiWeeklyVersionName = "Индекс потребительских цен.csv"` — литерал, а не `path.Base(url)`: публичный URL percent-encoded, basename из него нестабилен по виду.
-- `biCpiWeeklyFingerprint(points)` — `sha256` по каноничным строкам `2006-01-02\t<value>.17g`; точки уже отсортированы и дедуплицированы парсером, поэтому порядок строк источника на отпечаток не влияет.
+- `biCpiWeeklyFingerprint(points)` — `sha256` по каноничным строкам `2006-01-02\t<strconv.FormatFloat(value, 'g', -1, 64)>`, отсортированным по `(дата, значение)`; точки уже дедуплицированы парсером, поэтому порядок строк источника на отпечаток не влияет. Формат числа — кратчайшее представление (`'g', -1`), а не `.17g`: строка отпечатка закреплена тестом, и смена формата сменила бы версию всех точек.
 - `biCpiWeeklyShouldSkip(known bool, knownPoints, dbPoints uint64) bool` — no-op только если версия известна **и** `SELECT count() FROM rosstat_bi_cpi_weekly FINAL` совпал с записанным: ручная чистка таблицы даёт полный self-heal, а не тихий no-op.
 - no-op-путь перепубликует производные (`AfterImport`: каталог + `v_rosstat_macro`) и возвращает `0, nil` → `Imported 0 rows of rosstat_bi_cpi_weekly` без ошибки.
 - полный путь: `PrepareBatch` → `Append` → `Send`, на ошибке до `Send` — `Abort` (правило 2); после успеха — `AfterImport`, затем `util.SavePublication` с `Source = rosstat_bi_cpi_weekly`, `Url` текущего tmp-CSV (аудит).
@@ -72,7 +72,7 @@ DDL → export-RPC (ретраи) → GET CSV (ретраи) → разбор �
 - Имя таблицы `rosstat_bi_cpi_weekly`, DDL, ключ `ReplacingMergeTree`, ряд `Индекс потребительских цен (недельная оценка)`, каталог и витрина `v_rosstat_macro` — без изменений.
 - Парсер CSV (`biCpiWeeklyParseCSV`), разбор `//OK` (`biCpiWeeklyExportPath`) и сборка публичного URL — по смыслу те же.
 - Payload/заголовки RPC, `Referer`, `biCpiWeeklyMinDate` — те же.
-- Архива версий и `ARCHIVE_ACTION=restore` у BI не было и нет: файл не качается шаблоном, версия — хеш содержимого.
+- Архива версий у BI нет: файл одноразовый, версия — хеш содержимого. `ARCHIVE_ACTION=restore` импортёр **отклоняет явной ошибкой** до DDL и сети (прецедент `rosstat_okved2`): иначе режим восстановления молча пошёл бы полным живым импортом, хотя по контракту источник в нём не спрашивается.
 
 ## 5. Тесты
 

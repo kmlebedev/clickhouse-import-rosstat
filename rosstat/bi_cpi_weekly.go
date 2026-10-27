@@ -110,7 +110,16 @@ var biCpiWeeklyImporter = &BICpiWeeklyStat{ClickHouseImport: util.ClickHouseImpo
 // util.ClickHouseImport.Import (прецеденты weeklysa, fedstat_ipc): гейту нужен отпечаток
 // содержимого, а не HEAD по URL, и no-op обязан вернуть 0, а не число точек версии.
 // DataUrl вычисляется во время прогона: в init() сети нет (ARCHITECTURE §8.6).
+//
+// Режим восстановления (ARCHIVE_ACTION=restore) не поддержан и отказывает до DDL и сети:
+// шаблон в этом режиме берёт байты из архива шаблона, а у BI архива никогда не было —
+// одна строка версии с хешем содержимого. Молча пойти в сеть значило бы нарушить контракт
+// restore («источник не спрашивается вовсе»); прецедент отказа — rosstat_okved2.
 func (s *BICpiWeeklyStat) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
+	if util.ArchiveRestoreMode() {
+		return 0, fmt.Errorf("%s: режим восстановления (%s=%s) не поддержан: экспорт BI одноразовый, архива версий нет",
+			rosstatBICpiWeeklyTable, util.EnvArchiveAction, util.ArchiveActionRestore)
+	}
 	for _, ddl := range s.CreateTable {
 		if err = conn.Exec(ctx, fmt.Sprintf(ddl, s.TableName)); err != nil {
 			return 0, fmt.Errorf("%s: DDL: %w", rosstatBICpiWeeklyTable, err)
@@ -122,7 +131,7 @@ func (s *BICpiWeeklyStat) Import(ctx context.Context, conn driver.Conn) (count i
 	}
 	s.DataUrl = csvURL
 	body, err := biCpiWeeklyRetry(ctx, "CSV", func() ([]byte, error) {
-		return util.GetFileBytes(csvURL)
+		return util.GetFileBytesChecked(csvURL)
 	})
 	if err != nil {
 		return 0, err
@@ -133,7 +142,7 @@ func (s *BICpiWeeklyStat) Import(ctx context.Context, conn driver.Conn) (count i
 	}
 	fingerprint := biCpiWeeklyFingerprint(points)
 	// Производные (каталог ряда + витрина) публикуются и на no-op-пути: их отсутствие после
-	// ручной чистки не повод идти в сеть (прецедент weeklysa).
+	// ручной чистки — повод перепубликовать, а не повод на полный импорт (прецедент weeklysa).
 	publish := func() error {
 		if s.AfterImport == nil {
 			return nil
@@ -161,7 +170,7 @@ func (s *BICpiWeeklyStat) Import(ctx context.Context, conn driver.Conn) (count i
 		}
 		log.Warnf("%s: версия %s известна, но в таблице %d точек вместо %d — полный импорт", rosstatBICpiWeeklyTable, fingerprint, dbPoints, knownPoints)
 	}
-	inserted, err := biCpiWeeklyInsert(ctx, conn, points)
+	inserted, err := s.biCpiWeeklyInsert(ctx, conn, points)
 	if err != nil {
 		return 0, err
 	}
@@ -208,13 +217,15 @@ func biCpiWeeklyRetry[T any](ctx context.Context, what string, call func() (T, e
 		if attempt >= biCpiWeeklyAttempts {
 			return zero, fmt.Errorf("%s: %s: %w (%d попыток)", rosstatBICpiWeeklyTable, what, err, attempt)
 		}
-		delay := biCpiWeeklyBackoff[len(biCpiWeeklyBackoff)-1]
-		if attempt <= len(biCpiWeeklyBackoff) {
-			delay = biCpiWeeklyBackoff[attempt-1]
+		// Пауза — по индексу попытки; если таблицу пауз когда-нибудь опустошат, повтор идёт
+		// без ожидания, а не паникует на индексе -1.
+		var delay time.Duration
+		if len(biCpiWeeklyBackoff) > 0 {
+			delay = biCpiWeeklyBackoff[min(attempt, len(biCpiWeeklyBackoff))-1]
 		}
 		log.Warnf("%s: %s: попытка %d из %d: %v — повтор через %s", rosstatBICpiWeeklyTable, what, attempt, biCpiWeeklyAttempts, err, delay)
 		if sleepErr := biCpiWeeklySleep(ctx, delay); sleepErr != nil {
-			return zero, fmt.Errorf("%s: %s: %v (повтор отменён: %w)", rosstatBICpiWeeklyTable, what, err, sleepErr)
+			return zero, fmt.Errorf("%s: %s: %w (повтор отменён: %v)", rosstatBICpiWeeklyTable, what, err, sleepErr)
 		}
 	}
 }
@@ -297,15 +308,16 @@ func biCpiWeeklyPublicURL(path string) (string, error) {
 }
 
 // biCpiWeeklyInsert — один PrepareBatch на прогон, Append с проверкой, Abort на пути ошибки
-// до Send (правило 2 AGENTS.md): незакрытый батч держит соединение драйвера.
-func biCpiWeeklyInsert(ctx context.Context, conn driver.Conn, points []biCpiWeeklyPoint) (int64, error) {
-	batch, err := conn.PrepareBatch(ctx, "INSERT INTO "+rosstatBICpiWeeklyTable)
+// до Send (правило 2 AGENTS.md): незакрытый батч держит соединение драйвера. Имя таблицы —
+// из импортёра (s.TableName), как и в DDL: литерал разошёлся бы с DDL при переименовании.
+func (s *BICpiWeeklyStat) biCpiWeeklyInsert(ctx context.Context, conn driver.Conn, points []biCpiWeeklyPoint) (int64, error) {
+	batch, err := conn.PrepareBatch(ctx, "INSERT INTO "+s.TableName)
 	if err != nil {
-		return 0, fmt.Errorf("%s: %w", rosstatBICpiWeeklyTable, err)
+		return 0, fmt.Errorf("%s: %w", s.TableName, err)
 	}
 	if err = biCpiWeeklyAppend(points, batch); err != nil {
 		if abortErr := batch.Abort(); abortErr != nil {
-			log.Warnf("%s: не удалось закрыть батч после ошибки: %v", rosstatBICpiWeeklyTable, abortErr)
+			log.Warnf("%s: не удалось закрыть батч после ошибки: %v", s.TableName, abortErr)
 		}
 		return 0, err
 	}
@@ -330,11 +342,19 @@ func biCpiWeeklyAppend(points []biCpiWeeklyPoint, batch driver.Batch) error {
 // biCpiWeeklyFingerprint — SHA-256 канонического представления ряда: версия содержимого, а не
 // файла. Заголовки экспорта для этого не годятся (ETag вшивает mtime и меняется на каждом
 // POST), а сами точки стабильны: два независимых экспорта 2026-10-27 совпали байт-в-байт.
-// Порядок на входе не важен — функция сортирует копию, поэтому перестановка строк в выгрузке
-// не делает версию новой; смена локали тоже не влияет, отпечаток считается по значениям.
+// Порядок на входе не важен — функция сортирует копию по (дата, значение), поэтому
+// перестановка строк в выгрузке не делает версию новой; смена локали тоже не влияет,
+// отпечаток считается по значениям.
 func biCpiWeeklyFingerprint(points []biCpiWeeklyPoint) string {
 	canonical := append([]biCpiWeeklyPoint(nil), points...)
-	sort.SliceStable(canonical, func(i, j int) bool { return canonical[i].date.Before(canonical[j].date) })
+	sort.SliceStable(canonical, func(i, j int) bool {
+		if !canonical[i].date.Equal(canonical[j].date) {
+			return canonical[i].date.Before(canonical[j].date)
+		}
+		// Дублей дат парсер не отдаёт, но без tiebreak по значению порядок двух точек с одной
+		// датой зависел бы от входа — вопреки обещанию «порядок не важен».
+		return canonical[i].value < canonical[j].value
+	})
 	hash := sha256.New()
 	_, _ = hash.Write([]byte(biCpiWeeklyFingerprintScheme + "\n"))
 	for _, point := range canonical {
