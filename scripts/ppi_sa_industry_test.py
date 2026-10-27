@@ -182,7 +182,7 @@ class AggregateTest(unittest.TestCase):
             m.aggregate_mm(rows, weights, year=2026)
 
     def test_levels_require_continuous_36_months_and_positive(self) -> None:
-        points = {add_months(date(2021, 1, 1), month): 1.0 for month in range(36)}
+        points = {add_months(date(2021, 1, 1), month): 101.0 for month in range(36)}
         levels = m.levels_from_mm(points)
         self.assertEqual(levels[date(2021, 1, 1)], 100.0)
         self.assertAlmostEqual(levels[date(2021, 2, 1)], 101.0)
@@ -267,7 +267,7 @@ class X13Test(unittest.TestCase):
 
 class VariantOrderTest(unittest.TestCase):
     def test_direct_and_indirect_apply_adjustment_in_different_order(self) -> None:
-        rows = monthly_rows(("10", "11"), {"10": 2.0, "11": 4.0}, months=68)
+        rows = monthly_rows(("10", "11"), {"10": 102.0, "11": 104.0}, months=68)
         weights = {(2026, "10"): 60.0, (2026, "11"): 40.0}
 
         def nonlinear(levels: dict[date, float]) -> dict[date, float]:
@@ -281,7 +281,7 @@ class VariantOrderTest(unittest.TestCase):
 
     def test_build_variants_maps_no_alcohol_sensitivity(self) -> None:
         codes = m.VARIANT_CODES["core"]
-        rows = monthly_rows(codes, {"10": 2.0, "11": 4.0}, months=68)
+        rows = monthly_rows(codes, {"10": 102.0, "11": 104.0}, months=68)
         weights = {(2026, code): 1.0 for code in codes}
         variants = m.build_variants(rows, weights, 2026, adjust=lambda levels: levels)
         self.assertEqual(
@@ -310,15 +310,15 @@ class AnchorContractTest(unittest.TestCase):
 
     def test_compare_excludes_qualitative_from_exact_and_rejects_missing_value(self) -> None:
         anchors = m.load_anchors(anchors_path())
-        values: dict[str, dict[str, float]] = {}
+        values: dict[str, dict[date, float]] = {}
         for row in anchors:
-            values.setdefault(row["series"], {})[row["target"]] = 0.0
+            values.setdefault(row["series"], {})[date.fromisoformat(row["target"])] = 0.0
         report = m.compare_anchors({"fake": values}, anchors_path())["variants"]["fake"]
         self.assertEqual(report["exact"]["overall"]["n"], 11)
         self.assertEqual(sum(report["qualitative"]["summary"].values()), 14)
 
         broken = {series: dict(points) for series, points in values.items()}
-        broken["food"].pop("2026-04-01")
+        broken["food"].pop(date(2026, 4, 1))
         with self.assertRaisesRegex(ValueError, "нет saar3"):
             m.compare_anchors({"broken": broken}, anchors_path())
 
