@@ -629,10 +629,10 @@ weekly-core-proxy-test:
 # #396 Task 1: аудит недельного агрегата ИПЦ 2009+ (признаки wkagg_* — Task 2).
 # Читает ClickHouse; в БД не пишет.
 cpi-weekly-aggregate:
-	uv run --python 3.12 python3 scripts/models/cpi/cpi_weekly_aggregate.py $(ARGS)
+	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/cpi/cpi_weekly_aggregate.py $(ARGS)
 
 cpi-weekly-aggregate-test:
-	uv run --python 3.12 python3 scripts/models/cpi/cpi_weekly_aggregate_test.py -v
+	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/cpi/cpi_weekly_aggregate_test.py -v
 
 # Issue #364: core-прокси ИПЦ из недельных компонент 2021+ и короткие модели
 # (M1 raw, M2 Fourier-OLS, M3 UCM, M4 ridge-бридж, M5 seasonal naive).

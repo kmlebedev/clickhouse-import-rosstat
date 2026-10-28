@@ -14,13 +14,16 @@
    недели) и как неделя на границе месяцев раскладывается по дням.
 
 Скрипт только читает ClickHouse (`lib.clickhouse.ch_query`), в БД не пишет.
-Признаки `wkagg_*` — Task 2 и живут в этом же модуле позже.
+Task 2 — признаки `wkagg_*` (накопленный индекс месяца, покрытие, последняя
+неделя, 4-нед. накопленный, тарифный календарь) и сборка выборок v4
+(`S_W22`/`S_L13`/`S_L09`); чистые функции без ClickHouse, загрузчик — отдельно.
 
 Запуск — `make cpi-weekly-aggregate ARGS="--out-dir build/cpi-v4"`,
 тесты — `make cpi-weekly-aggregate-test`.
 """
 
 import argparse
+import dataclasses
 import json
 import math
 import sys
@@ -173,6 +176,253 @@ def seam_report(
 
 
 # ---------------------------------------------------------------------------
+# Task 2: признаки wkagg_* (спека §3)
+# ---------------------------------------------------------------------------
+
+WKAGG_FEATURES = (
+    "wkagg_mtd",
+    "wkagg_cov",
+    "wkagg_mtd_scaled",
+    "wkagg_last",
+    "wkagg_4w",
+    "tariff_week",
+)
+
+# Публикация недельной точки — `date + 2` (среда), как в v3 (`available_from_weekly`).
+AVAILABLE_LAG_DAYS = 2
+# Допустимая длина периода недельной точки: до 10 дней — период равен интервалу
+# между датами; новогодний разрыв (через границу года, до 28 дней) — тоже;
+# иной длинный разрыв — пропущенные документы, период считается неделей (7).
+PERIOD_MAX_GAP_DAYS = 10
+PERIOD_NEW_YEAR_MAX_GAP_DAYS = 28
+DEFAULT_PERIOD_DAYS = 7
+COV_MIN_FOR_SCALED = 0.5
+WINDOW_DAYS = 28
+WINDOW_MIN_COVERED_DAYS = 21
+
+# Календарь индексации тарифов ЖКУ — как в `weekly_core_proxy.TARIFF_DATES`
+# (спека §3: июль 2022–2025, октябрь 2026) плюс 1 января любого года. До 2022
+# других дат не вводим: непроверенный календарь был бы выдумкой, а не данными.
+TARIFF_DATES = (
+    date(2022, 7, 1),
+    date(2023, 7, 1),
+    date(2024, 7, 1),
+    date(2025, 7, 1),
+    date(2026, 10, 1),
+)
+
+SAMPLE_BOUNDS_V4 = {
+    "S_W22": (date(2022, 1, 1), date(2026, 8, 1)),
+    "S_L13": (date(2013, 10, 1), date(2026, 8, 1)),
+    "S_L09": (date(2009, 6, 1), date(2026, 8, 1)),
+}
+# `usd_mm`/`key_rate` стартуют в 2013: на S_L09 их нет у ВСЕХ моделей (спека §3).
+EXCLUDED_BASE_FEATURES = {"S_L09": ("usd_mm", "key_rate")}
+
+AGGREGATE_POINTS_SQL = (
+    "SELECT date, value FROM v_rosstat_macro "
+    f"WHERE series = '{_SERIES}' AND date >= '2009-04-06' ORDER BY date FORMAT JSON"
+)
+
+
+def period_length(day: date, previous) -> int:
+    """Длина периода точки в днях по интервалу до предыдущей даты.
+
+    Недельная точка — изменение «к предыдущей дате регистрации цен», поэтому
+    при нормальном интервале (≤ 10 дней) период равен ему; новогодний разрыв
+    через границу года (≤ 28 дней) — одна точка за весь разрыв; прочий
+    длинный разрыв — пропущенные документы, период неизвестен и берётся
+    равным неделе (непокрытые дни честно отражает `wkagg_cov`).
+    """
+    if previous is None:
+        return DEFAULT_PERIOD_DAYS
+    gap = (day - previous).days
+    if gap <= PERIOD_MAX_GAP_DAYS:
+        return gap
+    if previous.year < day.year and gap <= PERIOD_NEW_YEAR_MAX_GAP_DAYS:
+        return gap
+    return DEFAULT_PERIOD_DAYS
+
+
+def _periods(points: list) -> list:
+    """`[(начало, конец, индекс, длина)]` по возрастанию дат (дубли дат — последняя)."""
+    unique = dict(sorted((day, float(value)) for day, value in points))
+    days = sorted(unique)
+    out = []
+    previous = None
+    for day in days:
+        length = period_length(day, previous)
+        out.append((day - timedelta(days=length - 1), day, unique[day], length))
+        previous = day
+    return out
+
+
+def _overlap_days(start: date, end: date, window_start: date, window_end: date) -> int:
+    low = max(start, window_start)
+    high = min(end, window_end)
+    return max(0, (high - low).days + 1)
+
+
+def _log_and_days(periods: list, window_start: date, window_end: date) -> tuple:
+    """`(лог-прирост, покрытые дни)` периодов в окне; индекс делится по дням."""
+    log_sum = 0.0
+    covered = 0
+    for start, end, index, length in periods:
+        days = _overlap_days(start, end, window_start, window_end)
+        if days:
+            log_sum += math.log(index / 100.0) * days / length
+            covered += days
+    return log_sum, covered
+
+
+def _has_tariff_day(month: date) -> bool:
+    if month.month == 1:
+        return True
+    return any(day.year == month.year and day.month == month.month for day in TARIFF_DATES)
+
+
+def wkagg_features(points: list, month: date, cutoff: date) -> dict:
+    """Признаки недельного агрегата месяца `M` на `cutoff` (спека §3).
+
+    `points` — `[(дата, индекс)]`, 100 = без изменения. Используются только
+    точки с `date + 2 ≤ cutoff`; точка с предшественником считается по его
+    дате (он всегда раньше, утечки нет). Недоступный признак — NaN, не 0.
+    `tariff_week` — календарный флаг месяца (известен заранее, от данных не
+    зависит): месяц содержит дату индексации тарифов или 1 января.
+    """
+    nan = float("nan")
+    result = {name: nan for name in WKAGG_FEATURES}
+    result["wkagg_cov"] = 0.0
+    result["tariff_week"] = int(_has_tariff_day(month))
+    boundary = cutoff - timedelta(days=AVAILABLE_LAG_DAYS)
+    periods = [period for period in _periods(points) if period[1] <= boundary]
+    if not periods:
+        return result
+    month_start = month.replace(day=1)
+    month_end = (month_start.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)
+    days_in_month = month_end.day
+    log_sum, covered = _log_and_days(periods, month_start, month_end)
+    cov = min(1.0, covered / days_in_month)
+    result["wkagg_cov"] = cov
+    if covered:
+        result["wkagg_mtd"] = (math.exp(log_sum) - 1.0) * 100.0
+        if cov >= COV_MIN_FOR_SCALED:
+            result["wkagg_mtd_scaled"] = result["wkagg_mtd"] / cov
+    result["wkagg_last"] = periods[-1][2] - 100.0
+    last_day = periods[-1][1]
+    window_start = last_day - timedelta(days=WINDOW_DAYS - 1)
+    window_log, window_covered = _log_and_days(periods, window_start, last_day)
+    if window_covered >= WINDOW_MIN_COVERED_DAYS:
+        result["wkagg_4w"] = (math.exp(window_log) - 1.0) * 100.0
+    return result
+
+
+def _validate_sample(sample: str) -> str:
+    if sample not in SAMPLE_BOUNDS_V4:
+        raise ValueError(f"неизвестная выборка {sample!r}; доступны {list(SAMPLE_BOUNDS_V4)}")
+    return sample
+
+
+def feature_names_v4(sample: str, with_diffusion: bool = False) -> list:
+    """Порядок признаков v4: база v2 (без исключённых для выборки), `wkagg_*`, [diffusion], `month`."""
+    _validate_sample(sample)
+    from models.cpi import cpi_monthly as cm
+
+    excluded = set(EXCLUDED_BASE_FEATURES.get(sample, ()))
+    names = [name for name in cm.feature_names(with_mp=True) if name not in excluded]
+    extra = list(WKAGG_FEATURES)
+    if with_diffusion:
+        from models.cpi import cpi_monthly_v3 as v3
+
+        extra += list(v3.WEEKLY_FEATURES)
+    return names[:-1] + extra + [names[-1]]
+
+
+def attach_wkagg(rows: list, points: list, sample: str) -> list:
+    """Новые `Row` с `wkagg_*` на cutoff месяца; исключённые признаки выборки убираются."""
+    _validate_sample(sample)
+    from models.cpi import cpi_monthly as cm
+
+    excluded = set(EXCLUDED_BASE_FEATURES.get(sample, ()))
+    out = []
+    for row in rows:
+        features = {name: value for name, value in row.features.items() if name not in excluded}
+        features.update(wkagg_features(points, row.month, cm.cutoff_for(row.month)))
+        out.append(dataclasses.replace(row, features=features))
+    return out
+
+
+def wkagg_summary(rows: list) -> dict:
+    """Сводка по строкам выборки: число NaN в `wkagg_*` и месяцев с `cov ≥ 0,5` по годам."""
+    by_year = {}
+    nan_counts = {name: 0 for name in WKAGG_FEATURES}
+    for row in sorted(rows, key=lambda r: r.month):
+        for name in WKAGG_FEATURES:
+            value = row.features[name]
+            if isinstance(value, float) and math.isnan(value):
+                nan_counts[name] += 1
+        by_year.setdefault(row.month.year, 0)
+        if row.features["wkagg_cov"] >= COV_MIN_FOR_SCALED:
+            by_year[row.month.year] += 1
+    months = [row.month for row in rows]
+    return {
+        "n_rows": len(rows),
+        "first": min(months).isoformat() if months else None,
+        "last": max(months).isoformat() if months else None,
+        "nan_counts": nan_counts,
+        "cov_ge_half_by_year": dict(sorted(by_year.items())),
+    }
+
+
+def load_aggregate_points() -> list:
+    """Недельный агрегат из `v_rosstat_macro`: `[(дата, индекс)]` (только чтение)."""
+    return _load(AGGREGATE_POINTS_SQL)
+
+
+def build_sample_v4(sample: str, with_diffusion: bool = False) -> tuple:
+    """Строки v4 `([Row], [(месяц, причина)])`: база/МП из `cpi_monthly`, затем `wkagg_*`.
+
+    Границы — `SAMPLE_BOUNDS_V4`; пропуски месяцев — только по обязательным
+    признакам v2 (`y_lag*`, `fao_mm`, МП). Отсутствие недельных точек — NaN,
+    не пропуск месяца. Требует ClickHouse.
+    """
+    first, last = SAMPLE_BOUNDS_V4[_validate_sample(sample)]
+    from models.cpi import cpi_monthly as cm
+
+    targets = cm.load_targets()
+    survey = cm.load_survey()
+    usd = cm.load_usd()
+    key_rate = cm.load_key_rate()
+    fao = cm.load_fao()
+    index = cm.target_index(targets)
+    panel = None
+    if with_diffusion:
+        from models.cpi import cpi_monthly_v3 as v3
+
+        panel = v3.weekly_panel(v3.load_weekly())
+    rows = []
+    skipped = []
+    for month in cm.sample_months(targets):
+        if month < first or month > last:
+            continue
+        cutoff = cm.cutoff_for(month)
+        base, reason = cm.base_features(month, index, usd, key_rate, fao, cutoff)
+        if base is None:
+            skipped.append((month, reason))
+            continue
+        mp_part, reason = cm.mp_features(month, survey, cutoff)
+        if mp_part is None:
+            skipped.append((month, reason))
+            continue
+        features = {**base, **mp_part}
+        if panel is not None:
+            features.update(v3.weekly_features(panel, cutoff))
+        y = {code: values[cm.month_end(month)] for code, values in index.items()}
+        rows.append(cm.Row(month=month, y=y, features=features))
+    return attach_wkagg(rows, load_aggregate_points(), sample), skipped
+
+
+# ---------------------------------------------------------------------------
 # Аудит на ClickHouse (только чтение)
 # ---------------------------------------------------------------------------
 
@@ -267,7 +517,24 @@ def write_report(path: Path, audit: dict) -> None:
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--out-dir", default="build/cpi-v4", type=Path)
+    parser.add_argument(
+        "--samples",
+        action="store_true",
+        help="сводка wkagg_* по выборкам S_W22/S_L13/S_L09 вместо аудита источников",
+    )
     args = parser.parse_args(argv)
+    if args.samples:
+        out_dir = args.out_dir if args.out_dir.is_absolute() else ROOT / args.out_dir
+        out_dir.mkdir(parents=True, exist_ok=True)
+        result = {}
+        for sample in SAMPLE_BOUNDS_V4:
+            rows, skipped = build_sample_v4(sample)
+            result[sample] = {**wkagg_summary(rows), "n_skipped": len(skipped)}
+            print(sample, json.dumps(result[sample], ensure_ascii=False), flush=True)
+        (out_dir / "wkagg_samples_summary.json").write_text(
+            json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        return 0
     audit = run_audit()
     out_dir = args.out_dir if args.out_dir.is_absolute() else ROOT / args.out_dir
     out_dir.mkdir(parents=True, exist_ok=True)
