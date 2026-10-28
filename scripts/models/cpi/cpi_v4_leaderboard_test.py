@@ -23,6 +23,9 @@ from cpi_v4_leaderboard import (
     HORIZONS,
     REGRESSION_TOLERANCE,
     STAGE1_WEEKLY_RMSE,
+    TASK4_FEATURE_SHA256,
+    TASK4_REFERENCE_RMSE,
+    check_features,
     TARGETS,
     check_regression,
     common_folds,
@@ -189,7 +192,7 @@ class DigestTest(unittest.TestCase):
 
 
 class RegressionGateTest(unittest.TestCase):
-    def test_reference_is_stage1_weekly_table(self):
+    def test_stage1_table_is_kept_as_history(self):
         self.assertEqual(
             STAGE1_WEEKLY_RMSE,
             {
@@ -203,16 +206,44 @@ class RegressionGateTest(unittest.TestCase):
                 "B2": 0.873540,
             },
         )
+
+    def test_task4_reference_is_pinned_current_data_result(self):
+        self.assertEqual(
+            TASK4_REFERENCE_RMSE,
+            {
+            "v3_bottomup": 0.312836438,
+            "v2_bottomup": 0.367059285,
+            "v3_direct": 0.369967068,
+            "B3_weekly": 0.391455174,
+            "v2_baseline": 0.419888975,
+            "B3": 0.432999805,
+            "B1": 0.489294773,
+            "B2": 0.873540285
+        },
+        )
         self.assertEqual(REGRESSION_TOLERANCE, 1e-6)
 
-    def test_passes_within_rounding_of_the_reference(self):
-        got = {model: value + 4.4e-7 for model, value in STAGE1_WEEKLY_RMSE.items()}
+    def test_task4_feature_digests_cover_the_v3_feature_set(self):
+        from models.cpi import cpi_monthly_v3 as v3
+
+        self.assertEqual(sorted(TASK4_FEATURE_SHA256), sorted(v3.feature_names_v3()))
+        for digest in TASK4_FEATURE_SHA256.values():
+            self.assertRegex(digest, r"^[0-9a-f]{64}$")
+
+    def test_default_reference_is_task4_not_stage1(self):
+        report = check_regression(dict(TASK4_REFERENCE_RMSE))
+        self.assertTrue(report["passed"])
+        self.assertEqual([row["expected"] for row in report["rows"]], [TASK4_REFERENCE_RMSE[r["model"]] for r in report["rows"]])
+        self.assertFalse(check_regression(dict(STAGE1_WEEKLY_RMSE))["passed"])
+
+    def test_passes_within_tolerance_of_the_reference(self):
+        got = {model: value + 4.4e-7 for model, value in TASK4_REFERENCE_RMSE.items()}
         report = check_regression(got)
         self.assertTrue(report["passed"])
         self.assertEqual(len(report["rows"]), 8)
 
     def test_fails_on_a_difference_above_tolerance(self):
-        got = dict(STAGE1_WEEKLY_RMSE)
+        got = dict(TASK4_REFERENCE_RMSE)
         got["v3_bottomup"] += 2e-6
         report = check_regression(got)
         self.assertFalse(report["passed"])
@@ -220,7 +251,7 @@ class RegressionGateTest(unittest.TestCase):
         self.assertEqual(failed, ["v3_bottomup"])
 
     def test_fails_when_a_model_is_missing_or_nan(self):
-        got = dict(STAGE1_WEEKLY_RMSE)
+        got = dict(TASK4_REFERENCE_RMSE)
         del got["B1"]
         got["B2"] = float("nan")
         report = check_regression(got)
@@ -229,12 +260,35 @@ class RegressionGateTest(unittest.TestCase):
         self.assertEqual(failed, ["B1", "B2"])
 
 
+class CheckFeaturesTest(unittest.TestCase):
+    def test_identical_digests_pass(self):
+        report = check_features(dict(TASK4_FEATURE_SHA256))
+        self.assertTrue(report["passed"])
+        self.assertEqual(report["changed"], [])
+
+    def test_changed_and_missing_features_are_named(self):
+        got = dict(TASK4_FEATURE_SHA256)
+        got["usd_mm"] = "0" * 64
+        del got["fao_mm"]
+        report = check_features(got)
+        self.assertFalse(report["passed"])
+        self.assertEqual(report["changed"], ["fao_mm", "usd_mm"])
+
+    def test_extra_features_are_ignored(self):
+        got = dict(TASK4_FEATURE_SHA256)
+        got["wkagg_mtd"] = "1" * 64
+        self.assertTrue(check_features(got)["passed"])
+
+
 class SelectReferenceTest(unittest.TestCase):
-    def test_none_returns_full_table(self):
-        self.assertEqual(select_reference(None), STAGE1_WEEKLY_RMSE)
+    def test_none_returns_full_task4_table(self):
+        self.assertEqual(select_reference(None), TASK4_REFERENCE_RMSE)
 
     def test_subset_keeps_requested_models_only(self):
-        self.assertEqual(select_reference(["B1", "B3"]), {"B1": 0.489295, "B3": 0.438010})
+        self.assertEqual(
+            select_reference(["B1", "B3"]),
+            {"B1": TASK4_REFERENCE_RMSE["B1"], "B3": TASK4_REFERENCE_RMSE["B3"]},
+        )
 
     def test_unknown_model_raises(self):
         with self.assertRaises(ValueError):
