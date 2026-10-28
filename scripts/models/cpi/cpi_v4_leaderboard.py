@@ -9,7 +9,7 @@
 * накопленные цели `O+1…O+h` и purge `O' ≤ O−h−1` (правило live3);
 * общие фолды, парное сравнение (DM-HLN с поправкой на перекрытие, блочный
   бутстрап, MDE), MCS 90 %, детерминированный отпечаток предсказаний;
-* регрессионный гейт: v2/v3 на `S_W22` совпадают со Stage 1 до 1e-6 — иначе
+* регрессионный гейт: v2/v3 на `S_W22` совпадают с эталоном Task 4 (спека §7.1) до 1e-6, признаки — по sha256 — иначе
   эксперименты 2–3 не запускаются (спека §8).
 
 Скрипт только читает ClickHouse; в БД, `forecast_log` и MLflow не пишет.
@@ -39,9 +39,10 @@ BOOTSTRAP_N = 2000
 MCS_ALPHA = 0.10
 MCS_REPS = 2000
 
-# Таблица Stage 1 `weekly` (2022-01…2026-08, 32 фолда, start=24, embargo=0):
-# docs/research/2026-10-19-cpi-components-public-data.md §4. Числа округлены до
-# шести знаков, поэтому допуск 1e-6 (прежний гейт #76 давал расхождения ~4e-7).
+# Историческая справка: таблица Stage 1 `weekly` (2022-01…2026-08, 32 фолда,
+# start=24, embargo=0), docs/research/2026-10-19-cpi-components-public-data.md §4.
+# В гейт НЕ входит: на данных 2026-10-28 она не воспроизводится
+# (docs/research/2026-10-28-cpi-v4-regression-gate.md), эталон — ниже.
 STAGE1_WEEKLY_RMSE = {
     "v3_bottomup": 0.311487,
     "v2_bottomup": 0.362300,
@@ -51,6 +52,42 @@ STAGE1_WEEKLY_RMSE = {
     "B3": 0.438010,
     "B1": 0.489295,
     "B2": 0.873540,
+}
+
+# Эталон гейта Task 4 (спека §7.1, поправка 2026-10-28): результат текущего кода
+# на данных 2026-10-28 (`S_W22`, 32 фолда, start=24, embargo=0); два полных
+# прогона подряд идентичны. Эталон проверяет воспроизводимость и неизменность
+# входов, а не «правильность» чисел Stage 1. Переустанавливать молча нельзя.
+TASK4_REFERENCE_RMSE = {
+    "v3_bottomup": 0.312836438,
+    "v2_bottomup": 0.367059285,
+    "v3_direct": 0.369967068,
+    "B3_weekly": 0.391455174,
+    "v2_baseline": 0.419888975,
+    "B3": 0.432999805,
+    "B1": 0.489294773,
+    "B2": 0.873540285,
+}
+# sha256 значений признаков v3 по месяцам `S_W22` (`feature_digests`): при
+# расхождении гейт называет изменившиеся признаки.
+TASK4_FEATURE_SHA256 = {
+    "business_climate_sa": "b3756922710905365999e7588e0276f8df396911df953ddd31bb701b21a30386",
+    "business_climate_sa_chg": "b5c00e3c342a2de7848e9a15f78e7693363f4fcca8ccc46d94a9897f8f0625dc",
+    "capacity_utilization_sa": "26d3e4cb2ca4ffd207a3a11c737025b59ac5a63550b1d7f78ec591802f28e962",
+    "credit_conditions": "31cfdb7b78e40dc21ff12acb231ec485927258e6f7ccef4bd49adea6f5d2d6ed",
+    "fao_mm": "c63c18422ca500d60e85390dbf0b021f32054b9e30f49a345c05f826c6530109",
+    "headcount_expectations_sa": "7d9a53985259278a11e605f28a00b1f2c124867d984b178cda44a6be85246e31",
+    "key_rate": "856d0e50380cedc918431f8357014619df53735d94b9948ea1f30cb7ed2b88ed",
+    "month": "c9c90dbd2797668fc7d9db401e29a2c592921484c3feac70a987054986c8217b",
+    "price_expectations_sa": "7ea14d10d48308667cb6c1dc7b14f406bf26186c1e424bc157403f0c1188c1d0",
+    "price_expectations_sa_chg": "60309ebbbb23fbafcf819eef5e1b84439206714a912ebe0e05b4637979b7e69a",
+    "usd_mm": "7ce5d7f7c43b7961f0b2c0381c9d82dd8469535e5f10fbeb1c74969f07b6e7e3",
+    "wk_gasoline4": "bd4d9cbcf6eda0691bdf6c1751551c97e53c5948bac497defd874d1eb7cf6821",
+    "wk_median": "b1e600d17ecbb8dcb1d4b0d5e25ec146ff788747706a53f5da55c0d47cdc8719",
+    "wk_median4": "08e3bf5c935672877e7a3d782df1945ec41318830bb77540fe29de56f93dab34",
+    "wk_share_rising": "839b6c173f2f58bc35f0716903138ece94c762b85e796b8d989d69195f5f7452",
+    "y_lag1": "1d4e45cd0b7ba9b2c42f3baec015df8921a0f6cb06f3f166f3540f8ed556222a",
+    "y_lag2": "45262cf93ef7498dc24b98cb466d0b47aea0a1d932db910d1065d47d12cbb3d2",
 }
 REGRESSION_TOLERANCE = 1e-6
 GATE_START = 24
@@ -214,9 +251,19 @@ def feature_digests(rows: list) -> dict:
     return digests
 
 
+def check_features(digests: dict, reference=None) -> dict:
+    """Сверка отпечатков признаков с эталоном Task 4: `changed` — отличающиеся или отсутствующие.
+
+    Лишние признаки (например `wkagg_*`) не проверяются: эталон — набор v3.
+    """
+    reference = TASK4_FEATURE_SHA256 if reference is None else reference
+    changed = sorted(name for name, expected in reference.items() if digests.get(name) != expected)
+    return {"passed": not changed, "changed": changed}
+
+
 def check_regression(rmse_by_model: dict, reference=None, tolerance=REGRESSION_TOLERANCE) -> dict:
-    """Сверка RMSE моделей со Stage 1; `passed` только если все модели в допуске."""
-    reference = STAGE1_WEEKLY_RMSE if reference is None else reference
+    """Сверка RMSE моделей с эталоном Task 4; `passed` только если все модели в допуске."""
+    reference = TASK4_REFERENCE_RMSE if reference is None else reference
     rows = []
     for model, expected in reference.items():
         got = rmse_by_model.get(model)
@@ -234,13 +281,13 @@ def check_regression(rmse_by_model: dict, reference=None, tolerance=REGRESSION_T
 
 
 def select_reference(models) -> dict:
-    """Таблица Stage 1 целиком (`None`) или только выбранные модели; неизвестная — `ValueError`."""
+    """Эталон Task 4 целиком (`None`) или только выбранные модели; неизвестная — `ValueError`."""
     if models is None:
-        return dict(STAGE1_WEEKLY_RMSE)
-    unknown = [model for model in models if model not in STAGE1_WEEKLY_RMSE]
+        return dict(TASK4_REFERENCE_RMSE)
+    unknown = [model for model in models if model not in TASK4_REFERENCE_RMSE]
     if unknown:
-        raise ValueError(f"нет в таблице Stage 1: {unknown}")
-    return {model: STAGE1_WEEKLY_RMSE[model] for model in models}
+        raise ValueError(f"нет в эталоне Task 4: {unknown}")
+    return {model: TASK4_REFERENCE_RMSE[model] for model in models}
 
 
 def core_from_rows(rows: list) -> dict:
@@ -282,12 +329,12 @@ def load_target_series() -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Регрессионный гейт (S_W22, v2/v3 против Stage 1)
+# Регрессионный гейт (S_W22, v2/v3 против эталона Task 4, спека §7.1)
 # ---------------------------------------------------------------------------
 
 
 def run_gate(out_dir: Path, models=None) -> dict:
-    """Прогон Stage 1-моделей на `S_W22` через строки v4 и сверка с таблицей Stage 1.
+    """Прогон Stage 1-моделей на `S_W22` через строки v4 и сверка с эталоном Task 4.
 
     `models` — подмножество только для диагностики дрейфа: гейт на подмножестве
     помечается `partial` и не заменяет полный.
@@ -310,6 +357,10 @@ def run_gate(out_dir: Path, models=None) -> dict:
     summary, _pairs, predictions = v3.evaluate(rows, GATE_START, GATE_EMBARGO, selected)
     rmse = {model: item.get("rmse") for model, item in summary.items()}
     report = check_regression(rmse, reference)
+    features = feature_digests(rows)
+    feature_report = check_features(features)
+    report["features"] = feature_report
+    report["passed"] = bool(report["passed"] and feature_report["passed"])
     prediction_rows = [
         {
             "model": item.model,
@@ -331,7 +382,7 @@ def run_gate(out_dir: Path, models=None) -> dict:
         "rmse": rmse,
         "gate": report,
         "predictions_sha256": predictions_digest(prediction_rows),
-        "feature_sha256": feature_digests(rows),
+        "feature_sha256": features,
     }
     out_dir.mkdir(parents=True, exist_ok=True)
     with (out_dir / "cpi_v4_gate_predictions.csv").open("w", encoding="utf-8") as handle:
@@ -343,7 +394,7 @@ def run_gate(out_dir: Path, models=None) -> dict:
         encoding="utf-8",
     )
     lines = [
-        "# Регрессионный гейт CPI v4: v2/v3 на S_W22 против Stage 1",
+        "# Регрессионный гейт CPI v4: v2/v3 на S_W22 против эталона Task 4",
         "",
         f"Строк {payload['n_rows']}, start={GATE_START}, embargo={GATE_EMBARGO}, допуск {REGRESSION_TOLERANCE}.",
         f"sha256 предсказаний: `{payload['predictions_sha256']}`.",
@@ -355,6 +406,9 @@ def run_gate(out_dir: Path, models=None) -> dict:
         got = "—" if row["got"] is None else f"{row['got']:.6f}"
         delta = "—" if row["delta"] is None else f"{row['delta']:+.9f}"
         lines.append(f"| {row['model']} | {row['expected']:.6f} | {got} | {delta} | {'ok' if row['ok'] else 'FAIL'} |")
+    lines.append("")
+    changed = report["features"]["changed"]
+    lines.append(f"Признаки v3 против эталона: {'совпали' if not changed else 'изменились: ' + ', '.join(changed)}.")
     lines.append("")
     lines.append(f"**Гейт: {'пройден' if report['passed'] else 'НЕ пройден'}.**")
     (out_dir / "cpi_v4_gate.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
