@@ -68,10 +68,10 @@ class VerifiedTableTest(unittest.TestCase):
     def setUp(self):
         self.dates = rd.load_release_dates(rd.DEFAULT_PATH)
 
-    def test_continuous_82_months_dec_2019_to_sep_2026(self):
-        self.assertEqual(len(self.dates), 82)
+    def test_continuous_94_months_dec_2018_to_sep_2026(self):
+        self.assertEqual(len(self.dates), 94)
         months = sorted(self.dates)
-        self.assertEqual(months[0], date(2019, 12, 1))
+        self.assertEqual(months[0], date(2018, 12, 1))
         self.assertEqual(months[-1], date(2026, 9, 1))
         for left, right in zip(months, months[1:]):
             self.assertEqual((right.year * 12 + right.month) - (left.year * 12 + left.month), 1)
@@ -87,6 +87,8 @@ class VerifiedTableTest(unittest.TestCase):
 
     def test_known_points_from_two_independent_sources(self):
         # Файлы релизов rosstat.gov.ru (дата в имени) и таблицы графика (wayback).
+        self.assertEqual(self.dates[date(2018, 12, 1)], date(2019, 1, 10))
+        self.assertEqual(self.dates[date(2019, 9, 1)], date(2019, 10, 4))
         self.assertEqual(self.dates[date(2019, 12, 1)], date(2020, 1, 10))
         self.assertEqual(self.dates[date(2020, 5, 1)], date(2020, 6, 5))
         self.assertEqual(self.dates[date(2021, 7, 1)], date(2021, 8, 6))
@@ -108,19 +110,20 @@ class VerifiedTableTest(unittest.TestCase):
     def test_rule_is_wrong_in_both_directions(self):
         rows = rd.compare_with_rule(self.dates)
         summary = rd.summarize(rows)
-        self.assertEqual(summary["n"], 82)
+        self.assertEqual(summary["n"], 94)
         self.assertGreater(summary["later_than_rule"], 0)
         self.assertGreater(summary["earlier_than_rule"], 0)
         self.assertEqual(summary["min_diff"], -6)
         self.assertEqual(summary["max_diff"], 8)
-        self.assertEqual(summary["later_than_rule"], 45)
-        self.assertEqual(summary["earlier_than_rule"], 28)
+        self.assertEqual(summary["later_than_rule"], 46)
+        self.assertEqual(summary["earlier_than_rule"], 39)
 
     def test_difference_by_year_changes_sign(self):
         rows = rd.compare_with_rule(self.dates)
         by_year = {}
         for row in rows:
             by_year.setdefault(row["actual"].year, []).append(row["diff_days"])
+        self.assertLess(statistics.mean(by_year[2019]), 0)
         self.assertLess(statistics.mean(by_year[2020]), 0)
         self.assertLess(statistics.mean(by_year[2021]), 0)
         self.assertGreater(statistics.mean(by_year[2025]), 0)
