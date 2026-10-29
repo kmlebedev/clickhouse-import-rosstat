@@ -588,12 +588,50 @@ def previous_month(day: date) -> date:
     return _month_shift(day, -1)
 
 
+# As-of конвенция (#401 W0). `late` — прежняя (v2/v3/v4, #396): cutoff 8-е `M+1`,
+# консервативные доступности; к cutoff уже видны все недели месяца `M`.
+# `publication` — прогноз на дату публикации месячного ИПЦ `M−1` (9-е `M`,
+# 19:00 МСК, правило `publication_calendar`): метка `M−1` доступна точно в день
+# публикации, недель месяца `M` — одна-две, МП — последняя доступная точка.
+# Конвенция — `ContextVar`, по умолчанию `late`: без `asof_convention(...)` код
+# работает побайтно как раньше. Строки признаков надо собирать внутри контекста
+# (cutoff нужен только им; обучение моделей от конвенции не зависит).
+ASOF_LATE = "late"
+ASOF_PUBLICATION = "publication"
+ASOF_CONVENTIONS = (ASOF_LATE, ASOF_PUBLICATION)
+PUBLICATION_DAY = 9  # месячный ИПЦ Росстата: 9-е `M+1`, 19:00 МСК (publication_calendar)
+_ASOF_CONVENTION: ContextVar = ContextVar("cpi_asof_convention", default=ASOF_LATE)
+
+
+def current_asof_convention() -> str:
+    """Активная as-of конвенция (`late` по умолчанию)."""
+    return _ASOF_CONVENTION.get()
+
+
+@contextlib.contextmanager
+def asof_convention(name: str):
+    """Включает as-of конвенцию на время блока; неизвестное имя — `ValueError`."""
+    if name not in ASOF_CONVENTIONS:
+        raise ValueError(f"неизвестная as-of конвенция {name!r}: ожидается одна из {ASOF_CONVENTIONS}")
+    token = _ASOF_CONVENTION.set(name)
+    try:
+        yield
+    finally:
+        _ASOF_CONVENTION.reset(token)
+
+
 def cutoff_for(month: date) -> date:
-    """Cutoff месяца `M` (§2.2): 8-е число `M+1` (запас до публикации 10–16-го).
+    """Cutoff месяца `M` (§2.2).
+
+    `late` — 8-е число `M+1` (запас до публикации 10–16-го). `publication` —
+    9-е число `M`: день публикации месячного ИПЦ `M−1` (правило календаря),
+    момент публикации включителен.
 
     `month` — первое число месяца (каноническая форма `Row.month`); день
     внутри месяца значения не имеет.
     """
+    if current_asof_convention() == ASOF_PUBLICATION:
+        return month_of(month).replace(day=PUBLICATION_DAY)
     return _month_shift(month, 1).replace(day=8)
 
 
@@ -609,7 +647,13 @@ def available_from_mes(period_end: date) -> date:
     Правило консервативно: фактическая публикация — 10–16-е числа `M+1`, но
     для cutoff(M) = 8-е `M+1` точка месяца `M` недоступна — и это ровно то, что
     нужно: собственная метка тестового месяца в признаки не попадает.
+
+    Конвенция `publication` — точная дата публикации: 9-е `M+1` (правило
+    календаря); к cutoff `M+1`-го месяца (9-е) метка `M` доступна, самого
+    месяца `M+1` — нет.
     """
+    if current_asof_convention() == ASOF_PUBLICATION:
+        return _month_shift(period_end, 1).replace(day=PUBLICATION_DAY)
     return _month_shift(period_end, 2) - ONE_DAY
 
 
@@ -929,7 +973,11 @@ def build_sample(
         if features is None:
             skipped.append((month, reason))
             continue
-        mp_part, reason = mp_features(month, survey, cutoff)
+        # `publication`: к 9-му `M` точка МП за `M−1` ещё недоступна (конец `M`),
+        # берётся последняя доступная — режим `live` выбирает её без M−1-жёсткости.
+        mp_part, reason = mp_features(
+            month, survey, cutoff, live=current_asof_convention() == ASOF_PUBLICATION
+        )
         if mp_part is None:
             skipped.append((month, reason))
             continue
