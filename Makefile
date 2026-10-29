@@ -682,7 +682,7 @@ cpi-sa-reconciliation-test:
 	uv run --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/cpi/cpi_sa_reconciliation_test.py
 
 cpi-asof-test:
-	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --with arch --with "holidays>=0.60" --python 3.12 python3 scripts/models/cpi/cpi_asof_test.py
+	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --with arch --with "holidays>=0.60" --python 3.12 python3 scripts/models/cpi/cpi_asof_test.py && python3 scripts/models/cpi/cpi_release_dates_test.py
 
 # Issue #364: core-прокси ИПЦ из недельных компонент 2021+ и короткие модели
 # (M1 raw, M2 Fourier-OLS, M3 UCM, M4 ridge-бридж, M5 seasonal naive).
