@@ -228,6 +228,70 @@ class BuildSampleTest(unittest.TestCase):
         self.assertEqual([row.month for row in pub], [row.month for row in late][1:])
 
 
+class ExactReleaseDatesTest(unittest.TestCase):
+    """`publication` с точными датами релизов: cutoff = фактическая дата, иначе правило 9-го."""
+
+    DATES = {date(2020, 5, 1): date(2020, 6, 5), date(2025, 3, 1): date(2025, 4, 11)}
+
+    def test_cutoff_and_availability_use_exact_dates_with_fallback(self):
+        with cm.asof_convention("publication", release_dates=self.DATES):
+            self.assertEqual(cm.cutoff_for(date(2020, 6, 1)), date(2020, 6, 5))
+            self.assertEqual(cm.available_from_mes(date(2020, 5, 31)), date(2020, 6, 5))
+            self.assertEqual(cm.cutoff_for(date(2025, 4, 1)), date(2025, 4, 11))
+            # Месяца нет в таблице — правило 9-го.
+            self.assertEqual(cm.cutoff_for(date(2018, 6, 1)), date(2018, 6, 9))
+            self.assertEqual(cm.available_from_mes(date(2018, 5, 31)), date(2018, 6, 9))
+
+    def test_release_dates_only_for_publication_and_restored_after(self):
+        with self.assertRaises(ValueError):
+            with cm.asof_convention("late", release_dates=self.DATES):
+                pass
+        with cm.asof_convention("publication", release_dates=self.DATES):
+            pass
+        with cm.asof_convention("publication"):
+            self.assertEqual(cm.cutoff_for(date(2020, 6, 1)), date(2020, 6, 9))
+
+    def test_nested_inner_without_dates_uses_rule_and_outer_restored(self):
+        with cm.asof_convention("publication", release_dates=self.DATES):
+            with cm.asof_convention("publication"):
+                self.assertEqual(cm.cutoff_for(date(2020, 6, 1)), date(2020, 6, 9))
+            self.assertEqual(cm.cutoff_for(date(2020, 6, 1)), date(2020, 6, 5))
+
+    def test_no_leak_by_observation_date_with_exact_early_release(self):
+        # Релиз за май 2020 вышел 5 июня (раньше правила): данные после 5 июня — будущее.
+        hard_cutoff = date(2020, 6, 5)
+        world = cmt.synthetic_world()
+        bad = {
+            "targets": world["targets"],
+            "survey": world["survey"],
+            "usd": [(d, poison(v) if d > hard_cutoff else v) for d, v in world["usd"]],
+            "key_rate": [(d, poison(v) if d > hard_cutoff else v) for d, v in world["key_rate"]],
+            "fao": [(d, poison(v) if d > hard_cutoff else v) for d, v in world["fao"]],
+        }
+
+        def build(w):
+            with cm.asof_convention("publication", release_dates=self.DATES):
+                return cm.build_sample(w["targets"], w["survey"], w["usd"], w["key_rate"], w["fao"])
+
+        clean, _ = build(world)
+        dirty, _ = build(bad)
+        a = next(r for r in clean if r.month == ORIGIN)
+        b = next(r for r in dirty if r.month == ORIGIN)
+        for name in a.features:
+            same = a.features[name] == b.features[name] or (
+                isinstance(a.features[name], float) and math.isnan(a.features[name]) and math.isnan(b.features[name])
+            )
+            self.assertTrue(same, f"утечка после фактической даты релиза в {name}")
+
+    def test_weekly_visibility_follows_exact_date(self):
+        points = [(date.fromordinal(date(2020, 3, 2).toordinal() + 7 * i), 100.0 + 0.1 * (i % 5)) for i in range(40)]
+        with cm.asof_convention("publication", release_dates=self.DATES):
+            early = agg.wkagg_features(points, ORIGIN, cm.cutoff_for(ORIGIN))
+        with cm.asof_convention("publication"):
+            rule = agg.wkagg_features(points, ORIGIN, cm.cutoff_for(ORIGIN))
+        self.assertLessEqual(early["wkagg_cov"], rule["wkagg_cov"])
+
+
 class WeeklyAggregateLeakTest(unittest.TestCase):
     def points(self):
         start = date(2020, 3, 2)

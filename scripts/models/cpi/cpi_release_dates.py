@@ -4,8 +4,10 @@
 #401 W0. Источник — график срочных информаций Росстата
 (https://rosstat.gov.ru/compendium/document/50798, «Об индексе потребительских
 цен в <месяц> <год> года»); таблица — `scripts/testdata/rosstat_cpi_release_dates.csv`
-(период, дата размещения, имя файла-источника; время суток на странице не
-указано и не записывается). Скрипт только читает CSV.
+(период, дата размещения, источник: имя файла релиза `N_DD-MM-YYYY.html`
+на rosstat.gov.ru, где дата проверяется по имени, либо `wayback:…` — таблица
+графика срочных информаций из архивных снимков страницы; время суток не
+указано и не записывается). Охват: декабрь 2019 … сентябрь 2026. Скрипт только читает CSV.
 """
 
 import csv
@@ -19,6 +21,7 @@ ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_PATH = ROOT / "scripts" / "testdata" / "rosstat_cpi_release_dates.csv"
 RULE_DAY = 9  # `publication_calendar`/`cpi_monthly.PUBLICATION_DAY`
 _FILE_DATE = re.compile(r"_(\d{2})-(\d{2})-(\d{4})\.")
+WAYBACK_PREFIX = "wayback:"  # дата из таблицы графика (архивные снимки страницы), без файла релиза
 
 
 def rule_date(period: date) -> date:
@@ -40,9 +43,13 @@ def load_release_dates(path: Path = DEFAULT_PATH) -> dict:
             published = date.fromisoformat(row["published_on"])
             if period in out:
                 raise ValueError(f"{path}:{line}: дубль периода {row['period']}")
-            match = _FILE_DATE.search(row["source_file"])
-            if match is None or date(int(match[3]), int(match[2]), int(match[1])) != published:
-                raise ValueError(f"{path}:{line}: дата в имени файла не совпадает с published_on")
+            source = row["source_file"]
+            match = _FILE_DATE.search(source)
+            if match is not None:
+                if date(int(match[3]), int(match[2]), int(match[1])) != published:
+                    raise ValueError(f"{path}:{line}: дата в имени файла не совпадает с published_on")
+            elif not source.startswith(WAYBACK_PREFIX):
+                raise ValueError(f"{path}:{line}: источник {source!r} — ни файл релиза, ни {WAYBACK_PREFIX}")
             if published <= date(year + month // 12, month % 12 + 1, 1):
                 raise ValueError(f"{path}:{line}: публикация {published} не позже конца периода {period}")
             out[period] = published
