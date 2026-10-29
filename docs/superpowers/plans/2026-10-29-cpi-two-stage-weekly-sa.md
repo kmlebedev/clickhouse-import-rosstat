@@ -7,10 +7,11 @@
 
 ```text
 W0 as-of конвенция ──┬─> W1 as-of недельный X-13 ──> W2 КУ и T_SAX ─┐
-                     └─> W3 таргеты, фолды ──────────────────────────┼─> W4 Stage 1 ──> W5 Stage 2 ──> W6 robustness ──> W7 отчёт
+                     ├─> W3 таргеты, фолды ──────────────────────────┼─> W4 Stage 1 ──> W5 Stage 2 ──┬─> W5b сравнение с CB_COMP ─┐
+                     └─> W3b сверка данных с CB_COMP (архив) ────────┴───────────────────────────────┘                            ├─> W6 robustness ──> W7 отчёт
 ```
 
-Стоп-условия — спека §7: W1 parity не прошёл → ничего дальше; W4 `fail` → Stage 2 не строится.
+Стоп-условия — спека §7: W1 parity не прошёл → ничего дальше; W4 `fail` → Stage 2 не строится; W3b регрессионная база не воспроизвелась → W5b `incomplete`. W3b может изменить primary `w` только до W2/W4.
 
 ## W0: конвенция as-of и регрессионная база
 
@@ -41,6 +42,14 @@ W0 as-of конвенция ──┬─> W1 as-of недельный X-13 ─�
 - [ ] Хэши `feature_sha256`/`predictions_sha256` для детерминизма.
 **Done:** тесты доступности и purge.
 
+## W3b: сверка данных CPI с датасетом CB_COMP
+
+**Файлы:** `scripts/models/cpi/cb_comp_data_reconcile.py` (+`_test.py`); чтение `data_panel_bi_sa.fst` — R `fst` (как в `scripts/cb_comp_panel_export.R`), XLSX — openpyxl; архив — `.worktrees/cb-comp-archive/build/cb-comp/extracted/` или скачивание с проверкой md5 `797f00518c3a0fe6d4cd2c2ad22aa70a`.
+- [ ] Тесты на синтетических фикстурах: накопление `TARGET_FULL` из `[1]`, normal-флаг, метрики совпадения, правило допуска `0,01` п.п.
+- [ ] Регрессионная база: RMSE CB_COMP на 54 normal-месяцах = 0,158805 / 0,296655 / 0,443623 / 0,971459 (1e-6).
+- [ ] Таргет, компоненты, КУ и вес `w` (спека W3b п. 2–4); решение `aligned`/`misaligned`.
+**Done:** отчёт с таблицами совпадений и расхождений; решение по `w` зафиксировано до W2.
+
 ## W4: Stage 1
 
 **Файлы:** `cpi_two_stage_s1.py` (+тест).
@@ -54,6 +63,14 @@ W0 as-of конвенция ──┬─> W1 as-of недельный X-13 ─�
 - [ ] Признаки `v3` + `s1_*` (NaN где не определён); nested OOF (тест: `s1_*` строки обучения не использует данные после `P_j`).
 - [ ] Модели `v5_s1`, `v5_no_s1`; сравнения с `v3_direct@P_k`, `v4a_direct@P_k`, B3; gate S2 (спека §6.2).
 **Done:** ячейки `T_SAX`/`T_CORE` × h1/h3/h6, `build/ml-gate/cpi_two_stage.{json,md}`.
+
+## W5b: сравнение точности с CB_COMP
+
+**Файлы:** `scripts/models/cpi/cpi_two_stage_cb_comp.py` (+тест).
+- [ ] Выравнивание окон и origin CB_COMP, истина `TARGET_FULL`, normal 54 / все 67; тест на воспроизведение RMSE CB_COMP.
+- [ ] Варианты `v5_wf`, `v5_frozen` (train 2010-03…2018-12, один раз), ориентиры `v3_direct@P_k` и #190; h1/h3/h6 (+h2 справочно).
+- [ ] DM-HLN, 95 % CI ΔRMSE, TOST δ = 10 %, Бонферрони по 3 горизонтам; классификация «лучше/паритет/хуже/не определено» (спека §6.3).
+**Done:** `build/ml-gate/cpi_two_stage_cb_comp.{json,md}`, раздел отчёта.
 
 ## W6: robustness
 
