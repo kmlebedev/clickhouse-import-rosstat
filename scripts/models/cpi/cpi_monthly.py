@@ -601,6 +601,9 @@ ASOF_PUBLICATION = "publication"
 ASOF_CONVENTIONS = (ASOF_LATE, ASOF_PUBLICATION)
 PUBLICATION_DAY = 9  # месячный ИПЦ Росстата: 9-е `M+1`, 19:00 МСК (publication_calendar)
 _ASOF_CONVENTION: ContextVar = ContextVar("cpi_asof_convention", default=ASOF_LATE)
+# Точные даты релизов месячного ИПЦ для `publication`: `{первое число отчётного
+# месяца: дата публикации}`; нет месяца в таблице — правило `PUBLICATION_DAY`.
+_ASOF_RELEASES: ContextVar = ContextVar("cpi_asof_release_dates", default=None)
 
 
 def current_asof_convention() -> str:
@@ -609,29 +612,50 @@ def current_asof_convention() -> str:
 
 
 @contextlib.contextmanager
-def asof_convention(name: str):
-    """Включает as-of конвенцию на время блока; неизвестное имя — `ValueError`."""
+def asof_convention(name: str, release_dates: Optional[dict] = None):
+    """Включает as-of конвенцию на время блока; неизвестное имя — `ValueError`.
+
+    `release_dates` — точные даты релизов месячного ИПЦ (только `publication`):
+    `{первое число отчётного месяца: дата}`; для месяцев вне таблицы действует
+    правило 9-го. Фактические даты Росстата расходятся с правилом в обе стороны
+    (−6…+8 дней, 2020–2021 — раньше, 2024–2026 — позже), поэтому для бэктеста
+    на известных месяцах их стоит передавать (`cpi_release_dates`).
+    """
     if name not in ASOF_CONVENTIONS:
         raise ValueError(f"неизвестная as-of конвенция {name!r}: ожидается одна из {ASOF_CONVENTIONS}")
+    if release_dates is not None and name != ASOF_PUBLICATION:
+        raise ValueError("release_dates задаются только для конвенции publication")
     token = _ASOF_CONVENTION.set(name)
+    releases_token = _ASOF_RELEASES.set(dict(release_dates) if release_dates else None)
     try:
         yield
     finally:
+        _ASOF_RELEASES.reset(releases_token)
         _ASOF_CONVENTION.reset(token)
+
+
+def _publication_date(period: date) -> date:
+    """Дата публикации ИПЦ отчётного месяца `period`: из таблицы или правило 9-го `M+1`."""
+    key = month_of(period)
+    dates = _ASOF_RELEASES.get()
+    if dates is not None and key in dates:
+        return dates[key]
+    return _month_shift(key, 1).replace(day=PUBLICATION_DAY)
 
 
 def cutoff_for(month: date) -> date:
     """Cutoff месяца `M` (§2.2).
 
     `late` — 8-е число `M+1` (запас до публикации 10–16-го). `publication` —
-    9-е число `M`: день публикации месячного ИПЦ `M−1` (правило календаря),
-    момент публикации включителен.
+    день публикации месячного ИПЦ `M−1`: фактическая дата из таблицы
+    `release_dates`, а без неё — 9-е число `M` (правило календаря); момент
+    публикации включителен.
 
     `month` — первое число месяца (каноническая форма `Row.month`); день
     внутри месяца значения не имеет.
     """
     if current_asof_convention() == ASOF_PUBLICATION:
-        return month_of(month).replace(day=PUBLICATION_DAY)
+        return _publication_date(_month_shift(month, -1))
     return _month_shift(month, 1).replace(day=8)
 
 
@@ -653,7 +677,7 @@ def available_from_mes(period_end: date) -> date:
     месяца `M+1` — нет.
     """
     if current_asof_convention() == ASOF_PUBLICATION:
-        return _month_shift(period_end, 1).replace(day=PUBLICATION_DAY)
+        return _publication_date(period_end)
     return _month_shift(period_end, 2) - ONE_DAY
 
 
