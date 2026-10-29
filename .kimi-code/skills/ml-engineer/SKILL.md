@@ -88,6 +88,11 @@ whenToUse: When a task involves an ML experiment, model, feature set, backtest, 
 | `make cpi-public-audit` | Task 1 #76: аудит публичной панели, покрытие весов, PIT/as-of; в БД не пишет |
 | `make cpi-weekly-panel` | недельная компонентная панель ИПЦ (Task 3): product/component CSV, реконструкция и гейт; в ClickHouse не пишет, `ML_LOG` не используется |
 | `make cpi-weekly-panel-test` | офлайн-тесты панели (без ClickHouse и сети) |
+| `make cpi-weekly-aggregate` / `-test` | #396: аудит недельного агрегата 2009+ и признаки `wkagg_*` (`--samples S_L09,S_L13,S_W22`); только чтение |
+| `make cpi-v4-leaderboard` / `-test` | #396: регрессионный гейт v2/v3 на `S_W22` (эталон — спека §7.1); `--with arch` для MCS |
+| `make cpi-v4-grid` / `-test` | #396 эксперимент 1: сетка 3 таргета (NSA, SA без КУ, «Базовый ИПЦ») × h1/h3/h6; `ARGS="--sample S_L09|S_L13|S_W22 --cells T_NSA:1"`; `ML_LOG=1` — паспорт при девяти ячейках |
+| `make cpi-v4-h2` / `-test` | #396 эксперимент 2: решение gate по `wkagg_*` из ячеек сетки; пишет `build/ml-gate/cpi_v4_h2.*` |
+| `make cpi-core-nnls` / `-test`, `make cpi-v4-core` / `-test` | #396 эксперимент 3: `core_nnls` (NNLS по 14 корзинам панели #364, as-of), `v4c`/`v4d` на `T_CORE`; `ARGS="--sample S_L09"`, `ARGS="--decide"` |
 | `make key-rate-model` | ставка: Тейлор, ordered logit, walk-forward; `ML_LOG=1` |
 | `make shock-classifier` | классификатор шоков и причинные веса; `ML_LOG=1` |
 | `make cb-comp-parity` | паритет с CB_COMP (direct + bottom-up, DM/TOST); `ML_LOG=1` |
