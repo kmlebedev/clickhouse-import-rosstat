@@ -61,26 +61,30 @@ class VerifiedTableTest(unittest.TestCase):
     def setUp(self):
         self.dates = rd.load_release_dates(rd.DEFAULT_PATH)
 
-    def test_ten_months_dec_2025_to_sep_2026(self):
-        self.assertEqual(len(self.dates), 10)
-        self.assertEqual(min(self.dates), date(2025, 12, 1))
+    def test_21_months_jan_2025_to_sep_2026(self):
+        self.assertEqual(len(self.dates), 21)
+        self.assertEqual(min(self.dates), date(2025, 1, 1))
         self.assertEqual(max(self.dates), date(2026, 9, 1))
 
     def test_known_points(self):
+        self.assertEqual(self.dates[date(2025, 1, 1)], date(2025, 2, 14))
+        self.assertEqual(self.dates[date(2025, 4, 1)], date(2025, 5, 16))
         self.assertEqual(self.dates[date(2025, 12, 1)], date(2026, 1, 16))
         self.assertEqual(self.dates[date(2026, 8, 1)], date(2026, 9, 11))
         self.assertEqual(self.dates[date(2026, 9, 1)], date(2026, 10, 9))
 
     def test_difference_to_rule(self):
         rows = rd.compare_with_rule(self.dates)
-        self.assertEqual([row["diff_days"] for row in rows], [7, 4, 4, 1, 6, 1, 1, 3, 2, 0])
+        expected = [5, 3, 2, 7, 2, 2, 4, 1, 1, 5, 1, 7, 4, 4, 1, 6, 1, 1, 3, 2, 0]
+        self.assertEqual([row["diff_days"] for row in rows], expected)
         summary = rd.summarize(rows)
-        self.assertEqual(summary["n"], 10)
-        self.assertEqual(summary["later_than_rule"], 9)
+        self.assertEqual(summary["n"], 21)
+        self.assertEqual(summary["later_than_rule"], 20)
         self.assertEqual(summary["earlier_than_rule"], 0)
         self.assertEqual(summary["max_diff"], 7)
-        self.assertAlmostEqual(summary["mean_diff"], 2.9)
-        self.assertEqual(summary["median_diff"], statistics.median([7, 4, 4, 1, 6, 1, 1, 3, 2, 0]))
+        self.assertAlmostEqual(summary["mean_diff"], 62 / 21)
+        self.assertEqual(summary["median_diff"], statistics.median(expected))
+        self.assertEqual(summary["median_diff"], 2)
 
 
 if __name__ == "__main__":
