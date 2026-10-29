@@ -588,12 +588,74 @@ def previous_month(day: date) -> date:
     return _month_shift(day, -1)
 
 
+# As-of конвенция (#401 W0). `late` — прежняя (v2/v3/v4, #396): cutoff 8-е `M+1`,
+# консервативные доступности; к cutoff уже видны все недели месяца `M`.
+# `publication` — прогноз на дату публикации месячного ИПЦ `M−1` (9-е `M`,
+# 19:00 МСК, правило `publication_calendar`): метка `M−1` доступна точно в день
+# публикации, недель месяца `M` — одна-две, МП — последняя доступная точка.
+# Конвенция — `ContextVar`, по умолчанию `late`: без `asof_convention(...)` код
+# работает побайтно как раньше. Строки признаков надо собирать внутри контекста
+# (cutoff нужен только им; обучение моделей от конвенции не зависит).
+ASOF_LATE = "late"
+ASOF_PUBLICATION = "publication"
+ASOF_CONVENTIONS = (ASOF_LATE, ASOF_PUBLICATION)
+PUBLICATION_DAY = 9  # месячный ИПЦ Росстата: 9-е `M+1`, 19:00 МСК (publication_calendar)
+_ASOF_CONVENTION: ContextVar = ContextVar("cpi_asof_convention", default=ASOF_LATE)
+# Точные даты релизов месячного ИПЦ для `publication`: `{первое число отчётного
+# месяца: дата публикации}`; нет месяца в таблице — правило `PUBLICATION_DAY`.
+_ASOF_RELEASES: ContextVar = ContextVar("cpi_asof_release_dates", default=None)
+
+
+def current_asof_convention() -> str:
+    """Активная as-of конвенция (`late` по умолчанию)."""
+    return _ASOF_CONVENTION.get()
+
+
+@contextlib.contextmanager
+def asof_convention(name: str, release_dates: Optional[dict] = None):
+    """Включает as-of конвенцию на время блока; неизвестное имя — `ValueError`.
+
+    `release_dates` — точные даты релизов месячного ИПЦ (только `publication`):
+    `{первое число отчётного месяца: дата}`; для месяцев вне таблицы действует
+    правило 9-го. Фактические даты Росстата расходятся с правилом в обе стороны
+    (−6…+8 дней, 2020–2021 — раньше, 2024–2026 — позже), поэтому для бэктеста
+    на известных месяцах их стоит передавать (`cpi_release_dates`).
+    """
+    if name not in ASOF_CONVENTIONS:
+        raise ValueError(f"неизвестная as-of конвенция {name!r}: ожидается одна из {ASOF_CONVENTIONS}")
+    if release_dates is not None and name != ASOF_PUBLICATION:
+        raise ValueError("release_dates задаются только для конвенции publication")
+    token = _ASOF_CONVENTION.set(name)
+    releases_token = _ASOF_RELEASES.set(dict(release_dates) if release_dates else None)
+    try:
+        yield
+    finally:
+        _ASOF_RELEASES.reset(releases_token)
+        _ASOF_CONVENTION.reset(token)
+
+
+def _publication_date(period: date) -> date:
+    """Дата публикации ИПЦ отчётного месяца `period`: из таблицы или правило 9-го `M+1`."""
+    key = month_of(period)
+    dates = _ASOF_RELEASES.get()
+    if dates is not None and key in dates:
+        return dates[key]
+    return _month_shift(key, 1).replace(day=PUBLICATION_DAY)
+
+
 def cutoff_for(month: date) -> date:
-    """Cutoff месяца `M` (§2.2): 8-е число `M+1` (запас до публикации 10–16-го).
+    """Cutoff месяца `M` (§2.2).
+
+    `late` — 8-е число `M+1` (запас до публикации 10–16-го). `publication` —
+    день публикации месячного ИПЦ `M−1`: фактическая дата из таблицы
+    `release_dates`, а без неё — 9-е число `M` (правило календаря); момент
+    публикации включителен.
 
     `month` — первое число месяца (каноническая форма `Row.month`); день
     внутри месяца значения не имеет.
     """
+    if current_asof_convention() == ASOF_PUBLICATION:
+        return _publication_date(_month_shift(month, -1))
     return _month_shift(month, 1).replace(day=8)
 
 
@@ -609,7 +671,13 @@ def available_from_mes(period_end: date) -> date:
     Правило консервативно: фактическая публикация — 10–16-е числа `M+1`, но
     для cutoff(M) = 8-е `M+1` точка месяца `M` недоступна — и это ровно то, что
     нужно: собственная метка тестового месяца в признаки не попадает.
+
+    Конвенция `publication` — точная дата публикации: 9-е `M+1` (правило
+    календаря); к cutoff `M+1`-го месяца (9-е) метка `M` доступна, самого
+    месяца `M+1` — нет.
     """
+    if current_asof_convention() == ASOF_PUBLICATION:
+        return _publication_date(period_end)
     return _month_shift(period_end, 2) - ONE_DAY
 
 
@@ -929,7 +997,11 @@ def build_sample(
         if features is None:
             skipped.append((month, reason))
             continue
-        mp_part, reason = mp_features(month, survey, cutoff)
+        # `publication`: к 9-му `M` точка МП за `M−1` ещё недоступна (конец `M`),
+        # берётся последняя доступная — режим `live` выбирает её без M−1-жёсткости.
+        mp_part, reason = mp_features(
+            month, survey, cutoff, live=current_asof_convention() == ASOF_PUBLICATION
+        )
         if mp_part is None:
             skipped.append((month, reason))
             continue
