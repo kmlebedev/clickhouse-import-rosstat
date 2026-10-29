@@ -23,12 +23,13 @@ W0 as-of конвенция ──┬─> W1 as-of недельный X-13 ─�
 
 ## W1: as-of перефит недельного X-13 (главная дыра)
 
-**Файлы:** `scripts/models/cpi/weekly_sa_asof.py` (+`_test.py`, `_x13.R` — тот же скрипт, что `weeklysa/data/weekly_cpi_sa_x13.R`, SHA-256 пин).
-- [ ] Тесты на синтетике: порт `buildGrid`/`fourWeekIndex`/`monthlyLastInMonth`/`partialMonth` совпадает с примерами `weeklysa/grid_test.go`.
-- [ ] Parity: на полной выборке `sa_index`/`sa_4w`/`saar` совпадают с `weekly_cpi_sa` (`max|diff| ≤ 1e-6`, 209 + 1 `partial`).
-- [ ] As-of ряд по `P_k` 2013+; тест на утечку (изменение будущих недель не меняет значение месяца `k`).
-- [ ] Ревизии `as-of − final`, сдвиг-стабильность, критерий качества (RMSE ≤ 0,20, \|bias\| ≤ 0,05, корр. ≥ 0,95 на 2016+).
-**Done:** gate W1 (спека §4) зафиксирован числами; `make cpi-weekly-sa-asof(-test)`.
+**Файлы:** `scripts/models/cpi/weekly_sa_asof.py` (+`_test.py`); X-13 — продовый `weeklysa/data/weekly_cpi_sa_x13.R` (пин SHA-256 в коде).
+- [x] Тесты (порт `weeklysa/grid_test.go` с теми же ожиданиями; доступность недели `date + 2`; утечка; parity; gate): 36 тестов, мутационная проверка 5/5 после дополнения теста.
+- [x] Parity: на полной выборке `sa_index`/`sa_4w`/`saar` совпадают с `weekly_cpi_sa` (210 строк = 209 + 1 `partial`), `max|diff| = 0,0` ≤ 1e-6.
+- [x] As-of срезы по `P_k` 2013-01 … 2026-10 (165; 1 сбой X-13 — origin 2014-08, записан); утечки нет (последняя неделя + 2 дня ≤ cutoff на всех срезах).
+- [x] Ревизии первый выпуск → окончательная: RMSE 0,070 (2016+), 0,165 (2013–2015); дрейф при последующих перефитах 0,08–0,10.
+- [x] Критерий качества на 2016+: RMSE 0,158, bias −0,018, корр. 0,973 → **gate W1 = pass**. Отчёт: `docs/research/2026-10-30-cpi-two-stage-w1-weekly-sa-asof.md`.
+**Done:** gate W1 зафиксирован числами; `make cpi-weekly-sa-asof(-test)`; вход Stage 1 — NaN до 2016-01.
 
 ## W2: КУ и таргет `T_SAX`
 
