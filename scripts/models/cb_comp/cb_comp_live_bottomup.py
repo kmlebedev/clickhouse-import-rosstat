@@ -2,9 +2,9 @@
 """Live bottom-up по 88 группам на нашей панели, цель `T_LIVE` — Task 2 #422.
 
 Пункт `key-rate/phase-4-cb-comp-88-groups-live`, зонтик #419. Протокол —
-спека `docs/superpowers/specs/2026-10-30-cb-comp-88-groups-live-design.md` §12–§13.
+спека `docs/superpowers/specs/2026-10-30-cb-comp-88-groups-live-design.md` §12–§13 (вход — §13.1).
 
-* **данные** — SA групп из Task 1 (`build/cb-comp-groups/panel_amended.csv`:
+* **данные** — SA групп из Task 1 (`build/cb-comp-groups/panel.csv`, C0 на окне `live`:
   `sa_full_mm` и `sa_asof_mm`), публичная книга МП по листам
   (`build/cb-comp-parity/{public_panel,sheet_map}.csv`), макро v2
   (`cb_comp_parity.load_feature_rows`), архив CB_COMP;
@@ -62,7 +62,7 @@ MODEL_NOMP = "live_nomp"
 MODEL_ASOF = "live_per_sheet_asof"
 MODELS = (MODEL_LIVE, MODEL_NOMP, MODEL_ASOF)
 
-PANEL_CSV = ROOT / "build" / "cb-comp-groups" / "panel_amended.csv"
+PANEL_CSV = ROOT / "build" / "cb-comp-groups" / "panel.csv"
 PUBLIC_DIR = ROOT / "build" / "cb-comp-parity"
 OUT_DIR = ROOT / "build" / "cb-comp-live-bottomup"
 
@@ -335,7 +335,7 @@ def run(archive: Path, panel_csv: Path, public_dir: Path, out_dir: Path, skip_r0
     g2_pass = all(comparisons[MODEL_LIVE][h]["g2"]["ok"] for h in PRIMARY_HORIZONS)
 
     inputs = {
-        "panel_amended_csv": sha256(panel_csv),
+        "panel_csv": sha256(panel_csv),
         "public_panel_csv": sha256(public_dir / "public_panel.csv"),
         "sheet_map_csv": sha256(public_dir / "sheet_map.csv"),
         "target_xlsx": sha256(archive / cp.TARGET_XLSX),
@@ -395,7 +395,7 @@ def _jsonable(value):
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--archive", default=None)
-    parser.add_argument("--panel", default=str(PANEL_CSV), help="panel_amended.csv из make cb-comp-groups-panel ARGS=--asof")
+    parser.add_argument("--panel", default=str(PANEL_CSV), help="panel.csv (C0, спека §13.1) из make cb-comp-groups-panel ARGS=--asof")
     parser.add_argument("--public-dir", default=str(PUBLIC_DIR), help="каталог public_panel.csv и sheet_map.csv (make cb-comp-public-export)")
     parser.add_argument("--out", default=str(OUT_DIR))
     parser.add_argument("--skip-r0", action="store_true", help="только для отладки; итоговый прогон — с R0")

@@ -325,7 +325,7 @@ def ensure_panel_csv(archive: Path, out_dir: Path, require_full: bool = False) -
     if require_full and not full_csv.exists():
         missing = True
     if missing:
-        exporter = Path(__file__).resolve().parent / "cb_comp_panel_export.R"
+        exporter = ROOT / "scripts" / "models" / "cb_comp" / "cb_comp_panel_export.R"
         try:
             subprocess.run(
                 ["Rscript", str(exporter), str(archive), str(out_dir)],

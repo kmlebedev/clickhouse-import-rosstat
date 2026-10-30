@@ -41,13 +41,40 @@
 - [x] **2.2 Код до прогона** — `scripts/models/cb_comp/cb_comp_live_bottomup.py` (+ `_test.py`): загрузка панели групп, `T_LIVE`, признаки и модели через `cb_comp_bottomup`, R0 через `run_bottomup(per_sheet)`, G2/E2/E3/E4 через `cpi_two_stage_cb_comp.compare_to_cb`; `make cb-comp-live-bottomup(-test)`. Тесты: `T_LIVE` (нормировка, лаг весов, накопление), выбор лагов full/as-of, origin и отсутствие утечки, порог G2, сборка паспорта.
 - [x] **2.3 Данные** — `make cb-comp-groups-panel ARGS="--asof --jobs 8"`, `make cb-comp-public-export`.
 - [x] **2.4 Прогон и повтор** — `make cb-comp-live-bottomup`, повтор для детерминизма.
+- [x] **2.4a Поправка §13.1 после #431** — merge `main`; вход — C0-панель `panel.csv` вместо `panel_amended.csv` (до перепрогона).
+- [x] **2.4b Код и данные** — `PANEL_CSV = panel.csv`, ключ паспорта `panel_csv`; `make cb-comp-groups-panel ARGS="--asof --jobs 8"` на коде `main`.
+- [x] **2.4c Перепрогон ×2** — `make cb-comp-live-bottomup`, sha256 `result.json` и `predictions.csv` совпадают.
 - [ ] **2.5 Отчёт** — `docs/research/2026-10-30-cb-comp-88-groups-task2.{md,json}`; роадмап, README, `docs/site-pages.json`; `make all`, `make docs-check`; PR с `Closes #422`.
+
+## Задачи Task 1b (#430)
+
+Ветка `research/cb-comp-88-groups-panel-fix`, worktree `.worktrees/cb-comp-88-groups-fix`. Протокол — спека §14; пороги §7 не меняются.
+
+- [ ] **1b.1 Предрегистрация** — спека §14 и этот раздел; роадмап, issue #430. **До кода и до чисел.**
+- [x] **1b.2 Код до прогона.** `cb_comp_groups_panel.py`: `REFERENCE_WINDOWS = {csv: 2010-01…2024-09, fst: 2009-01…2024-08}`, `--fit-window {csv,fst,live}`; `load_products(start)` вместо хардкода; `group_sa` получает ряд, обрезанный по окну; блок `sa_fst` в JSON рядом с `sa_csv`; `load_fst_reference` через `cb_comp_bottomup.ensure_panel_csv` + `load_cpi_diff` (лог→п.п.); поправка 9550 по AICc на 2009–2018 в дополнение к §11. Фикс `cb_comp_bottomup.py:329`: путь экспортёра `scripts/models/cb_comp/cb_comp_panel_export.R`.
+- [x] **1b.3 Тесты до прогона.** Обрезка по окну (фит не видит точек вне окна), окна в константах, лог→п.п. для `fst`, выбор по AICc (NaN не участвует, равенство — меньший id), `sa_failed` при несошедшемся кандидате. Существующие 31 тест остаются зелёными.
+- [x] **1b.4 Прогон ×2** — `make cb-comp-groups-panel ARGS="--fit-window csv"` и `--fit-window fst`; повтор для детерминизма (sha256 JSON и `panel.csv`).
+- [x] **1b.5 Отчёт и документы.** §1/§4/§6a/§7 переписать, новый §10 «Исправление после ревью» с таблицей «было → стало» по группам; JSON; спека §13 (Task 2: 9950 и 9550 — по результату §11 и AICc); роадмап.
+- [x] **1b.7 Ревью PR #431 (8 замечаний).** Окно выбора 9550 не зависело от `fit_window`; `fst` грузился и в live; `load_products(2009)` менял входы маппинга; возможный KeyError в `amendment.sa.fst.groups`; резерв по листьям до 2010 подмешивал веса 2016; вывод по AICc опирался на ничью; список точных нулей не сохранялся; не было тестов маршрутизации окна.
+- [ ] **1b.6 Приёмка.** `make cb-comp-groups-panel-test`, `make all`, `make docs-check`; протокол — комментарием в PR; PR `Closes #430`.
+
+## Риски Task 1b
+
+- AICc для 9550 может выбрать спецификацию, которая не воспроизводит `fst` (AICc — критерий модели, не близости к автору). Тогда Q3-B остаётся > 0,15, и это результат, а не повод подбирать дальше.
+- `ensure_panel_csv` до фикса падает на пустом кэше: путь экспортёра указывает на `scripts/cb_comp_panel_export.R`, которого нет.
+- Живой прогон требует R `seasonal` и `fst`; в CI не идёт — тесты офлайн.
 
 ## Задачи Task 3 (#423)
 
-Ветка `exp/cb-comp-88-groups-task3` (от ветки Task 2). Протокол — спека §14.
+Ветка `exp/cb-comp-88-groups-task3` (от ветки Task 2). Протокол — спека §15, поправка §15.1.
 
-- [x] **3.1 Протокол** — спека §14 и этот раздел; роадмап.
+- [x] **3.1 Протокол** — спека §15 и этот раздел; роадмап.
 - [x] **3.2 Код до прогона** — `scripts/models/cb_comp/cb_comp_live_en.py` (+ `_test.py`): EN группы (конфигурация B3, импутация медианой train, без `month`), комбинация CB+EN, классификация, MCS, попарные сравнения, правило выбора и G3; `make cb-comp-live-en(-test)`. Переиспользуются загрузка данных, признаки и CatBoost из `cb_comp_live_bottomup`.
-- [x] **3.3 Прогон и повтор** — `make cb-comp-live-en`; входы — те же артефакты Task 2.
-- [ ] **3.4 Отчёт** — `docs/research/2026-10-30-cb-comp-88-groups-task3.{md,json}`; роадмап, README, `docs/site-pages.json`; `make all`, `make docs-check`.
+- [x] **3.3 Первый прогон и повтор** — `make cb-comp-live-en` на `panel_amended.csv`; в решении не участвует (§15.1).
+- [x] **3.4 Пересборка после мержа #432** — merge `main` (`91e6429`), вход `panel.csv` (C0, §13.1), ключ паспорта `panel_csv`; перепрогон ×2, побайтно тот же `result.json`.
+- [ ] **3.5 Отчёт** — `docs/research/2026-10-30-cb-comp-88-groups-task3.{md,json}`: числа перепрогона, G3 h6 = 1,062 при 1,050; убрать утверждение о совпадении sha256 входов; роадмап, README, `docs/site-pages.json`; `make all`, `make docs-check`; PR с `Closes #423`.
+
+## Риски Task 3
+
+- Пороги G3 заданы по E3 первого прогона; после §13.1 они не пересматриваются, чтобы не подгонять гейт под новый вход.
+- На h6 отрыв от порога — 0,012, в пределах шума MCS; вывод формулируется как «не пройден», а не «почти пройден».
