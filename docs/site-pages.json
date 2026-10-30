@@ -418,5 +418,11 @@
     "page": "research-2026-10-30-transaq-net-flows-source.md",
     "title": "Transaq: нетто-объёмы сделок MOEX",
     "section": "Исследования"
+  },
+  {
+    "source": "docs/research/2026-10-30-cb-comp-88-groups-panel.md",
+    "page": "research-2026-10-30-cb-comp-88-groups-panel.md",
+    "title": "CB_COMP: live-панель 88 групп из ЕМИСС 31074",
+    "section": "Исследования"
   }
 ]
