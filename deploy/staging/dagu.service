@@ -15,6 +15,10 @@ EnvironmentFile=/etc/clickhouse-import-rosstat.env
 Environment="HOME=/root"
 Environment="ROSSTAT_IMPORT_BIN=/root/.local/bin/clickhouse-import-rosstat"
 Environment="DAGU_COORDINATOR_ENABLED=false"
+# Cron dagu считает в часовом поясе процесса, а расписания в dagu/*.yaml и в
+# документации заданы по МСК. С TZ хоста (America/New_York) cbr шёл в 16:17 МСК,
+# moex — в 02:13 МСК, а шаг transaq_net_flows попадал вне торговой сессии.
+Environment="TZ=Europe/Moscow"
 Restart=always
 RestartSec=10
 LimitNOFILE=65536
