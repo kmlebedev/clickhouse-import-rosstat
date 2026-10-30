@@ -183,7 +183,7 @@ def load_regressors(public_dir: Path) -> dict:
     econ = {cp.month_start(d): float(v) for d, v in survey[X_ECON_SERIES]}
     panel = bu.load_public_panel(public_dir / "public_panel.csv")
     sheet_map = bu.load_sheet_map(public_dir / "sheet_map.csv")
-    codes = sorted(sheet_map.loc[sheet_map["industry_slug"] == X_ROZN_SLUG, "code"])
+    codes = sorted(code for code, slug in sheet_map.items() if slug == X_ROZN_SLUG)
     if not codes:
         raise SystemExit(f"в sheet_map нет кодов листа {X_ROZN_SLUG}")
     part = panel[(panel["code"] == codes[0]) & (panel["indicator"] == X_ROZN_INDICATOR)]
