@@ -49,11 +49,11 @@ W0 as-of конвенция ──┬─> W1 as-of недельный X-13 ─�
 
 ## W3b: сверка данных CPI с датасетом CB_COMP
 
-**Файлы:** `scripts/models/cpi/cb_comp_data_reconcile.py` (+`_test.py`); чтение `data_panel_bi_sa.fst` — R `fst` (как в `scripts/cb_comp_panel_export.R`), XLSX — openpyxl; архив — `.worktrees/cb-comp-archive/build/cb-comp/extracted/` или скачивание с проверкой md5 `797f00518c3a0fe6d4cd2c2ad22aa70a`.
-- [ ] Тесты на синтетических фикстурах: накопление `TARGET_FULL` из `[1]`, normal-флаг, метрики совпадения, правило допуска `0,01` п.п.
-- [ ] Регрессионная база: RMSE CB_COMP на 54 normal-месяцах = 0,158805 / 0,296655 / 0,443623 / 0,971459 (1e-6).
-- [ ] Таргет, компоненты, КУ и вес `w` (спека W3b п. 2–4); решение `aligned`/`misaligned`.
-**Done:** отчёт с таблицами совпадений и расхождений; решение по `w` зафиксировано до W2.
+**Файлы:** `scripts/models/cpi/cb_comp_data_reconcile.py` (+`_test.py`); чтение архива — `cb_comp_parity.resolve_archive`/`check_archive` (pandas/openpyxl).
+- [x] Протокол в спеке до результатов (`d961f27`), код — до запуска (`b70d600`); 26 тестов, мутационная проверка 7/8 (выживший эквивалентен).
+- [x] Регрессионная база: RMSE CB_COMP 0,158805 / 0,296655 / 0,443623 / 0,971459, накопление `TARGET_FULL`, источники — 0 расхождений.
+- [x] Таргет: `T_SAX` (w = 0,10) против `TARGET_FULL[1]` RMSE 0,117; КУ — идентичен; калибровка `w` → **0,08** (RMSE 0,088, `aligned`); core — **кода нет в архиве**; групповая сверка и вес из `cpi_weights_tovar` — не выполнены. Отчёт: `docs/research/2026-10-30-cpi-two-stage-w3b-cb-comp-data.md`.
+**Done:** решение `aligned` при primary w = 0,08 зафиксировано числами; W5b на истине `TARGET_FULL`, обучающая цель — `T_SAX` (w = 0,08).
 
 ## W4: Stage 1
 

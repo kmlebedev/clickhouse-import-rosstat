@@ -270,8 +270,17 @@ def run(archive: Optional[str] = None, runner: Optional[Callable] = None) -> dic
         table[weight] = {"fit": _rmse(series, theirs_h1, window_months("train")), "eval": _rmse(series, theirs_h1, window_months("test"))}
     result["weight_calibration"] = {"table": {f"{w:.2f}": v for w, v in table.items()}, **choose_weight(table, WEIGHT_BASE)}
 
-    # 5. Решение.
-    result["alignment"] = decide_alignment(result["target_h1"]["tsax_final"]["test"])
+    # 5. Решение. Протокол п. 4 меняет primary `w`, п. 5 оценивает `T_SAX` с primary `w`: поэтому решение — по ряду
+    # с выбранным весом; числа при `w = 0,10` приводятся рядом (порядок уточнён после результатов, см. отчёт).
+    chosen = result["weight_calibration"]["chosen"]
+    sax_chosen = sax_final if chosen == WEIGHT_BASE else tt.sax_final(nsa, util, chosen, runner)
+    result["target_h1"]["tsax_final_chosen_w"] = compare_on_windows(sax_chosen, theirs_h1, windows)
+    for horizon in (3, 6):
+        theirs_h = {m: float(v) for m, v in target[horizon].items() if not math.isnan(float(v))}
+        result["target_cumulative"][f"h{horizon}_chosen_w"] = compare_on_windows(align_cumulative(sax_chosen, horizon), theirs_h, ("test", "normal"))
+    result["alignment_w010"] = decide_alignment(result["target_h1"]["tsax_final"]["test"])
+    result["alignment"] = decide_alignment(result["target_h1"]["tsax_final_chosen_w"]["test"])
+    result["alignment"]["weight"] = chosen
     return result
 
 

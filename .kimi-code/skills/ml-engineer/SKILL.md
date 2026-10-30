@@ -97,6 +97,7 @@ whenToUse: When a task involves an ML experiment, model, feature set, backtest, 
 | `make cpi-two-stage-targets-test`, `make cpi-two-stage-w2` / `-test` | #401 W2: `T_SAX` (окончательный и винтажный X-13), варианты КУ `V0/V1/V2` и выбор на dev; `build/cpi-two-stage/w2_select.json`; нужен R `seasonal` |
 | `make cpi-two-stage-folds` / `-test` | #401 W3: таргеты `T_SAX`/`T_CORE`/`T_NSA`, доступность (Росстат/ЦБ), purge и фолды Stage 1/2, отпечатки; `build/cpi-two-stage/w3_folds.json`; нужен R `seasonal` |
 | `make cpi-two-stage-s1` / `-test` | #401 W4: Stage 1 (прогноз `T_SAX`/`T_CORE` h1 по недельному SA as-of), baselines и gate S1; `build/cpi-two-stage/s1_gate.json`, `s1_oof.csv`; нужны R `seasonal`, ClickHouse |
+| `make cb-comp-data-reconcile` / `-test` | #401 W3b: сверка данных CPI с датасетом CB_COMP (таргет `TARGET_FULL`, агрегаты, КУ, калибровка веса `w`); нужен локальный архив CB_COMP (`resolve_archive`), pandas+openpyxl; `build/cpi-two-stage/cb_comp_reconcile.json` |
 | `make cpi-asof-test` | #401 W0: as-of конвенция `publication` (cutoff = публикация ИПЦ `M−1`, 9-е `M`) и тесты на утечку; `with cm.asof_convention("publication")` |
 | `make cpi-sa-reconciliation` / `-test` | #399: сверка SA из сырого месячного ИПЦ (X-13, STL), ИПЦ без КУ из `ipc31074` и недельного SA `weekly_cpi_sa` с SA/core ЦБ; пишет `build/cpi-sa/reconciliation.json`; нужен R `seasonal` |
 | `make key-rate-model` | ставка: Тейлор, ordered logit, walk-forward; `ML_LOG=1` |
