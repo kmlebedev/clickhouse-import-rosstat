@@ -629,7 +629,7 @@ def run(archive: Path, out_dir: Path, runner_factory, asof: bool, jobs: int, fit
     leaf_weights = load_leaf_weights(archive)
     group_weights = bu.load_weights(archive, WEIGHT_YEARS, specs)
     weights_2024 = {code: group_weights[COVERAGE_YEAR].get(code, 0.0) for code in codes}
-    product_mm, regions = load_products(min([PANEL_START] + [w[0] for w in REFERENCE_WINDOWS.values()]))
+    product_mm, regions = load_products(DATA_START)
     products = product_index(product_mm)
     last = max(m for values in product_mm.values() for m in values)
     months = month_grid(PANEL_START, last)
@@ -656,8 +656,20 @@ def run(archive: Path, out_dir: Path, runner_factory, asof: bool, jobs: int, fit
 
     # Q3 — X-13 по группам на окне сверки (спека §14): live — до последнего
     # месяца панели, csv/fst — на выборке эталона.
+    # Окно fst начинается с 2009-01, а NSA считается с PANEL_START: для групп
+    # с готовым рядом (`direct`) история достраивается до начала окна.
+    # Агрегированных групп в маппинге нет; для них окно осталось бы с
+    # PANEL_START, потому что веса СПР публикуются с 2016.
+    if fit_first < PANEL_START:
+        nsa_fit = {
+            c: group_nsa(groups[c], product_mm, leaf_weights, month_grid(fit_first, last))[0]
+            for c in codes if groups[c].method == "direct"
+        }
+    else:
+        nsa_fit = {}
+    sa_input = {c: nsa_fit.get(c) or nsa[c] for c in codes}
     with ThreadPoolExecutor(max_workers=max(1, jobs)) as pool:
-        futures = {c: pool.submit(group_sa, nsa[c], fit_last, runner_factory, asof, fit_first) for c in codes}
+        futures = {c: pool.submit(group_sa, sa_input[c], fit_last, runner_factory, asof, fit_first) for c in codes}
         sa = {c: futures[c].result() for c in codes}
     sa_full = {c: sa[c]["full"] for c in codes}
     sa_metrics = {c: compare(sa_full[c], mom_sa.get(c, {}), *SA_WINDOW) for c in codes}
@@ -675,17 +687,11 @@ def run(archive: Path, out_dir: Path, runner_factory, asof: bool, jobs: int, fit
     sa_fst_exact = sorted(c for c in codes if sa_fst_metrics[c]["n"] and sa_fst_metrics[c]["rmse"] < 1e-9)
 
     # Поправка §11 + §14: выбор на 2009/2010–2018 и SA выбранной спецификацией.
-    # 9550 нужен ряд с 2009-01 (начало панели fst), поэтому для групп поправки
-    # NSA считается от `DATA_START`, а не от `PANEL_START`.
-    nsa_extra = {
-        c: group_nsa(groups[c], product_mm, leaf_weights, month_grid(DATA_START, last))[0]
-        for c in AMENDED_GROUPS if c in groups
-    }
     selection, sa_amended = {}, dict(sa)
     for code in AMENDED_GROUPS:
         if code not in nsa:
             continue
-        series = nsa_extra.get(code, nsa[code])
+        series = nsa_fit.get(code) or nsa[code]
         selection[code] = select_spec(code, series, mom_sa.get(code, {}),
                                       first=SELECTION_FIRST.get(code, PANEL_START))
         chosen = selection[code]["chosen"]
@@ -698,6 +704,8 @@ def run(archive: Path, out_dir: Path, runner_factory, asof: bool, jobs: int, fit
     sa_rmse_amended, _ = weighted_rmse(sa_metrics_amended, weights_2024)
     sa_corr_amended = weighted_mean(sa_metrics_amended, weights_2024, "corr")
     services_amended, _ = weighted_rmse({c: sa_metrics_amended[c] for c in codes if c in services_codes}, weights_2024)
+    sa_fst_metrics_amended = {c: compare(sa_full_amended[c], fst_sa.get(c, {}), *SA_WINDOW) for c in codes}
+    sa_fst_rmse_amended, _ = weighted_rmse(sa_fst_metrics_amended, weights_2024)
 
     # Q4 — сборка; справочно — сборка архивного mom_sa теми же функциями.
     target_full = cp.read_target_full(archive)
@@ -710,9 +718,13 @@ def run(archive: Path, out_dir: Path, runner_factory, asof: bool, jobs: int, fit
         ours_asof = assembly({c: sa[c]["rt"] for c in codes}, target_full, group_weights, test_months)
         amended_asof = assembly({c: sa_amended[c]["rt"] for c in codes}, target_full, group_weights, test_months)
 
-    decision = decisions(coverage_abs, nsa_rmse, sa_rmse, sa_corr, ours["test_67"][1]["rmse"], sa_fst_rmse)
+    # Q3-B применим только на своём окне: на чужом сравнение меряет разницу
+    # окон, а не качество фильтра (спека §14), поэтому решение — None.
+    fst_diag = sa_fst_rmse if fit_window == "fst" else float("nan")
+    fst_diag_amended = sa_fst_rmse_amended if fit_window == "fst" else float("nan")
+    decision = decisions(coverage_abs, nsa_rmse, sa_rmse, sa_corr, ours["test_67"][1]["rmse"], fst_diag)
     decision_amended = decisions(coverage_abs, nsa_rmse, sa_rmse_amended, sa_corr_amended,
-                                 amended["test_67"][1]["rmse"], sa_fst_rmse)
+                                 amended["test_67"][1]["rmse"], fst_diag_amended)
     result = {
         "spec": "docs/superpowers/specs/2026-10-30-cb-comp-88-groups-live-design.md",
         "fit_window": fit_window,
@@ -753,10 +765,12 @@ def run(archive: Path, out_dir: Path, runner_factory, asof: bool, jobs: int, fit
                      "amended_asof": _jsonable(amended_asof) if amended_asof else None},
         "decisions": decision,
         "amendment": {
-            "spec": "§11", "groups": list(AMENDED_GROUPS), "selection": selection,
+            "spec": "§11+§14", "groups": list(AMENDED_GROUPS), "selection": selection,
             "sa": {"weighted_rmse": sa_rmse_amended, "weighted_corr": sa_corr_amended,
                    "services_weighted_rmse": services_amended,
                    "groups": {c: sa_metrics_amended[c] for c in AMENDED_GROUPS if c in sa_metrics_amended},
+                   "fst": {"weighted_rmse": sa_fst_rmse_amended,
+                           "groups": {c: sa_fst_metrics_amended[c] for c in AMENDED_GROUPS}},
                    "failed": sorted(c for c in codes if sa_amended[c]["status"] != "ok")},
             "decisions": decision_amended,
         },
