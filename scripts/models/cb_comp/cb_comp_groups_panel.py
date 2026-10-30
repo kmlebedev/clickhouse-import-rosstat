@@ -302,10 +302,20 @@ def aggregated_mm(group: GroupMap, product_mm: dict, leaf_weights: dict, months:
     return out
 
 
-def group_nsa(group: GroupMap, product_mm: dict, leaf_weights: dict, months: list) -> tuple:
-    """`(mm, sources)`: м/м группы и источник каждого месяца (`chain:i` | `leaves`)."""
+def group_nsa(group: GroupMap, product_mm: dict, leaf_weights: dict, months: list,
+              fallback_first: date = PANEL_START) -> tuple:
+    """`(mm, sources)`: м/м группы и источник каждого месяца (`chain:i` | `leaves`).
+
+    `fallback_first` — с какого месяца разрешён резерв по листьям. До `PANEL_START`
+    веса СПР не публикуются, поэтому агрегат взял бы веса ближайшего доступного
+    года (2016) и подмешал чужую структуру в историю окна `fst` (ревью #431).
+    """
     out, sources = {}, {}
-    fallback = aggregated_mm(group, product_mm, leaf_weights, months) if group.method != "missing" else {}
+    aggregated_months = [m for m in months if m >= fallback_first]
+    fallback = (
+        aggregated_mm(group, product_mm, leaf_weights, aggregated_months)
+        if group.method != "missing" and aggregated_months else {}
+    )
     for month in months:
         for position, series in enumerate(group.chain):
             values = product_mm.get(series, {})
@@ -364,6 +374,36 @@ def group_sa(mm: dict, last: date, runner_factory, asof: bool, first: date = PAN
     rt = {m: float(r[1]) for m, r in zip(grid, rows) if not math.isnan(float(r[1]))}
     status = "ok" if full else "sa_failed"
     return {"full": full, "rt": rt, "status": status, "months": len(grid)}
+
+
+def fit_window_start(code: str, fit_first: date, selection_first: dict) -> date:
+    """Старт ряда для подгонки: окно прогона, окно выбора поправки и `PANEL_START` — минимум.
+
+    Группам поправки нужен более ранний старт, чем окно прогона (9550 — с 2009-01
+    в любом режиме, спека §14), иначе правило «выбор на 2009–2018» в окнах
+    csv/live фактически считалось бы на 2010–2018 (ревью #431).
+    """
+    return min(fit_first, selection_first.get(code, PANEL_START), PANEL_START)
+
+
+def fit_series_map(codes: list, groups: dict, nsa: dict, fit_mm: dict, leaf_weights: dict,
+                   fit_first: date, last: date, selection_first: dict) -> dict:
+    """`{код: ряд}` для X-13: история до `PANEL_START` достраивается только по цепочке.
+
+    До `PANEL_START` веса СПР не публикуются, поэтому резерв по листьям там
+    запрещён (`fallback_first=PANEL_START`); после — берётся готовый `nsa`.
+    """
+    head_last = month_from_index(month_index(PANEL_START) - 1)
+    out = {}
+    for code in codes:
+        start = fit_window_start(code, fit_first, selection_first)
+        if start < PANEL_START and groups[code].method == "direct":
+            head = group_nsa(groups[code], fit_mm, leaf_weights,
+                             month_grid(start, head_last), fallback_first=PANEL_START)[0]
+            out[code] = {**head, **nsa[code]}
+        else:
+            out[code] = nsa[code]
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -449,7 +489,13 @@ def select_spec(code: str, mm: dict, mom_sa: dict, factory_for=spec_factory, fir
         converged = sa["status"] == "ok"
         scores[spec] = (aicc if by_aicc else metric["rmse"]) if converged else float("nan")
         detail[spec] = {"status": sa["status"], "aicc": aicc, "rmse_2016_2018": metric["rmse"], "n": metric["n"]}
+    valid = [v for v in scores.values() if v is not None and not math.isnan(v)]
+    best = min(valid) if valid else float("nan")
+    spread = (max(valid) - best) if len(valid) > 1 else float("nan")
+    tied = sorted(s for s, v in scores.items() if v is not None and not math.isnan(v) and v - best <= SPEC_TIE)
     return {"criterion": "aicc" if by_aicc else "rmse_mom_sa_2016_2018", "chosen": choose_spec(scores),
+            "spread": spread, "tied": tied,
+            "window": [first.isoformat(), SELECTION_END.isoformat()],
             "candidates": detail}
 
 
@@ -629,7 +675,11 @@ def run(archive: Path, out_dir: Path, runner_factory, asof: bool, jobs: int, fit
     leaf_weights = load_leaf_weights(archive)
     group_weights = bu.load_weights(archive, WEIGHT_YEARS, specs)
     weights_2024 = {code: group_weights[COVERAGE_YEAR].get(code, 0.0) for code in codes}
-    product_mm, regions = load_products(DATA_START)
+    # Маппинг, Q1/Q2 и отчёт строятся по данным с `PANEL_START`: загрузка 2009
+    # не должна менять входы маппинга (коллизии имён, direct-ряд без данных
+    # после 2010). История до 2010 нужна только подгонке окна fst и выбору
+    # поправки 9550 — для неё отдельная загрузка (ревью #431).
+    product_mm, regions = load_products(PANEL_START)
     products = product_index(product_mm)
     last = max(m for values in product_mm.values() for m in values)
     months = month_grid(PANEL_START, last)
@@ -637,6 +687,8 @@ def run(archive: Path, out_dir: Path, runner_factory, asof: bool, jobs: int, fit
         fit_first, fit_last = PANEL_START, last
     else:
         fit_first, fit_last = REFERENCE_WINDOWS[fit_window]
+    fit_start = min([fit_first, DATA_START] + list(SELECTION_FIRST.values()))
+    fit_mm = load_products(fit_start)[0] if fit_start < PANEL_START else product_mm
 
     # Q1/Q6 — маппинг, покрытие, смены состава.
     groups = {code: map_group(code, dictionaries, leaf_weights, products) for code in codes}
@@ -656,20 +708,11 @@ def run(archive: Path, out_dir: Path, runner_factory, asof: bool, jobs: int, fit
 
     # Q3 — X-13 по группам на окне сверки (спека §14): live — до последнего
     # месяца панели, csv/fst — на выборке эталона.
-    # Окно fst начинается с 2009-01, а NSA считается с PANEL_START: для групп
-    # с готовым рядом (`direct`) история достраивается до начала окна.
-    # Агрегированных групп в маппинге нет; для них окно осталось бы с
-    # PANEL_START, потому что веса СПР публикуются с 2016.
-    if fit_first < PANEL_START:
-        nsa_fit = {
-            c: group_nsa(groups[c], product_mm, leaf_weights, month_grid(fit_first, last))[0]
-            for c in codes if groups[c].method == "direct"
-        }
-    else:
-        nsa_fit = {}
-    sa_input = {c: nsa_fit.get(c) or nsa[c] for c in codes}
+    # Окно fst начинается с 2009-01, а NSA считается с PANEL_START: история
+    # достраивается только по цепочке (веса СПР до 2016 не публикуются).
+    fit_inputs = fit_series_map(codes, groups, nsa, fit_mm, leaf_weights, fit_first, last, SELECTION_FIRST)
     with ThreadPoolExecutor(max_workers=max(1, jobs)) as pool:
-        futures = {c: pool.submit(group_sa, sa_input[c], fit_last, runner_factory, asof, fit_first) for c in codes}
+        futures = {c: pool.submit(group_sa, fit_inputs[c], fit_last, runner_factory, asof, fit_first) for c in codes}
         sa = {c: futures[c].result() for c in codes}
     sa_full = {c: sa[c]["full"] for c in codes}
     sa_metrics = {c: compare(sa_full[c], mom_sa.get(c, {}), *SA_WINDOW) for c in codes}
@@ -680,7 +723,9 @@ def run(archive: Path, out_dir: Path, runner_factory, asof: bool, jobs: int, fit
 
     # Q3-B — диагностика §14 против панели fst, которую использует CB_COMP:
     # та же метрика, но эталон — реальные SA-компоненты, а не CSV-выгрузка.
-    fst_sa = load_fst_reference(archive)
+    # Панель грузится только на своём окне: в live/csv она не решается, а
+    # требовать R+пакет fst от live-прогона Task 2 нельзя (ревью #431).
+    fst_sa = load_fst_reference(archive) if fit_window == "fst" else {}
     sa_fst_metrics = {c: compare(sa_full[c], fst_sa.get(c, {}), *SA_WINDOW) for c in codes}
     sa_fst_rmse, sa_fst_weight = weighted_rmse(sa_fst_metrics, weights_2024)
     sa_fst_corr = weighted_mean(sa_fst_metrics, weights_2024, "corr")
@@ -691,7 +736,7 @@ def run(archive: Path, out_dir: Path, runner_factory, asof: bool, jobs: int, fit
     for code in AMENDED_GROUPS:
         if code not in nsa:
             continue
-        series = nsa_fit.get(code) or nsa[code]
+        series = fit_inputs[code]
         selection[code] = select_spec(code, series, mom_sa.get(code, {}),
                                       first=SELECTION_FIRST.get(code, PANEL_START))
         chosen = selection[code]["chosen"]
@@ -755,10 +800,12 @@ def run(archive: Path, out_dir: Path, runner_factory, asof: bool, jobs: int, fit
                "weighted_rmse": sa_rmse, "weighted_corr": sa_corr, "services_weighted_rmse": services_rmse,
                "failed": sorted(c for c in codes if sa[c]["status"] != "ok"),
                "fst": {"reference": "data_panel_bi_sa.fst:diff",
+                       "computed": fit_window == "fst",
                        "weighted_rmse": sa_fst_rmse, "weighted_corr": sa_fst_corr,
                        "weight_sum": sa_fst_weight,
                        "groups_with_metric": sum(1 for c in codes if sa_fst_metrics[c]["n"]),
-                       "exact_groups": len(sa_fst_exact)}},
+                       "exact_groups": len(sa_fst_exact),
+                       "exact_group_codes": sa_fst_exact}},
         "assembly": {"ours_full": _jsonable(ours), "archive_mom_sa": _jsonable(reference),
                      "ours_asof": _jsonable(ours_asof) if ours_asof else None,
                      "amended_full": _jsonable(amended),
@@ -770,7 +817,9 @@ def run(archive: Path, out_dir: Path, runner_factory, asof: bool, jobs: int, fit
                    "services_weighted_rmse": services_amended,
                    "groups": {c: sa_metrics_amended[c] for c in AMENDED_GROUPS if c in sa_metrics_amended},
                    "fst": {"weighted_rmse": sa_fst_rmse_amended,
-                           "groups": {c: sa_fst_metrics_amended[c] for c in AMENDED_GROUPS}},
+                           "computed": fit_window == "fst",
+                           "groups": {c: sa_fst_metrics_amended[c] for c in AMENDED_GROUPS
+                                      if c in sa_fst_metrics_amended}},
                    "failed": sorted(c for c in codes if sa_amended[c]["status"] != "ok")},
             "decisions": decision_amended,
         },
