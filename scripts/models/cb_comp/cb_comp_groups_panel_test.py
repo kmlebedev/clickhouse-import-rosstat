@@ -6,6 +6,7 @@ import sys
 import unittest
 from datetime import date
 from pathlib import Path
+from unittest import mock
 
 import numpy as np
 import pandas as pd
@@ -221,6 +222,51 @@ class SaTest(unittest.TestCase):
         self.assertEqual(seen["first_rt"], len(grid) + 1)
         self.assertEqual(out["rt"], {})
 
+    def test_fit_window_bounds_series(self):
+        """Спека §14: окно подгонки задаёт старт ряда, а не только его конец."""
+        grid = g.month_grid(date(2009, 1, 1), date(2024, 8, 1))
+        seen = {}
+
+        def factory(start):
+            def run(levels, first_rt):
+                seen["start"], seen["n"] = start, len(levels)
+                return [(0.1, float("nan"))] * len(levels)
+
+            return run
+
+        mm = {m: 0.2 for m in grid}
+        g.group_sa(mm, date(2024, 8, 1), factory, asof=False, first=date(2009, 1, 1))
+        self.assertEqual(seen["start"], date(2009, 1, 1))
+        self.assertEqual(seen["n"], len(grid))
+        g.group_sa(mm, date(2024, 8, 1), factory, asof=False, first=date(2010, 1, 1))
+        self.assertEqual(seen["start"], date(2010, 1, 1))
+        self.assertEqual(seen["n"], len(grid) - 12)
+        g.group_sa(mm, date(2024, 8, 1), factory, asof=False)
+        self.assertEqual(seen["start"], g.PANEL_START)
+
+
+class ReferenceWindowTest(unittest.TestCase):
+    """Спека §14: окна эталонов и загрузка панели fst (без R и архива)."""
+
+    def test_reference_windows(self):
+        self.assertEqual(g.REFERENCE_WINDOWS["csv"], (date(2010, 1, 1), date(2024, 9, 1)))
+        self.assertEqual(g.REFERENCE_WINDOWS["fst"], (date(2009, 1, 1), date(2024, 8, 1)))
+        self.assertEqual(g.FIT_WINDOWS, ("live", "csv", "fst"))
+        self.assertEqual(g.DATA_START, date(2009, 1, 1))
+
+    def test_fst_reference_converts_log_to_pct(self):
+        cpi = pd.DataFrame({
+            "date": [pd.Timestamp("2009-01-01"), pd.Timestamp("2009-02-01"), pd.Timestamp("2009-02-01")],
+            "code": ["10", "10", "11"],
+            "kind": ["diff", "diff", "base_index"],
+            "value": [float("nan"), math.log(1.015), 100.0],
+        })
+        with mock.patch.object(g.bu, "ensure_panel_csv", return_value=(cpi, None, None)):
+            ref = g.load_fst_reference(Path("/nonexistent"))
+        self.assertEqual(set(ref["10"]), {date(2009, 2, 1)})
+        self.assertAlmostEqual(ref["10"][date(2009, 2, 1)], 1.5)
+        self.assertNotIn("11", ref)
+
 
 class MetricsTest(unittest.TestCase):
     def test_compare_window_and_bias(self):
@@ -242,11 +288,14 @@ class MetricsTest(unittest.TestCase):
         self.assertEqual(weight, 4.0)
 
     def test_decisions_thresholds(self):
-        ok = g.decisions(0.85, 0.05, 0.15, 0.90, 0.10)
+        ok = g.decisions(0.85, 0.05, 0.15, 0.90, 0.10, 0.14)
         self.assertTrue(all(ok.values()))
-        bad = g.decisions(0.849, 0.051, 0.151, 0.95, 0.101)
+        bad = g.decisions(0.849, 0.051, 0.151, 0.95, 0.101, 0.16)
         self.assertFalse(any(bad.values()))
         self.assertFalse(g.decisions(0.80, 0.0, 0.0, 1.0, 0.01)["assembly_ok"])
+        # Q3-B — диагностика: без числа решение None, а не False (спека §14).
+        self.assertIsNone(g.decisions(0.85, 0.05, 0.15, 0.90, 0.10)["sa_fst_ok"])
+        self.assertTrue(g.decisions(0.85, 0.05, 0.15, 0.90, 0.10, 0.15)["sa_fst_ok"])
 
     def test_assembly_exact_components_give_zero_error(self):
         months = g.month_grid(g.PANEL_START, date(2024, 7, 1))
@@ -299,14 +348,32 @@ class AmendmentTest(unittest.TestCase):
         return factory_for
 
     def test_constants_match_spec(self):
-        self.assertEqual(g.AMENDED_GROUPS, ("9540", "9950", "9218"))
+        self.assertEqual(g.AMENDED_GROUPS, ("9540", "9950", "9218", "9550"))
+        self.assertEqual(g.AICC_GROUPS, frozenset({"9218", "9550"}))
         self.assertEqual(g.SPEC_CANDIDATES, ("C0", "C1", "C2", "C3", "C4"))
         self.assertEqual(g.SELECTION_END, date(2018, 12, 1))
+        self.assertEqual(g.SELECTION_FIRST["9550"], date(2009, 1, 1))
 
     def test_choose_spec_min_tie_and_nan(self):
         self.assertEqual(g.choose_spec({"C0": 0.3, "C1": 0.2, "C2": float("nan")}), "C1")
         self.assertEqual(g.choose_spec({"C3": 0.2, "C1": 0.2 + 1e-7}), "C1")
         self.assertEqual(g.choose_spec({"C0": float("nan")}), "")
+
+    def test_select_spec_respects_window_start(self):
+        """Спека §14: 9550 выбирается по AICc на 2009-01…2018-12."""
+        months = g.month_grid(date(2009, 1, 1), date(2019, 6, 1))
+        mm = {m: 0.3 for m in months}
+        seen = []
+        factory_for = self.fake_factory_for(
+            {spec: 0.2 for spec in g.SPEC_CANDIDATES},
+            {spec: float(i) for i, spec in enumerate(g.SPEC_CANDIDATES)},
+            seen,
+        )
+        out = g.select_spec("9550", mm, {}, factory_for=factory_for, first=date(2009, 1, 1))
+        self.assertEqual(out["criterion"], "aicc")
+        self.assertEqual(out["chosen"], "C0")
+        self.assertEqual(seen[0][1], date(2009, 1, 1))
+        self.assertEqual(seen[0][2], len(g.month_grid(date(2009, 1, 1), date(2018, 12, 1))))
 
     def test_rmse_selection_uses_only_data_to_2018(self):
         months = g.month_grid(date(2010, 1, 1), date(2024, 7, 1))
