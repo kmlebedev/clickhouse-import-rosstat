@@ -33,6 +33,10 @@ class ConstantsTest(unittest.TestCase):
         self.assertEqual(lb.R0_PINNED, {1: 0.191215, 2: 0.308390, 3: 0.463865, 6: 0.971324})
         self.assertEqual(lb.ASOF_START, date(2019, 1, 1))
 
+    def test_default_panel_is_c0(self):
+        # Спека §13.1: T_LIVE — C0 везде, поправка §11 (panel_amended.csv) не входит.
+        self.assertEqual(lb.PANEL_CSV.name, "panel.csv")
+
 
 class PanelTest(unittest.TestCase):
     def test_load_group_panel_reads_both_columns(self):
