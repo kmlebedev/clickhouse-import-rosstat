@@ -268,5 +268,87 @@ class MetricsTest(unittest.TestCase):
         self.assertEqual(out["normal_54"][1]["n"], 54)
 
 
+class AmendmentTest(unittest.TestCase):
+    """Поправка §11: выбор спецификации X-13 только по данным ≤ 2018-12."""
+
+    def fake_factory_for(self, offsets: dict, aiccs: dict, seen: list):
+        """Фабрика: SA = NSA + сдвиг кандидата; AICc — из таблицы; None — не сошлась."""
+
+        def factory_for(spec):
+            def factory(start):
+                class Runner:
+                    aicc = float("nan")
+
+                    def __call__(self, levels, first_rt):
+                        seen.append((spec, start, len(levels)))
+                        if offsets[spec] is None:
+                            return [(float("nan"), float("nan"))] * len(levels)
+                        self.aicc = aiccs.get(spec, float("nan"))
+                        out = [(float("nan"), float("nan"))]
+                        for prev, cur in zip(levels, levels[1:]):
+                            out.append(((cur / prev - 1) * 100 + offsets[spec], float("nan")))
+                        return out
+
+                runner = Runner()
+                factory.runners.append(runner)
+                return runner
+
+            factory.runners = []
+            return factory
+
+        return factory_for
+
+    def test_constants_match_spec(self):
+        self.assertEqual(g.AMENDED_GROUPS, ("9540", "9950", "9218"))
+        self.assertEqual(g.SPEC_CANDIDATES, ("C0", "C1", "C2", "C3", "C4"))
+        self.assertEqual(g.SELECTION_END, date(2018, 12, 1))
+
+    def test_choose_spec_min_tie_and_nan(self):
+        self.assertEqual(g.choose_spec({"C0": 0.3, "C1": 0.2, "C2": float("nan")}), "C1")
+        self.assertEqual(g.choose_spec({"C3": 0.2, "C1": 0.2 + 1e-7}), "C1")
+        self.assertEqual(g.choose_spec({"C0": float("nan")}), "")
+
+    def test_rmse_selection_uses_only_data_to_2018(self):
+        months = g.month_grid(date(2010, 1, 1), date(2024, 7, 1))
+        mm = {m: 0.5 for m in months}
+        ref = {m: 0.5 + 0.2 for m in g.month_grid(date(2016, 1, 1), date(2018, 12, 1))}
+        seen = []
+        factory_for = self.fake_factory_for({"C0": 0.0, "C1": 0.2, "C2": 0.1, "C3": None, "C4": 0.3}, {}, seen)
+        out = g.select_spec("9540", mm, ref, factory_for)
+        self.assertEqual(out["chosen"], "C1")
+        self.assertEqual(out["criterion"], "rmse_mom_sa_2016_2018")
+        self.assertEqual(out["candidates"]["C3"]["status"], "sa_failed")
+        expected_len = len(g.month_grid(date(2010, 1, 1), date(2018, 12, 1)))
+        self.assertTrue(all(n == expected_len for _, _, n in seen))
+
+    def test_future_change_does_not_move_choice(self):
+        months = g.month_grid(date(2010, 1, 1), date(2024, 7, 1))
+        ref = {m: 0.7 for m in g.month_grid(date(2016, 1, 1), date(2018, 12, 1))}
+        offsets = {"C0": 0.0, "C1": 0.2, "C2": 0.1, "C3": 0.15, "C4": 0.3}
+        base = g.select_spec("9950", {m: 0.5 for m in months}, ref, self.fake_factory_for(offsets, {}, []))
+        changed = {m: (9.0 if m.year >= 2019 else 0.5) for m in months}
+        moved = g.select_spec("9950", changed, ref, self.fake_factory_for(offsets, {}, []))
+        self.assertEqual(base["chosen"], moved["chosen"])
+        self.assertEqual(repr(base["candidates"]), repr(moved["candidates"]))
+
+    def test_aicc_selection_for_tariff(self):
+        months = g.month_grid(date(2010, 1, 1), date(2024, 7, 1))
+        offsets = {"C0": None, "C1": 0.0, "C2": 0.0, "C3": 0.0, "C4": 0.0}
+        aiccs = {"C1": 120.0, "C2": 95.5, "C3": 101.0, "C4": 95.5}
+        out = g.select_spec("9218", {m: 0.5 for m in months}, {}, self.fake_factory_for(offsets, aiccs, []))
+        self.assertEqual(out["criterion"], "aicc")
+        self.assertEqual(out["chosen"], "C2")
+
+    def test_none_converged_gives_empty_choice(self):
+        months = g.month_grid(date(2010, 1, 1), date(2024, 7, 1))
+        offsets = {spec: None for spec in g.SPEC_CANDIDATES}
+        out = g.select_spec("9218", {m: 0.5 for m in months}, {}, self.fake_factory_for(offsets, {}, []))
+        self.assertEqual(out["chosen"], "")
+
+    def test_unknown_spec_rejected(self):
+        with self.assertRaises(ValueError):
+            g.SpecRunner("C9", date(2010, 1, 1))
+
+
 if __name__ == "__main__":
     unittest.main()
