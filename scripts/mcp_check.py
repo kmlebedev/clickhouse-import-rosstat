@@ -1660,6 +1660,44 @@ async def check(params, server_log):
                 failed += not expect(f"сырая {table} закрыта ({label})", denied,
                                      f"отказ ClickHouse 497 на {table} (ожидаемо)" if denied else raw[:200])
 
+            # Рыночная лента Transaq (пункт ofz-market/1.5, issue #414): витрины
+            # минутных и дневных нетто-объёмов читаются, а сырые transaq_trades и
+            # transaq_net_flows агенту закрыты. Пустая витрина — не сбой: вне
+            # торговой сессии, до включения подписки аккаунта или до первого
+            # прогона агрегатора бакетов нет, и это штатное состояние. Поэтому
+            # проверяется РАЗРЕШЕНИЕ и разбор ответа, а не число строк.
+            net_flows = text(await session.call_tool("run_query", {"query":
+                "SELECT count() AS n, min(minute) AS first, max(minute) AS last FROM v_transaq_net_flows"}))
+            net_flows_rows = result_rows(net_flows)
+            net_flows_n = net_flows_rows[0].get("n") if net_flows_rows else None
+            net_flows_last = net_flows_rows[0].get("last") if net_flows_rows else None
+            if net_flows_rows is None:
+                net_flows_detail = (f"витрина не читается: {net_flows[:200]} — прогнать "
+                                    "make import STAT=transaq_net_flows")
+            elif (net_flows_n or 0) == 0:
+                net_flows_detail = "бакетов нет: вне сессии, нет подписки аккаунта или не было прогона"
+            else:
+                net_flows_detail = f"бакетов: {net_flows_n}, последняя минута: {net_flows_last}"
+            failed += not expect("витрина v_transaq_net_flows читается", net_flows_rows is not None,
+                                 net_flows_detail)
+
+            net_flows_daily = text(await session.call_tool("run_query", {"query":
+                "SELECT count() AS n, countIf(gap_suspected = 1) AS gaps FROM v_transaq_net_flows_daily"}))
+            net_flows_daily_rows = result_rows(net_flows_daily)
+            if net_flows_daily_rows is None:
+                net_flows_daily_detail = f"витрина не читается: {net_flows_daily[:200]}"
+            else:
+                net_flows_daily_detail = (f"строк: {net_flows_daily_rows[0].get('n')}, "
+                                          f"дней с разрывом: {net_flows_daily_rows[0].get('gaps')}")
+            failed += not expect("витрина v_transaq_net_flows_daily читается",
+                                 net_flows_daily_rows is not None, net_flows_daily_detail)
+
+            for table in ("transaq_net_flows", "transaq_trades"):
+                raw = text(await session.call_tool("run_query", {"query": f"SELECT count() FROM {table}"}))
+                denied = "ACCESS_DENIED" in raw or "Not enough privileges" in raw
+                failed += not expect(f"сырая {table} закрыта агенту", denied,
+                                     f"отказ ClickHouse 497 на {table} (ожидаемо)" if denied else raw[:200])
+
             # Контур ФАО (пункт infra/1.6, issue #225): витрина v_fao_food_price читается
             # агентом, содержит 6 рядов / 2646 точек (6 × 441 месяц), каталог source='fao'
             # описывает все 6 рядов, а сырая таблица агенту не выдана. Точное число 2646 —
