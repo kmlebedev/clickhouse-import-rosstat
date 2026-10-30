@@ -32,3 +32,13 @@
 - Главный гейт не пройден: 0,106, с поправкой §11 — 0,1048. Решение владельца (спека §12): цель Task 2 — `T_LIVE`.
 - Task 2 (#422) начинается с протокола в спеке (признаки, МП per-sheet, frozen-сплит #190, origin, пороги сравнения по §12) до результатов. Нужен as-of X-13 групп: `make cb-comp-groups-panel ARGS="--asof --jobs 8"`.
 - Отдельный Go-пункт — импортёр весов СПР Росстата (Q5 = `go`).
+
+## Задачи Task 2 (#422)
+
+Ветка `exp/cb-comp-88-groups-task2`. Протокол — спека §13.
+
+- [ ] **2.1 Протокол** — спека §13 и этот раздел; роадмап.
+- [ ] **2.2 Код до прогона** — `scripts/models/cb_comp/cb_comp_live_bottomup.py` (+ `_test.py`): загрузка панели групп, `T_LIVE`, признаки и модели через `cb_comp_bottomup`, R0 через `run_bottomup(per_sheet)`, G2/E2/E3/E4 через `cpi_two_stage_cb_comp.compare_to_cb`; `make cb-comp-live-bottomup(-test)`. Тесты: `T_LIVE` (нормировка, лаг весов, накопление), выбор лагов full/as-of, origin и отсутствие утечки, порог G2, сборка паспорта.
+- [ ] **2.3 Данные** — `make cb-comp-groups-panel ARGS="--asof --jobs 8"`, `make cb-comp-public-export`.
+- [ ] **2.4 Прогон и повтор** — `make cb-comp-live-bottomup`, повтор для детерминизма.
+- [ ] **2.5 Отчёт** — `docs/research/2026-10-30-cb-comp-88-groups-task2.{md,json}`; роадмап, README, `docs/site-pages.json`; `make all`, `make docs-check`; PR с `Closes #422`.
