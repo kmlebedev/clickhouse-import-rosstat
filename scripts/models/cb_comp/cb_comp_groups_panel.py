@@ -13,16 +13,20 @@
   данными с января (резерв, число таких месяцев пишется);
   сверка с архивным `mom` (`cpi_sa_db_with_forecast.csv`, Россия);
 * **Q3 SA** — X-13 (R `seasonal`, мост `cpi_sa_reconciliation.make_r_runner`)
-  на уровне группы с 2010-01: «вся выборка» и, по флагу `--asof`, as-of с
-  2019-01; сверка с архивным `mom_sa`;
+  на уровне группы; окно подгонки задаётся `--fit-window` (спека §14): `live`
+  — до последнего месяца панели, `csv` — 2010-01…2024-09, `fst` —
+  2009-01…2024-08. Сверка двух видов: Q3-A против архивного `mom_sa` (гейт
+  §7) и Q3-B против панели `data_panel_bi_sa.fst`, которую использует CB_COMP
+  (диагностика); по флагу `--asof` — as-of с 2019-01;
 * **Q4 сборка** — функция гейта #190 (`cb_comp_bottomup.reconstruction`) на
   наших SA-группах против `TARGET_FULL`; веса — лаг год;
 * **Q6 швы** — NSA-ошибка до 2023 и 2023+ (РФ без новых субъектов), смены
   состава листьев по годам словаря;
-* **поправка §11** — для групп `9540`, `9950`, `9218` спецификация X-13
-  выбирается из `C0…C4` только по данным 2010–2018 (9540/9950 — RMSE против
-  архивного `mom_sa` 2016–2018, 9218 — AICc) и применяется на всей выборке;
-  основной прогон (C0 везде) и прогон с поправкой пишутся рядом.
+* **поправка §11 + §14** — для групп `9540`, `9950`, `9218`, `9550`
+  спецификация X-13 выбирается из `C0…C4` только по данным до 2018-12
+  (9540/9950 — RMSE против архивного `mom_sa` 2016–2018, 9218/9550 — AICc,
+  эталон в выборе не участвует) и применяется на окне прогона; основной
+  прогон (C0 везде) и прогон с поправкой пишутся рядом.
 
 Пороги — спека §7, константы ниже; после первого прогона не меняются.
 Только чтение ClickHouse и локального архива CB_COMP; в БД не пишет.
@@ -58,6 +62,15 @@ from models.cb_comp import cb_comp_parity as cp
 
 SERIES_PREFIX = "ipc31074/"
 PANEL_START = date(2010, 1, 1)
+# Окна эталонов (спека §14): сверка идёт на той выборке, на которой посчитан
+# эталон; live-режим Task 2 по-прежнему берёт ряд до последнего месяца панели.
+REFERENCE_WINDOWS = {
+    "csv": (date(2010, 1, 1), date(2024, 9, 1)),
+    "fst": (date(2009, 1, 1), date(2024, 8, 1)),
+}
+FIT_WINDOWS = ("live",) + tuple(REFERENCE_WINDOWS)
+# Самый ранний месяц, который нужен выравниванию окон: панель fst начинается 2009-01.
+DATA_START = min([PANEL_START] + [window[0] for window in REFERENCE_WINDOWS.values()])
 NSA_WINDOW = (date(2010, 1, 1), date(2024, 9, 1))
 SA_WINDOW = (date(2016, 1, 1), date(2024, 7, 1))
 SEAM_START = date(2023, 1, 1)
@@ -77,11 +90,14 @@ ASSEMBLY_RMSE_H1_MAX = 0.10
 SERVICES_CODE = "9000"
 
 # Поправка §11: группы, кандидаты и окно выбора (только 2010–2018).
-AMENDED_GROUPS = ("9540", "9950", "9218")
-AICC_GROUPS = frozenset({"9218"})
+# Task 1b (спека §14) добавляет 9550: выбор по AICc с 2009-01, без эталона.
+AMENDED_GROUPS = ("9540", "9950", "9218", "9550")
+AICC_GROUPS = frozenset({"9218", "9550"})
 SPEC_CANDIDATES = ("C0", "C1", "C2", "C3", "C4")
 SELECTION_END = date(2018, 12, 1)
 SELECTION_REF = (date(2016, 1, 1), date(2018, 12, 1))
+# Старт окна выбора: 9550 — с начала панели fst, остальные — с PANEL_START.
+SELECTION_FIRST = {"9550": REFERENCE_WINDOWS["fst"][0]}
 SPEC_TIE = 1e-6
 R_SPEC_SCRIPT = Path(__file__).resolve().parent / "cb_comp_groups_x13.R"
 
@@ -302,12 +318,16 @@ def group_nsa(group: GroupMap, product_mm: dict, leaf_weights: dict, months: lis
     return out, sources
 
 
-def contiguous_tail(mm: dict, last: date) -> list:
-    """Самый длинный непрерывный отрезок месяцев с данными, заканчивающийся в `last`."""
+def contiguous_tail(mm: dict, last: date, first: date = PANEL_START) -> list:
+    """Самый длинный непрерывный отрезок месяцев с данными, заканчивающийся в `last`.
+
+    `first` — нижняя граница окна (спека §14): для сверки с эталоном ряд
+    обрезается по окну эталона, для live — по `PANEL_START`.
+    """
     if last not in mm:
         return []
     index = month_index(last)
-    while month_from_index(index - 1) in mm and month_from_index(index - 1) >= PANEL_START:
+    while month_from_index(index - 1) in mm and month_from_index(index - 1) >= first:
         index -= 1
     return month_grid(month_from_index(index), last)
 
@@ -317,16 +337,18 @@ def contiguous_tail(mm: dict, last: date) -> list:
 # ---------------------------------------------------------------------------
 
 
-def group_sa(mm: dict, last: date, runner_factory, asof: bool) -> dict:
+def group_sa(mm: dict, last: date, runner_factory, asof: bool, first: date = PANEL_START) -> dict:
     """SA м/м группы X-13: `{"full": {...}, "rt": {...}, "status": ...}`.
 
     Ряд короче `MIN_SA_MONTHS` или неудачный фит — `sa_failed`: NaN, NSA не
     подставляется. `runner_factory(start)` — мост X-13 для ряда с первого месяца `start`.
+    `first`/`last` задают окно подгонки: сверка с эталоном идёт на его выборке
+    (спека §14), live — до последнего месяца панели.
     """
     # Хвост ряда — от его собственного последнего месяца в пределах `last`:
     # ряд, снятый с публикации раньше (9260 — до 2024-10), не теряет историю.
     own_last = max((m for m in mm if m <= last), default=None)
-    grid = contiguous_tail(mm, own_last) if own_last else []
+    grid = contiguous_tail(mm, own_last, first) if own_last else []
     if len(grid) < MIN_SA_MONTHS:
         return {"full": {}, "rt": {}, "status": "sa_failed", "months": len(grid)}
     levels = [1.0]
@@ -409,18 +431,19 @@ def choose_spec(scores: dict) -> str:
     return min(spec for value, spec in valid if value - best <= SPEC_TIE)
 
 
-def select_spec(code: str, mm: dict, mom_sa: dict, factory_for=spec_factory) -> dict:
-    """Выбор спецификации группы по данным ≤ 2018-12 (спека §11).
+def select_spec(code: str, mm: dict, mom_sa: dict, factory_for=spec_factory, first: date = PANEL_START) -> dict:
+    """Выбор спецификации группы по данным ≤ 2018-12 (спека §11, §14).
 
-    9540/9950 — RMSE SA м/м против архивного `mom_sa` на 2016–2018; 9218 —
-    AICc regARIMA. 2019+ в выбор не попадает: ряд обрезается до подгонки.
+    9540/9950 — RMSE SA м/м против архивного `mom_sa` на 2016–2018; 9218/9550 —
+    AICc regARIMA (эталон в выборе не участвует). 2019+ в выбор не попадает:
+    ряд обрезается до подгонки; `first` — старт окна (9550 — с 2009-01).
     """
     by_aicc = code in AICC_GROUPS
-    window = truncate(mm, SELECTION_END)
+    window = {m: v for m, v in mm.items() if first <= m <= SELECTION_END}
     scores, detail = {}, {}
     for spec in SPEC_CANDIDATES:
         factory = factory_for(spec)
-        sa = group_sa(window, SELECTION_END, factory, asof=False)
+        sa = group_sa(window, SELECTION_END, factory, asof=False, first=first)
         aicc = factory.runners[-1].aicc if factory.runners else float("nan")
         metric = compare(sa["full"], mom_sa, *SELECTION_REF)
         converged = sa["status"] == "ok"
@@ -491,12 +514,18 @@ def assembly(series_by_code: dict, target_full: pd.DataFrame, group_weights: dic
     }
 
 
-def decisions(coverage: float, nsa_rmse: float, sa_rmse: float, sa_corr: float, assembly_h1: float) -> dict:
-    """Решения спеки §7 (кроме весов live — Q5 решается в отчёте)."""
+def decisions(coverage: float, nsa_rmse: float, sa_rmse: float, sa_corr: float, assembly_h1: float,
+              sa_fst_rmse: float = float("nan")) -> dict:
+    """Решения спеки §7 (кроме весов live — Q5 решается в отчёте).
+
+    `sa_fst_rmse` — диагностика §14 (Q3-B): публикуется отдельным решением,
+    блокирующим гейтом не является.
+    """
     return {
         "mapping_ok": coverage >= COVERAGE_MIN,
         "nsa_ok": nsa_rmse <= NSA_RMSE_MAX,
         "sa_ok": sa_rmse <= SA_RMSE_MAX and sa_corr >= SA_CORR_MIN,
+        "sa_fst_ok": (sa_fst_rmse <= SA_RMSE_MAX) if not math.isnan(sa_fst_rmse) else None,
         "assembly_ok": assembly_h1 <= ASSEMBLY_RMSE_H1_MAX and coverage >= COVERAGE_MIN,
     }
 
@@ -506,7 +535,7 @@ def decisions(coverage: float, nsa_rmse: float, sa_rmse: float, sa_corr: float, 
 # ---------------------------------------------------------------------------
 
 
-def load_products() -> tuple:
+def load_products(start: date = PANEL_START) -> tuple:
     """`(product_mm, regions)` из `v_fedstat_ipc`: `{series: {месяц: м/м, %}}`.
 
     На одну пару (ряд, месяц) ожидается один регион (до 2023 — РФ, с 2023 — РФ
@@ -516,7 +545,7 @@ def load_products() -> tuple:
 
     rows = ch_query(
         "SELECT series, region, toString(date) AS d, value FROM v_fedstat_ipc "
-        f"WHERE date >= '{PANEL_START.isoformat()}' ORDER BY series, date FORMAT JSON"
+        f"WHERE date >= '{start.isoformat()}' ORDER BY series, date FORMAT JSON"
     )
     product_mm, regions, seen = {}, {}, set()
     for row in rows:
@@ -561,6 +590,23 @@ def load_archive_reference(archive: Path) -> tuple:
     return mom, mom_sa
 
 
+def load_fst_reference(archive: Path) -> dict:
+    """`{код: {месяц: п.п.}}` из `data_panel_bi_sa.fst` — SA, которую использует CB_COMP.
+
+    Панель экспортируется `cb_comp_panel_export.R` (кэш в `build/cb-comp-parity/`).
+    `kind = diff` — месячный лог-прирост SA-уровня; в п.п. переводится `expm1`.
+    """
+    cpi, _mp, _full = bu.ensure_panel_csv(archive, bu.PANEL_DIR)
+    diff = cpi[cpi["kind"] == "diff"]
+    out = {}
+    for code, day, value in zip(diff["code"], diff["date"], diff["value"]):
+        if pd.isna(value):
+            continue
+        month = day.date().replace(day=1) if hasattr(day, "date") else day.replace(day=1)
+        out.setdefault(str(code), {})[month] = float(np.expm1(float(value)) * 100)
+    return out
+
+
 def sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -574,17 +620,23 @@ def sha256(path: Path) -> str:
 # ---------------------------------------------------------------------------
 
 
-def run(archive: Path, out_dir: Path, runner_factory, asof: bool, jobs: int) -> dict:
+def run(archive: Path, out_dir: Path, runner_factory, asof: bool, jobs: int, fit_window: str = "live") -> dict:
+    if fit_window not in FIT_WINDOWS:
+        raise ValueError(f"неизвестное окно {fit_window!r}: ожидается {FIT_WINDOWS}")
     specs = bu.load_specs(archive)
     codes = [spec.code for spec in specs]
     dictionaries = load_dictionaries(archive)
     leaf_weights = load_leaf_weights(archive)
     group_weights = bu.load_weights(archive, WEIGHT_YEARS, specs)
     weights_2024 = {code: group_weights[COVERAGE_YEAR].get(code, 0.0) for code in codes}
-    product_mm, regions = load_products()
+    product_mm, regions = load_products(min([PANEL_START] + [w[0] for w in REFERENCE_WINDOWS.values()]))
     products = product_index(product_mm)
     last = max(m for values in product_mm.values() for m in values)
     months = month_grid(PANEL_START, last)
+    if fit_window == "live":
+        fit_first, fit_last = PANEL_START, last
+    else:
+        fit_first, fit_last = REFERENCE_WINDOWS[fit_window]
 
     # Q1/Q6 — маппинг, покрытие, смены состава.
     groups = {code: map_group(code, dictionaries, leaf_weights, products) for code in codes}
@@ -602,9 +654,10 @@ def run(archive: Path, out_dir: Path, runner_factory, asof: bool, jobs: int) -> 
     nsa_seam = {c: compare(nsa[c], mom.get(c, {}), SEAM_START, NSA_WINDOW[1]) for c in codes}
     nsa_rmse, _ = weighted_rmse(nsa_metrics, weights_2024)
 
-    # Q3 — X-13 по группам.
+    # Q3 — X-13 по группам на окне сверки (спека §14): live — до последнего
+    # месяца панели, csv/fst — на выборке эталона.
     with ThreadPoolExecutor(max_workers=max(1, jobs)) as pool:
-        futures = {c: pool.submit(group_sa, nsa[c], last, runner_factory, asof) for c in codes}
+        futures = {c: pool.submit(group_sa, nsa[c], fit_last, runner_factory, asof, fit_first) for c in codes}
         sa = {c: futures[c].result() for c in codes}
     sa_full = {c: sa[c]["full"] for c in codes}
     sa_metrics = {c: compare(sa_full[c], mom_sa.get(c, {}), *SA_WINDOW) for c in codes}
@@ -613,15 +666,31 @@ def run(archive: Path, out_dir: Path, runner_factory, asof: bool, jobs: int) -> 
     services = {c: sa_metrics[c] for c in codes if c in services_codes}
     services_rmse, _ = weighted_rmse(services, weights_2024)
 
-    # Поправка §11 — выбор на 2010–2018 и SA трёх групп выбранной спецификацией.
+    # Q3-B — диагностика §14 против панели fst, которую использует CB_COMP:
+    # та же метрика, но эталон — реальные SA-компоненты, а не CSV-выгрузка.
+    fst_sa = load_fst_reference(archive)
+    sa_fst_metrics = {c: compare(sa_full[c], fst_sa.get(c, {}), *SA_WINDOW) for c in codes}
+    sa_fst_rmse, sa_fst_weight = weighted_rmse(sa_fst_metrics, weights_2024)
+    sa_fst_corr = weighted_mean(sa_fst_metrics, weights_2024, "corr")
+    sa_fst_exact = sorted(c for c in codes if sa_fst_metrics[c]["n"] and sa_fst_metrics[c]["rmse"] < 1e-9)
+
+    # Поправка §11 + §14: выбор на 2009/2010–2018 и SA выбранной спецификацией.
+    # 9550 нужен ряд с 2009-01 (начало панели fst), поэтому для групп поправки
+    # NSA считается от `DATA_START`, а не от `PANEL_START`.
+    nsa_extra = {
+        c: group_nsa(groups[c], product_mm, leaf_weights, month_grid(DATA_START, last))[0]
+        for c in AMENDED_GROUPS if c in groups
+    }
     selection, sa_amended = {}, dict(sa)
     for code in AMENDED_GROUPS:
         if code not in nsa:
             continue
-        selection[code] = select_spec(code, nsa[code], mom_sa.get(code, {}))
+        series = nsa_extra.get(code, nsa[code])
+        selection[code] = select_spec(code, series, mom_sa.get(code, {}),
+                                      first=SELECTION_FIRST.get(code, PANEL_START))
         chosen = selection[code]["chosen"]
         sa_amended[code] = (
-            group_sa(nsa[code], last, spec_factory(chosen), asof) if chosen
+            group_sa(series, fit_last, spec_factory(chosen), asof, fit_first) if chosen
             else {"full": {}, "rt": {}, "status": "sa_failed", "months": 0}
         )
     sa_full_amended = {c: sa_amended[c]["full"] for c in codes}
@@ -641,10 +710,13 @@ def run(archive: Path, out_dir: Path, runner_factory, asof: bool, jobs: int) -> 
         ours_asof = assembly({c: sa[c]["rt"] for c in codes}, target_full, group_weights, test_months)
         amended_asof = assembly({c: sa_amended[c]["rt"] for c in codes}, target_full, group_weights, test_months)
 
-    decision = decisions(coverage_abs, nsa_rmse, sa_rmse, sa_corr, ours["test_67"][1]["rmse"])
-    decision_amended = decisions(coverage_abs, nsa_rmse, sa_rmse_amended, sa_corr_amended, amended["test_67"][1]["rmse"])
+    decision = decisions(coverage_abs, nsa_rmse, sa_rmse, sa_corr, ours["test_67"][1]["rmse"], sa_fst_rmse)
+    decision_amended = decisions(coverage_abs, nsa_rmse, sa_rmse_amended, sa_corr_amended,
+                                 amended["test_67"][1]["rmse"], sa_fst_rmse)
     result = {
         "spec": "docs/superpowers/specs/2026-10-30-cb-comp-88-groups-live-design.md",
+        "fit_window": fit_window,
+        "fit_span": [fit_first.isoformat(), fit_last.isoformat()],
         "thresholds": {
             "coverage_min": COVERAGE_MIN, "nsa_rmse_max": NSA_RMSE_MAX, "nsa_group_flag": NSA_GROUP_FLAG,
             "sa_rmse_max": SA_RMSE_MAX, "sa_corr_min": SA_CORR_MIN, "assembly_rmse_h1_max": ASSEMBLY_RMSE_H1_MAX,
@@ -667,8 +739,14 @@ def run(archive: Path, out_dir: Path, runner_factory, asof: bool, jobs: int) -> 
             "manual_aliases": {c: [list(a) for a in v] for c, v in MANUAL_ALIASES.items()},
         },
         "nsa": {"weighted_rmse": nsa_rmse, "flagged": sorted(c for c in codes if nsa_metrics[c]["n"] and nsa_metrics[c]["rmse"] > NSA_GROUP_FLAG)},
-        "sa": {"weighted_rmse": sa_rmse, "weighted_corr": sa_corr, "services_weighted_rmse": services_rmse,
-               "failed": sorted(c for c in codes if sa[c]["status"] != "ok")},
+        "sa": {"reference": "cpi_sa_db_with_forecast.csv:mom_sa",
+               "weighted_rmse": sa_rmse, "weighted_corr": sa_corr, "services_weighted_rmse": services_rmse,
+               "failed": sorted(c for c in codes if sa[c]["status"] != "ok"),
+               "fst": {"reference": "data_panel_bi_sa.fst:diff",
+                       "weighted_rmse": sa_fst_rmse, "weighted_corr": sa_fst_corr,
+                       "weight_sum": sa_fst_weight,
+                       "groups_with_metric": sum(1 for c in codes if sa_fst_metrics[c]["n"]),
+                       "exact_groups": len(sa_fst_exact)}},
         "assembly": {"ours_full": _jsonable(ours), "archive_mom_sa": _jsonable(reference),
                      "ours_asof": _jsonable(ours_asof) if ours_asof else None,
                      "amended_full": _jsonable(amended),
@@ -691,7 +769,8 @@ def run(archive: Path, out_dir: Path, runner_factory, asof: bool, jobs: int) -> 
                 "manual": groups[c].manual, "composition_changes": composition_changes(groups[c]),
                 "services": c in services_codes,
                 "nsa": nsa_metrics[c], "nsa_pre2023": nsa_pre[c], "nsa_2023": nsa_seam[c],
-                "sa": sa_metrics[c], "sa_status": sa[c]["status"], "sa_months": sa[c]["months"],
+                "sa": sa_metrics[c], "sa_fst": sa_fst_metrics[c],
+                "sa_status": sa[c]["status"], "sa_months": sa[c]["months"],
             }
             for c in codes
         },
@@ -740,12 +819,14 @@ def main(argv=None) -> int:
     parser.add_argument("--archive", default=None, help="каталог архива CB_COMP (иначе CB_COMP_ARCHIVE / известные пути)")
     parser.add_argument("--out", default=str(OUT_DIR))
     parser.add_argument("--asof", action="store_true", help="дополнительно X-13 as-of с 2019-01 (для Task 2)")
+    parser.add_argument("--fit-window", choices=FIT_WINDOWS, default="live",
+                        help="окно подгонки SA: live — до последнего месяца панели, csv/fst — окно эталона (спека §14)")
     parser.add_argument("--jobs", type=int, default=4)
     args = parser.parse_args(argv)
     from models.cpi import cpi_sa_reconciliation as sar
 
     archive = cp.resolve_archive(args.archive)
-    result = run(archive, Path(args.out), sar.make_r_runner, args.asof, args.jobs)
+    result = run(archive, Path(args.out), sar.make_r_runner, args.asof, args.jobs, args.fit_window)
     print(json.dumps({k: _jsonable(result[k]) for k in ("mapping", "nsa", "sa", "decisions", "amendment")}, ensure_ascii=False, indent=2))
     print("primary", json.dumps(_jsonable(result["assembly"]["ours_full"]["test_67"]), ensure_ascii=False))
     print("amended", json.dumps(_jsonable(result["assembly"]["amended_full"]["test_67"]), ensure_ascii=False))
