@@ -1,0 +1,17 @@
+type: chain
+# Торговая сессия MOEX: каждые 15 минут до закрытия основной сессии и финальный
+# прогон после него. Вечерние сделки (19:00–23:50 МСК) догоняет утренний пересчёт
+# окна [watermark − 15 мин, max(time)].
+schedule:
+  - "*/15 9-18 * * 1-5"
+  - "20 19 * * 1-5"
+overlap_policy: skip
+
+steps:
+  - id: transaq_net_flows
+    run: "$ROSSTAT_IMPORT_BIN"
+    env:
+      - CLICKHOUSE_IMPORT_STAT=transaq_net_flows
+    retry_policy:
+      limit: 3
+      interval_sec: 300
