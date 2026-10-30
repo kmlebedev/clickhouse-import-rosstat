@@ -57,10 +57,11 @@ W0 as-of конвенция ──┬─> W1 as-of недельный X-13 ─�
 
 ## W4: Stage 1
 
-**Файлы:** `cpi_two_stage_s1.py` (+тест).
-- [ ] Признаки (as-of `P_k`), запрет ожиданий/SA ЦБ/МП; модели CatBoost и ElasticNetCV; baselines B1/B2/B3/`weekly_naive`/`v3_direct@P_k`.
-- [ ] Walk-forward с 2016-01, min train 24, OOF с 2018-01; dev/holdout; gate S1 (спека §6.1) с Holm по двум целям.
-**Done:** `s1_oof.csv`, решение `pass/partial/fail`; `make cpi-two-stage-s1(-test)`.
+**Файлы:** `scripts/models/cpi/cpi_two_stage_s1.py` (+тест).
+- [x] Протокол (признаки, модели, baselines, детали gate) зафиксирован в спеке до результатов (`a8fab8e`); код — до запуска (`aca0806`); 49 тестов, мутационная проверка 10/10 после дополнения.
+- [x] Walk-forward с 2016-01, min train 24, фолды W3; dev 2018–2021 (выбор кандидата), holdout 2022+; baselines B1/B2/B3/`weekly_naive`/`v3_direct@P_k`.
+- [x] Gate S1 (спека §6.1, Holm): **`fail`** — обе цели, условия 1 и 3 не выполнены (`T_SAX`: 1,238 против `v3_direct` 1,134 и `weekly_naive` 1,151; `T_CORE`: 1,346 против `weekly_naive` 1,170). По спеке §7 Stage 2 (W5) **не строится**. Отчёт: `docs/research/2026-10-30-cpi-two-stage-w4-stage1-gate.md`.
+**Done:** решение `fail` зафиксировано числами; `s1_oof.csv`, `s1_gate.json`; `make cpi-two-stage-s1(-test)`. Дальнейшие шаги (новая итерация/пересмотр постановки/закрытие) — решение владельца.
 
 ## W5: Stage 2
 
