@@ -1,0 +1,122 @@
+{
+  "run": "cb_comp_live_vs_per_sheet",
+  "date": "2026-10-20",
+  "status": "diagnostic",
+  "target": "TARGET_FULL (архив CB_COMP)",
+  "window": {
+    "train_official": "2010-03-01…2018-12-01",
+    "train_sa": "2016-01-01…2018-12-01",
+    "test": "2019-01-01…2024-07-01",
+    "normal_months": 54,
+    "origin": "M−(h−1)"
+  },
+  "models": {
+    "live3_official": "3 официальных компонента ИПЦ NSA + v3-признаки; NNLS-агрегат",
+    "live3_sa": "3 SA-компонента авторов (6/7/9000) + v3-признаки; NNLS-агрегат",
+    "per_sheet": "88 групп ИПЦ + публичные листовые МП; CPI-веса",
+    "cb": "эталон CB_COMP (архив)"
+  },
+  "native": {
+    "cb_comp_live_pipeline": {
+      "target": "official CPI m/m (NSA)",
+      "window": "2024-10…2026-09 (24 months)",
+      "rmse": {
+        "all": 0.3048572095453654,
+        "food": 0.4699411133065084,
+        "nonfood": 0.2732548416155491,
+        "services": 0.8137007999070592
+      }
+    },
+    "per_sheet": {
+      "target": "TARGET_FULL",
+      "window": "54 normal months",
+      "rmse": {
+        "1": 0.19121466218643976,
+        "2": 0.30839016676223396,
+        "3": 0.46386455860895515,
+        "6": 0.9713240565701026
+      }
+    },
+    "cb": {
+      "target": "TARGET_FULL",
+      "window": "54 normal months",
+      "rmse": {
+        "1": 0.158805,
+        "2": 0.296655,
+        "3": 0.443623,
+        "6": 0.971459
+      }
+    }
+  },
+  "table": [
+    {
+      "horizon": 1,
+      "live3_official_rmse": 0.21646246206580944,
+      "live3_sa_rmse": 0.25143540849872925,
+      "per_sheet_rmse": 0.19121466218643976,
+      "cb_rmse": 0.158805,
+      "live3_official_vs_per_sheet": 1.1320390371254707,
+      "live3_sa_vs_per_sheet": 1.3149379112652593,
+      "live3_official_vs_cb": 1.3630708231214976,
+      "live3_sa_vs_cb": 1.5832965492190374,
+      "per_sheet_vs_cb": 1.2040846458640455
+    },
+    {
+      "horizon": 2,
+      "live3_official_rmse": 0.40264151464880205,
+      "live3_sa_rmse": 0.5039491251338275,
+      "per_sheet_rmse": 0.30839016676223396,
+      "cb_rmse": 0.296655,
+      "live3_official_vs_per_sheet": 1.305623713220516,
+      "live3_sa_vs_per_sheet": 1.634128384911727,
+      "live3_official_vs_cb": 1.3572719645676024,
+      "live3_sa_vs_cb": 1.6987717218109504,
+      "per_sheet_vs_cb": 1.0395582975585578
+    },
+    {
+      "horizon": 3,
+      "live3_official_rmse": 0.658006881224255,
+      "live3_sa_rmse": 0.7477933763579724,
+      "per_sheet_rmse": 0.46386455860895515,
+      "cb_rmse": 0.443623,
+      "live3_official_vs_per_sheet": 1.4185323474539575,
+      "live3_sa_vs_per_sheet": 1.6120942255223545,
+      "live3_official_vs_cb": 1.4832569123428114,
+      "live3_sa_vs_cb": 1.6856506005278635,
+      "per_sheet_vs_cb": 1.0456278385226987
+    },
+    {
+      "horizon": 6,
+      "live3_official_rmse": 1.3440788731452395,
+      "live3_sa_rmse": 1.3648898711029716,
+      "per_sheet_rmse": 0.9713240565701026,
+      "cb_rmse": 0.971459,
+      "live3_official_vs_per_sheet": 1.3837594817649144,
+      "live3_sa_vs_per_sheet": 1.405184873030543,
+      "live3_official_vs_cb": 1.3835672664983696,
+      "live3_sa_vs_cb": 1.4049896816056793,
+      "per_sheet_vs_cb": 0.9998610919967827
+    }
+  ],
+  "train_rows": {
+    "official": {
+      "1": 102,
+      "2": 101,
+      "3": 100,
+      "6": 97
+    },
+    "sa": {
+      "1": 36,
+      "2": 35,
+      "3": 34,
+      "6": 31
+    }
+  },
+  "caveats": [
+    "Live3 — диагностическая реконструкция: фиксированный train и h-таргеты, а не production nowcast #251.",
+    "live3_official: официальные ИПЦ NSA — не тот же таргет, что SA TARGET_FULL; это нижняя/смещённая оценка.",
+    "live3_sa: SA-компоненты авторов (6/7/9000) и агрегат 1−9470; train 2016-01…2018-12, короче per-sheet.",
+    "Per-sheet обучался на 2010-03…2018-12; live3 official — на доступных v3-строках того же окна; n_train назван.",
+    "CB_COMP не переобучался; сравнение с ним — на архивных прогнозах."
+  ]
+}

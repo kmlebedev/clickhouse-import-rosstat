@@ -6,18 +6,26 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/grafana/grafana-foundation-sdk/go/common"
 	"github.com/grafana/grafana-foundation-sdk/go/dashboard"
+	"github.com/grafana/grafana-foundation-sdk/go/timeseries"
 	"github.com/grafana/grafana-foundation-sdk/go/units"
 )
 
-// keyRateRowTitles — ряды дашборда в порядке следования (id 21–24). Собраны все четыре ряда спеки:
-// список фиксирует и заголовки, и порядок сетки, а id (вне диапазона панелей 1..19) проверяет
-// TestKeyRatePublicationsRowTitles.
-var keyRateRowTitles = []string{
-	"Ставка и инфляция",
-	"Деньги, кредит, бюджет, труд",
-	"Рыночный контур",
-	"Сигнал, консенсус, календарь",
+// keyRateRows — ряды дашборда в порядке следования: id 21–24, 34 и 40. Пятый ряд идёт после
+// панелей 29–33, поэтому не может взять свободный по порядку id 25 — он занят панелью долгового
+// контура; шестой ряд получил id 40, потому что 36–39 — id панелей цен. Список фиксирует и
+// заголовки, и порядок сетки; id проверяет TestKeyRatePublicationsRowTitles.
+var keyRateRows = []struct {
+	id    uint32
+	title string
+}{
+	{firstKeyRateRowID, "Ставка и инфляция"},
+	{firstKeyRateRowID + 1, "Деньги, кредит, бюджет, труд"},
+	{firstKeyRateRowID + 2, "Рыночный контур"},
+	{firstKeyRateRowID + 3, "Сигнал, консенсус, календарь"},
+	{channelRowID, "Остальные каналы решения"},
+	{pricesRowID, "Цены производителей, продовольствие, средние цены"},
 }
 
 func builtKeyRatePublications(t *testing.T) dashboard.Dashboard {
@@ -29,33 +37,38 @@ func builtKeyRatePublications(t *testing.T) dashboard.Dashboard {
 	return d
 }
 
-// TestKeyRatePublicationsHasNineteenPanels фиксирует состав дашборда: собраны ряды 21 (панели 1–5),
-// 22 (панели 6–10), 23 (панели 11–14) и 24 (панели 15–19) — 19 панелей, полный контракт спеки §5.
-func TestKeyRatePublicationsHasNineteenPanels(t *testing.T) {
-	if panels := panelsOf(builtKeyRatePublications(t)); len(panels) != 19 {
-		t.Fatalf("панелей %d, ожидалось 19", len(panels))
+// TestKeyRatePublicationsHasThirtyThreePanels фиксирует состав дашборда: ряды 21 (панели 1–5 и 36 —
+// недельные цены на полной истории), 22 (панели 6–10 и 35 — кредиты банков, опережающий срез М2),
+// 23 (панели 11–14 и 25–28 — долговой контур ОФЗ), 24 (панели 15–19), 34 (панели 29–33 — внешние
+// условия, сбережения, разрыв выпуска, автономные факторы) и 40 (панели 37–39 — ИЦП, ФАО, средние
+// цены) — 33 панели, полный контракт спеки §3.
+func TestKeyRatePublicationsHasThirtyThreePanels(t *testing.T) {
+	if panels := panelsOf(builtKeyRatePublications(t)); len(panels) != 33 {
+		t.Fatalf("панелей %d, ожидалось 33", len(panels))
 	}
 }
 
-// TestKeyRatePublicationsRowTitles: ряды нумеруются вне диапазона панелей 1..19 — нулевой
-// или совпавший id Grafana перезапишет своим, и артефакт разойдётся с кодом.
+// TestKeyRatePublicationsRowTitles: id рядов не совпадают ни с панелями 1..19, 25..33 и 35, ни
+// между собой — нулевой или совпавший id Grafana перезапишет своим, и артефакт разойдётся с кодом.
 func TestKeyRatePublicationsRowTitles(t *testing.T) {
+	var ids []uint32
 	var titles []string
 	for _, entry := range builtKeyRatePublications(t).Panels {
 		if entry.RowPanel == nil {
 			continue
 		}
-		if entry.RowPanel.Id < 20 {
-			t.Fatalf("ряд %q: id %d попадает в диапазон панелей 1..19", optionalString(entry.RowPanel.Title), entry.RowPanel.Id)
-		}
+		ids = append(ids, entry.RowPanel.Id)
 		titles = append(titles, optionalString(entry.RowPanel.Title))
 	}
-	if len(titles) != len(keyRateRowTitles) {
-		t.Fatalf("рядов %d, ожидалось %d: %v", len(titles), len(keyRateRowTitles), titles)
+	if len(ids) != len(keyRateRows) {
+		t.Fatalf("рядов %d, ожидалось %d: %v", len(ids), len(keyRateRows), titles)
 	}
-	for i, got := range titles {
-		if got != keyRateRowTitles[i] {
-			t.Fatalf("ряд %d: %q, ожидался %q", i+1, got, keyRateRowTitles[i])
+	for i, want := range keyRateRows {
+		if ids[i] != want.id {
+			t.Fatalf("ряд %d (%q): id %d, ожидался %d", i+1, titles[i], ids[i], want.id)
+		}
+		if titles[i] != want.title {
+			t.Fatalf("ряд %d: %q, ожидался %q", i+1, titles[i], want.title)
 		}
 	}
 }
@@ -79,6 +92,51 @@ func TestKeyRateAllTargetsUseViews(t *testing.T) {
 	}
 }
 
+// TestKeyRateAllTimeseriesUseTimeFilter: каждый график обязан уважать выбранный
+// диапазон дашборда — $__timeFilter по своей временной колонке (date/period_date).
+// Табличные и stat-панели не проверяются: у них время не ось. Это машинная норма,
+// а не ревью-пожелание: новый график без фильтра валит make grafana-validate.
+func TestKeyRateAllTimeseriesUseTimeFilter(t *testing.T) {
+	for _, p := range panelsOf(builtKeyRatePublications(t)) {
+		if string(p.Type) != "timeseries" {
+			continue
+		}
+		if len(p.Targets) == 0 {
+			t.Fatalf("у графика %q нет запросов", panelTitle(p))
+		}
+		for _, target := range p.Targets {
+			query, ok := chQuery(target)
+			if !ok {
+				t.Fatalf("график %q: запрос не является запросом ClickHouse", panelTitle(p))
+			}
+			if !strings.Contains(query.RawSql, "$__timeFilter") {
+				t.Fatalf("график %q (%s): запрос без $__timeFilter: %s", panelTitle(p), query.RefId, query.RawSql)
+			}
+		}
+	}
+}
+
+// TestKeyRateInflationPanelWeeklySA: панель 4 показывает weekly SA-агрегат третьей серией —
+// опережающее сравнение с базовой ЦБ. В витрине value в процентах, панель в percentunit,
+// поэтому SQL обязан делить на 100; series фиксируется, чтобы панель не переехала на другой ряд.
+// Nowcast-точка обязана быть видимой при to=now: её метка месяца лежит в будущем, поэтому
+// время берётся как as_of, а фильтр — по as_of; иначе октябрьская оценка выпадала из окна.
+func TestKeyRateInflationPanelWeeklySA(t *testing.T) {
+	panel := panelByID(t, builtKeyRatePublications(t), 4)
+	if len(panel.Targets) != 3 {
+		t.Fatalf("у панели %q %d запросов, ожидалось 3 (ИПЦ, базовая, weekly SA)", panelTitle(panel), len(panel.Targets))
+	}
+	query, ok := chQuery(panel.Targets[2])
+	if !ok {
+		t.Fatalf("панель %q: запрос не является запросом ClickHouse", panelTitle(panel))
+	}
+	for _, want := range []string{"v_weekly_cpi_sa", "series = 'weekly_cpi:saar'", "value / 100", "if(partial = 1, as_of, date)", "$__timeFilter(as_of)"} {
+		if !strings.Contains(query.RawSql, want) {
+			t.Fatalf("панель %q: запрос %q не содержит %q: %s", panelTitle(panel), query.RefId, want, query.RawSql)
+		}
+	}
+}
+
 // TestKeyRatePanelIDsUnique проверяет и раскладку id (через Validate), и параметризацию
 // Validate: тот же дашборд с чужим uid обязан быть отвергнут, иначе опечатка в uid прошла
 // бы молча и один дашборд затёр бы другой при деплое.
@@ -95,6 +153,8 @@ func TestKeyRatePanelIDsUnique(t *testing.T) {
 // TestKeyRateWeeklyYearOverlay: ряд B панели 2 — календарное наложение прошлого года.
 // Время сдвигается на +1 год (date_add), а год отбирается ровно прошлый (toYear(now()) - 1):
 // поменяй одно без другого — наложение покажет не тот год, и «прошлый год» окажется текущим.
+// $__timeFilter при этом обязан стоять на сдвинутом time: фильтр по сырому date отбросил бы
+// прошлый год (его даты лежат вне окна дашборда), и пунктир исчез бы.
 func TestKeyRateWeeklyYearOverlay(t *testing.T) {
 	panel := panelByID(t, builtKeyRatePublications(t), 2)
 	if len(panel.Targets) != 2 {
@@ -104,10 +164,13 @@ func TestKeyRateWeeklyYearOverlay(t *testing.T) {
 	if !ok {
 		t.Fatalf("панель %q: запрос не является запросом ClickHouse", panelTitle(panel))
 	}
-	for _, want := range []string{"date_add(YEAR, 1, date)", "toYear(now()) - 1"} {
+	for _, want := range []string{"date_add(YEAR, 1, date)", "toYear(now()) - 1", "$__timeFilter(time)"} {
 		if !strings.Contains(query.RawSql, want) {
 			t.Fatalf("панель %q: запрос %q не содержит %q: %s", panelTitle(panel), query.RefId, want, query.RawSql)
 		}
+	}
+	if strings.Contains(query.RawSql, "$__timeFilter(date)") {
+		t.Fatalf("панель %q: запрос %q фильтрует сырой date, а не сдвинутый time: %s", panelTitle(panel), query.RefId, query.RawSql)
 	}
 }
 
@@ -376,8 +439,9 @@ func TestKeyRateTrajectoryUsesKnownSecids(t *testing.T) {
 }
 
 // TestKeyRateSparseSeriesPoints: разрежённые серии рисуются точками, а не линией — панель 11
-// (KKG7: дальняя серия без сделок, одно наблюдение) и панель 13 (теноры кривой ОФЗ — снимок по одной
-// точке, история наполняется). Сплошная линия по единственной точке не читается. У KKG7 ещё и
+// (KKG7: дальняя серия без сделок, одно наблюдение), панель 13 (теноры кривой ОФЗ — снимок по одной
+// точке, история наполняется) и панель 30-B (месячная оценка счёта текущих операций публикуется
+// только за последние месяцы). Сплошная линия по единственной точке не читается. У KKG7 ещё и
 // фиксированный цвет: цвет точечной серии не должен зависеть от порядка таргетов в палитре.
 func TestKeyRateSparseSeriesPoints(t *testing.T) {
 	board := builtKeyRatePublications(t)
@@ -387,6 +451,7 @@ func TestKeyRateSparseSeriesPoints(t *testing.T) {
 	}{
 		{11, []string{"C"}},
 		{13, []string{"B", "C", "D", "E"}},
+		{30, []string{"B"}},
 	} {
 		panel := panelByID(t, board, tc.panelID)
 		for _, refID := range tc.refIDs {
@@ -419,6 +484,46 @@ func TestKeyRateCurveCoversFourTenors(t *testing.T) {
 			if !strings.Contains(query.RawSql, want) {
 				t.Fatalf("панель 13: запрос %q не содержит %q: %s", tc.refID, want, query.RawSql)
 			}
+		}
+	}
+}
+
+// TestKeyRateOfzStressPanels: панели 25–28 читают v_ofz_stress и разнесены по
+// единицам: покрытие и доля обслуживания — доли (percentunit), спред — п.п.
+// (percent), изменение запаса — рубли. Смешивать их на одной шкале нельзя.
+func TestKeyRateOfzStressPanels(t *testing.T) {
+	board := builtKeyRatePublications(t)
+	cases := []struct {
+		id    uint32
+		title string
+		unit  string
+		wants []string
+	}{
+		{25, "Аукционы ОФЗ: покрытие спроса", units.PercentUnit,
+			[]string{"FROM v_ofz_stress", "coverage_ratio", "$__timeFilter(date)", "ORDER BY date"}},
+		{26, "Аукционы ОФЗ: отсечение − КБД", units.Percent,
+			[]string{"FROM v_ofz_stress", "cutoff_minus_secondary_pp", "$__timeFilter(date)", "ORDER BY date"}},
+		{27, "Долг: обслуживание в доходах", units.PercentUnit,
+			[]string{"FROM v_ofz_stress", "debt_service_to_revenue", "GROUP BY date", "$__timeFilter(date)"}},
+		{28, "Долг: изменение запаса ОФЗ", units.Rubles,
+			[]string{"FROM v_ofz_stress", "ofz_stock_change", "GROUP BY date", "$__timeFilter(date)"}},
+	}
+	for _, tc := range cases {
+		panel := panelByID(t, board, tc.id)
+		if got := panelTitle(panel); got != tc.title {
+			t.Errorf("панель %d: заголовок %q, ожидался %q", tc.id, got, tc.title)
+		}
+		if len(panel.Targets) != 1 {
+			t.Fatalf("панель %d: %d запросов, ожидался 1", tc.id, len(panel.Targets))
+		}
+		query := targetByRefID(t, panel, "A")
+		for _, want := range tc.wants {
+			if !strings.Contains(query.RawSql, want) {
+				t.Errorf("панель %d: запрос A не содержит %q: %s", tc.id, want, query.RawSql)
+			}
+		}
+		if unit := panel.FieldConfig.Defaults.Unit; unit == nil || *unit != tc.unit {
+			t.Errorf("панель %d: unit %v, ожидался %q", tc.id, unit, tc.unit)
 		}
 	}
 }
@@ -586,27 +691,28 @@ func TestKeyRateSignalRowUsesTableQueries(t *testing.T) {
 	}
 }
 
-// TestKeyRateSpecConventions фиксирует конвенции спеки §4/§7 одним проходом: id панелей 1..19
-// без пропусков и повторов, непустой Description у каждой, ширина 24 у панелей 5 и 10 и 12
-// у остальных, FINAL в панельных запросах не пишется (FINAL уже внутри витрин, спека §2),
-// а LIMIT — только у таблиц 12/16/17/18/19: на timeseries это анти-паттерн спеки §6.
+// TestKeyRateSpecConventions фиксирует конвенции спеки §4/§7 одним проходом: id панелей
+// 1..19, 25..33 и 35–39 без пропусков и повторов, непустой Description у каждой, ширина 24 у
+// панелей 5, 10, 33 и 35 и 12 у остальных, FINAL в панельных запросах не пишется (FINAL уже внутри
+// витрин, спека §2), а LIMIT — только у таблиц 12/16/17/18/19: на timeseries это анти-паттерн §6.
 func TestKeyRateSpecConventions(t *testing.T) {
 	tablePanels := map[uint32]bool{12: true, 16: true, 17: true, 18: true, 19: true}
-	seen := make(map[uint32]bool, 19)
+	seen := make(map[uint32]bool, 33)
 	for _, p := range panelsOf(builtKeyRatePublications(t)) {
 		if p.Id == nil {
 			t.Fatalf("панель %q: не задан id", panelTitle(p))
 		}
 		id := *p.Id
-		if id < 1 || id > 19 || seen[id] {
-			t.Fatalf("панель %q: id %d вне 1..19 или повторяется", panelTitle(p), id)
+		allowed := (id >= 1 && id <= 19) || (id >= 25 && id <= 33) || (id >= 35 && id <= 39)
+		if !allowed || seen[id] {
+			t.Fatalf("панель %q: id %d вне 1..19/25..33/35..39 или повторяется", panelTitle(p), id)
 		}
 		seen[id] = true
 		if p.Description == nil || strings.TrimSpace(*p.Description) == "" {
 			t.Fatalf("панель %d: пустой Description (спека §4 — описание у каждой панели)", id)
 		}
 		wantSpan := uint32(12)
-		if id == 5 || id == 10 {
+		if id == 5 || id == 10 || id == 33 || id == 35 {
 			wantSpan = 24
 		}
 		if p.GridPos == nil || p.GridPos.W != wantSpan {
@@ -625,7 +731,509 @@ func TestKeyRateSpecConventions(t *testing.T) {
 			}
 		}
 	}
-	if len(seen) != 19 {
-		t.Fatalf("панелей %d, ожидалось 19 (id 1..19 без пропусков)", len(seen))
+	if len(seen) != 33 {
+		t.Fatalf("панелей %d, ожидалось 33 (id 1..19, 25..33 и 35..39 без пропусков)", len(seen))
+	}
+}
+
+// TestKeyRateBankLoansPanel: панель 35 — кредиты банков как опережающий срез М2. Сумма кредитов
+// ЮЛ и ФЛ (gross) по каждому банку считается в SQL ДО темпа; customer_loans (netto) не читается;
+// М2 SA — пунктирный референс. Единица — доля: иначе 11,9 % напечатались бы как «0.12».
+func TestKeyRateBankLoansPanel(t *testing.T) {
+	panel := panelByID(t, builtKeyRatePublications(t), 35)
+	if got := panelTitle(panel); got != "Кредиты банков (Сбер, ВТБ) — опережающий срез М2, г/г" {
+		t.Fatalf("панель 35: заголовок %q", got)
+	}
+	if len(panel.Targets) != 3 {
+		t.Fatalf("панель 35: %d запросов, ожидалось 3 (Сбер, ВТБ, М2)", len(panel.Targets))
+	}
+	for refID, bank := range map[string]string{"A": "SBER", "B": "VTBR"} {
+		query := targetByRefID(t, panel, refID)
+		for _, want := range []string{
+			"FROM v_bank_loan_portfolio_forward",
+			"bank = '" + bank + "'",
+			"metric IN ('loans_corporations', 'loans_individuals')",
+			"lagInFrame(sum(value_bln_rub), 12)",
+			"$__timeFilter(time)",
+			"ORDER BY time",
+		} {
+			if !strings.Contains(query.RawSql, want) {
+				t.Fatalf("панель 35: запрос %s не содержит %q: %s", refID, want, query.RawSql)
+			}
+		}
+		if strings.Contains(query.RawSql, "customer_loans") {
+			t.Fatalf("панель 35: запрос %s читает customer_loans (netto): %s", refID, query.RawSql)
+		}
+	}
+	m2 := targetByRefID(t, panel, "C")
+	for _, want := range []string{"FROM v_cbr_macro", "series = 'М2 SA'", "$__timeFilter(time)"} {
+		if !strings.Contains(m2.RawSql, want) {
+			t.Fatalf("панель 35: запрос C не содержит %q: %s", want, m2.RawSql)
+		}
+	}
+	if got := overridePropByRefID(panel, "C", "custom.lineStyle"); got == nil {
+		t.Fatalf("панель 35: у М2 нет пунктира — референс не отличён от рядов банков")
+	}
+	if unit := panel.FieldConfig.Defaults.Unit; unit == nil || *unit != units.PercentUnit {
+		t.Fatalf("панель 35: unit %v, ожидался %q", unit, units.PercentUnit)
+	}
+	for _, want := range []string{"gross", "netto", "опережающ", "разрыв источника"} {
+		if !strings.Contains(optionalString(panel.Description), want) {
+			t.Fatalf("Description панели 35 не содержит %q: %s", want, optionalString(panel.Description))
+		}
+	}
+}
+
+// TestKeyRateTimeseriesInterpolationSmooth: все графики дашборда используют сглаженную
+// интерполяцию — Grafana по умолчанию рисует ломаную linear. Проверка идёт по Type: у табличных
+// панелей custom-конфига timeseries нет, и требовать от них lineInterpolation нельзя.
+func TestKeyRateTimeseriesInterpolationSmooth(t *testing.T) {
+	timeseriesPanels := 0
+	for _, p := range panelsOf(builtKeyRatePublications(t)) {
+		if p.Type != "timeseries" {
+			continue
+		}
+		timeseriesPanels++
+		custom, ok := p.FieldConfig.Defaults.Custom.(*timeseries.FieldConfig)
+		if !ok || custom == nil || custom.LineInterpolation == nil {
+			t.Fatalf("панель %q: не задана lineInterpolation (ожидался smooth)", panelTitle(p))
+		}
+		if *custom.LineInterpolation != common.LineInterpolationSmooth {
+			t.Fatalf("панель %q: lineInterpolation %q, ожидался %q",
+				panelTitle(p), *custom.LineInterpolation, common.LineInterpolationSmooth)
+		}
+	}
+	if timeseriesPanels != 28 {
+		t.Fatalf("графиков %d, ожидалось 28 (33 панели минус 5 таблиц)", timeseriesPanels)
+	}
+}
+
+// TestKeyRateChannelPanelTitlesAndUnits: панели 29–33 закрывают четыре канала без покрытия, и у
+// каждой своя базовая единица: курс и депозиты — рубли, БОП и Brent — доллары, ИБК/гэпы — пункты
+// и п.п. (short). Ошибка в unit печатала бы проценты как рубли.
+func TestKeyRateChannelPanelTitlesAndUnits(t *testing.T) {
+	board := builtKeyRatePublications(t)
+	for _, tc := range []struct {
+		id      uint32
+		title   string
+		unit    string
+		targets int
+	}{
+		{29, "Внешние условия: курс ЦБ и Brent", units.Rubles, 2},
+		{30, "Внешние условия: счёт текущих операций", units.Dollars, 2},
+		{31, "Сбережения: депозиты населения", units.Rubles, 2},
+		{32, "Разрыв выпуска: бизнес-климат, ИБК и загрузка", units.Short, 3},
+		{33, "Автономные факторы: кредитные гэпы и рост кредита", units.Short, 4},
+	} {
+		panel := panelByID(t, board, tc.id)
+		if got := panelTitle(panel); got != tc.title {
+			t.Errorf("панель %d: заголовок %q, ожидался %q", tc.id, got, tc.title)
+		}
+		if unit := panel.FieldConfig.Defaults.Unit; unit == nil || *unit != tc.unit {
+			t.Errorf("панель %d: unit %v, ожидался %q", tc.id, unit, tc.unit)
+		}
+		if len(panel.Targets) != tc.targets {
+			t.Errorf("панель %d: %d запросов, ожидалось %d", tc.id, len(panel.Targets), tc.targets)
+		}
+	}
+}
+
+// TestKeyRateExternalFxPanel: панель 29 читает официальный курс ЦБ и Brent с витрин, а не сырых
+// таблиц; Brent — фронт-месяц MOEX BR, поэтому он на правой оси и с unit dollars, а в Description
+// стоит оговорка «не спот»: иначе settle фьючерса прочли бы как спотовую цену.
+func TestKeyRateExternalFxPanel(t *testing.T) {
+	panel := panelByID(t, builtKeyRatePublications(t), 29)
+	fx := targetByRefID(t, panel, "A")
+	for _, want := range []string{"FROM v_cbr_macro", "series = 'cbr_currency_usd'", "$__timeFilter(date)", "ORDER BY date"} {
+		if !strings.Contains(fx.RawSql, want) {
+			t.Fatalf("панель 29: запрос A не содержит %q: %s", want, fx.RawSql)
+		}
+	}
+	brent := targetByRefID(t, panel, "B")
+	for _, want := range []string{"FROM v_moex_market", "series = 'brent_front'", "$__timeFilter(date)", "ORDER BY date"} {
+		if !strings.Contains(brent.RawSql, want) {
+			t.Fatalf("панель 29: запрос B не содержит %q: %s", want, brent.RawSql)
+		}
+	}
+	if got := overridePropByRefID(panel, "B", "unit"); got != units.Dollars {
+		t.Fatalf("панель 29: unit серии B = %v, ожидался %q", got, units.Dollars)
+	}
+	if got := overridePropByRefID(panel, "B", "custom.axisPlacement"); got != "right" {
+		t.Fatalf("панель 29: ось серии B = %v, ожидалась правая", got)
+	}
+	for _, want := range []string{"Brent", "НЕ спот", "правая ось"} {
+		if !strings.Contains(optionalString(panel.Description), want) {
+			t.Fatalf("Description панели 29 не содержит %q: %s", want, optionalString(panel.Description))
+		}
+	}
+}
+
+// TestKeyRateExternalBopPanel: панель 30 разделяет две выгрузки платёжного баланса. Стандартная
+// презентация — млн USD, поэтому в SQL стоит ÷1000; месячная оценка — уже млрд USD и рисуется
+// точками: источник публикует только последние месяцы. Ноль у БОП — значение, а не пропуск.
+func TestKeyRateExternalBopPanel(t *testing.T) {
+	panel := panelByID(t, builtKeyRatePublications(t), 30)
+	quarterly := targetByRefID(t, panel, "A")
+	for _, want := range []string{
+		"FROM v_cbr_bop", "source = 'cbr_bop_standard'", "series = 'Счет текущих операций (квартал)'",
+		"value / 1000", "$__timeFilter(date)", "ORDER BY date",
+	} {
+		if !strings.Contains(quarterly.RawSql, want) {
+			t.Fatalf("панель 30: запрос A не содержит %q: %s", want, quarterly.RawSql)
+		}
+	}
+	monthly := targetByRefID(t, panel, "B")
+	for _, want := range []string{
+		"FROM v_cbr_bop", "source = 'cbr_bop_est'", "series = 'Счет текущих операций (месяц)'",
+		"$__timeFilter(date)", "ORDER BY date",
+	} {
+		if !strings.Contains(monthly.RawSql, want) {
+			t.Fatalf("панель 30: запрос B не содержит %q: %s", want, monthly.RawSql)
+		}
+	}
+	assertPointsOnly(t, panel, "B")
+	for _, want := range []string{"млн USD", "млрд USD", "ноль — значение"} {
+		if !strings.Contains(optionalString(panel.Description), want) {
+			t.Fatalf("Description панели 30 не содержит %q: %s", want, optionalString(panel.Description))
+		}
+	}
+}
+
+// TestKeyRateSavingsPanel: панель 31 берёт канон канала сбережений — «Депозиты населения»
+// (ФЛ + ИП), а не отдельный ряд физлиц; приток считается окном по полному ряду, а фильтр стоит
+// снаружи подзапроса. lagInFrame с NULL оставляет первую точку пустой, а не value − 0.
+func TestKeyRateSavingsPanel(t *testing.T) {
+	panel := panelByID(t, builtKeyRatePublications(t), 31)
+	level := targetByRefID(t, panel, "A")
+	for _, want := range []string{
+		"FROM v_cbr_macro", "series = 'Депозиты населения'", "value / 1000",
+		"$__timeFilter(date)", "ORDER BY date",
+	} {
+		if !strings.Contains(level.RawSql, want) {
+			t.Fatalf("панель 31: запрос A не содержит %q: %s", want, level.RawSql)
+		}
+	}
+	inflow := targetByRefID(t, panel, "B")
+	if got := strings.Count(inflow.RawSql, "$__timeFilter"); got != 1 {
+		t.Fatalf("панель 31: запрос B: $__timeFilter встречается %d раз, ожидался 1 (только снаружи)", got)
+	}
+	if !strings.Contains(inflow.RawSql, "lagInFrame(value, 1, NULL) OVER (ORDER BY date)") {
+		t.Fatalf("панель 31: запрос B не оставляет первую точку NULL: %s", inflow.RawSql)
+	}
+	if !strings.Contains(inflow.RawSql, ")\nWHERE $__timeFilter(time)") {
+		t.Fatalf("панель 31: запрос B фильтрует окно внутри подзапроса, а не после его закрывающей скобки: %s", inflow.RawSql)
+	}
+	if got := overridePropByRefID(panel, "B", "custom.axisPlacement"); got != "right" {
+		t.Fatalf("панель 31: ось серии B = %v, ожидалась правая (уровень и приток — разные шкалы)", got)
+	}
+	description := optionalString(panel.Description)
+	for _, want := range []string{"ФЛ + ИП", "млрд руб.", "NULL"} {
+		if !strings.Contains(description, want) {
+			t.Fatalf("Description панели 31 не содержит %q: %s", want, description)
+		}
+	}
+}
+
+// TestKeyRateOutputGapPanel: панель 32 читает три прокси разрыва выпуска из v_cbr_survey:
+// бизнес-климат SA, ИБК промышленности SA (пункты, левая ось) и загрузку мощностей SA
+// (проценты, правая ось). Description обязан назвать их прокси, а не самим разрывом.
+func TestKeyRateOutputGapPanel(t *testing.T) {
+	panel := panelByID(t, builtKeyRatePublications(t), 32)
+	for refID, series := range map[string]string{
+		"A": "business_climate_sa",
+		"B": "industry_total_ibk_sa",
+		"C": "capacity_utilization_sa",
+	} {
+		query := targetByRefID(t, panel, refID)
+		for _, want := range []string{"FROM v_cbr_survey", "series = '" + series + "'", "$__timeFilter(date)", "ORDER BY date"} {
+			if !strings.Contains(query.RawSql, want) {
+				t.Fatalf("панель 32: запрос %q не содержит %q: %s", refID, want, query.RawSql)
+			}
+		}
+	}
+	if got := overridePropByRefID(panel, "C", "unit"); got != units.Percent {
+		t.Fatalf("панель 32: unit серии C = %v, ожидался %q", got, units.Percent)
+	}
+	if got := overridePropByRefID(panel, "C", "custom.axisPlacement"); got != "right" {
+		t.Fatalf("панель 32: ось серии C = %v, ожидалась правая", got)
+	}
+	description := optionalString(panel.Description)
+	for _, want := range []string{"ПРОКСИ", "не публикует"} {
+		if !strings.Contains(description, want) {
+			t.Fatalf("Description панели 32 не содержит %q: %s", want, description)
+		}
+	}
+}
+
+// TestKeyRateAutonomousFactorsPanel: панель 33 читает АЦН-индикаторы: кредитные гэпы (п.п.) и
+// темпы роста кредита (%). Край ряда 2024-07/2024-10 — свойство публикации; после него NULL,
+// а не ноль, и это сказано в Description. Темпы — на правой оси, у них другая единица.
+func TestKeyRateAutonomousFactorsPanel(t *testing.T) {
+	panel := panelByID(t, builtKeyRatePublications(t), 33)
+	for refID, series := range map[string]string{
+		"A": "credit_gap_broad",
+		"B": "credit_gap_hh",
+		"C": "hh_yoy",
+		"D": "nfo_rub_yoy",
+	} {
+		query := targetByRefID(t, panel, refID)
+		for _, want := range []string{"FROM v_cbr_ccyb_indicators", "series = '" + series + "'", "$__timeFilter(date)", "ORDER BY date"} {
+			if !strings.Contains(query.RawSql, want) {
+				t.Fatalf("панель 33: запрос %q не содержит %q: %s", refID, want, query.RawSql)
+			}
+		}
+	}
+	for _, refID := range []string{"C", "D"} {
+		if got := overridePropByRefID(panel, refID, "unit"); got != units.Percent {
+			t.Fatalf("панель 33: unit серии %s = %v, ожидался %q", refID, got, units.Percent)
+		}
+		if got := overridePropByRefID(panel, refID, "custom.axisPlacement"); got != "right" {
+			t.Fatalf("панель 33: ось серии %s = %v, ожидалась правая", refID, got)
+		}
+	}
+	description := optionalString(panel.Description)
+	for _, want := range []string{"2024-10", "NULL", "НЕ ноль"} {
+		if !strings.Contains(description, want) {
+			t.Fatalf("Description панели 33 не содержит %q: %s", want, description)
+		}
+	}
+}
+
+// TestKeyRateWeeklyAvg4Panel: панель 36 — полный ряд недельных цен с 2022-01-10 и две 4-недельные
+// средние. Полный ряд не режется по годам (иначе истории с 2022 не будет), окно — ровно четыре
+// недели, а неполное окно отбрасывается (n = 4): первые три точки иначе считались бы по 1–3 неделям.
+func TestKeyRateWeeklyAvg4Panel(t *testing.T) {
+	panel := panelByID(t, builtKeyRatePublications(t), 36)
+	if got := panelTitle(panel); got != "Недельные цены: 4-недельная средняя, годовое выражение" {
+		t.Fatalf("панель 36: заголовок %q", got)
+	}
+	if len(panel.Targets) != 3 {
+		t.Fatalf("панель 36: %d запросов, ожидалось 3 (полный ряд и две 4-нед. средние)", len(panel.Targets))
+	}
+	full := targetByRefID(t, panel, "A")
+	for _, want := range []string{
+		"pow(avg(value) / 100, 52) - 1",
+		"date >= '2022-01-10'",
+		"JOIN v_series_catalog",
+		"frequency = 'W'",
+		"$__timeFilter(date)",
+	} {
+		if !strings.Contains(full.RawSql, want) {
+			t.Fatalf("панель 36: запрос A не содержит %q: %s", want, full.RawSql)
+		}
+	}
+	if strings.Contains(full.RawSql, "toYear(") {
+		t.Fatalf("панель 36: запрос A режет ряд по годам — истории с 2022 не будет: %s", full.RawSql)
+	}
+	for refID, alias := range map[string]string{
+		"B": "4-нед. средняя (товары)",
+		"C": "4-нед. средняя (недельный ИПЦ)",
+	} {
+		query := targetByRefID(t, panel, refID)
+		for _, want := range []string{
+			"ROWS BETWEEN 3 PRECEDING AND CURRENT ROW",
+			"count()",
+			"WHERE n = 4",
+			"avg(ln(idx / 100))",
+			"exp(",
+			"pow(",
+			alias,
+		} {
+			if !strings.Contains(query.RawSql, want) {
+				t.Fatalf("панель 36: запрос %s не содержит %q: %s", refID, want, query.RawSql)
+			}
+		}
+	}
+	aggregate := targetByRefID(t, panel, "C")
+	for _, want := range []string{
+		"series = 'Индекс потребительских цен (недельная оценка)'",
+		"JOIN v_series_catalog",
+		"frequency = 'W'",
+	} {
+		if !strings.Contains(aggregate.RawSql, want) {
+			t.Fatalf("панель 36: запрос C не содержит %q: %s", want, aggregate.RawSql)
+		}
+	}
+	if unit := panel.FieldConfig.Defaults.Unit; unit == nil || *unit != units.PercentUnit {
+		t.Fatalf("панель 36: unit %v, ожидался %q", unit, units.PercentUnit)
+	}
+	if !hasThresholdStep(panel, 0.04) {
+		t.Fatalf("панель 36: порог 4 %% не задан (как у панели 2)")
+	}
+	description := optionalString(panel.Description)
+	for _, want := range []string{"не SAAR", "2022-01-10", "отстаёт", "4-нед. средняя"} {
+		if !strings.Contains(description, want) {
+			t.Fatalf("Description панели 36 не содержит %q: %s", want, description)
+		}
+	}
+}
+
+// TestKeyRatePPIPanel: панель 37 — ИЦП в годовом выражении. У м/м и г/г РАЗНЫЕ формулы: индекс к
+// прошлому месяцу возводится в степень 12, а индекс к прошлому году уже темп, и степень к нему
+// не применяется. Ряды ppi_sa — проценты, их SQL не преобразует. Порога 4 % у панели нет.
+func TestKeyRatePPIPanel(t *testing.T) {
+	panel := panelByID(t, builtKeyRatePublications(t), 37)
+	if got := panelTitle(panel); got != "ИЦП: годовое выражение" {
+		t.Fatalf("панель 37: заголовок %q", got)
+	}
+	if len(panel.Targets) != 4 {
+		t.Fatalf("панель 37: %d запросов, ожидалось 4 (м/м, г/г и два SAAR)", len(panel.Targets))
+	}
+	monthly := targetByRefID(t, panel, "A")
+	for _, want := range []string{
+		"FROM v_rosstat_ppi",
+		"pow(value / 100, 12) - 1",
+		"series = 'ИЦП по ВЭД, РФ, m/m'",
+		"$__timeFilter(date)",
+	} {
+		if !strings.Contains(monthly.RawSql, want) {
+			t.Fatalf("панель 37: запрос A не содержит %q: %s", want, monthly.RawSql)
+		}
+	}
+	annual := targetByRefID(t, panel, "B")
+	for _, want := range []string{"value / 100 - 1", "series = 'ИЦП по ВЭД, РФ, y/y'"} {
+		if !strings.Contains(annual.RawSql, want) {
+			t.Fatalf("панель 37: запрос B не содержит %q: %s", want, annual.RawSql)
+		}
+	}
+	for refID, series := range map[string]string{
+		"C": "ppi_sa:total:saar3",
+		"D": "ppi_sa:core:saar3",
+	} {
+		query := targetByRefID(t, panel, refID)
+		if !strings.Contains(query.RawSql, "series = '"+series+"'") {
+			t.Fatalf("панель 37: запрос %s не читает %q: %s", refID, series, query.RawSql)
+		}
+		if strings.Contains(query.RawSql, "pow(") {
+			t.Fatalf("панель 37: запрос %s возводит готовый SAAR в степень: %s", refID, query.RawSql)
+		}
+	}
+	if unit := panel.FieldConfig.Defaults.Unit; unit == nil || *unit != units.PercentUnit {
+		t.Fatalf("панель 37: unit %v, ожидался %q", unit, units.PercentUnit)
+	}
+	if panel.FieldConfig.Defaults.Thresholds != nil {
+		t.Fatalf("панель 37: порог 4 %% — цель по ИПЦ, у ИЦП его быть не должно: %+v",
+			panel.FieldConfig.Defaults.Thresholds)
+	}
+	description := optionalString(panel.Description)
+	for _, want := range []string{"не применяется", "X-13", "не распространяется"} {
+		if !strings.Contains(description, want) {
+			t.Fatalf("Description панели 37 не содержит %q: %s", want, description)
+		}
+	}
+}
+
+// TestKeyRateFAOPanel: панель 38 — шесть индексов ФАО по МЕСЯЦУ НАБЛЮДЕНИЯ. date витрины — дата
+// публикации, и на графике она сдвинула бы весь ряд на месяц; поэтому проверяется period_date и
+// отсутствие `SELECT date AS time`.
+func TestKeyRateFAOPanel(t *testing.T) {
+	panel := panelByID(t, builtKeyRatePublications(t), 38)
+	if got := panelTitle(panel); got != "ФАО: индексы продовольственных цен" {
+		t.Fatalf("панель 38: заголовок %q", got)
+	}
+	if len(panel.Targets) != 6 {
+		t.Fatalf("панель 38: %d запросов, ожидалось 6 (сводный и пять подиндексов)", len(panel.Targets))
+	}
+	seriesByRef := map[string]string{
+		"A": "Food Price Index",
+		"B": "Cereals",
+		"C": "Dairy",
+		"D": "Meat",
+		"E": "Oils",
+		"F": "Sugar",
+	}
+	seenAliases := make(map[string]bool, len(panel.Targets))
+	for refID, series := range seriesByRef {
+		query := targetByRefID(t, panel, refID)
+		for _, want := range []string{
+			"FROM v_fao_food_price",
+			"period_date AS time",
+			"series = '" + series + "'",
+			"$__timeFilter(period_date)",
+			"ORDER BY period_date",
+		} {
+			if !strings.Contains(query.RawSql, want) {
+				t.Fatalf("панель 38: запрос %s не содержит %q: %s", refID, want, query.RawSql)
+			}
+		}
+		if strings.Contains(query.RawSql, "SELECT date AS time") {
+			t.Fatalf("панель 38: запрос %s читает дату публикации вместо месяца наблюдения: %s", refID, query.RawSql)
+		}
+		alias := query.RawSql[strings.LastIndex(query.RawSql, "AS ")+3:]
+		alias = strings.SplitN(alias, "\n", 2)[0]
+		if seenAliases[alias] {
+			t.Fatalf("панель 38: алиас %q повторяется — серии неразличимы в легенде", alias)
+		}
+		seenAliases[alias] = true
+	}
+	if unit := panel.FieldConfig.Defaults.Unit; unit == nil || *unit != units.Short {
+		t.Fatalf("панель 38: unit %v, ожидался %q (пункты индекса)", unit, units.Short)
+	}
+	description := optionalString(panel.Description)
+	for _, want := range []string{"period_date", "2014-2016", "номинальн"} {
+		if !strings.Contains(description, want) {
+			t.Fatalf("Description панели 38 не содержит %q: %s", want, description)
+		}
+	}
+}
+
+// TestKeyRateFedstatPricesPanel: панель 39 — уровни цен в рублях. Фильтр региона обязателен:
+// 2026 год в источнике — другое определение РФ, и без него линия получила бы разрыв 2023–2025
+// и смену территории. Шесть позиций — шесть разных рядов и шесть разных алиасов.
+func TestKeyRateFedstatPricesPanel(t *testing.T) {
+	panel := panelByID(t, builtKeyRatePublications(t), 39)
+	if got := panelTitle(panel); got != "Средние потребительские цены (ФЕДСТАТ), ₽" {
+		t.Fatalf("панель 39: заголовок %q", got)
+	}
+	if len(panel.Targets) != 6 {
+		t.Fatalf("панель 39: %d запросов, ожидалось 6 позиций", len(panel.Targets))
+	}
+	seenSeries := make(map[string]bool, len(panel.Targets))
+	for _, target := range panel.Targets {
+		query, ok := chQuery(target)
+		if !ok {
+			t.Fatalf("панель 39: запрос %q не является запросом ClickHouse", query.RefId)
+		}
+		for _, want := range []string{
+			"FROM v_fedstat_weekly_prices",
+			"region = 'Российская Федерация'",
+			"$__timeFilter(date)",
+			"ORDER BY date",
+		} {
+			if !strings.Contains(query.RawSql, want) {
+				t.Fatalf("панель 39: запрос %s не содержит %q: %s", query.RefId, want, query.RawSql)
+			}
+		}
+		series := query.RawSql[strings.Index(query.RawSql, "series = '")+len("series = '"):]
+		series = strings.SplitN(series, "'", 2)[0]
+		if seenSeries[series] {
+			t.Fatalf("панель 39: ряд %q повторяется", series)
+		}
+		seenSeries[series] = true
+	}
+	if unit := panel.FieldConfig.Defaults.Unit; unit == nil || *unit != units.Rubles {
+		t.Fatalf("панель 39: unit %v, ожидался %q", unit, units.Rubles)
+	}
+	description := optionalString(panel.Description)
+	for _, want := range []string{"2022-12-26", "2023–2025", "не индекс", "другом определении"} {
+		if !strings.Contains(description, want) {
+			t.Fatalf("Description панели 39 не содержит %q: %s", want, description)
+		}
+	}
+}
+
+// TestKeyRatePricesPanelsTimeFrom: у панелей цен своё окно, потому что общий диапазон дашборда
+// (now-3y) срезал бы 2022 год у панели 36 и сделал бы панель 39 пустой (ряд кончается 2022-12-26).
+// Общий диапазон при этом не меняется — иначе сдвинулись бы все существующие панели.
+func TestKeyRatePricesPanelsTimeFrom(t *testing.T) {
+	board := builtKeyRatePublications(t)
+	for id, want := range map[uint32]string{36: "5y", 37: "10y", 38: "10y", 39: "20y"} {
+		panel := panelByID(t, board, id)
+		if panel.TimeFrom == nil || *panel.TimeFrom != want {
+			t.Fatalf("панель %d: TimeFrom %v, ожидался %q", id, panel.TimeFrom, want)
+		}
+	}
+	if board.Time == nil || board.Time.From != "now-3y" {
+		t.Fatalf("общий диапазон дашборда %+v, ожидался now-3y", board.Time)
 	}
 }

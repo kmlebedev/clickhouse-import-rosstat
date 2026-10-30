@@ -150,7 +150,7 @@ var newsViewStatements = []string{
 			if(d.model = '', NULL, d.summary) AS summary,
 			d.model AS model,
 			d.prompt_version AS prompt_version,
-			groupArrayIf(tuple(t.dimension, t.tag, t.direction), t.tag != '') AS tags
+			groupArrayIf(tuple(t.dimension, %s, t.direction), t.tag != '') AS tags
 		FROM (SELECT * FROM news_events FINAL) AS e
 		LEFT JOIN (
 			SELECT url, content_hash, sentiment, relevance, summary, model, prompt_version
@@ -170,7 +170,7 @@ var newsViewStatements = []string{
 			multiIf(e.url LIKE 'https://t.me/%%', 'telegram', 'rss'),
 			e.title, e.url, e.description, e.content_hash,
 			d.sentiment, d.relevance, d.summary, d.model, d.prompt_version
-		ORDER BY date DESC`, newsFilter, newsFilter),
+		ORDER BY date DESC`, newsTagCanonicalSQL("t.tag"), newsFilter, newsFilter),
 	`ALTER TABLE v_news_events MODIFY COMMENT 'Событийная лента РФ-канала: RSS «Интерфакс», РБК, ЦБ РФ ×2, TASS, общий smart-lab и два блога, а также Telegram-каналы — молния «Интерфакса» (interfaxonline, ifax_go), корпоративные раскрытия «Интерфакс-ЦРКИ» (edisclosure), новостная лента Смартлаба (newssmartlab) и рыночные каналы markettwits, russianmacro, MarketOverview, mozgovikresearch (импортёр news_watch, каждые 30 минут). transport различает RSS и публичное Telegram-превью; показаны только события по стемам тезисов (широкий фильтр — в определении витрины); полная лента лежит в сырой news_events и агенту не выдаётся. История копится с первого прогона (окна лент 20–100 позиций). sentiment/relevance/summary/tags — LLM-разметка видимых позиций (news_annotation, method=''llm''); NULL/пусто — позиция не размечена, а не «нейтрально»; content_hash — ключ разметки, '''' — строка до миграции и не аннотируема. Тональность Telegram также в v_news_flash.sentiment'`,
 	`ALTER TABLE v_news_events COMMENT COLUMN date 'Момент публикации в ленте (pubDate источника со своим офсетом времени; у Telegram — time сообщения)'`,
 	`ALTER TABLE v_news_events COMMENT COLUMN date_msk 'День публикации по МСК (toDate(date, ''Europe/Moscow'')) — для группировок по дням'`,
@@ -187,7 +187,7 @@ var newsViewStatements = []string{
 	`ALTER TABLE v_news_events COMMENT COLUMN summary 'Краткое резюме (одно предложение) из LLM-разметки; NULL — позиция ещё не размечена'`,
 	`ALTER TABLE v_news_events COMMENT COLUMN model 'LLM-модель последней doc-строки разметки; '''' — разметки нет'`,
 	`ALTER TABLE v_news_events COMMENT COLUMN prompt_version 'Редакция промпта последней doc-строки разметки (newsPromptVersion); 0 — разметки нет'`,
-	`ALTER TABLE v_news_events COMMENT COLUMN tags 'Теги LLM последней doc-строки: Array(Tuple(dimension, tag, direction)); dimension — person|country|sector|event|theme|cb_channel, tag — слаг реестра (расшифровка — v_news_tags), direction — влияние на инфляцию (proinflationary|disinflationary|neutral|mixed); [] — тегов нет или позиция не размечена'`,
+	`ALTER TABLE v_news_events COMMENT COLUMN tags 'Теги LLM последней doc-строки: Array(Tuple(dimension, tag, direction)); dimension — person|country|sector|event|theme|cb_channel, tag — слаг реестра (расшифровка — v_news_tags; у cb_channel всегда канонический слаг KEY_RATE_CHANNELS.md §3.1, legacy-слаги редакций ≤2 нормализуются на чтении), direction — влияние на инфляцию (proinflationary|disinflationary|neutral|mixed); [] — тегов нет или позиция не размечена'`,
 
 	// v_news_flash: VIEW + комментарий таблицы + 17 комментариев колонок.
 	// Последняя версия — argMax(field, version) в подзапросе по (channel, message_id); tombstone
@@ -211,7 +211,7 @@ var newsViewStatements = []string{
 			d.summary AS summary,
 			d.model AS model,
 			d.prompt_version AS prompt_version,
-			groupArrayIf(tuple(t.dimension, t.tag, t.direction), t.tag != '') AS tags
+			groupArrayIf(tuple(t.dimension, ` + newsTagCanonicalSQL("t.tag") + `, t.direction), t.tag != '') AS tags
 		FROM (
 			SELECT channel, message_id, max(version) AS last_version,
 				argMax(date, version) AS date,
@@ -258,7 +258,7 @@ var newsViewStatements = []string{
 	`ALTER TABLE v_news_flash COMMENT COLUMN summary 'Краткое резюме (1 предложение) от LLM; пусто — doc-строки разметки нет'`,
 	`ALTER TABLE v_news_flash COMMENT COLUMN model 'LLM-модель, поставившая разметку; пусто — разметки нет'`,
 	`ALTER TABLE v_news_flash COMMENT COLUMN prompt_version 'Версия промпта разметки (newsPromptVersion); 0 — разметки нет'`,
-	`ALTER TABLE v_news_flash COMMENT COLUMN tags 'Теги LLM: Array(Tuple(dimension, tag, direction)); dimension — person|country|sector|event|theme|cb_channel, tag — слаг реестра (расшифровка — v_news_tags), direction — влияние на инфляцию (proinflationary|disinflationary|neutral|mixed); [] — тегов нет'`,
+	`ALTER TABLE v_news_flash COMMENT COLUMN tags 'Теги LLM: Array(Tuple(dimension, tag, direction)); dimension — person|country|sector|event|theme|cb_channel, tag — слаг реестра (расшифровка — v_news_tags; у cb_channel всегда канонический слаг KEY_RATE_CHANNELS.md §3.1, legacy-слаги редакций ≤2 нормализуются на чтении), direction — влияние на инфляцию (proinflationary|disinflationary|neutral|mixed); [] — тегов нет'`,
 
 	// v_news_message_versions: VIEW + комментарий таблицы + 12 комментариев колонок.
 	`CREATE OR REPLACE VIEW v_news_message_versions DEFINER = default SQL SECURITY DEFINER AS

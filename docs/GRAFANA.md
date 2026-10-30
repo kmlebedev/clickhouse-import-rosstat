@@ -26,9 +26,10 @@ grafana/ (Go, grafana-foundation-sdk) --make grafana-build--> dashboard/<uid>.js
 
 ### Дашборд как код
 
-- Источник истины — `grafana/` (отдельный Go-модуль): дашборды `gold-thesis` (9 панелей id 1–9 в 5 рядах), `key-rate-publications` (19 панелей id 1–19 в 4 рядах, «Ключевая ставка — публикации») и `finance-polyus` (19 панелей id 1–19 в 4 рядах id 31–34, «Полюс (PLZL) — финансы и прогноз»); все запросы — только по витринам `v_*`, датасорс каждой панели — константа uid `ch-rosstat`. CLI — флаги `-dashboard <uid>|all` (дефолт `all`) и `-out-dir` (дефолт `../dashboard`): файл артефакта — `<out-dir>/<uid>.json`. Артефакты `dashboard/gold-thesis.json`, `dashboard/key-rate-publications.json` и `dashboard/finance-polyus.json` (k8s-ресурс `dashboard.grafana.app/v1beta1`, uid = `metadata.name`) руками не правятся: `make grafana-build` перезаписывает их детерминированно, а CI падает, если артефакт разошёлся с кодом.
+- Источник истины — `grafana/` (отдельный Go-модуль): дашборды `gold-thesis` (9 панелей id 1–9 в 5 рядах), `key-rate-publications` (33 панели id 1–19, 25–33 и 35–39 в 6 рядах, «Ключевая ставка — публикации»; линии графиков — smooth-интерполяция) и `finance-polyus` (19 панелей id 1–19 в 4 рядах id 31–34, «Полюс (PLZL) — финансы и прогноз»); все запросы — только по витринам `v_*`, датасорс каждой панели — константа uid `ch-rosstat`. CLI — флаги `-dashboard <uid>|all` (дефолт `all`) и `-out-dir` (дефолт `../dashboard`): файл артефакта — `<out-dir>/<uid>.json`. Артефакты `dashboard/gold-thesis.json`, `dashboard/key-rate-publications.json` и `dashboard/finance-polyus.json` (k8s-ресурс `dashboard.grafana.app/v1beta1`, uid = `metadata.name`) руками не правятся: `make grafana-build` перезаписывает их детерминированно, а CI падает, если артефакт разошёлся с кодом.
 - `make grafana-validate` — `go vet` + тесты модуля (состав панелей всех трёх дашбордов и негативные правила `Validate`). Серверный `gcx resources validate` намеренно не входит в цель: он проверяет ресурс на живом инстансе (server-side dry-run) и требует кредов — рабочая форма записана в комментарии цели.
 - Локальный стенд: `make grafana-up` (brew-Grafana; данные, логи и плагины в `$(GF_DIR)`, провижининг датасорса — `grafana/provisioning/datasources/clickhouse.yaml`, порт 3000) и `make grafana-down`. При первом входе в UI смените пароль `admin/admin`.
+- **`$__timeFilter` — по умолчанию.** Каждый timeseries-таргет несёт `$__timeFilter` по своей временной колонке (`date`, `period_date`, `meeting_date`): без него панель игнорирует выбор периода в правом верхнем углу. Если время на графике вычисляется (наложение прошлого года `date_add(YEAR, 1, date)`, 4-недельная средняя), фильтр ставится на вычисленное `time`, а не на сырой `date` — иначе ряд выходит за окно (у панели 2 прошлый год дал бы 0 точек вместо 42). Норма машинная: `TestKeyRateAllTimeseriesUseTimeFilter` и `TestKeyRateWeeklyYearOverlay` в `grafana/` валят `make grafana-validate`; табличные и stat-панели не проверяются — у них время не ось.
 
 ### Переменные окружения стендов
 
@@ -84,6 +85,19 @@ curl -u admin:<пароль> -X POST http://localhost:3001/api/admin/provisionin
 ```
 
 (либо один `systemctl restart grafana-server`). Цель Grafana не перезапускает и сама печатает эту команду; подробности — `deploy/staging/README.md`.
+
+### Алерты live-мониторинга ML (`infra/4.3`)
+
+`grafana/provisioning/alerting/ml-live.yaml` — два правила Grafana Alerting:
+
+| UID | Условие | Порог |
+|---|---|---|
+| `ml-live-degradation` | rolling MAE трёх последних разрешённых production-заседаний по `v_ml_live_accuracy` | > 100 б.п. |
+| `ml-live-freshness` | последний прошедший production-прогноз не разрешён (`is_resolved=1`) | > 3 дней |
+
+Оба — `severity=warning`, `contour=ml-live`, `for: 5m`; contact point не задаётся (алерт виден и уходит в Firing в UI, маршрутизация уведомлений — решение владельца). Оба запроса исключают `model='gate-selftest'`: синтетические строки приёмки не поднимают production-алерт. Локальный стенд читает каталог напрямую: `make grafana-up` передаёт `GF_PATHS_PROVISIONING=$(CURDIR)/grafana/provisioning`. Staging получает файл через `make grafana-provision-alerting-staging` (вызывается из `grafana-deploy-staging`); после копирования нужен admin-reload `POST /api/admin/provisioning/alert-rules/reload` или рестарт `grafana-server`. Smoke `make grafana-check` после дашбордов проверяет оба UID через `scripts/grafana_alert_check.py`. Офлайн-контракт YAML — `views/ml_live_alert_test.go` (входит в `make grafana-validate` и `make all`).
+
+Проверка firing на локальном стенде: временно понизить порог `ml-live-degradation` через API/UI, дождаться состояния Firing, вернуть 100; в протоколе PR фиксируются UID, порог и наблюдённое состояние. Прод-данные для этого не нужны.
 
 ### Проверки и приёмка (gold-thesis — 2026-10-12; key-rate-publications — 2026-10-16; finance-polyus — v1 2026-10-16; живой деплой + smoke трёх uid на локальном стенде — 2026-10-16)
 

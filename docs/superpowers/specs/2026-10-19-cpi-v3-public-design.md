@@ -147,7 +147,7 @@ CatBoost — дефолты `cpi_monthly`/Task 2, `random_seed=20261018`, `month
 
 ## 9. Артефакты и приёмка
 
-- `scripts/cpi_monthly_v3_public.py` + `scripts/cpi_monthly_v3_public_test.py`; цели `make cpi-monthly-v3-public` / `-test`.
+- `scripts/models/cpi/cpi_monthly_v3_public.py` + `scripts/models/cpi/cpi_monthly_v3_public_test.py`; цели `make cpi-monthly-v3-public` / `-test`.
 - Отчёт `docs/research/2026-10-19-cpi-v3-public.md` и JSON с числами, гейтами, run_id, sha256.
 - `ML_LOG=1`: паспорт run на каждое окно; primary — `weekly` h1; fold-предсказания с `window=h1/h2/h3/h6`.
 - `make cpi-monthly-v3-public-test`, `make all`, `make docs-check` — зелёные.

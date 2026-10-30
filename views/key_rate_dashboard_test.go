@@ -42,7 +42,7 @@ func TestKeyRateDashboardViewContract(t *testing.T) {
 	}
 
 	// Порядок таблиц — порядок гейта util.CreateView: витрина создаётся только
-	// когда на месте все 11 сырых источников; ни одной чужой витрины в списке нет.
+	// когда на месте все 12 сырых источников; ни одной чужой витрины в списке нет.
 	wantTables := []string{
 		"cbr_key_rate",
 		"cbr_indicators_cpd",
@@ -55,6 +55,7 @@ func TestKeyRateDashboardViewContract(t *testing.T) {
 		"keyrate_contract",
 		"events_calendar",
 		"forecast_log",
+		"weekly_cpi_sa",
 	}
 	if len(v.Tables) != len(wantTables) {
 		t.Fatalf("Tables = %v, want %v", v.Tables, wantTables)
@@ -74,6 +75,8 @@ func TestKeyRateDashboardViewContract(t *testing.T) {
 		"'forecast'",
 		"'calendar'",
 		"'base_ipc_saar'",
+		"'weekly_cpi_saar'",
+		"tuple(partial, as_of, date)",
 		"'keyrate_implied_change_bp'",
 		"'ofz_slope_10y_1y_bp'",
 		"as_1y",
@@ -91,6 +94,8 @@ func TestKeyRateDashboardViewContract(t *testing.T) {
 		"'next_meeting'",
 		"error_bp",
 		"LIKE 'cbr_rate:%'",
+		"metric NOT LIKE '%:shadow'",
+		"metric NOT LIKE '%:canary'",
 		"pow(1 +",
 		"FINAL",
 		"minOrNull",

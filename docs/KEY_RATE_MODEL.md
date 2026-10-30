@@ -85,6 +85,41 @@
 
 **Почему простое среднее, а не взвешенное.** По литературе о комбинировании прогнозов простое среднее редко проигрывает взвешенному (веса по историческим ошибкам нестабильны), и при 8 наблюдениях в год оценивать веса просто не на чем.
 
+### Калиброванное правило ЦБ (`cbr_rule`) — экспериментальный трек
+
+Отдельный трек по структуре правила ДДКП (issue #268, [отчёт](research/2026-10-20-cbr-rule.md)):
+`i_t = 0.75·i_{t−1} + 0.25·(r* + E3π_MP + 1.5·(E3π_MP − 4) + 0.5·gap)`,
+`E3π_MP = 0.75·E3(core) + 0.25·E3(headline)`, цель 4 %. `i_{t−1}` — фактическая
+ставка накануне заседания, то есть одношаговое инерционное правило, а не
+многоквартальная симуляция. E3 — 12-месячный y/y SA м/м (`cbr_indicators_cpd`),
+gap — односторонний HP-разрыв SA-ВВП (`rosstat_vvp_kvartal`, λ=1600) или ИБК,
+`r*` — 3 % (сетка 2–4 % как чувствительность). Walk-forward 108 заседаний,
+84/68 фолдов: `cbr_rule` RMSE **304.34** б.п. против 145.05 у `ordered_logit`,
+148.35 у B1 и 151.71 у B3; Brier 0.9056 против 0.6111 — **вердикт `reject`**
+(блочный бутстрап p=0.0460, DM-HLN p=0.1526). Причина — шоки 2015 и 2022:
+адаптивные ожидания требуют повышения, ЦБ снижает ставку. В ансамбль и
+`forecast_log` трек не входит; сценарии/вперёдсмотрящие ожидания — #269, #270, #272.
+
+### Сценарный веер с shock-aware слоем (Task 1 #272)
+
+Follow-up к `cbr_rule` ([отчёт](research/2026-10-20-cbr-scenario-fan.md)): веер по 5 reduced-form сценариям КПМ (`inertial`, `rational`, `hard`, `budget`, `no_market_loans`) плюс shock-слой — причинные веса `shock_classifier` (`w_t`) и вероятность явного шока (`p_t`, клип 0–0.25) с emergency-веткой из прошлых внеочередных шагов. Walk-forward 108 заседаний, 84/68 фолдов: `fan_shock` CRPS **150.05** против `fan_raw` 166.32 (−16.27, 95 % CI [−32.67; −3.02], p=0.012), но coverage 80 % — **0.429** [0.328; 0.535] и RMSE 303.87 против 145.05 у `ordered_logit`; `fan_shock_weighted` (`w_repeat`) — CRPS 102.97 / RMSE 204.49, coverage не растёт. Вердикт **`iterate`**: shock-слой улучшает распределение, но веер недорассеян, а ядро сценариев — отвергнутый `cbr_rule`; следующий шаг — сменить ядро и добавить модель дисперсии (спека §5 отчёта). В `forecast_log` не пишется; CPI-веер — Task 2 того же пункта.
+
+### Веер v2: ядро ordered logit/ML + модель дисперсии (Task 3 #272)
+
+Follow-up Task 1 ([отчёт](research/2026-10-20-cbr-scenario-fan-v2.md)): центр веера — `ordered_logit` (primary) или `ElasticNetCV` (challenger), сценарии КПМ — центрированные дельты `Σδ=0`, остатки ядра и дисперсия `disp_global`/`disp_scale`/`disp_conformal`. Ядро 84/68 фолдов, веер 72/56 (residual warm-up 12). Исходный primary `core_fan_scale` (run `32fd65f9…`): CRPS 60.76, coverage 0.736, RMSE 155.01. **Post-hoc revision** (owner): primary → `core_fan_conformal` (run `e0bb8e72…`): CRPS **60.60**, coverage 80 % **0.806** [0.700; 0.880], RMSE 156.10; против Task 1 −52.03 (95 % CI [−96.87; −18.73]), против `ordered_logit` −16.28 (p<0.0001). `core_fan_global` — 60.36/0.764; regime-вариант 2022–2023 coverage 0.800, но CRPS 170.65 / ширина 748.89 — **2022–2023 по CRPS не закрыт**; `disp_scale` не подтверждён (γ2<0). Вердикт `promote` для conformal; post-hoc, не независимое подтверждение. В `forecast_log` не пишется; CPI-веер — Task 2 (#285).
+
+### Веер v3: channel-complete ядро + volatility-дисперсия (Task 4 #289)
+
+Follow-up Task 3 ([отчёт](research/2026-10-20-cbr-scenario-fan-v3.md)): ядро `ElasticNetCV` на 41 channel-complete признаке (22 панели shock-classifier + savings/OFZ/Brent/BOP/ccyb/text/has_* + `gdp_gap`/`ibk_gap`), дисперсия `disp_vol` (primary), ablations `disp_conformal`/`disp_calibrated`. Прогон `ab539a10…` (`git_dirty=0`): `channel_fan_vol` — CRPS **48.22**, coverage 80 % **0.778** [0.669; 0.858], RMSE **129.96**, ширина 80 % 144.64; против `core_fan_conformal` ΔCRPS **−12.38** [−25.84; −0.63] (bootstrap p=0.034, DM p=0.109); против `ordered_logit` ΔCRPS −28.66, RMSE 129.96 vs 155.17. `channel_fan_conformal` — 49.10/0.875; `channel_fan_calibrated` — 48.25/0.847. 2022–2023: coverage 0.750 / CRPS 106.34 / ширина 203.55 — лучше primary Task 3 (0.650/136.49/269.19), но не закрыто. Каналы: 10 used, KEYRATE unavailable; ccyb до 2024-07/2024-10. Вердикт **`promote`** с оговоркой о хрупкости DM. В `forecast_log` не пишется; CPI-веер — Task 2 (#285).
+
+### CPI live3 h1/h3/h6 как прокси ожиданий (Task 4.1 #296)
+
+`scripts/models/cpi/cpi_live3_horizons.py` оборачивает модель live3 из `cb_comp_live_compare` (3 официальных компонента ИПЦ + v3-признаки + NNLS) в walk-forward с as-of по дате заседания: origin `O` — последний месяц с `cutoff_for(O) ≤ d`, target — накопленный m/m за `O+1 … O+h` (h=1/3/6), train — только `O' ≤ O−h−1`, чей целевой конец уже наблюдён. Для последнего месяца добавляется feature-only origin без таргета: это позволяет получить h1 следующего месяца, а не уже опубликованный. `scripts/models/key_rate/key_rate_cpi_v3_experiment.py` добавляет `cpi_v3_h1/h3/h6` + `cpi_v3_available` в `channel_fan_vol` (варианты baseline/+h1/+h1h3h6/replace_survey) и считает CRPS/coverage/RMSE, DM/CI и аблации; ranking live3/direct/B1/B3 — диагностика, не переключение primary. Прогон `b392c98c…` (2026-10-20; 108 решений, 72 фолда): baseline CRPS **48.215** / coverage80 0.778 / RMSE 129.96; `+h1` 47.842; **`+h1h3h6` 47.271**, ΔCRPS **−0.944** [−2.512; +0.322], coverage80 **0.792** [0.684; 0.869], RMSE **127.67**; `replace_survey` 44.888 [−8.688; +0.589]. Вердикт **`iterate`**: направление в пользу CPI-прокси, но CI включает 0; survey не заменяется. Live 2026-10-23: h1/h3/h6 = 0.842 / 3.024 / 5.660 п.п. Числа и оговорки — в [отчёте](research/2026-10-20-cpi-v3-expectations.md).
+
+### Трёхступенчатый конвейер CPI → SA/expectations → ставка (issue #309)
+
+`scripts/lib/publication_calendar.py` задаёт `published_at` и as-of по времени заседания; `scripts/models/cpi/cpi_pipeline_stage1.py` строит NSA-nowcast `M0`/`M0+1`, `cpi_pipeline_sa.py` — real-time SA, `cpi_pipeline_stage2.py` — SA-путь `M0…M0+5` и cumulative h1/h3/h6. **Gate 1** пройден только по допуску +5 %: RMSE 0,697780 против live3 0,754466, n=80, DM p=0,3062 (не значимо). **Gate 2 — FAIL**: h1 1,008515 против 0,920523 (ratio 1,0956, DM p=0,0391), h3 2,201192 против 2,027397, h6 2,964448 против 2,801349; n=52, строгий publication-фильтр сократил выборку до 54 фолдов. **Stage 3 не строился** — Gate 2 stop; вердикт `iterate`, без `forecast_log`/промоушена. Отчёт — [2026-10-21-cpi-key-rate-pipeline-results.md](research/2026-10-21-cpi-key-rate-pipeline-results.md).
+
 ### ML-трек: CatBoost на компонентах, а не на самом решении
 
 **Граница применимости — первое, что надо зафиксировать.** Градиентный бустинг **не** применяется к целевой переменной контура (решение по ставке): 8 заседаний в год и ~105 наблюдений с 2013 — это не выборка для бустинга, и ни одна из просмотренных работ так не делает. Он применяется к **компонентам** прогноза, где наблюдений на порядки больше. Главный пример — **nowcast месячного ИПЦ и его базовой части до официальной публикации Росстата**.

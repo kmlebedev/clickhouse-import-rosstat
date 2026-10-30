@@ -1,6 +1,6 @@
 # Модель v3 на публичных данных: отчёт прогона
 
-> `scripts/cpi_monthly_v3_public.py`; пункт `key-rate/phase-4-ml-components`, Task 4 (issue #237). Числа не редактируются руками.
+> `scripts/models/cpi/cpi_monthly_v3_public.py`; пункт `key-rate/phase-4-ml-components`, Task 4 (issue #237). Числа не редактируются руками.
 
 **Вердикт: `iterate`**
 - v3_ind_bottomup vs v2_bottomup: Δ -0.020475, p=0.5216

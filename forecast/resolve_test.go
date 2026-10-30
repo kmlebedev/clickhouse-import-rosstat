@@ -473,6 +473,44 @@ func TestResolveRateWritesErrorBp(t *testing.T) {
 	}
 }
 
+// TestResolveRateKeepsStageSuffix — staged-строка (infra/4.3) резолвится той же
+// веткой `metric LIKE 'cbr_rate%'`, а суффикс стадии и метаданные переносятся в
+// новую версию без потерь: иначе shadow/canary схлопнулись бы с production.
+func TestResolveRateKeepsStageSuffix(t *testing.T) {
+	target := date(2026, time.September, 11)
+	store := &fakeResolveStore{
+		rateRows: []forecastRow{
+			{
+				ForecastDate: date(2026, time.September, 1), TargetDate: target,
+				Metric: "cbr_rate:ordered_logit:shadow", Predicted: 13.00,
+				Probabilities: `{"cut":80,"hike":5,"hold":15}`,
+				Model:         "ordered_logit", DataVersion: "v-shadow", PromptVersion: 0,
+			},
+		},
+		rates: map[string]float64{"2026-09-11": 14.00},
+	}
+
+	count, err := resolveForecasts(context.Background(), store)
+	if err != nil {
+		t.Fatalf("resolveForecasts: %v", err)
+	}
+	if count != 1 || len(store.writes) != 1 || len(store.writes[0]) != 1 {
+		t.Fatalf("count = %d, writes = %+v, want one staged row", count, store.writes)
+	}
+	row := store.writes[0][0]
+	if row.Metric != "cbr_rate:ordered_logit:shadow" {
+		t.Fatalf("metric = %q, want cbr_rate:ordered_logit:shadow", row.Metric)
+	}
+	if row.ErrorBp == nil || math.Abs(*row.ErrorBp+100) > 1e-9 {
+		t.Fatalf("error_bp = %v, want -100", row.ErrorBp)
+	}
+	if row.Probabilities != `{"cut":80,"hike":5,"hold":15}` ||
+		row.Model != "ordered_logit" || row.DataVersion != "v-shadow" {
+		t.Fatalf("metadata = (%q, %q, %q), want staged metadata preserved",
+			row.Probabilities, row.Model, row.DataVersion)
+	}
+}
+
 // TestResolveRateMissingFact — точки после заседания ещё нет: строка остаётся
 // нерезолвленной, прогон не падает. Так выглядит заседание, решение которого
 // объявлено сегодня, а ставка вступает в силу завтра.

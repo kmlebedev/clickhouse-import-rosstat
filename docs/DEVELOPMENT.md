@@ -7,7 +7,7 @@
 | Команда | Что делает |
 |---|---|
 | `make lint` | `gofmt -l` (падает, если есть неотформатированный код) и `golangci-lint run ./...` |
-| `make test` | `go vet` и `go test -race ./...` (тесты есть у `bea`, `bls`, `bold`, `calendar`, `cbr`, `craw`, `dcf`, `eia`, `forecast`, `fred`, `gold`, `ingest`, `minfin`, `moex`, `news`, `polyus`, `rosstat`, `util`, `views`, `wgc`) |
+| `make test` | `go vet` и `go test -race ./...` (тесты есть у `bea`, `bls`, `bold`, `calendar`, `cbr`, `craw`, `dcf`, `eia`, `forecast`, `fred`, `gold`, `ingest`, `minfin`, `moex`, `news`, `polyus`, `ppi`, `rosstat`, `util`, `views`, `wgc`) |
 | `make build` | статический бинарник `linux/amd64` в `build/` |
 | `make run` | сборка и запуск (нужен `CLICKHOUSE_URL`) |
 | `make import STAT=<имя>` | локальный прогон одного импортёра по `Name()` (собирает `build/clickhouse-import-rosstat-native`). Для расчёта NAV: `DCF_RUN_ID=$(uuidgen \| tr A-Z a-z) make import STAT=dcf_engine` |
@@ -33,6 +33,9 @@
 | `make cpi-monthly-industry-test` | офлайн-тесты Stage 2 (unittest, без ClickHouse и сети): геометрия листов, as-of, NaN-политика, mapping, имена признаков, smoke CatBoost/ElasticNet/NNLS |
 | `make cpi-monthly-v3-public` | Task 4 #237: production-v3 на публичных данных — industry MP сразу из `v_cbr_survey` (#239; 48 SA-рядов `industry_<slug>_<indicator>_sa`, 14 256 точек), 4 компонента `rosstat_ipc_mes`, weekly-признаки Stage 1, direct/bottom-up, B1–B3; горизонты h1 (primary), h2/h3/h6 (secondary), walk-forward с purge `j+h−1 < i`, DM-HLN, блочный бутстрап, MDE, Holm; окна `weekly` 2022-01…2026-08 (start 24), `weekly` h1 embargo 1 и `long` 2013-10…2026-08 (start 48/24). **В ClickHouse данные НЕ пишет** — per-window артефакты `build/cpi-monthly-v3-public/<window>/{report.md,result.json}` (gitignored), итоговые `docs/research/2026-10-19-cpi-v3-public.{md,json}`, `ML_LOG=1` — паспорт и fold-предсказания в `ml_runs`/`ml_predictions` и MLflow. Официальный прогон XLSX не читает; `ARGS="--verify-only --verify-xlsx PATH"` — разовая сверка CH↔XLSX, `ARGS="--all"` — все предрегистрированные окна. Нужны ClickHouse env; зависимости — `catboost>=1.2`, `scikit-learn`, `pandas`, `openpyxl`, `statsmodels>=0.15`, `scipy` |
 | `make cpi-monthly-v3-public-test` | офлайн-тесты Task 4 (unittest, без ClickHouse, сети и XLSX): mapping 48 рядов, as-of, NaN-политика, compound-таргеты h2/h3/h6, purge `j+h−1 < i`, feature names, smoke CatBoost/NNLS, Holm, decision tree, гейты Stage 1/Task 2 |
+| `make ppi-sa-weights-panel` / `make ppi-sa-weights-panel-test` | одноразовый экспорт полной панели весов КИПЦ (52 кода/476 строк) из `Vesa-tov-KIPC_2012-2026.xlsx` / офлайн-тесты; `openpyxl` поднимает `uv` |
+| `make ppi-sa-parity` | паритет `ppi_sa` с 10 текстовыми якорями «Инфляции в России»: read-only `ppi_sa` через `scripts/lib/clickhouse.py`, `saar3` на target, MAE/max/bias/corr, JSON `docs/research/2026-10-21-ppi-sa-parity.json`; цель ±0,3 п.п. может быть не достигнута — отчёт публикует расхождение, веса не подгоняются. Live-прогон `ppi_sa` требует `Rscript` + `seasonal`: `Rscript -e 'install.packages("seasonal", lib="build/ppi-sa-research/r-lib", repos="https://cloud.r-project.org")'`, затем `R_LIBS_USER=$PWD/build/ppi-sa-research/r-lib make import STAT=ppi_sa` |
+| `make ppi-sa-parity-test` | офлайн-тесты паритетного скрипта (unittest, без ClickHouse и сети) |
 | `make key-rate-llm-forecast` | экспериментальный LLM-трек контура ставки (issue #189): as-of снимок витрин, промпт v1, три OpenAI-совместимых повтора, медиана и разброс; **в ClickHouse НЕ пишет** — артефакты локальные (`key_rate_llm_forecast.json`, `key_rate_llm_forecast_report.md`, в git не коммитятся). Нужны ClickHouse env и `LLM_BASE_URL`/`LLM_API_KEY`/`LLM_MODEL`; `uv` без внешних зависимостей (`--python 3.12`). `ARGS="--as-of YYYY-MM-DD"` — срез на дату; `ARGS="--log"` — дополнительно payload `key_rate_llm_forecast_log_payload.json` для ingest #127 (прямой записи в `forecast_log` нет) |
 | `make dev-check` | проверить наличие `go`, `gofmt`, `golangci-lint`, `uv`, `curl`, `clickhouse` |
 | `make docs-check` | проверить манифест docs-портала и прогнать офлайн-тесты генератора (`scripts/docs_build_test.py`) |
@@ -61,24 +64,28 @@
 | Роль | Скил | Границы |
 |---|---|---|
 | Go-инженер | [`go-engineer`](../.kimi-code/skills/go-engineer/SKILL.md) | Go-код, DDL, витрины, гранты, ingest, Makefile/CI |
-| Python-инженер | [`python-engineer`](../.kimi-code/skills/python-engineer/SKILL.md) | `scripts/*.py` вне ML; запись — только через ingest |
+| Python-инженер | [`python-engineer`](../.kimi-code/skills/python-engineer/SKILL.md) | немодельные инструменты `scripts/`; общий код `scripts/lib/`; запись — только через ingest |
 | ML-инженер | [`ml-engineer`](../.kimi-code/skills/ml-engineer/SKILL.md) | ML-эксперименты, MLflow, `forecast_log` |
 | Research-инженер | [`research-engineer`](../.kimi-code/skills/research-engineer/SKILL.md) | разведка источника, аудит, research-документ |
 
 Общий роутер — [AGENTS.md](../AGENTS.md); диспатч — [`subagent-dispatch`](../.kimi-code/skills/subagent-dispatch/SKILL.md).
 
-Тесты Python-скриптов пока идут вручную (в CI только Go-проверки; долг — `infra/5.2`, issue #212). Наборы модели ключевой ставки, классификатора шоков и ML-треков (nowcast ИПЦ v1 и v2) — офлайн: транспорт ClickHouse и HTTP-вызов провайдера мокаются, поэтому живая БД и env-переменные не нужны; набор v2 (`scripts/cpi_monthly_test.py`) — **176 тестов**; `--python 3.12` — тот же пин, что в целях `make key-rate-model`, `make shock-classifier`, `make cpi-nowcast`, `make cpi-monthly` и `make key-rate-llm-forecast`. Офлайн-наборы MLflow (`infra/4.2`) — stdlib-only: fake `mlflow` подменяется через `sys.modules`, сеть не используется. Офлайн-набор добычи недельных ИПЦ до 2022 (`scripts/harvest_test.py`) сети не касается вовсе и идёт системным python3:
+Модельные скрипты лежат в `scripts/models/<family>/` (`cpi`, `cb_comp`, `key_rate`, `polyus`), общий код — в `scripts/lib/`; команды ниже уже используют эти пути.
+
+Тесты Python-скриптов пока идут вручную (в CI только Go-проверки; долг — `infra/5.2`, issue #212). Наборы модели ключевой ставки, классификатора шоков и ML-треков (nowcast ИПЦ v1 и v2) — офлайн: транспорт ClickHouse и HTTP-вызов провайдера мокаются, поэтому живая БД и env-переменные не нужны; набор v2 (`scripts/models/cpi/cpi_monthly_test.py`) — **176 тестов**; `--python 3.12` — тот же пин, что в целях `make key-rate-model`, `make shock-classifier`, `make cpi-nowcast`, `make cpi-monthly` и `make key-rate-llm-forecast`. Офлайн-наборы MLflow (`infra/4.2`) — stdlib-only: fake `mlflow` подменяется через `sys.modules`, сеть не используется. Офлайн-набор добычи недельных ИПЦ до 2022 (`scripts/harvest_test.py`) сети не касается вовсе и идёт системным python3:
 
 ```bash
-uv run --with "statsmodels>=0.15" --with pandas --with scikit-learn --with scipy --python 3.12 python3 scripts/key_rate_model_test.py
-uv run --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/shock_classifier_test.py -v
-uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/cpi_nowcast_test.py
-uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/cpi_monthly_test.py
-python3 scripts/key_rate_llm_forecast_test.py
-python3 scripts/ml_experiment_test.py -v
+uv run --with "statsmodels>=0.15" --with pandas --with scikit-learn --with scipy --python 3.12 python3 scripts/models/key_rate/key_rate_model_test.py
+uv run --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/key_rate/shock_classifier_test.py -v
+uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/cpi/cpi_nowcast_test.py
+uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/cpi/cpi_monthly_test.py
+python3 scripts/models/key_rate/key_rate_llm_forecast_test.py
+python3 scripts/lib/ml_experiment_test.py -v
 python3 scripts/mlflow_export_test.py -v
 python3 scripts/mlflow_registry_test.py -v
 python3 scripts/harvest_test.py
+uv run --with openpyxl --python 3.12 python3 scripts/ppi_sa_weights_panel_test.py -v
+python3 scripts/ppi_sa_parity_test.py -v
 ```
 
 ## Зависимости для разработки
@@ -88,6 +95,7 @@ python3 scripts/harvest_test.py
 - `uv` (`brew install uv`): запускает `mcp-clickhouse` без установки в систему, Python `3.12` подтягивается `uv`;
 - ClickHouse локально: бинарник из `PATH` или `~/.clickhouse/versions/*/clickhouse` (или `CH_BIN=...`);
 - `curl` — для проверки статуса сервера;
+- R (`Rscript`) и пакет `seasonal` (X-13) — только для live-прогона `make import STAT=ppi_sa`; в CI и `make all` не нужны (Go-тесты офлайн): `Rscript -e 'install.packages("seasonal", lib="build/ppi-sa-research/r-lib", repos="https://cloud.r-project.org")'`;
 - GoLand 2025.2+ (опционально) — MCP-сервер IDE для Kimi Code, см. «MCP GoLand (опционально)» ниже.
 
 Порядок проверки окружения и работы:

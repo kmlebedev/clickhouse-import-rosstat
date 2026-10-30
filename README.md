@@ -19,6 +19,7 @@ Docs-портал: **https://kmlebedev.github.io/clickhouse-import-rosstat/** �
 | [docs/LIMITATIONS.md](docs/LIMITATIONS.md) | ограничения и известные проблемы |
 | [docs/GRAFANA.md](docs/GRAFANA.md) | дашборды как код, стенды и приёмка |
 | [docs/GOLD_CONTOUR.md](docs/GOLD_CONTOUR.md) | контур прогноза золота, ingest-endpoint, плагин |
+| [docs/publications/README.md](docs/publications/README.md) | публикационный прогон по ключевой ставке: импорт источников, модели ИПЦ и ставки, журнал, витрина, графики |
 | [docs/IMPORTER_PACKAGE_STANDARD.md](docs/IMPORTER_PACKAGE_STANDARD.md) | нормативный стандарт пакета импортёров |
 | [docs/ROADMAP_INDEX.md](docs/ROADMAP_INDEX.md) | реестр роадмапов, слаги и GitHub-трекер |
 | [AGENTS.md](AGENTS.md) | правила работы AI-ассистентов |
@@ -48,20 +49,25 @@ SELECT venue, count(), max(date) FROM gold_prices FINAL GROUP BY venue;
 
 | Домен | Что импортирует | Основные таблицы | Расписание (МСК) |
 |---|---|---|---|
-| [`cbr`](docs/IMPORTERS.md) | ЦБ РФ: ставка, курс, M2, золото, кредиты, ставки, ИПЦ, RUONIA, мониторинг предприятий (16 отраслевых листов), макроопрос, резюме ДКП, платёжный баланс, ДИП, среднесрочный прогноз, форма 101, кривая бескупонной доходности (КБД), макропруденциальные требования (АЦН-индикаторы, надбавки к коэффициентам риска, МПЛ) | `cbr_*`, `macro_series`, `cbr_mp_summary*`, `cbr_bop_*`, `cbr_dip_bulletin`, `cbr_mt_forecast`, `cbr_form101`, `cbr_zcyc`, `cbr_ccyb_indicators`, `cbr_risk_weight_addons`, `cbr_mpl`; слой ДИП — витрины `v_point_in_time`, `v_point_in_time_asof` (срез `as_of='YYYY-MM-DD'`), `v_point_in_time_version`; КБД — витрины `v_ofz_curve_compare`, `v_ofz_signal`; макропруденциальные требования — витрины `v_cbr_ccyb_indicators`, `v_cbr_risk_weight_addons`, `v_cbr_mpl` | ежедневно 09:17 |
-| [`rosstat`](docs/IMPORTERS.md) | ИПЦ (месяц, неделя, до 2022), зарплаты, ВВП, рынок труда | `rosstat_*` | четверг 12:17 |
+| [`cbr`](docs/IMPORTERS.md) | ЦБ РФ: ставка, курс, M2, золото, кредиты, ставки, ИПЦ, RUONIA, мониторинг предприятий (16 отраслевых листов), макроопрос, резюме ДКП, пресс-релизы и стенограммы пресс-конференций по ключевой ставке, платёжный баланс, ДИП, среднесрочный прогноз, форма 101, кривая бескупонной доходности (КБД), макропруденциальные требования (АЦН-индикаторы, надбавки к коэффициентам риска, МПЛ), публичный кроссворд 87 BSU-кодов на отраслевые листы, график публикаций ЦБ и исторические `published_at` | `cbr_*`, `macro_series`, `cbr_mp_summary*`, `cbr_key_rate_press*`, `cbr_key_rate_pressconf*`, `cbr_bop_*`, `cbr_dip_bulletin`, `cbr_mt_forecast`, `cbr_form101`, `cbr_zcyc`, `cbr_ccyb_indicators`, `cbr_risk_weight_addons`, `cbr_mpl`, `cbr_mp_bsu_map`, `cbr_publication_calendar`, generic `series_publication`; слой ДИП — витрины `v_point_in_time`, `v_point_in_time_asof` (срез `as_of='YYYY-MM-DD'`), `v_point_in_time_version`; КБД — витрины `v_ofz_curve_compare`, `v_ofz_signal`; макропруденциальные требования — витрины `v_cbr_ccyb_indicators`, `v_cbr_risk_weight_addons`, `v_cbr_mpl`; Task 7 #248 — витрины `v_cbr_mp_bsu_map`, `v_cbr_mp_public_panel`; календарь — `v_cbr_publication_calendar`, `v_series_publication` | ежедневно 09:17 |
+| [`rosstat`](docs/IMPORTERS.md) | ИПЦ (месяц, неделя, до 2022), недельный агрегат ИПЦ 2019+ из BI, зарплаты, ВВП, рынок труда, ИЦП по ВЭД (совокупный ряд, 1998+, m/m / ytd / y/y / period), ИЦП по товарам/ОКПД2 (1 327 кодов, 2021–2026, 4 типа), веса ИЦП по ВЭД (38 кодов, 2017–2026, domestic и domestic+export), публичный классификатор ОКВЭД2 (3 102 строки, 87/87 BSU-кодов) | `rosstat_*`; Task 7 #248 — `rosstat_okved2` и витрина `v_rosstat_okved2`; `rosstat_bi_cpi_weekly` — 398 точек 2019-01-09…2026-10-12; T1 #276 — `rosstat_ppi_ved`; T2 #277 — `rosstat_ppi_product` (336 512 точек 2021-01…2026-08) и `rosstat_ppi_weights` (758 точек, 2017–2026); витрина `v_rosstat_ppi` (339 585 строк / 5 408 рядов)| четверг 12:17 |
+| [`ppi`](docs/IMPORTERS.md) | Производный слой ИЦП SA: X-13ARIMA-SEATS `seats_log_cal`, 5 рядов (`total`, `food`, `nonfood`, `all`, `core`), `sa`/`mm_sa`/`saar`/`saar3`; `spec_version`/`taxonomy_version` в каждой строке; требует `Rscript` + `seasonal` | `ppi_sa`; каталог `series_catalog` (`source='ppi_sa'`, 25 рядов); витрина `v_rosstat_ppi` (339 585 строк / 5 408 рядов)| четверг 14:17 |
+| [`weeklysa`](docs/IMPORTERS.md) | Производный недельный SA-агрегат ИПЦ: X-13ARIMA-SEATS `seats_log_cal` на 4-нед. индексе официального недельного агрегата (бюллетени 2009–2021 + BI 2019+), 3 метрики `sa_index`/`sa_4w`/`saar`; требует `Rscript` + `seasonal` | `weekly_cpi_sa` (209 полных + 1 nowcast 2009-05…2026-10); каталог `series_catalog` (`source='weekly_cpi_sa'`, 3 ряда); витрина `v_weekly_cpi_sa` (630 строк / 3 ряда) | четверг 14:17 |
+| [`fedstat`](docs/IMPORTERS.md) | ЕМИСС: еженедельные средние потребительские цены (37426, 158 товаров, 2008–2022 + 2026) и пять макро-блоков — ИПП (43046/57806), розница (31066/31260), сельхоз (34128/59001/31062/43337), инвестиции (58089/58090/34129/40562/34475), ИПЦ 31074 (1 105 товаров) | `fedstat_weekly_prices` (56 133 точки), `fedstat_ipp` (55 968), `fedstat_retail` (4 638), `fedstat_agri` (565), `fedstat_investment` (153), `fedstat_ipc` (204 038); витрины `v_fedstat_*` | пятница 13:43 |
 | [`minfin`](docs/IMPORTERS.md) | исполнение федерального и консолидированного бюджета (включая федеральный дефицит), нефтегазовые доходы и НДПИ; общий шаблон импортёра, значения Float64 | `minfin_fed_bud_*`, `minfin_oil_gas_mes` | 10-е 10:41 |
 | [`customs`](docs/IMPORTERS.md) | внешняя торговля по странам | `customs_vneshn_torg` | 15-е 11:41 |
 | [`fao`](docs/IMPORTERS.md) | индексы продовольственных цен (6 рядов, включая Sugar) | `fao_food_price_Indices_monthly`; витрина `v_fao_food_price` | 5-е 10:47 |
 | [`bank`](docs/IMPORTERS.md) | ДОМ.РФ, ВТБ, Сбер, СберИндекс, Т-Банк | `domrf_mortgage`, `rus_vtb_group_ifrs`, `sber_*`, `tbank_group_ifrs` | понедельник 09:23 |
+| [`domrf`](docs/IMPORTERS.md) | рынок жилья ДОМ.РФ: месячные выдачи и ДДУ, портфель, просрочка, ставки выдачи; недельная ставка предложения по продуктам; индекс цен первички и сделки по регионам | `domrf_mortgage_market`, `domrf_mortgage_weekly`, `domrf_price_index`; витрины `v_domrf_mortgage`, `v_domrf_price_index` | понедельник 09:47 |
 | [`craw`](docs/IMPORTERS.md) | реестр СБКТС Росстандарта | `gost_vehicle_safety_certificate` | ежечасно :17 |
 | [`edisclosure`](docs/IMPORTERS.md) | документы карточек [e-disclosure.ru](https://e-disclosure.ru/): отчётность IFRS/RAS, списки аффилированных лиц, решения собраний (PLZL, SBER, CHMF); коллектор полуавтоматический, импорт детерминированный | `edisclosure_documents`; витрина `v_edisclosure_documents` | 5-е число 21:17 (шаг `dagu/edisclosure.yaml`); сбор — вручную |
 | [`fred`](docs/IMPORTERS.md), [`bls`](docs/IMPORTERS.md), [`bea`](docs/IMPORTERS.md), [`eia`](docs/IMPORTERS.md) | US macro: ставки, CPI, PCE, NFP, запасы нефти | `macro_series` | ежедневно / среда |
 | [`wgc`](docs/IMPORTERS.md), [`bold`](docs/IMPORTERS.md) | золотые ETF и резервы ЦБ, цена дня | `macro_series`, `bold_fund_snapshot`, `gold_prices` | ежедневно |
 | [`news`](docs/IMPORTERS.md) | 16 лент RSS/Telegram | `news_events`, `news_message_version`, `news_annotation` | каждые 30 мин |
-| [`gold`](docs/IMPORTERS.md), [`moex`](docs/IMPORTERS.md) | цена золота, PLZL, ОФЗ, KEYRATE | `gold_prices`, `stock_prices`, `ofz_curve`, `keyrate_*` | ежедневно 18:47/19:13 |
+| [`gold`](docs/IMPORTERS.md), [`moex`](docs/IMPORTERS.md) | цена золота, PLZL, ОФЗ, KEYRATE, Brent-фронт-месяц | `gold_prices`, `stock_prices`, `ofz_curve`, `keyrate_*`, `moex_market` | ежедневно 18:47/19:13 |
+| [`transaq`](docs/IMPORTERS.md) | нетто-объёмы покупок и продаж по публичным сделкам MOEX из ленты внешнего `transaq-clickhouse-exporter` (вселенная — акции IMOEX и ОФЗ TQOB); минута и день | `transaq_net_flows`; витрины `v_transaq_net_flows`, `v_transaq_net_flows_daily` | каждые 15 мин 09:00–18:59 и 19:20 по будням |
 | [`calendar`](docs/IMPORTERS.md), [`forecast`](docs/IMPORTERS.md) | календарь событий, резолвер прогнозов | `events_calendar`, `forecast_log` | ежедневно |
-| [`views`](docs/IMPORTERS.md) | витрины контура, метрик компаний и сводный дашборд ключевой ставки (`key_rate_views`) | `v_*`, `v_key_rate_dashboard`, `company_financials` | понедельник / вручную |
+| [`views`](docs/IMPORTERS.md) | витрины контура, метрик компаний, сводный дашборд ключевой ставки и live-точность (`key_rate_views`) | `v_*`, `v_key_rate_dashboard`, `v_ml_live_accuracy`, `company_financials` | понедельник / вручную |
 | [`mlregistry`](docs/IMPORTERS.md) | реестр ML-экспериментов: DDL и витрины (schema-only, внешнего источника нет) | `ml_runs`, `ml_predictions`, `v_ml_*` | ежедневно 06:07 |
 | [`dcf`](docs/IMPORTERS.md), [`polyus`](docs/IMPORTERS.md), [`financial`](docs/IMPORTERS.md) | LOM-планы/NAV, отчётность Полюса, legacy | `mine_plans`, `price_decks`, `nav_by_asset`, `databook_polyus`, `company_financials` | понедельник |
 
@@ -75,13 +81,15 @@ SELECT venue, count(), max(date) FROM gold_prices FINAL GROUP BY venue;
 main.go              точка входа и фильтр импортёров
 chimport/            интерфейс ImportStat и реестр Stats
 util/                HTTP, шаблон импортёра, батч-вставка
-cbr/ rosstat/ ...    доменные импортёры
+cbr/ rosstat/ ppi/ weeklysa/ ofz/ ... доменные импортёры
 views/ dcf/          витрины, DCF/NAV
 ingest/ cmd/ingest/  ingest-endpoint контура прогноза
 dagu/                расписания DAG
 grafana/ dashboard/  дашборды как код и артефакты
 docs/                документация: спецификации, конфигурация, эксплуатация
-scripts/             проверки, модели, генератор docs-портала
+scripts/lib/         транспорт ClickHouse, eval_utils, ml_experiment
+scripts/models/      cpi/, cb_comp/, key_rate/, polyus/, ppi/ — все версии модели в своей папке
+scripts/             остальные инструменты: harvest, mcp_*, docs_build, mlflow_*, xlsx_*, grafana_*
 deploy/staging/      артефакты staging
 ```
 
@@ -133,9 +141,9 @@ make mlflow-down
 
 ## Контур прогноза золота
 
-Витрины `v_model_inputs`, `v_gold_dashboard`, `v_forecast_accuracy`, `v_gold_forecasts`, `v_gold_etf_flows*`, `v_news_*`, `v_events_calendar`, `v_dcf_assumptions` читаются агентом через MCP (`kimi_reader`, только `v_*`). Ingest-endpoint (`cmd/ingest`) — единственный путь записи прогонов модели, ручных рядов, цен COMEX и консенсус-прогнозов; плагин `gold-nav` — отдельный репозиторий.
+Витрины `v_model_inputs`, `v_gold_dashboard`, `v_forecast_accuracy`, `v_gold_forecasts`, `v_gold_etf_flows*`, `v_news_*`, `v_events_calendar`, `v_dcf_assumptions`, `v_ml_live_accuracy` читаются агентом через MCP (`kimi_reader`, только `v_*`). Ingest-endpoint (`cmd/ingest`) — единственный путь записи прогонов модели, ручных рядов, цен COMEX и консенсус-прогнозов; плагин `gold-nav` — отдельный репозиторий.
 
-Журнал прогнозов ключевой ставки пишется тем же ingest: `POST /v1/key_rate_forecast` (единственный путь, MCP read-only) принимает одну строку `forecast_log` с треком в `metric` (`cbr_rate:taylor`, `cbr_rate:ordered_logit`, `cbr_rate:ml`, `cbr_rate:llm`) и метаданными публикации — распределением вероятностей, моделью, версией набора данных и `prompt_version`. Прогноз отправляет `make key-rate-forecast-log` (`scripts/key_rate_forecast_log.py`) из локальных артефактов `key_rate_model_forecast.json` и, при наличии, `key_rate_llm_forecast.json` или готового payload #189 (`--llm-payload`); `forecast_resolve` заполняет факт из `cbr_key_rate` и ошибку в базисных пунктах (`error_bp`), сохраняя метаданные строки. Спека/план — `docs/superpowers/{specs,plans}/2026-10-18-key-rate-forecast-log*`.
+Журнал прогнозов ключевой ставки пишется тем же ingest: `POST /v1/key_rate_forecast` (единственный путь, MCP read-only) принимает одну строку `forecast_log` с треком в `metric` (`cbr_rate:taylor`, `cbr_rate:ordered_logit`, `cbr_rate:ml`, `cbr_rate:llm`) и метаданными публикации — распределением вероятностей, моделью, версией набора данных и `prompt_version`. Staged-прогнозы `--stage shadow|canary` получают суффикс `:shadow`/`:canary` и не публикуются. Прогноз отправляет `make key-rate-forecast-log` (`scripts/key_rate_forecast_log.py`) из локальных артефактов `key_rate_model_forecast.json` и, при наличии, `key_rate_llm_forecast.json` или готового payload #189 (`--llm-payload`); `forecast_resolve` заполняет факт из `cbr_key_rate` и ошибку в базисных пунктах (`error_bp`), сохраняя метаданные строки. Live-точность читается из `v_ml_live_accuracy`, проверка до публикации — `make ml-live-check`. Спека/план — `docs/superpowers/{specs,plans}/2026-10-18-key-rate-forecast-log*`, `2026-10-20-ml-promotion-live-monitoring*`.
 
 Состав, эндпоинты и запуск — [docs/GOLD_CONTOUR.md](docs/GOLD_CONTOUR.md); схемы — [ARCHITECTURE.md](ARCHITECTURE.md) §6.3/§6.5.
 
@@ -146,23 +154,32 @@ make mlflow-down
 | `make all` | gofmt, lint, vet, `go test -race`, сборка |
 | `make test` / `make lint` | тесты / линт |
 | `make build` | бинарник `linux/amd64` в `build/` |
-| `make import STAT=<имя>` | локальный прогон импортёра |
+| `make import STAT=<имя|группа>` | локальный прогон импортёра; `STAT=key_rate_sources` — все 50 источников контура ключевой ставки одной командой (группа раскрывается Makefile, порядок — регистрация в `chimport.Stats`) |
 | `make cpi-nowcast` | nowcast ИПЦ; `ML_LOG=1 MLFLOW=1` включает журнал и MLflow |
 | `make key-rate-model` / `make key-rate-forecast-log` | прогноз ставки (локальные артефакты; консенсус-бенчмарк №4 — годовая средняя + B4-проекция) / запись прогноза в `forecast_log` через ingest; `ML_LOG=1 MLFLOW=1` включает журнал и MLflow |
+| `make key-rate-cbr-rule` / `make key-rate-cbr-rule-test` | экспериментальный трек `cbr_rule` — калиброванное правило ДДКП ЦБ: 108 заседаний, 84/68 фолдов, DM/CI, Brier/log loss против B1–B3 и `ordered_logit`; локальные артефакты `key_rate_cbr_rule_*`, **в `forecast_log` не пишет**, вердикт — `reject` (issue #268) / офлайн-тесты без ClickHouse и сети |
 | `make shock-classifier` / `make shock-classifier-test` | классификатор шоков ключевой ставки: явные метки `emergency ∧ step_bp ≠ 0`, причинные as-of веса и описательный логистический слой; локальные артефакты `shock_classifier_report.md`, `shock_classifier_weights.csv`, `shock_classifier_forecast.json`; **в ClickHouse напрямую не пишет** (`ML_LOG=1` или `ARGS="--log"` — журнал через `ml_experiment`) / офлайн-тесты без ClickHouse и сети |
 | `make cpi-monthly` | месячный nowcast ИПЦ с МП (ML-трек v2); долгая выборка — `ARGS="--sample long"`; журнал — `ML_LOG=1`; быстрый экспериментальный режим — `ARGS="--quick"` и `ARGS="--quick --jobs N"` (в разы быстрее; **quick-числа неофициальные**, полный прогон без флагов не меняется) |
 | `make cpi-monthly-industry` / `make cpi-monthly-industry-test` | Stage 2: отраслевые МП-признаки (16 листов `mp_survey_data.xlsx`, 96 SA-признаков) в компонентном nowcast ИПЦ; aggregate vs industry на общих фолдах `long`/`weekly`, RMSE/MAE, DM-HLN, CI, MDE; в ClickHouse данные не пишет, `ML_LOG=1` — паспорт run / офлайн-тесты без ClickHouse и сети |
 | `make cpi-monthly-v3-public` / `make cpi-monthly-v3-public-test` | Task 4: v3 на публичных данных — industry MP сразу из `v_cbr_survey` (#239, 48 SA-рядов), h1/h2/h3/h6, direct/bottom-up, B1–B3, DM/CI/MDE; в ClickHouse данные не пишет, `ML_LOG=1` — паспорт run / офлайн-тесты без ClickHouse, сети и XLSX |
 | `make cpi-weekly-panel` / `make cpi-weekly-panel-test` | недельная компонентная панель ИПЦ (Task 3): месячный m/m 148 товаров, реконструкция food/nonfood/services, покрытие весов и гейт bottom-up; только чтение ClickHouse, артефакты в `docs/research/` / офлайн-тесты без ClickHouse |
+| `make publication-calendar-test` | офлайн-тесты календаря публикаций (`published_at`, as-of, fallback); CSV — экспериментальный fallback, production-таблица — отдельный Go/DDL-пункт |
+| `make cpi-pipeline-stage1` / `make cpi-pipeline-stage1-test` | stage 1 конвейера: NSA-nowcast `M0`/`M0+1` на месячных лагах, weekly CPI, FX/FAO/ставке; Gate 1 — PASS только по допуску +5 % к live3, DM не значим; артефакты в `build/cpi-pipeline-stage1/` / офлайн-тесты |
+| `make cpi-pipeline-sa-test` | офлайн-тесты real-time SA (STL, только данные ≤ `as_of`, без финальных факторов) |
+| `make cpi-pipeline-stage2` / `make cpi-pipeline-stage2-test` | stage 2 конвейера: SA-путь `M0…M0+5` + cumulative h1/h3/h6, expectations/МП, nested OOF; **Gate 2 FAIL** (h1 1,0085 против live3 0,9205), поэтому stage 3 не строился; артефакты в `build/cpi-pipeline-stage2/` / офлайн-тесты |
 | `make key-rate-llm-forecast` | экспериментальный LLM-прогноз ключевой ставки: as-of снимок, три повтора, медиана/разброс, локальные артефакты; в ClickHouse не пишет; `ARGS="--log"` готовит payload для #127 |
 | `make mlflow-up` / `make mlflow-down` / `make mlflow-status` | локальный MLflow-сервер (SQLite + артефакты, `127.0.0.1:5000`) |
 | `make mlflow-export` | экспорт run'ов MLflow в `ml_runs`/`ml_predictions` (`ARGS` — `--since/--limit/--dry-run`) |
 | `make mlflow-register` / `make mlflow-promote` / `make mlflow-models` | реестр моделей и алиасы `challenger`/`champion` (аргументы — в `ARGS`) |
+| `make ml-gate` / `make ml-gate-test` | gate промоушена: DM-HLN, 95% бутстрап CI, robustness-окна, MCS при >2 кандидатах; артефакт `build/ml-gate/<run>.json`; live-режим `ARGS="--live --live-track cbr_rate:ordered_logit"` / офлайн-тесты |
+| `make ml-live-check` / `make ml-live-check-test` | проверка live-прогноза до публикации: production-строки на ближайшее заседание, `forecast_date < target_date`, непустой `data_version`; `ARGS="--require-llm --warn-only"` / офлайн-тесты |
 | `make mcp-check` | MCP end-to-end |
 | `make cb-comp-parity` / `make cb-comp-parity-test` | паритет nowcast с CB_COMP (direct + bottom-up, архив авторов) / офлайн-тесты parity-скриптов |
+| `make ppi-sa-parity` / `make ppi-sa-parity-test` | паритет `ppi_sa` с 10 якорями «Инфляции в России» (read-only, JSON `docs/research/2026-10-21-ppi-sa-parity.json`) / офлайн-тесты паритетного скрипта |
+| `make ppi-monthly-forecast` / `make ppi-monthly-forecast-test` | research-only direct h1/h3/h6 CPI/PPI с aggregate ценовыми ожиданиями: парные B2/B3, strict survey as-of, DM/Holm/CI/MDE; Markdown/JSON/CSV в `docs/research/`, `ML_LOG=1` — паспорт и folds, без production promotion / офлайн-тесты без ClickHouse и сети |
 | `make docs-check` / `make docs-build` | проверка и сборка docs-портала |
 
-`make shock-classifier` пишет три локальных артефакта в каталог прогона (по умолчанию текущий, переопределяется `ARGS="--out-dir DIR"`): отчёт с разделами «Явные шоки», «Покрытие каналов», «Метрики классификатора», «Веса», «С весами / без», «Ограничения»; CSV as-of весов `meeting_date, emergency, explicit_shock, step_bp, y3, anomaly_score, weight, shock_prob, missing_count` + признаки; JSON as-of среза следующего заседания. Прямых вставок в ClickHouse нет: журнал включается только `ML_LOG=1` (или `ARGS="--log"`) и идёт через `scripts/ml_experiment.py` (`ml_runs`/`ml_predictions`). Офлайн-фикстуры — `ARGS="--export-fixtures scripts/testdata/shock_classifier"`.
+`make shock-classifier` пишет три локальных артефакта в каталог прогона (по умолчанию текущий, переопределяется `ARGS="--out-dir DIR"`): отчёт с разделами «Явные шоки», «Покрытие каналов», «Метрики классификатора», «Веса», «С весами / без», «Ограничения»; CSV as-of весов `meeting_date, emergency, explicit_shock, step_bp, y3, anomaly_score, weight, shock_prob, missing_count` + признаки; JSON as-of среза следующего заседания. Прямых вставок в ClickHouse нет: журнал включается только `ML_LOG=1` (или `ARGS="--log"`) и идёт через `scripts/lib/ml_experiment.py` (`ml_runs`/`ml_predictions`). Офлайн-фикстуры — `ARGS="--export-fixtures scripts/testdata/shock_classifier"`.
 
 Пункт роадмапа ведётся через GitHub issue с составным ID `<slug>/<item-id>`: шаблоны — [`.github/ISSUE_TEMPLATE/roadmap-item.yml`](.github/ISSUE_TEMPLATE/roadmap-item.yml) и [`.github/pull_request_template.md`](.github/pull_request_template.md); операции — скил `github-tracker` ([`.kimi-code/skills/github-tracker/SKILL.md`](.kimi-code/skills/github-tracker/SKILL.md)); правила — [docs/ROADMAP_INDEX.md](docs/ROADMAP_INDEX.md) и правило 12 [AGENTS.md](AGENTS.md). Живой проект — [clickhouse-import-rosstat — Roadmap](https://github.com/users/kmlebedev/projects/11).
 
@@ -174,8 +191,27 @@ make mlflow-down
 | Python-инженер (не-ML) | [`python-engineer`](.kimi-code/skills/python-engineer/SKILL.md) |
 | ML-инженер | [`ml-engineer`](.kimi-code/skills/ml-engineer/SKILL.md) |
 | Research-инженер | [`research-engineer`](.kimi-code/skills/research-engineer/SKILL.md) |
+| Главный редактор | [`editor-in-chief`](.kimi-code/skills/editor-in-chief/SKILL.md) |
 
 Общий роутер — [AGENTS.md](AGENTS.md); диспатч субагентов — [`subagent-dispatch`](.kimi-code/skills/subagent-dispatch/SKILL.md). Скилы не отменяют Go-стандарт для DDL/импортёров.
+
+### Подключение как плагин LLM-клиента
+
+Репозиторий устанавливается как плагин в Kimi Code, Claude Code, Codex, Cursor и Qwen Code. Единственный источник скилов — [`.kimi-code/skills/`](.kimi-code/skills/); манифесты в корне только ссылаются на него, поэтому состав плагина совпадает с составом ролевых скилов.
+
+| Клиент | Установка |
+|---|---|
+| Kimi Code | `/plugins install https://github.com/kmlebedev/clickhouse-import-rosstat/tree/main` |
+| Claude Code | `claude plugin marketplace add kmlebedev/clickhouse-import-rosstat`<br>`claude plugin install clickhouse-import-rosstat@clickhouse-import-rosstat` |
+| Codex | `codex plugin marketplace add kmlebedev/clickhouse-import-rosstat`<br>`codex plugin add clickhouse-import-rosstat@clickhouse-import-rosstat` |
+| Cursor | `/add-plugin https://github.com/kmlebedev/clickhouse-import-rosstat` |
+| Qwen Code | `qwen extensions install kmlebedev/clickhouse-import-rosstat` |
+
+После установки — `/reload` или новая сессия. Скилы вызываются с namespace: `/skill:clickhouse-import-rosstat:go-engineer`; Kimi дополнительно получает агента `coder`.
+
+Ограничения: установка копирует снапшот репозитория (~86 МБ), и относительные ссылки в скилах ведут в этот снапшот, а не в рабочее дерево — после изменения docs/скилов плагин нужно переустановить. Короткий GitHub-URL Kimi (`/plugins install https://github.com/...`) ставит последний релиз; пока в нём нет манифеста, используйте `/tree/main`. MCP в плагин не входит: в репозитории ClickHouse-доступ даёт [`.kimi-code/mcp.json`](.kimi-code/mcp.json).
+
+Метаданные манифестов (`name`, `version`, длинное и короткое описание) синхронизируются из `.claude-plugin/plugin.json` и `.claude-plugin/marketplace.json`: на PR [`.github/workflows/sync-manifests.yml`](.github/workflows/sync-manifests.yml) проверяет дрейф, на push в `main` — дописывает и коммитит. Локально — `make plugin-manifests-check` и `make plugin-manifests-sync`.
 
 Полный набор целей, Python-тесты, зависимости и CI — [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 

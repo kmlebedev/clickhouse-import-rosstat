@@ -95,6 +95,7 @@
             "custom": {
               "gradientMode": "none",
               "lineWidth": 1,
+              "lineInterpolation": "smooth",
               "fillOpacity": 0,
               "spanNulls": false
             }
@@ -132,7 +133,7 @@
         "targets": [
           {
             "refId": "A",
-            "rawSql": "SELECT date AS time, pow(avg(value) / 100, 52) - 1 AS \"Текущий год, годовое выражение\"\nFROM v_rosstat_macro AS w\nINNER JOIN v_series_catalog AS c ON c.source = w.source AND c.series = w.series\nWHERE c.frequency = 'W' AND toYear(date) = toYear(now())\nGROUP BY date\nORDER BY date\n",
+            "rawSql": "SELECT time, pow(avg(value) / 100, 52) - 1 AS \"Текущий год, годовое выражение\"\nFROM (\n    SELECT date AS time, value\n    FROM v_rosstat_macro AS w\n    INNER JOIN v_series_catalog AS c ON c.source = w.source AND c.series = w.series\n    WHERE c.frequency = 'W' AND toYear(date) = toYear(now())\n)\nWHERE $__timeFilter(time)\nGROUP BY time\nORDER BY time\n",
             "editorType": "sql",
             "format": 0,
             "queryType": "timeseries",
@@ -140,7 +141,7 @@
           },
           {
             "refId": "B",
-            "rawSql": "SELECT date_add(YEAR, 1, date) AS time, pow(avg(value) / 100, 52) - 1 AS \"Прошлый год, годовое выражение\"\nFROM v_rosstat_macro AS w\nINNER JOIN v_series_catalog AS c ON c.source = w.source AND c.series = w.series\nWHERE c.frequency = 'W' AND toYear(date) = toYear(now()) - 1\nGROUP BY date\nORDER BY time\n",
+            "rawSql": "SELECT time, pow(avg(value) / 100, 52) - 1 AS \"Прошлый год, годовое выражение\"\nFROM (\n    SELECT date_add(YEAR, 1, date) AS time, value\n    FROM v_rosstat_macro AS w\n    INNER JOIN v_series_catalog AS c ON c.source = w.source AND c.series = w.series\n    WHERE c.frequency = 'W' AND toYear(date) = toYear(now()) - 1\n)\nWHERE $__timeFilter(time)\nGROUP BY time\nORDER BY time\n",
             "editorType": "sql",
             "format": 0,
             "queryType": "timeseries",
@@ -148,7 +149,7 @@
           }
         ],
         "title": "Недельные цены: годовое выражение",
-        "description": "Средний недельный индекс цен недельных товарных рядов (v_rosstat_macro, отбор — v_series_catalog.frequency = 'W') возведён в степень 52: «если бы такие недели шли весь год». SAAR считает модель, здесь — годовое выражение, а не прогноз. Пунктир — прошлый год, сдвинутый на +1 год для наложения на текущий. Порог 4% — цель ЦБ.",
+        "description": "Средний недельный индекс цен недельных товарных рядов (v_rosstat_macro, отбор — v_series_catalog.frequency = 'W') возведён в степень 52: «если бы такие недели шли весь год». SAAR считает модель, здесь — годовое выражение, а не прогноз. Пунктир — прошлый год, сдвинутый на +1 год для наложения на текущий; диапазон дат фильтрует уже сдвинутое время, поэтому оба года видны в одном окне. Порог 4% — цель ЦБ.",
         "transparent": false,
         "datasource": {
           "type": "grafana-clickhouse-datasource",
@@ -202,6 +203,7 @@
                 "mode": "line"
               },
               "lineWidth": 1,
+              "lineInterpolation": "smooth",
               "fillOpacity": 0,
               "spanNulls": false
             }
@@ -230,6 +232,99 @@
       },
       {
         "type": "timeseries",
+        "id": 36,
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT date AS time, pow(avg(value) / 100, 52) - 1 AS \"Недельное, годовое выражение\"\nFROM v_rosstat_macro AS w\nINNER JOIN v_series_catalog AS c ON c.source = w.source AND c.series = w.series\nWHERE c.frequency = 'W' AND date \u003e= '2022-01-10' AND $__timeFilter(date)\nGROUP BY date\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "B",
+            "rawSql": "SELECT time, y AS \"4-нед. средняя (товары)\"\nFROM (\n    SELECT time,\n           pow(exp(avg(ln(idx / 100)) OVER (ORDER BY time ROWS BETWEEN 3 PRECEDING AND CURRENT ROW)), 52) - 1 AS y,\n           count() OVER (ORDER BY time ROWS BETWEEN 3 PRECEDING AND CURRENT ROW) AS n\n    FROM (\n        SELECT date AS time, avg(value) AS idx\nFROM v_rosstat_macro AS w\nINNER JOIN v_series_catalog AS c ON c.source = w.source AND c.series = w.series\nWHERE c.frequency = 'W' AND date \u003e= '2022-01-10'\nGROUP BY date\n    )\n)\nWHERE n = 4 AND $__timeFilter(time)\nORDER BY time\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "C",
+            "rawSql": "SELECT time, y AS \"4-нед. средняя (недельный ИПЦ)\"\nFROM (\n    SELECT time,\n           pow(exp(avg(ln(idx / 100)) OVER (ORDER BY time ROWS BETWEEN 3 PRECEDING AND CURRENT ROW)), 52) - 1 AS y,\n           count() OVER (ORDER BY time ROWS BETWEEN 3 PRECEDING AND CURRENT ROW) AS n\n    FROM (\n        SELECT date AS time, value AS idx\nFROM v_rosstat_macro AS w\nINNER JOIN v_series_catalog AS c ON c.source = w.source AND c.series = w.series\nWHERE c.frequency = 'W' AND c.series = 'Индекс потребительских цен (недельная оценка)' AND date \u003e= '2022-01-10'\n    )\n)\nWHERE n = 4 AND $__timeFilter(time)\nORDER BY time\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "Недельные цены: 4-недельная средняя, годовое выражение",
+        "description": "Средний недельный индекс цен недельных товарных рядов (v_rosstat_macro, отбор — v_series_catalog.frequency = 'W') в годовом выражении: pow(индекс/100, 52) - 1 — «если бы такая неделя шла весь год». Это не SAAR и не сезонная корректировка. 4-нед. средняя — геометрическое среднее четырёх последних недель, приведённое к году той же степенью 52 (эквивалент: накопленный за 4 недели рост в степень 13); первые три недели ряда не показываются — окно по ним неполное. История с 2022-01-10: до этой даты недельные ряды собраны из бюллетеней с другим набором позиций, и средние несравнимы. Серия «недельный ИПЦ» — официальный агрегат «Индекс потребительских цен (недельная оценка)», он отстаёт от товарного слоя на неделю. Порог 4 % — цель ЦБ.",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 9,
+          "w": 12,
+          "x": 0,
+          "y": 10
+        },
+        "repeatDirection": "h",
+        "timeFrom": "5y",
+        "options": {
+          "legend": {
+            "displayMode": "table",
+            "placement": "bottom",
+            "showLegend": true,
+            "calcs": [
+              "last",
+              "mean",
+              "max"
+            ]
+          },
+          "tooltip": {
+            "mode": "single",
+            "sort": "none"
+          }
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percentunit",
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "value": null,
+                  "color": "super-light-green"
+                },
+                {
+                  "value": 0.04,
+                  "color": "super-light-red"
+                }
+              ]
+            },
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "gradientMode": "none",
+              "thresholdsStyle": {
+                "mode": "line"
+              },
+              "lineWidth": 1,
+              "lineInterpolation": "smooth",
+              "fillOpacity": 0,
+              "spanNulls": false
+            }
+          },
+          "overrides": []
+        }
+      },
+      {
+        "type": "timeseries",
         "id": 3,
         "targets": [
           {
@@ -251,7 +346,7 @@
         "gridPos": {
           "h": 9,
           "w": 12,
-          "x": 0,
+          "x": 12,
           "y": 10
         },
         "repeatDirection": "h",
@@ -280,6 +375,7 @@
             "custom": {
               "gradientMode": "none",
               "lineWidth": 1,
+              "lineInterpolation": "smooth",
               "fillOpacity": 0,
               "spanNulls": false
             }
@@ -293,7 +389,7 @@
         "targets": [
           {
             "refId": "A",
-            "rawSql": "SELECT date AS time, pow(value / 100, 12) - 1 AS \"ИПЦ, годовое выражение\"\nFROM v_rosstat_macro\nWHERE series = 'Индексы потребительских цен на товары и услуги по Российской Федерации'\n  AND $__timeFilter(date)\nORDER BY date\n",
+            "rawSql": "SELECT date AS time, pow(value / 100, 12) - 1 AS \"ИПЦ, м/м в годовое выражение (Росстат)\"\nFROM v_rosstat_macro\nWHERE series = 'Индексы потребительских цен на товары и услуги по Российской Федерации'\n  AND $__timeFilter(date)\nORDER BY date\n",
             "editorType": "sql",
             "format": 0,
             "queryType": "timeseries",
@@ -301,7 +397,15 @@
           },
           {
             "refId": "B",
-            "rawSql": "SELECT date AS time, pow(1 + value / 100, 12) - 1 AS \"Базовая инфляция, годовое выражение\"\nFROM v_cbr_macro\nWHERE series = 'Базовый ИПЦ' AND $__timeFilter(date)\nORDER BY date\n",
+            "rawSql": "SELECT date AS time, pow(1 + value / 100, 12) - 1 AS \"Базовая инфляция, годовое выражение (ЦБ)\"\nFROM v_cbr_macro\nWHERE series = 'Базовый ИПЦ' AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "C",
+            "rawSql": "SELECT if(partial = 1, as_of, date) AS time, value / 100 AS \"Недельный SA-агрегат узкого ИПЦ 4н/4н\"\nFROM v_weekly_cpi_sa\nWHERE series = 'weekly_cpi:saar' AND $__timeFilter(as_of)\nORDER BY time\n",
             "editorType": "sql",
             "format": 0,
             "queryType": "timeseries",
@@ -309,7 +413,7 @@
           }
         ],
         "title": "Инфляция: ИПЦ и базовая",
-        "description": "Годовое выражение месячных данных, формулы разные: ИПЦ — индекс (100 = без изменения), pow(индекс/100, 12) - 1; базовая инфляция — месячный прирост в %, pow(1 + прирост/100, 12) - 1. Базовую нельзя читать как индекс. Источники — v_rosstat_macro (ИПЦ) и v_cbr_macro (Базовый ИПЦ).",
+        "description": "Годовое выражение месячных данных, формулы разные: ИПЦ — индекс (100 = без изменения), pow(индекс/100, 12) - 1; базовая инфляция — месячный прирост в %, pow(1 + прирост/100, 12) - 1. Базовую нельзя читать как индекс. Источники — v_rosstat_macro (ИПЦ) и v_cbr_macro (Базовый ИПЦ). Третья серия — недельный SA-агрегат ИПЦ (v_weekly_cpi_sa, weekly_cpi:saar, value/100): это headline-агрегат, а не core, поэтому сравнивать его с базовой как замену нельзя — на окне 2023+ в отдельные месяцы расхождение достигает 5–9 п.п. (состав корзины и годовое усиление ×13). Последняя точка — nowcast текущего месяца (partial = 1) на дате as_of; в октябре 2026 искажён тарифной неделей 2026-10-05.",
         "transparent": false,
         "datasource": {
           "type": "grafana-clickhouse-datasource",
@@ -318,8 +422,8 @@
         "gridPos": {
           "h": 9,
           "w": 12,
-          "x": 12,
-          "y": 10
+          "x": 0,
+          "y": 19
         },
         "repeatDirection": "h",
         "options": {
@@ -363,6 +467,7 @@
                 "mode": "line"
               },
               "lineWidth": 1,
+              "lineInterpolation": "smooth",
               "fillOpacity": 0,
               "spanNulls": false
             }
@@ -409,7 +514,7 @@
         "gridPos": {
           "h": 9,
           "w": 24,
-          "x": 0,
+          "x": 12,
           "y": 19
         },
         "repeatDirection": "h",
@@ -438,6 +543,7 @@
             "custom": {
               "gradientMode": "none",
               "lineWidth": 1,
+              "lineInterpolation": "smooth",
               "fillOpacity": 0,
               "spanNulls": false
             }
@@ -480,11 +586,11 @@
       },
       {
         "type": "timeseries",
-        "id": 6,
+        "id": 35,
         "targets": [
           {
             "refId": "A",
-            "rawSql": "SELECT time, yoy AS \"М2, г/г\"\nFROM (\n    SELECT date AS time, value / nullIf(lagInFrame(value, 12) OVER (ORDER BY date), 0) - 1 AS yoy\n    FROM v_cbr_macro\n    WHERE series = 'М2 SA'\n)\nWHERE $__timeFilter(time)\nORDER BY time\n",
+            "rawSql": "SELECT time, yoy AS \"Сбер: кредиты ЮЛ+ФЛ, г/г\"\nFROM (\n    SELECT report_month AS time,\n           sum(value_bln_rub) / nullIf(lagInFrame(sum(value_bln_rub), 12) OVER (ORDER BY report_month), 0) - 1 AS yoy\n    FROM v_bank_loan_portfolio_forward\n    WHERE bank = 'SBER' AND metric IN ('loans_corporations', 'loans_individuals')\n    GROUP BY report_month\n)\nWHERE $__timeFilter(time)\nORDER BY time\n",
             "editorType": "sql",
             "format": 0,
             "queryType": "timeseries",
@@ -492,15 +598,23 @@
           },
           {
             "refId": "B",
-            "rawSql": "SELECT time, yoy AS \"Кредит экономике, г/г\"\nFROM (\n    SELECT date AS time, value / nullIf(lagInFrame(value, 12) OVER (ORDER BY date), 0) - 1 AS yoy\n    FROM v_cbr_macro\n    WHERE series = 'Кредит экономике'\n)\nWHERE $__timeFilter(time)\nORDER BY time\n",
+            "rawSql": "SELECT time, yoy AS \"ВТБ: кредиты ЮЛ+ФЛ, г/г\"\nFROM (\n    SELECT report_month AS time,\n           sum(value_bln_rub) / nullIf(lagInFrame(sum(value_bln_rub), 12) OVER (ORDER BY report_month), 0) - 1 AS yoy\n    FROM v_bank_loan_portfolio_forward\n    WHERE bank = 'VTBR' AND metric IN ('loans_corporations', 'loans_individuals')\n    GROUP BY report_month\n)\nWHERE $__timeFilter(time)\nORDER BY time\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "C",
+            "rawSql": "SELECT time, yoy AS \"М2 SA, г/г — референс\"\nFROM (\n    SELECT date AS time, value / nullIf(lagInFrame(value, 12) OVER (ORDER BY date), 0) - 1 AS yoy\n    FROM v_cbr_macro\n    WHERE series = 'М2 SA'\n)\nWHERE $__timeFilter(time)\nORDER BY time\n",
             "editorType": "sql",
             "format": 0,
             "queryType": "timeseries",
             "pluginVersion": "4.3.2"
           }
         ],
-        "title": "Денежная масса и кредит, г/г",
-        "description": "Годовые темпы денежной массы М2, сезонно скорректированной (v_cbr_macro, series = 'М2 SA'), и кредита экономике — value к значению 12 месяцев назад − 1. YoY считается окном по полному ряду, фильтр окна — снаружи подзапроса: при обрезке первые 12 месяцев считались бы по неполному ряду. Значения — доли (Grafana печатает «3.2%»): выше нуля — рост, ниже — сжатие.",
+        "title": "Кредиты банков (Сбер, ВТБ) — опережающий срез М2, г/г",
+        "description": "Годовой темп кредитов, выданных банками: сумма кредитов ЮЛ и ФЛ (gross, до резервов) по v_bank_loan_portfolio_forward для Сбера (РСБУ) и ВТБ (МСФО). Темп считается по сумме — value к значению 12 месяцев назад − 1, окном по полному ряду; фильтр времени снаружи подзапроса. Это опережающий срез кредитной составляющей М2: отчёты банков за месяц выходят раньше денежной статистики ЦБ (Сбер за сентябрь — 09.10.2026), а М2 SA (v_cbr_macro) показана пунктиром как референс. Оговорки: customer_loans — netto и у Сбера кончается 2026-06, поэтому не используется; базы РСБУ и МСФО разные — сравнивать темпы банков между собой нельзя, только динамику каждого с М2. Пропуск ВТБ за 2026-01 — разрыв источника, а не ноль. Значения — доли (Grafana печатает «11.9%»).",
         "transparent": false,
         "datasource": {
           "type": "grafana-clickhouse-datasource",
@@ -508,7 +622,7 @@
         },
         "gridPos": {
           "h": 9,
-          "w": 12,
+          "w": 24,
           "x": 0,
           "y": 29
         },
@@ -554,6 +668,110 @@
                 "mode": "line"
               },
               "lineWidth": 1,
+              "lineInterpolation": "smooth",
+              "fillOpacity": 0,
+              "spanNulls": false
+            }
+          },
+          "overrides": [
+            {
+              "matcher": {
+                "id": "byFrameRefID",
+                "options": "C"
+              },
+              "properties": [
+                {
+                  "id": "custom.lineStyle",
+                  "value": {
+                    "fill": "dash",
+                    "dash": [
+                      10,
+                      10
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "type": "timeseries",
+        "id": 6,
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT time, yoy AS \"М2, г/г\"\nFROM (\n    SELECT date AS time, value / nullIf(lagInFrame(value, 12) OVER (ORDER BY date), 0) - 1 AS yoy\n    FROM v_cbr_macro\n    WHERE series = 'М2 SA'\n)\nWHERE $__timeFilter(time)\nORDER BY time\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "B",
+            "rawSql": "SELECT time, yoy AS \"Кредит экономике, г/г\"\nFROM (\n    SELECT date AS time, value / nullIf(lagInFrame(value, 12) OVER (ORDER BY date), 0) - 1 AS yoy\n    FROM v_cbr_macro\n    WHERE series = 'Кредит экономике'\n)\nWHERE $__timeFilter(time)\nORDER BY time\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "Денежная масса и кредит, г/г",
+        "description": "Годовые темпы денежной массы М2, сезонно скорректированной (v_cbr_macro, series = 'М2 SA'), и кредита экономике — value к значению 12 месяцев назад − 1. YoY считается окном по полному ряду, фильтр окна — снаружи подзапроса: при обрезке первые 12 месяцев считались бы по неполному ряду. Значения — доли (Grafana печатает «3.2%»): выше нуля — рост, ниже — сжатие.",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 9,
+          "w": 12,
+          "x": 0,
+          "y": 38
+        },
+        "repeatDirection": "h",
+        "options": {
+          "legend": {
+            "displayMode": "table",
+            "placement": "bottom",
+            "showLegend": true,
+            "calcs": [
+              "last",
+              "mean",
+              "max"
+            ]
+          },
+          "tooltip": {
+            "mode": "single",
+            "sort": "none"
+          }
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percentunit",
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "value": null,
+                  "color": "red"
+                },
+                {
+                  "value": 0,
+                  "color": "green"
+                }
+              ]
+            },
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "gradientMode": "none",
+              "thresholdsStyle": {
+                "mode": "line"
+              },
+              "lineWidth": 1,
+              "lineInterpolation": "smooth",
               "fillOpacity": 0,
               "spanNulls": false
             }
@@ -601,7 +819,7 @@
           "h": 9,
           "w": 12,
           "x": 12,
-          "y": 29
+          "y": 38
         },
         "repeatDirection": "h",
         "options": {
@@ -629,6 +847,7 @@
             "custom": {
               "gradientMode": "none",
               "lineWidth": 1,
+              "lineInterpolation": "smooth",
               "fillOpacity": 0,
               "spanNulls": false
             }
@@ -676,7 +895,7 @@
           "h": 9,
           "w": 12,
           "x": 0,
-          "y": 38
+          "y": 47
         },
         "repeatDirection": "h",
         "options": {
@@ -704,6 +923,7 @@
             "custom": {
               "gradientMode": "none",
               "lineWidth": 1,
+              "lineInterpolation": "smooth",
               "fillOpacity": 0,
               "spanNulls": false
             }
@@ -743,7 +963,7 @@
           "h": 9,
           "w": 12,
           "x": 12,
-          "y": 38
+          "y": 47
         },
         "repeatDirection": "h",
         "options": {
@@ -771,6 +991,7 @@
             "custom": {
               "gradientMode": "none",
               "lineWidth": 1,
+              "lineInterpolation": "smooth",
               "fillOpacity": 0,
               "spanNulls": false
             }
@@ -819,7 +1040,7 @@
           "h": 9,
           "w": 24,
           "x": 0,
-          "y": 47
+          "y": 56
         },
         "repeatDirection": "h",
         "options": {
@@ -847,6 +1068,7 @@
             "custom": {
               "gradientMode": "none",
               "lineWidth": 1,
+              "lineInterpolation": "smooth",
               "fillOpacity": 0,
               "spanNulls": false
             }
@@ -862,7 +1084,7 @@
           "h": 1,
           "w": 24,
           "x": 0,
-          "y": 56
+          "y": 65
         },
         "id": 23,
         "panels": []
@@ -907,7 +1129,7 @@
           "h": 9,
           "w": 12,
           "x": 0,
-          "y": 57
+          "y": 66
         },
         "repeatDirection": "h",
         "options": {
@@ -935,6 +1157,7 @@
             "custom": {
               "gradientMode": "none",
               "lineWidth": 1,
+              "lineInterpolation": "smooth",
               "fillOpacity": 0,
               "spanNulls": false
             }
@@ -990,7 +1213,7 @@
           "h": 9,
           "w": 12,
           "x": 12,
-          "y": 57
+          "y": 66
         },
         "repeatDirection": "h",
         "options": {
@@ -1070,7 +1293,7 @@
           "h": 9,
           "w": 12,
           "x": 0,
-          "y": 66
+          "y": 75
         },
         "repeatDirection": "h",
         "options": {
@@ -1098,6 +1321,7 @@
             "custom": {
               "gradientMode": "none",
               "lineWidth": 1,
+              "lineInterpolation": "smooth",
               "fillOpacity": 0,
               "spanNulls": false
             }
@@ -1222,7 +1446,7 @@
           "h": 9,
           "w": 12,
           "x": 12,
-          "y": 66
+          "y": 75
         },
         "repeatDirection": "h",
         "options": {
@@ -1250,6 +1474,247 @@
             "custom": {
               "gradientMode": "none",
               "lineWidth": 1,
+              "lineInterpolation": "smooth",
+              "fillOpacity": 0,
+              "spanNulls": false
+            }
+          },
+          "overrides": []
+        }
+      },
+      {
+        "type": "timeseries",
+        "id": 25,
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT date AS time, coverage_ratio AS \"Покрытие спроса, доля\"\nFROM v_ofz_stress\nWHERE coverage_ratio IS NOT NULL AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "Аукционы ОФЗ: покрытие спроса",
+        "description": "Отношение размещённого объёма к спросу на аукционе ОФЗ (v_ofz_stress, coverage_ratio; 0.3 = размещено 30 % спроса). Точки — даты аукционов, а не регулярный ряд; NULL — аукцион не состоялся или сделок не было, это не ноль.",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 9,
+          "w": 12,
+          "x": 0,
+          "y": 84
+        },
+        "repeatDirection": "h",
+        "options": {
+          "legend": {
+            "displayMode": "table",
+            "placement": "bottom",
+            "showLegend": true,
+            "calcs": [
+              "last",
+              "mean",
+              "max"
+            ]
+          },
+          "tooltip": {
+            "mode": "single",
+            "sort": "none"
+          }
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percentunit",
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "gradientMode": "none",
+              "lineWidth": 1,
+              "lineInterpolation": "smooth",
+              "fillOpacity": 0,
+              "spanNulls": false
+            }
+          },
+          "overrides": []
+        }
+      },
+      {
+        "type": "timeseries",
+        "id": 26,
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT date AS time, cutoff_minus_secondary_pp AS \"Отсечение − КБД, п.п.\"\nFROM v_ofz_stress\nWHERE cutoff_minus_secondary_pp IS NOT NULL AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "Аукционы ОФЗ: отсечение − КБД",
+        "description": "Доходность по цене отсечения минус доходность ближайшего тенора КБД ЦБ на дату аукциона (v_ofz_stress, cutoff_minus_secondary_pp, п.п.). КБД — кривая бескупонной доходности ЦБ, а не сделки вторичного рынка; положительное значение — аукцион дороже кривой. NULL — нет одной из доходностей.",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 9,
+          "w": 12,
+          "x": 12,
+          "y": 84
+        },
+        "repeatDirection": "h",
+        "options": {
+          "legend": {
+            "displayMode": "table",
+            "placement": "bottom",
+            "showLegend": true,
+            "calcs": [
+              "last",
+              "mean",
+              "max"
+            ]
+          },
+          "tooltip": {
+            "mode": "single",
+            "sort": "none"
+          }
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent",
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "gradientMode": "none",
+              "lineWidth": 1,
+              "lineInterpolation": "smooth",
+              "fillOpacity": 0,
+              "spanNulls": false
+            }
+          },
+          "overrides": []
+        }
+      },
+      {
+        "type": "timeseries",
+        "id": 27,
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT date AS time, max(debt_service_to_revenue) AS \"Обслуживание / доходы\"\nFROM v_ofz_stress\nWHERE debt_service_to_revenue IS NOT NULL AND $__timeFilter(date)\nGROUP BY date\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "Долг: обслуживание в доходах",
+        "description": "Расходы на обслуживание долга / доходы федерального бюджета за месяц (v_ofz_stress, debt_service_to_revenue; 0.05 = 5 %). До 2022 — бюджетная строка (федеральный и муниципальный долг), с 2024 — обслуживание федеральных ценных бумаг; 2022–2023 — NULL (пробел источника), поэтому линия разорвана, а не равна нулю.",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 9,
+          "w": 12,
+          "x": 0,
+          "y": 93
+        },
+        "repeatDirection": "h",
+        "options": {
+          "legend": {
+            "displayMode": "table",
+            "placement": "bottom",
+            "showLegend": true,
+            "calcs": [
+              "last",
+              "mean",
+              "max"
+            ]
+          },
+          "tooltip": {
+            "mode": "single",
+            "sort": "none"
+          }
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percentunit",
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "gradientMode": "none",
+              "lineWidth": 1,
+              "lineInterpolation": "smooth",
+              "fillOpacity": 0,
+              "spanNulls": false
+            }
+          },
+          "overrides": []
+        }
+      },
+      {
+        "type": "timeseries",
+        "id": 28,
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT date AS time, max(ofz_stock_change) AS \"Δ запаса ОФЗ, млрд руб.\"\nFROM v_ofz_stress\nWHERE ofz_stock_change IS NOT NULL AND $__timeFilter(date)\nGROUP BY date\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "Долг: изменение запаса ОФЗ",
+        "description": "Изменение номинала ОФЗ на 1-е число месяца к предыдущему месяцу (v_ofz_stress, ofz_stock_change, млрд руб.): положительное — чистое наращивание запаса, отрицательное — погашение. NULL — нет одного из месяцев (пропуски публикации структуры), это не ноль.",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 9,
+          "w": 12,
+          "x": 12,
+          "y": 93
+        },
+        "repeatDirection": "h",
+        "options": {
+          "legend": {
+            "displayMode": "table",
+            "placement": "bottom",
+            "showLegend": true,
+            "calcs": [
+              "last",
+              "mean",
+              "max"
+            ]
+          },
+          "tooltip": {
+            "mode": "single",
+            "sort": "none"
+          }
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "currencyRUB",
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "gradientMode": "none",
+              "lineWidth": 1,
+              "lineInterpolation": "smooth",
               "fillOpacity": 0,
               "spanNulls": false
             }
@@ -1265,7 +1730,7 @@
           "h": 1,
           "w": 24,
           "x": 0,
-          "y": 75
+          "y": 102
         },
         "id": 24,
         "panels": []
@@ -1334,7 +1799,7 @@
           "h": 9,
           "w": 12,
           "x": 0,
-          "y": 76
+          "y": 103
         },
         "repeatDirection": "h",
         "options": {
@@ -1362,6 +1827,7 @@
             "custom": {
               "gradientMode": "none",
               "lineWidth": 1,
+              "lineInterpolation": "smooth",
               "fillOpacity": 0,
               "spanNulls": false
             }
@@ -1484,7 +1950,7 @@
           "h": 9,
           "w": 12,
           "x": 12,
-          "y": 76
+          "y": 103
         },
         "repeatDirection": "h",
         "options": {
@@ -1532,7 +1998,7 @@
           "h": 9,
           "w": 12,
           "x": 0,
-          "y": 85
+          "y": 112
         },
         "repeatDirection": "h",
         "options": {
@@ -1580,7 +2046,7 @@
           "h": 9,
           "w": 12,
           "x": 12,
-          "y": 85
+          "y": 112
         },
         "repeatDirection": "h",
         "options": {
@@ -1628,7 +2094,7 @@
           "h": 9,
           "w": 12,
           "x": 0,
-          "y": 94
+          "y": 121
         },
         "repeatDirection": "h",
         "options": {
@@ -1647,6 +2113,780 @@
             "custom": {
               "align": "auto",
               "inspect": false
+            }
+          },
+          "overrides": []
+        }
+      },
+      {
+        "type": "row",
+        "collapsed": false,
+        "title": "Остальные каналы решения",
+        "gridPos": {
+          "h": 1,
+          "w": 24,
+          "x": 0,
+          "y": 130
+        },
+        "id": 34,
+        "panels": []
+      },
+      {
+        "type": "timeseries",
+        "id": 29,
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT date AS time, value AS \"Курс USD/RUB, руб. за 1 USD\"\nFROM v_cbr_macro\nWHERE series = 'cbr_currency_usd' AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "B",
+            "rawSql": "SELECT date AS time, value AS \"Brent (фронт-месяц), USD/барр.\"\nFROM v_moex_market\nWHERE series = 'brent_front' AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "Внешние условия: курс ЦБ и Brent",
+        "description": "Курс ЦБ (v_cbr_macro, series = 'cbr_currency_usd') — руб. за 1 USD, левая ось; Brent — фронт-месяц фьючерса MOEX BR (v_moex_market, series = 'brent_front', settle) — USD/барр., правая ось. Brent — НЕ спот и не back-adjusted: на роллах возможен разрыв, поэтому линия не интерполируется. Курс — официальный, не биржевой.",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 9,
+          "w": 12,
+          "x": 0,
+          "y": 131
+        },
+        "repeatDirection": "h",
+        "options": {
+          "legend": {
+            "displayMode": "table",
+            "placement": "bottom",
+            "showLegend": true,
+            "calcs": [
+              "last",
+              "mean",
+              "max"
+            ]
+          },
+          "tooltip": {
+            "mode": "single",
+            "sort": "none"
+          }
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "currencyRUB",
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "gradientMode": "none",
+              "lineWidth": 1,
+              "lineInterpolation": "smooth",
+              "fillOpacity": 0,
+              "spanNulls": false
+            }
+          },
+          "overrides": [
+            {
+              "matcher": {
+                "id": "byFrameRefID",
+                "options": "B"
+              },
+              "properties": [
+                {
+                  "id": "unit",
+                  "value": "currencyUSD"
+                },
+                {
+                  "id": "custom.axisPlacement",
+                  "value": "right"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "type": "timeseries",
+        "id": 30,
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT date AS time, value / 1000 AS \"Счёт текущих операций (квартал), млрд USD\"\nFROM v_cbr_bop\nWHERE source = 'cbr_bop_standard' AND series = 'Счет текущих операций (квартал)' AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "B",
+            "rawSql": "SELECT date AS time, value AS \"Счёт текущих операций (месяц), млрд USD\"\nFROM v_cbr_bop\nWHERE source = 'cbr_bop_est' AND series = 'Счет текущих операций (месяц)' AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "Внешние условия: счёт текущих операций",
+        "description": "Счёт текущих операций платёжного баланса (v_cbr_bop): линия — стандартная презентация ЦБ (source = 'cbr_bop_standard', млн USD → млрд USD делением на 1000, кварталы с 1994); точки — месячная оценка (source = 'cbr_bop_est', млрд USD), публикуются только последние месяцы. Это две выгрузки одного показателя: стандартная — для сверки, месячная — свежая оценка; ноль — значение, а не пропуск.",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 9,
+          "w": 12,
+          "x": 12,
+          "y": 131
+        },
+        "repeatDirection": "h",
+        "options": {
+          "legend": {
+            "displayMode": "table",
+            "placement": "bottom",
+            "showLegend": true,
+            "calcs": [
+              "last",
+              "mean",
+              "max"
+            ]
+          },
+          "tooltip": {
+            "mode": "single",
+            "sort": "none"
+          }
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "currencyUSD",
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "gradientMode": "none",
+              "lineWidth": 1,
+              "lineInterpolation": "smooth",
+              "fillOpacity": 0,
+              "spanNulls": false
+            }
+          },
+          "overrides": [
+            {
+              "matcher": {
+                "id": "byFrameRefID",
+                "options": "B"
+              },
+              "properties": [
+                {
+                  "id": "custom.lineWidth",
+                  "value": 0
+                },
+                {
+                  "id": "custom.showPoints",
+                  "value": "always"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "type": "timeseries",
+        "id": 31,
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT date AS time, value / 1000 AS \"Депозиты населения, млрд руб.\"\nFROM v_cbr_macro\nWHERE series = 'Депозиты населения' AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "B",
+            "rawSql": "SELECT time, chg AS \"Приток за месяц, млрд руб.\"\nFROM (\n    SELECT date AS time,\n           (value - lagInFrame(value, 1, NULL) OVER (ORDER BY date)) / 1000 AS chg\n    FROM v_cbr_macro\n    WHERE series = 'Депозиты населения'\n)\nWHERE $__timeFilter(time)\nORDER BY time\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "Сбережения: депозиты населения",
+        "description": "«Депозиты населения» (v_cbr_macro) = депозиты ФЛ + ИП — канон канала сбережений (KEY_RATE_CHANNELS §8.1). Левая ось — уровень (млрд руб.), правая — месячный приток (value − предыдущий месяц, млрд руб.; первая точка NULL, а не выброс). Уровни ФЛ и ИП по отдельности с уровнем населения не смешиваются.",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 9,
+          "w": 12,
+          "x": 0,
+          "y": 140
+        },
+        "repeatDirection": "h",
+        "options": {
+          "legend": {
+            "displayMode": "table",
+            "placement": "bottom",
+            "showLegend": true,
+            "calcs": [
+              "last",
+              "mean",
+              "max"
+            ]
+          },
+          "tooltip": {
+            "mode": "single",
+            "sort": "none"
+          }
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "currencyRUB",
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "gradientMode": "none",
+              "lineWidth": 1,
+              "lineInterpolation": "smooth",
+              "fillOpacity": 0,
+              "spanNulls": false
+            }
+          },
+          "overrides": [
+            {
+              "matcher": {
+                "id": "byFrameRefID",
+                "options": "B"
+              },
+              "properties": [
+                {
+                  "id": "custom.axisPlacement",
+                  "value": "right"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "type": "timeseries",
+        "id": 32,
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT date AS time, value AS \"Бизнес-климат (ИБК, SA), пункты\"\nFROM v_cbr_survey\nWHERE series = 'business_climate_sa' AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "B",
+            "rawSql": "SELECT date AS time, value AS \"ИБК — промышленность (SA), пункты\"\nFROM v_cbr_survey\nWHERE series = 'industry_total_ibk_sa' AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "C",
+            "rawSql": "SELECT date AS time, value AS \"Загрузка мощностей (SA), %\"\nFROM v_cbr_survey\nWHERE series = 'capacity_utilization_sa' AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "Разрыв выпуска: бизнес-климат, ИБК и загрузка",
+        "description": "ИБК Банка России (v_cbr_survey, series = 'business_climate_sa') и ИБК промышленности ('industry_total_ibk_sa') — балансовые индексы SA в пунктах (левая ось); загрузка производственных мощностей ('capacity_utilization_sa', %) — правая ось. Это ПРОКСИ разрыва выпуска, а не сам разрыв: ЦБ числовым рядом его не публикует (KEY_RATE_CHANNELS §8).",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 9,
+          "w": 12,
+          "x": 12,
+          "y": 140
+        },
+        "repeatDirection": "h",
+        "options": {
+          "legend": {
+            "displayMode": "table",
+            "placement": "bottom",
+            "showLegend": true,
+            "calcs": [
+              "last",
+              "mean",
+              "max"
+            ]
+          },
+          "tooltip": {
+            "mode": "single",
+            "sort": "none"
+          }
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "gradientMode": "none",
+              "lineWidth": 1,
+              "lineInterpolation": "smooth",
+              "fillOpacity": 0,
+              "spanNulls": false
+            }
+          },
+          "overrides": [
+            {
+              "matcher": {
+                "id": "byFrameRefID",
+                "options": "C"
+              },
+              "properties": [
+                {
+                  "id": "unit",
+                  "value": "percent"
+                },
+                {
+                  "id": "custom.axisPlacement",
+                  "value": "right"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "type": "timeseries",
+        "id": 33,
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT date AS time, value AS \"Кредитный гэп (широкий), п.п.\"\nFROM v_cbr_ccyb_indicators\nWHERE series = 'credit_gap_broad' AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "B",
+            "rawSql": "SELECT date AS time, value AS \"Кредитный гэп (ФЛ), п.п.\"\nFROM v_cbr_ccyb_indicators\nWHERE series = 'credit_gap_hh' AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "C",
+            "rawSql": "SELECT date AS time, value AS \"Кредиты ФЛ, г/г, %\"\nFROM v_cbr_ccyb_indicators\nWHERE series = 'hh_yoy' AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "D",
+            "rawSql": "SELECT date AS time, value AS \"Кредиты ЮЛ в рублях, г/г, %\"\nFROM v_cbr_ccyb_indicators\nWHERE series = 'nfo_rub_yoy' AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "Автономные факторы: кредитные гэпы и рост кредита",
+        "description": "АЦН-индикаторы ЦБ (v_cbr_ccyb_indicators): кредитные гэпы broad и ФЛ (п.п., левая ось) и годовые темпы прироста кредитов ФЛ и ЮЛ в рублях (%, правая ось). Ряд источника заканчивается 2024-07 у гэпов и 2024-10 у темпов: после — NULL, НЕ ноль. Это отставание публикации, а не отсутствие данных в контуре.",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 9,
+          "w": 24,
+          "x": 0,
+          "y": 149
+        },
+        "repeatDirection": "h",
+        "options": {
+          "legend": {
+            "displayMode": "table",
+            "placement": "bottom",
+            "showLegend": true,
+            "calcs": [
+              "last",
+              "mean",
+              "max"
+            ]
+          },
+          "tooltip": {
+            "mode": "single",
+            "sort": "none"
+          }
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "gradientMode": "none",
+              "lineWidth": 1,
+              "lineInterpolation": "smooth",
+              "fillOpacity": 0,
+              "spanNulls": false
+            }
+          },
+          "overrides": [
+            {
+              "matcher": {
+                "id": "byFrameRefID",
+                "options": "C"
+              },
+              "properties": [
+                {
+                  "id": "unit",
+                  "value": "percent"
+                },
+                {
+                  "id": "custom.axisPlacement",
+                  "value": "right"
+                }
+              ]
+            },
+            {
+              "matcher": {
+                "id": "byFrameRefID",
+                "options": "D"
+              },
+              "properties": [
+                {
+                  "id": "unit",
+                  "value": "percent"
+                },
+                {
+                  "id": "custom.axisPlacement",
+                  "value": "right"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "type": "row",
+        "collapsed": false,
+        "title": "Цены производителей, продовольствие, средние цены",
+        "gridPos": {
+          "h": 1,
+          "w": 24,
+          "x": 0,
+          "y": 158
+        },
+        "id": 40,
+        "panels": []
+      },
+      {
+        "type": "timeseries",
+        "id": 37,
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT date AS time, pow(value / 100, 12) - 1 AS \"ИЦП, м/м → годовое выражение\"\nFROM v_rosstat_ppi\nWHERE series = 'ИЦП по ВЭД, РФ, m/m' AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "B",
+            "rawSql": "SELECT date AS time, value / 100 - 1 AS \"ИЦП, г/г (официальный)\"\nFROM v_rosstat_ppi\nWHERE series = 'ИЦП по ВЭД, РФ, y/y' AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "C",
+            "rawSql": "SELECT date AS time, value AS \"ИЦП SA: SAAR 3м\"\nFROM v_rosstat_ppi\nWHERE series = 'ppi_sa:total:saar3' AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "D",
+            "rawSql": "SELECT date AS time, value AS \"ИЦП SA: SAAR 3м, ядро\"\nFROM v_rosstat_ppi\nWHERE series = 'ppi_sa:core:saar3' AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "ИЦП: годовое выражение",
+        "description": "ИЦП по ВЭД (Промышленность, v_rosstat_ppi). «м/м → годовое выражение» = pow(индекс/100, 12) - 1 с 1998: индекс к прошлому месяцу, приведённый к году. «г/г» = индекс/100 - 1 с 2021: это уже темп к прошлому году, степень к нему не применяется. «SAAR 3м» — сезонно скорректированный слой ppi_sa (X-13ARIMA-SEATS), «ядро» — KIPC food + non-food; это расчёт контура, а не официальный ряд. Порога 4 % здесь нет: 4 % — цель ЦБ по потребительской инфляции, на цены производителей она не распространяется.",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 9,
+          "w": 12,
+          "x": 0,
+          "y": 159
+        },
+        "repeatDirection": "h",
+        "timeFrom": "10y",
+        "options": {
+          "legend": {
+            "displayMode": "table",
+            "placement": "bottom",
+            "showLegend": true,
+            "calcs": [
+              "last",
+              "mean",
+              "max"
+            ]
+          },
+          "tooltip": {
+            "mode": "single",
+            "sort": "none"
+          }
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percentunit",
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "gradientMode": "none",
+              "lineWidth": 1,
+              "lineInterpolation": "smooth",
+              "fillOpacity": 0,
+              "spanNulls": false
+            }
+          },
+          "overrides": []
+        }
+      },
+      {
+        "type": "timeseries",
+        "id": 38,
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT period_date AS time, value AS \"ФАО: сводный\"\nFROM v_fao_food_price\nWHERE series = 'Food Price Index' AND $__timeFilter(period_date)\nORDER BY period_date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "B",
+            "rawSql": "SELECT period_date AS time, value AS \"ФАО: зерновые\"\nFROM v_fao_food_price\nWHERE series = 'Cereals' AND $__timeFilter(period_date)\nORDER BY period_date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "C",
+            "rawSql": "SELECT period_date AS time, value AS \"ФАО: молочные\"\nFROM v_fao_food_price\nWHERE series = 'Dairy' AND $__timeFilter(period_date)\nORDER BY period_date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "D",
+            "rawSql": "SELECT period_date AS time, value AS \"ФАО: мясо\"\nFROM v_fao_food_price\nWHERE series = 'Meat' AND $__timeFilter(period_date)\nORDER BY period_date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "E",
+            "rawSql": "SELECT period_date AS time, value AS \"ФАО: масла\"\nFROM v_fao_food_price\nWHERE series = 'Oils' AND $__timeFilter(period_date)\nORDER BY period_date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "F",
+            "rawSql": "SELECT period_date AS time, value AS \"ФАО: сахар\"\nFROM v_fao_food_price\nWHERE series = 'Sugar' AND $__timeFilter(period_date)\nORDER BY period_date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "ФАО: индексы продовольственных цен",
+        "description": "Индексы продовольственных цен ФАО (v_fao_food_price): сводный и пять подиндексов, номинальные, 2014-2016 = 100; real-индекса в источнике нет. По оси времени — period_date (месяц наблюдения); date витрины — дата публикации (1-е число следующего месяца), и на графике она сдвинула бы ряд на месяц. Это внешний фон продовольственной инфляции, а не российские цены.",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 9,
+          "w": 12,
+          "x": 12,
+          "y": 159
+        },
+        "repeatDirection": "h",
+        "timeFrom": "10y",
+        "options": {
+          "legend": {
+            "displayMode": "table",
+            "placement": "bottom",
+            "showLegend": true,
+            "calcs": [
+              "last",
+              "mean",
+              "max"
+            ]
+          },
+          "tooltip": {
+            "mode": "single",
+            "sort": "none"
+          }
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "gradientMode": "none",
+              "lineWidth": 1,
+              "lineInterpolation": "smooth",
+              "fillOpacity": 0,
+              "spanNulls": false
+            }
+          },
+          "overrides": []
+        }
+      },
+      {
+        "type": "timeseries",
+        "id": 39,
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT date AS time, value AS \"Говядина, ₽/кг\"\nFROM v_fedstat_weekly_prices\nWHERE series = 'Говядина (кроме бескостного мяса), кг' AND region = 'Российская Федерация' AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "B",
+            "rawSql": "SELECT date AS time, value AS \"Куры, ₽/кг\"\nFROM v_fedstat_weekly_prices\nWHERE series = 'Куры охлажденные и мороженые, кг' AND region = 'Российская Федерация' AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "C",
+            "rawSql": "SELECT date AS time, value AS \"Молоко 2,5–3,2 %, ₽/л\"\nFROM v_fedstat_weekly_prices\nWHERE series = 'Молоко питьевое цельное пастеризованное 2,5-3,2% жирности, л' AND region = 'Российская Федерация' AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "D",
+            "rawSql": "SELECT date AS time, value AS \"Картофель, ₽/кг\"\nFROM v_fedstat_weekly_prices\nWHERE series = 'Картофель, кг' AND region = 'Российская Федерация' AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "E",
+            "rawSql": "SELECT date AS time, value AS \"Яйца, ₽/10 шт.\"\nFROM v_fedstat_weekly_prices\nWHERE series = 'Яйца куриные, 10 шт.' AND region = 'Российская Федерация' AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "F",
+            "rawSql": "SELECT date AS time, value AS \"Бензин АИ-92, ₽/л\"\nFROM v_fedstat_weekly_prices\nWHERE series = 'Бензин автомобильный марки АИ-92, л' AND region = 'Российская Федерация' AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "Средние потребительские цены (ФЕДСТАТ), ₽",
+        "description": "Средние потребительские цены ЕМИСС (v_fedstat_weekly_prices), рубли за единицу из названия ряда (кг, л, 10 шт.) — это уровень цены, а не индекс: изменение за n недель = value_t / value_(t−n) − 1. Ряд идёт 2008-01-09 … 2022-12-26: в 2023–2025 источник данных не отдаёт, а 2026 публикуется в другом определении РФ («без учёта новых субъектов») и в панель не взят — поэтому линия непрерывна и заканчивается 2022-12-26. Окно панели — 20 лет, чтобы история читалась независимо от общего диапазона дашборда.",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 9,
+          "w": 12,
+          "x": 0,
+          "y": 168
+        },
+        "repeatDirection": "h",
+        "timeFrom": "20y",
+        "options": {
+          "legend": {
+            "displayMode": "table",
+            "placement": "bottom",
+            "showLegend": true,
+            "calcs": [
+              "last",
+              "mean",
+              "max"
+            ]
+          },
+          "tooltip": {
+            "mode": "single",
+            "sort": "none"
+          }
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "currencyRUB",
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "gradientMode": "none",
+              "lineWidth": 1,
+              "lineInterpolation": "smooth",
+              "fillOpacity": 0,
+              "spanNulls": false
             }
           },
           "overrides": []

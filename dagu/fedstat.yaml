@@ -1,0 +1,60 @@
+type: chain
+schedule: "43 13 * * 5"
+overlap_policy: skip
+
+steps:
+  # Один POST на весь диапазон 2008–2022 + 2026: серия POST подряд получает 503,
+  # поэтому шаг недельный, а не по годам. 2023–2025 в источнике отсутствуют.
+  - id: fedstat_weekly_prices
+    run: "$ROSSTAT_IMPORT_BIN"
+    env:
+      - CLICKHOUSE_IMPORT_STAT=fedstat_weekly_prices
+    retry_policy:
+      limit: 3
+      interval_sec: 300
+
+  # Макро-блоки ЕМИСС — в хвосте цепочки: падение нового шага не лишает данных
+  # уже проверенный 37426. 43046 (2000–2016) + 57806 (2015–2026), 55 968 точек.
+  - id: fedstat_ipp
+    run: "$ROSSTAT_IMPORT_BIN"
+    env:
+      - CLICKHOUSE_IMPORT_STAT=fedstat_ipp
+    retry_policy:
+      limit: 3
+      interval_sec: 300
+
+  # 31066 + 31260: индекс физобъёма и оборот, месячные и накопительные периоды.
+  - id: fedstat_retail
+    run: "$ROSSTAT_IMPORT_BIN"
+    env:
+      - CLICKHOUSE_IMPORT_STAT=fedstat_retail
+    retry_policy:
+      limit: 3
+      interval_sec: 300
+
+  # 34128 (Q) + 59001/31062 (Y) + 43337 (стоимость); batch-ряды в хвосте.
+  - id: fedstat_agri
+    run: "$ROSSTAT_IMPORT_BIN"
+    env:
+      - CLICKHOUSE_IMPORT_STAT=fedstat_agri
+    retry_policy:
+      limit: 3
+      interval_sec: 300
+
+  # 58089/58090 (2017–2026) + 34129/40562/34475 (история).
+  - id: fedstat_investment
+    run: "$ROSSTAT_IMPORT_BIN"
+    env:
+      - CLICKHOUSE_IMPORT_STAT=fedstat_investment
+    retry_policy:
+      limit: 3
+      interval_sec: 300
+
+  # 31074: 25 POST по году с паузой 30 с; полный прогон — только при новых годах.
+  - id: fedstat_ipc
+    run: "$ROSSTAT_IMPORT_BIN"
+    env:
+      - CLICKHOUSE_IMPORT_STAT=fedstat_ipc
+    retry_policy:
+      limit: 3
+      interval_sec: 300

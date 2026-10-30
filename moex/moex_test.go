@@ -30,6 +30,9 @@ func TestSeriesMetaCoversAllSeries(t *testing.T) {
 			t.Errorf("zcyc period %v tenor %s has no series_catalog entry", period, tenor)
 		}
 	}
+	if !described[brentSeries] {
+		t.Errorf("series %s (moex_market) has no series_catalog entry", brentSeries)
+	}
 }
 
 func TestParseCandles(t *testing.T) {

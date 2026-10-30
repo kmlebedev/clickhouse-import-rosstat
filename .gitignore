@@ -30,6 +30,32 @@ coverage.out
 /key_rate_model_predictions.csv
 /key_rate_model_forecast.json
 
+# Артефакты трека cbr_rule (issue #268): отчёт, предсказания, диагностика и
+# информационный прогноз. Локальные; в forecast_log не пишутся.
+/key_rate_cbr_rule_report.md
+/key_rate_cbr_rule_predictions.csv
+/key_rate_cbr_rule_diagnostics.csv
+/key_rate_cbr_rule_forecast.json
+
+# Артефакты сценарного веера (issue #272, Task 1): отчёт, предсказания,
+# диагностика и информационный прогноз. Локальные; в forecast_log не пишутся.
+/key_rate_scenario_fan_report.md
+/key_rate_scenario_fan_predictions.csv
+/key_rate_scenario_fan_diagnostics.csv
+/key_rate_scenario_fan_forecast.json
+
+# Артефакты веера v2 (issue #286, Task 3): ядро + дисперсия.
+/key_rate_scenario_fan_v2_report.md
+/key_rate_scenario_fan_v2_predictions.csv
+/key_rate_scenario_fan_v2_diagnostics.csv
+/key_rate_scenario_fan_v2_forecast.json
+
+# Артефакты веера v3 (issue #289, Task 4): channel-complete ядро + vol-дисперсия.
+/key_rate_scenario_fan_v3_report.md
+/key_rate_scenario_fan_v3_predictions.csv
+/key_rate_scenario_fan_v3_diagnostics.csv
+/key_rate_scenario_fan_v3_forecast.json
+
 # Артефакты классификатора шоков (issue #200): отчёт, as-of веса и запись
 # следующего заседания. Локальные и детерминированные при фиксированном сиде
 # и одной БД; имена точные.

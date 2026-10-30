@@ -1,0 +1,1433 @@
+
+<!DOCTYPE html>
+<html>
+<head>
+    
+
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+<meta name="format-detection" content="telephone=no" />
+<meta name="zoom:lang" content="ru" />
+    <meta name="zoom:last-modified" content="Wed, 14 Oct 2026 16:45:00 GMT" />
+    <meta name="zoom:tags" content="Аналитика, InMaterials" />
+<title>Инфляция в России | Банк России</title>
+
+
+
+    <meta property="og:image" content="/common/images/share-1.jpg" />
+
+    
+
+
+            <link rel="stylesheet" type="text/css" href="/common/libs/jquery-ui/jquery-ui.min.css?v=v478607061" media="all">
+
+            <!--[if IE 9]><link rel="stylesheet" type="text/css" href="/common/style/main-ie9.css?v=v1337212920" media="all"><![endif]-->
+
+            <!--[if gt IE 9]><!--><link rel="stylesheet" type="text/css" href="/common/style/main.min.css?v=v1337212920" media="all"><!--<![endif]-->
+
+
+        <script type="text/javascript" src="/common/libs/jquery-3.7.1.min.js?v=v735956814"></script>
+
+
+
+        <script type="text/javascript" src="/common/libs/jquery-ui/jquery-ui.min.js?v=v478607061"></script>
+
+        <script type="text/javascript" src="/common/libs/jquery.inputmask.min.js?v=v478607061"></script>
+
+
+        <script type="text/javascript" src="/common/scripts/vendor.js?v=v4270970564"></script>
+
+        <script type="text/javascript" src="/common/libs/jquery.floatThead.min.js?v=v478607061"></script>
+
+
+
+            <script type="text/javascript" src="/common/libs/highcharts.js?v=v478607061"></script>
+
+            <script type="text/javascript" src="/common/libs/exporting.js?v=v478607061"></script>
+
+
+            <script type="text/javascript" src="/common/libs/grouped-categories.js?v=v3912451182"></script>
+
+
+        <script type="text/javascript" src="/common/libs/popper.js?v=v478607061"></script>
+
+        <script type="text/javascript" src="/common/libs/tippy.js?v=v478607061"></script>
+
+        <script type="text/javascript" src="/common/scripts/main.min.js?v=v1337212920"></script>
+
+
+        <script type="text/javascript" src="/common/libs/localization-ru.js?v=v712023859"></script>
+        <script type="text/javascript" src="/js/jquery.ui.autocomplete-ru.js?v=v1043438991"></script>
+
+        <script type="text/javascript" src="/js/jquery.cookie.min.js?v=v4260771145"></script>
+
+        <script type="text/javascript" src="/js/site.js?v=v2848633841"></script>
+
+
+
+
+
+<script src="/Modules/Queries/Scripts/charts.js?v=v2127569593" type="text/javascript"></script>
+    <script type="text/javascript">
+        $(function () {
+            var $menu = $('[data-menu]'),
+                $menuItemBtn = $menu.find('[data-menu-item-btn]'),
+                $menuShow = $('[data-menu-show]'),
+                $menuClose = $('[data-menu-close]');
+            var config = $menu.data('config');
+
+            $menuShow.on('click.cms_loadwholesite mouseenter.cms_loadwholesite', function (event) {
+                loadWholeSite();
+            });
+
+            var xhr = null;
+            function loadWholeSite() {
+                if (xhr === null) {
+                    $('.menu_wrap .networks-circle').html($('.networks-circle.footer_networks').html());
+                    $('.menu_wrap .header_search').html($('.header .offsetMenu .header_search').html());
+
+                    $('[data-cms-wholesite-placeholder]').addClass('with-centered-loader').empty();
+                    xhr = $.ajax(config.url, {
+                        dataType: "html",
+                        method: "get",
+                        success: function (html) {
+                            $('[data-cms-wholesite-placeholder]').replaceWith(html);
+
+                            $menu.find('.menu_tab[data-tabs-tab]').each(function () {
+                                var tab = $(this).data('tabs-tab');
+                                $(this).toggle($menu.find('[data-tabs-content="' + tab + '"]').length != 0);
+                            });
+
+                            $menu.trigger('new-html');
+
+                            for (var i in config.catalogPath) {
+                                $menu.find('li[data-catalog-id="' + config.catalogPath[i] + '"]')
+                                    .addClass("_active");
+                                $menu.find('li[data-catalog-id="' + config.catalogPath[i] + '"]')
+                                    .closest('[data-tabs-content]')
+                                    .trigger('open-anchor');
+                            }
+
+                            $menuShow.off('click.cms_loadwholesite mouseenter.cms_loadwholesite');
+                        },
+                        error: function () {
+                            $('[data-cms-wholesite-placeholder]').removeClass('with-centered-loader')
+                                .append('<div class="menu_content offset-md-1">' +
+                                    '<span class="group-error field-validation-error">Не удалось загрузить карту сайта. <a href="#">Попробуйте еще раз.</a></span>' +
+                                    '</div>')
+                                .find('a')
+                                .on('click', function () { loadWholeSite(); });
+                        },
+                        complete: function () {
+                            xhr = null;
+                        }
+                    });
+                }
+            }
+        });
+    </script>
+
+
+<script>
+    if (window.localStorage) {
+        if (localStorage.getItem('vision-impaired'))
+            document.getElementsByTagName('html')[0].className += ' vision-impaired';
+    }
+</script>
+<script>
+    document.documentElement.style.setProperty('--scrollbar-width', '17px');
+    setTimeout(function () {
+        
+        var div = document.createElement('div');
+
+        div.style.overflowY = 'scroll';
+        div.style.width = '50px';
+        div.style.height = '50px';
+
+        
+        div.style.visibility = 'hidden';
+
+        document.body.appendChild(div);
+        var scrollWidth = Math.max(div.offsetWidth - div.clientWidth, 0.15); 
+        document.body.removeChild(div);
+        
+        document.documentElement.style.setProperty('--scrollbar-width', scrollWidth + 'px');
+    }, 0);
+</script>
+
+
+
+
+    
+</head>
+<body class="page-v3 page-v3-inside " id="">
+
+
+<!-- Yandex.Metrika counter -->
+<script type="text/javascript" >
+    (function(m,e,t,r,i,k,a){m[i]=m[i]||function(){(m[i].a=m[i].a||[]).push(arguments)};
+    m[i].l=1*new Date();
+    for (var j = 0; j < document.scripts.length; j++) {if (document.scripts[j].src === r) { return; }}
+    k=e.createElement(t),a=e.getElementsByTagName(t)[0],k.async=1,k.src=r,a.parentNode.insertBefore(k,a)})
+    (window, document, "script", "https://mc.yandex.ru/metrika/tag.js", "ym");
+
+    ym(5774506, "init", {
+        clickmap:true,
+        trackLinks:true,
+        accurateTrackBounce:true,
+        webvisor:true
+    });
+</script>
+<noscript><div><img src="https://mc.yandex.ru/watch/5774506" style="position:absolute; left:-9999px;" alt="" /></div></noscript>    
+<!-- /Yandex.Metrika counter -->
+        
+    <div class="header-print">
+    <div class="offsetMenu">
+        <div class="header-print_inner">
+            <img class="header-print_logo" alt="cbr" src="/common/images/logo.svg">
+            <ul class="header-print_contacts">
+<li>107016, Москва, ул. Неглинная, д.&nbsp;12, к. В, Банк России</li>
+<li><nobr class="phone">8 800 300-30-00</nobr></li>
+<li>www.cbr.ru</li>
+</ul>
+
+        </div>
+    </div>
+</div>
+
+        <div class="banner-header">
+            <header class="header" id="header" style="background-image: url(/StaticHtml/File/131917/1.jpg);">
+                <div class="header-image"><img class="banner-header_image" src="/StaticHtml/File/131917/1.jpg"></div>
+                <div class="top-line" data-top-line="">
+                    <div class="header_burger-big"></div>
+                    <div class="offsetMenu">
+                        <div class="col-md-23 header_margin-left">
+                            <div class="top-line_inner header_inner">
+                                
+
+<div class="row">
+    <div class="col-xl-4 col-md-6">
+        <div class="header_left pr-0">
+                <div class="header_menu" data-menu-show=""></div>
+            <a class="header_logo" href="/"></a>
+                <a class="header_search_btn d-flex d-md-none" href="#" data-search-form-show="" aria-label="Поиск по сайту"><div class="header_search_icon"></div></a>
+            <a class="d-flex d-md-none" href="#" data-tooltip="" data-tooltip-content="Версия для слабовидящих" data-tooltip-class="mobile-hide"><div class="header_visual-impaired_item"></div></a>
+        </div>
+    </div>
+    <div class="col-xl-17 col-md-13 offset-md-1 header_block">
+        <div class="d-none d-md-block">
+            <div class="header_right">
+                <div class="networks header_link header_networks"><a class="header_appeal-link" href="/contactBR/" data-tooltip="" data-tooltip-content="Обратиться в Банк России" data-tooltip-class="mobile-hide"></a></div>
+                <div class="networks header_networks header_visual-impaired header_visual-impaired_inner"><a href="#" data-tooltip="" data-tooltip-content="Версия для слабовидящих" data-tooltip-class="mobile-hide" aria-label="Версия для слабовидящих"><div class="header_visual-impaired_item"></div></a></div>
+                <div class="header_lang header_lang_inner header_networks">
+    <a href="/Localization/SwitchLanguage?url=%2Fanalytics%2Fdkp%2Fdinamic%2FCPD_2026-9%2F&amp;from=ru-RU&amp;to=en-CB"><!--noindex-->EN<!--/noindex--></a>
+</div>
+                    <div class="header_networks header_search header_search_inner">
+                        <a class="header_search_btn" href="#" data-search-form-show="" aria-label="Поиск по сайту"><div class="header_search_icon"></div><span aria-hidden="true">Поиск по сайту</span></a>
+                    </div>
+            </div>
+        </div>
+    </div>
+</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="offsetMenu">
+                    <div class="col-md-23 offset-md-1 header_margin-left">
+                        <div class="header_inner">
+                            
+<div class="row">
+    <div class="col-xl-4 col-md-6">
+        <div class="header_left pr-0">
+            <div class="header_menu" data-menu-show=""></div>
+            <a class="header_logo" href="/"></a>
+            <a class="header_search_btn d-flex d-md-none" href="#" data-search-form-show="" aria-label="Поиск по сайту">
+                <div class="header_search_icon"></div>
+            </a>
+            <a class="d-flex d-md-none" href="#" data-tooltip data-tooltip-content="Версия для слабовидящих" data-tooltip-class="mobile-hide">
+                <div class="header_visual-impaired_item"></div>
+            </a>
+        </div>
+    </div>
+    <div class="col-xl-17 col-md-13 offset-md-1 header_block justify-content-end">
+        <div class="d-none d-md-block">
+            <div class="header_right">
+                <div class="networks header_link header_networks"><a class="header_appeal-link" href="/contactBR/" data-tooltip="" data-tooltip-content="Обратиться в Банк России" data-tooltip-class="mobile-hide"></a></div>
+                <div class="networks header_networks header_visual-impaired header_visual-impaired_inner">
+                    <a href="#" data-tooltip data-tooltip-content="Версия для слабовидящих" data-tooltip-class="mobile-hide" aria-label="Версия для слабовидящих">
+                        <div class="header_visual-impaired_item"></div>
+                    </a>
+                </div>
+                <div class="header_lang header_lang_inner header_networks">
+    <a href="/Localization/SwitchLanguage?url=%2Fanalytics%2Fdkp%2Fdinamic%2FCPD_2026-9%2F&amp;from=ru-RU&amp;to=en-CB"><!--noindex-->EN<!--/noindex--></a>
+</div>
+                <div class="header_networks header_search header_search_inner">
+                    <a class="header_search_btn" href="#" data-search-form-show="" aria-label="Поиск по сайту">
+                        <div class="header_search_icon"></div><span aria-hidden="true">Поиск по сайту</span>
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+                        </div>
+                    </div>
+                </div>
+            </header>
+            <div class="banner-header_main">
+                <div class="offsetMenu banner-header_breadcumbs">
+                    <div class="col-md-23 offset-md-1">
+                        <div class="breadcrumbs">
+    <div class="breadcrumbs_item"><a class="breadcrumbs_home" href="/"></a></div>
+        <div class="breadcrumbs_item">
+            <a href="/analytics/"><!--noindex-->Аналитика<!--/noindex--></a>
+        </div>
+        <div class="breadcrumbs_item">
+            <a href="/analytics/dkp/"><!--noindex-->Денежно-кредитная политика<!--/noindex--></a>
+        </div>
+        <div class="breadcrumbs_item">
+            <a href="/analytics/dkp/dinamic/"><!--noindex-->Инфляция в&#160;России<!--/noindex--></a>
+        </div>
+    </div>
+
+                    </div>
+                </div>
+                <div class="offsetMenu">
+                    <div class="col-md-23 offset-md-1">
+                        <!--index-->
+                        <h1><span class="referenceable">Инфляция в&#160;России</span>
+</h1>
+
+                        <!--/index-->
+                    </div>
+                </div>
+            </div>
+            <div class="banner-header_bottom">
+<div class="offsetMenu"><div class="col-md-23 offset-md-1"><div class="banner-header_vestnik"><div class="banner-header_vestnik_subtitle"></div><div class="banner-header_vestnik_title">№ 9 (129) • Сентябрь</div><div class="banner-header_vestnik_btn"><a class="b-btn _blue" href="/Collection/Collection/File/62446/CPD_2026-9.pdf">Скачать</a></div></div><div class="news-header_author"><!--	Фото:  copyright --></div><div class="news-info-line row news-info-line__dark"><div class="col-md-6 col-12 news-info-line_date">14 октября 2026 года</div><div class="col-md-11 col-13 news-info-line_type"></div><div class="col-md-6 d-none d-md-block news-info-line_share"><span class="news-info-line_share-btn" tabindex="0" data-share-btn="data-share-btn">Поделиться</span><div class="news-info-line_share-select _hide"><a class="news-info-line_share-vkontakte" target="_blank" href="https://vkontakte.ru/share.php?url=https%3a%2f%2fwww.cbr.ru%2fanalytics%2fdkp%2fdinamic%2fCPD_2026-9%2f">ВКонтакте</a><a class="news-info-line_share-telegram" target="_blank" href="https://telegam.me/share/url?url=https%3a%2f%2fwww.cbr.ru%2fanalytics%2fdkp%2fdinamic%2fCPD_2026-9%2f">Telegram</a><a class="news-info-line_share-max" target="_blank" href="https://max.ru/:share?text=https%3a%2f%2fwww.cbr.ru%2fanalytics%2fdkp%2fdinamic%2fCPD_2026-9%2f">Макс</a></div></div></div></div></div>            </div>
+        </div>
+    <form action="/search/" method="get" class="search-form" data-search-form=""
+      data-api-url="/Content/SearchSuggest/Suggest"
+      data-api-top-url="">
+    <div class="offsetMenu">
+        <div class="col-md-23 offset-md-1">
+            <div class="search-form_inner">
+                <div class="search-form_title">Что вы хотите найти?<img class="search-form_title-close" src="/common/images/icons/menu-close-dark-grey.svg"></div>
+                <div class="search-form_content">
+                    <div class="search-form_block">
+                        <div class="search-form_icon"></div>
+                        <div class="search-form_field">
+                            <input name="text" type="text" autocomplete="off" placeholder="Начните писать" data-search-form-input="" />
+                        </div>
+                    </div>
+                    <div class="search-form_clear" data-search-form-clear-btn=""><img src="/common/images/icons/menu-close-gray.svg"></div>
+                    <div class="search-form_btn">
+                        <button class="b-btn _blue" data-search-form-btn="">Искать</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</form>
+
+
+<div class="menu_wrap" data-menu="" data-config="{&quot;catalogPath&quot;:[30488,18692,16629],&quot;url&quot;:&quot;/Catalog/SiteMap/GetWholeSiteHtml?blockId=59191&quot;}">
+    <div class="offsetMenu">
+        <div class="header_menu _close menu_close d-none d-md-block" data-menu-close=""></div>
+        <div class="header_inner top-line_inner d-block d-md-none">
+            <div class="row">
+                <div class="col-xl-5 col-md-9">
+                    <div class="header_left pr-0">
+                        <div class="header_menu _close" role="button" tabindex="0" aria-label="Закрыть меню" data-menu-close=""></div>
+                        <a class="header_logo" href="/"></a>
+                        <a class="header_search_btn" href="#" data-search-form-show="data-search-form-show" aria-label="Поиск по сайту"><div class="header_search_icon"></div></a>
+                        <a href="#" data-tooltip="data-tooltip" data-tooltip-content="Версия для слабовидящих" data-tooltip-class="mobile-hide"><div class="header_visual-impaired_item"></div></a>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="menu row" data-tabs="data-tabs">
+            <div class="menu_quick col-md-7">
+                <div role="tablist" class="menu_quick_tabs">
+    <a role="tab" id="menu_tab_Activity" aria-controls="menu_content_Activity" aria-selected="true" class="menu_tab _active" href="#" data-tabs-tab="Activity">Деятельность</a>
+    <a role="tab" id="menu_tab_FinancialMarkets" aria-controls="menu_content_FinancialMarkets" aria-selected="false" class="menu_tab" href="#" data-tabs-tab="FinancialMarkets">Финансовые рынки</a>
+    <a role="tab" id="menu_tab_Documents" aria-controls="menu_content_Documents" aria-selected="false" class="menu_tab" href="#" data-tabs-tab="Documents">Документы и данные</a>
+    <a role="tab" id="menu_tab_AboutBank" aria-controls="menu_content_AboutBank" aria-selected="false" class="menu_tab" href="#" data-tabs-tab="AboutBank">О Банке России</a>
+    <a role="tab" id="menu_tab_Services" aria-controls="menu_content_Services" aria-selected="false" class="menu_tab" href="#" data-tabs-tab="Services">Сервисы</a>
+</div>
+<div class="menu_quick_links">
+    <div class="inner_links"><a href="/support_measures/" title="Меры зашиты финансового рынка" style="color:red">Меры защиты финансового рынка</a>
+  </div>
+<div class="phones"><a class="menu_phone_val" href="tel:+74993003000">
+<div class="plus">+</div>7 499 300-30-00</a><a class="menu_phone_val" href="tel:88003003000">8 800 300-30-00</a><a class="menu_phone_val" href="tel:300">300</a><span>Бесплатно для звонков с мобильных телефонов</span></div>
+<div class="inner_links">
+  <a href="/news/" title="Новости">Новости</a>
+  <a href="/rbr/" title="Решения Банка России">Решения Банка России</a>
+  <a href="/contacts/" title="Контактная информация">Контактная информация</a>
+  <a href="/sitemap" title="Карта сайта">Карта сайта</a>
+  <a href="/about/" title="О сайте">О сайте</a>
+  </div>
+<div class="networks-circle">
+  <a class="networks-circle_item _vk" href="https://vk.com/cbr_official" title="ВКонтакте"></a>
+  <a class="networks-circle_item _yt" href="https://www.youtube.com/user/BankofRussia" title="Youtube"></a>
+  <a class="networks-circle_item _tg" href="https://telegram.me/centralbank_russia" title="Telegram"></a>
+  <a class="networks-circle_item _ydzen" href="https://zen.yandex.ru/id/622372d6a565892091994ea9" title="Яндекс Дзен"></a>
+  <a class="networks-circle_item _ok" href="https://ok.ru/group/68858679787580" title="Одноклассники"></a>
+  <a class="networks-circle_item _rt" href="https://rutube.ru/channel/23873201/" title="RUTUBE"></a>
+  <a class="networks-circle_item _max" href="https://max.ru/cbr_official" title="Макс"></a>
+</div>
+</div>
+            </div>
+            <div class="d-md-none link-above">
+                <div class="header_right">
+                    <div class="header_link"><a href="/contactBR/">Обратиться в&nbsp;Банк России</a></div>
+                    <div class="header_lang">
+            <div class="header_lang_item _active"><span><!--noindex-->RU<!--/noindex--></span></div>
+            <div class="header_lang_item"><a href="/Localization/SwitchLanguage?url=%2Fanalytics%2Fdkp%2Fdinamic%2FCPD_2026-9%2F&amp;from=ru-RU&amp;to=en-CB"><!--noindex-->EN<!--/noindex--></a></div>
+</div>
+                </div>
+<div class="header_right"><div class="header_link"><a href="/about_br/">О Банке России</a></div></div>
+<div class="header_right"><div class="header_link"><a href="/finorg/">Проверить участника финансового рынка</a></div></div>
+<div class="header_right"><div class="header_link"><a href="/beware/">Осторожно: мошенники!</a></div></div>            </div>
+            <div class="menu_content_container col-md" data-cms-wholesite-placeholder="">
+            </div>
+        </div>
+    </div>
+</div>
+
+    <main id="content">
+        <div class="offsetMenu">
+            <div class="container-fluid">
+                <div class="col-md-23 offset-md-1">
+                    <!--index-->
+                    
+        <div class="versions-tabs tabs_wrap" data-tabs>
+            <div class="versions" data-versions>
+                <div class="versions_select_wrap">
+                    <select data-versions-select class="versions_select">
+                            <option value="2026 г.">2026 г.</option>
+                            <option value="2025 г.">2025 г.</option>
+                            <option value="2024 г.">2024 г.</option>
+                            <option value="2023 г.">2023 г.</option>
+                            <option value="2022 г.">2022 г.</option>
+                            <option value="2021 г.">2021 г.</option>
+                            <option value="2020 г.">2020 г.</option>
+                            <option value="2019 г.">2019 г.</option>
+                            <option value="2018 г.">2018 г.</option>
+                            <option value="2017 г.">2017 г.</option>
+                            <option value="2016 г.">2016 г.</option>
+                    </select>
+                    <div class="dropdown_select"></div>
+                </div>
+                    <div class="versions_items _active" data-versions-items="2026 г." data-item-select="2026 г.">
+                            <a class="versions_item _active"
+       href="/analytics/dkp/dinamic/CPD_2026-9/"
+       
+
+       data-versions-item="">№&#160;9&#160;(129) • сентябрь</a>
+    <a class="versions_item"
+       href="/analytics/dkp/dinamic/CPD_2026-8/"
+       
+
+       data-versions-item="">№&#160;8&#160;(128) • август</a>
+    <a class="versions_item"
+       href="/analytics/dkp/dinamic/CPD_2026-7/"
+       
+
+       data-versions-item="">№&#160;7&#160;(127) • июль</a>
+    <a class="versions_item"
+       href="/analytics/dkp/dinamic/CPD_2026-6/"
+       
+
+       data-versions-item="">№&#160;6&#160;(126) • июнь</a>
+    <a class="versions_item"
+       href="/analytics/dkp/dinamic/CPD_2026-5/"
+       
+
+       data-versions-item="">№&#160;5&#160;(125) • май</a>
+    <a class="versions_item"
+       href="/analytics/dkp/dinamic/CPD_2026-4/"
+       
+
+       data-versions-item="">№&#160;4&#160;(124) • апрель</a>
+    <a class="versions_item"
+       href="/analytics/dkp/dinamic/CPD_2026-3/"
+       
+
+       data-versions-item="">№&#160;3&#160;(123) • март</a>
+    <a class="versions_item"
+       href="/analytics/dkp/dinamic/CPD_2026-2/"
+       
+
+       data-versions-item="">№&#160;2&#160;(122) • февраль</a>
+    <a class="versions_item"
+       href="/analytics/dkp/dinamic/CPD_2026-1/"
+       
+
+       data-versions-item="">№&#160;1&#160;(121) • январь</a>
+                    </div>
+                    <div class="versions_items " data-versions-items="2025 г." data-item-select="2025 г.">
+                            <a class="versions_item"
+       href="/analytics/dkp/dinamic/CPD_2025-12/"
+       
+
+       data-versions-item="">№&#160;12&#160;(120) • декабрь</a>
+    <a class="versions_item"
+       href="/analytics/dkp/dinamic/CPD_2025-11/"
+       
+
+       data-versions-item="">№&#160;11&#160;(119) • ноябрь</a>
+    <a class="versions_item"
+       href="/analytics/dkp/dinamic/CPD_2025-10/"
+       
+
+       data-versions-item="">№&#160;10&#160;(118) • октябрь</a>
+    <a class="versions_item"
+       href="/analytics/dkp/dinamic/CPD_2025-9/"
+       
+
+       data-versions-item="">№&#160;9&#160;(117) • сентябрь</a>
+    <a class="versions_item"
+       href="/analytics/dkp/dinamic/CPD_2025-8/"
+       
+
+       data-versions-item="">№&#160;8&#160;(116) • август</a>
+    <a class="versions_item"
+       href="/analytics/dkp/dinamic/CPD_2025-7/"
+       
+
+       data-versions-item="">№&#160;7&#160;(115) • июль</a>
+    <a class="versions_item"
+       href="/analytics/dkp/dinamic/CPD_2025-6/"
+       
+
+       data-versions-item="">№&#160;6&#160;(114) • июнь</a>
+    <a class="versions_item"
+       href="/analytics/dkp/dinamic/analytics/dkp/dinamic/CPD_2025-5/"
+       
+
+       data-versions-item="">№&#160;5&#160;(113) • май</a>
+    <a class="versions_item"
+       href="/analytics/dkp/dinamic/analytics/dkp/dinamic/CPD_2025-4/"
+       
+
+       data-versions-item="">№&#160;4&#160;(112) • апрель</a>
+    <a class="versions_item"
+       href="/analytics/dkp/dinamic/CPD_2025-3/"
+       
+
+       data-versions-item="">№&#160;3&#160;(111) • март</a>
+    <a class="versions_item"
+       href="/analytics/dkp/dinamic/CPD_2025-2/"
+       
+
+       data-versions-item="">№&#160;2&#160;(110) • февраль</a>
+    <a class="versions_item"
+       href="/analytics/dkp/dinamic/CPD_2025-1/"
+       
+
+       data-versions-item="">№&#160;1&#160;(109) • январь</a>
+                    </div>
+                    <div class="versions_items " data-versions-items="2024 г." data-item-select="2024 г.">
+                            <a class="versions_item"
+       href="/analytics/dkp/dinamic/CPD_2024-12/"
+       
+
+       data-versions-item="">№&#160;12&#160;(108) • декабрь</a>
+    <a class="versions_item"
+       href="/analytics/dkp/dinamic/CPD_2024-11/"
+       
+
+       data-versions-item="">№&#160;11&#160;(107) • ноябрь</a>
+    <a class="versions_item"
+       href="/analytics/dkp/dinamic/CPD_2024-10/"
+       
+
+       data-versions-item="">№&#160;10&#160;(106) • октябрь</a>
+    <a class="versions_item"
+       href="/analytics/dkp/dinamic/CPD_2024-9/"
+       
+
+       data-versions-item="">№&#160;9&#160;(105) • сентябрь</a>
+    <a class="versions_item"
+       href="/analytics/dkp/dinamic/CPD_2024-8/"
+       
+
+       data-versions-item="">№&#160;8&#160;(104) • август</a>
+    <a class="versions_item"
+       href="/analytics/dkp/dinamic/CPD_2024-7/"
+       
+
+       data-versions-item="">№&#160;7&#160;(103) • июль</a>
+    <a class="versions_item"
+       href="/analytics/dkp/dinamic/CPD_2024-6/"
+       
+
+       data-versions-item="">№&#160;6&#160;(102) • июнь</a>
+    <a class="versions_item"
+       href="/analytics/dkp/dinamic/CPD_2024-5/"
+       
+
+       data-versions-item="">№&#160;5&#160;(101) • май</a>
+    <a class="versions_item"
+       href="/analytics/dkp/dinamic/CPD_2024-4/"
+       
+
+       data-versions-item="">№&#160;4&#160;(100) • апрель</a>
+    <a class="versions_item"
+       href="/analytics/dkp/dinamic/CPD_2024-3/"
+       
+
+       data-versions-item="">№&#160;3&#160;(99) • март</a>
+    <a class="versions_item"
+       href="/analytics/dkp/dinamic/CPD_2024-2/"
+       
+
+       data-versions-item="">№&#160;2&#160;(98) • февраль</a>
+    <a class="versions_item"
+       href="/analytics/dkp/dinamic/CPD_2024-1/"
+       
+
+       data-versions-item="">№&#160;1&#160;(97) • январь</a>
+                    </div>
+                    <div class="versions_items " data-versions-items="2023 г." data-item-select="2023 г.">
+                            <a class="versions_item"
+       href="/analytics/dkp/dinamic/CPD_2023-12/"
+       
+
+       data-versions-item="">№&#160;12&#160;(96) • декабрь</a>
+    <a class="versions_item"
+       href="/analytics/dkp/dinamic/CPD_2023-11/"
+       
+
+       data-versions-item="">№&#160;11&#160;(95) • ноябрь</a>
+    <a class="versions_item"
+       href="/analytics/dkp/dinamic/CPD_2023-10/"
+       
+
+       data-versions-item="">№&#160;10&#160;(94) • октябрь</a>
+    <a class="versions_item"
+       href="/analytics/dkp/dinamic/CPD_2023-9/"
+       
+
+       data-versions-item="">№&#160;9&#160;(93) • сентябрь</a>
+    <a class="versions_item"
+       href="/analytics/dkp/dinamic/CPD_2023-8/"
+       
+
+       data-versions-item="">№&#160;8&#160;(92) • август</a>
+    <a class="versions_item"
+       href="/analytics/dkp/dinamic/CPD_2023-7/"
+       
+
+       data-versions-item="">№&#160;7&#160;(91) • июль</a>
+    <a class="versions_item"
+       href="/analytics/dkp/dinamic/CPD_2023-6/"
+       
+
+       data-versions-item="">№&#160;6&#160;(90) • июнь</a>
+    <a class="versions_item"
+       href="/analytics/dkp/dinamic/CPD_2023-5/"
+       
+
+       data-versions-item="">№&#160;5&#160;(89) • май</a>
+    <a class="versions_item"
+       href="/analytics/dkp/dinamic/CPD_2023-4/"
+       
+
+       data-versions-item="">№&#160;4&#160;(88) • апрель</a>
+    <a class="versions_item"
+       href="/analytics/dkp/dinamic/CPD_2023-3/"
+       
+
+       data-versions-item="">№&#160;3&#160;(87) • март</a>
+    <a class="versions_item"
+       href="/analytics/dkp/dinamic/CPD_2023-2/"
+       
+
+       data-versions-item="">№&#160;2&#160;(86) • февраль</a>
+    <a class="versions_item"
+       href="/analytics/dkp/dinamic/CPD_2023-1/"
+       
+
+       data-versions-item="">№&#160;1&#160;(85) • январь</a>
+                    </div>
+                    <div class="versions_items " data-versions-items="2022 г." data-item-select="2022 г.">
+                            <a class="versions_item"
+       href="/analytics/dkp/dinamic/CPD_2022-12/"
+       
+
+       data-versions-item="">№&#160;12&#160;(84) • декабрь</a>
+    <a class="versions_item"
+       href="/analytics/dkp/dinamic/CPD_2022-11/"
+       
+
+       data-versions-item="">№&#160;11&#160;(83) • ноябрь</a>
+    <a class="versions_item"
+       href="/analytics/dkp/dinamic/CPD_2022-10/"
+       
+
+       data-versions-item="">№&#160;10&#160;(82) • октябрь</a>
+    <a class="versions_item"
+       href="/analytics/dkp/dinamic/CPD_2022-09/"
+       
+
+       data-versions-item="">№&#160;9&#160;(81) • сентябрь</a>
+    <a class="versions_item"
+       href="/analytics/dkp/dinamic/CPD_2022-08/"
+       
+
+       data-versions-item="">№&#160;8&#160;(80) • август</a>
+    <a class="versions_item"
+       href="/analytics/dkp/dinamic/CPD_2022-07/"
+       
+
+       data-versions-item="">№&#160;7&#160;(79) • июль</a>
+    <a class="versions_item"
+       href="/analytics/dkp/dinamic/CPD_2022-06/"
+       
+
+       data-versions-item="">№&#160;6&#160;(78) • июнь</a>
+    <a class="versions_item"
+       href="/analytics/dkp/dinamic/CPD_2022-05/"
+       
+
+       data-versions-item="">№&#160;5&#160;(77) • май</a>
+    <a class="versions_item"
+       href="/analytics/dkp/dinamic/CPD_2022-04/"
+       
+
+       data-versions-item="">№&#160;4&#160;(76) • апрель</a>
+    <a class="versions_item"
+       href="/analytics/dkp/dinamic/CPD_2022-03/"
+       
+
+       data-versions-item="">№&#160;3&#160;(75) • март</a>
+    <a class="versions_item"
+       href="/Collection/Collection/File/40886/CPD_2022-02.pdf"
+        data-tooltip data-tooltip-content="Опубликовано 21 марта 2022" 
+ target="_blank" 
+       data-versions-item="">№&#160;2&#160;(74) • февраль</a>
+    <a class="versions_item"
+       href="/analytics/dkp/dinamic/CPD_2022-01/"
+       
+
+       data-versions-item="">№&#160;1&#160;(73) • январь</a>
+                    </div>
+                    <div class="versions_items " data-versions-items="2021 г." data-item-select="2021 г.">
+                            <a class="versions_item"
+       href="/analytics/dkp/dinamic/CPD_2021-12/"
+       
+
+       data-versions-item="">№&#160;12&#160;(72) • декабрь</a>
+    <a class="versions_item"
+       href="/Collection/Collection/File/39638/CPD_2021-11.pdf"
+        data-tooltip data-tooltip-content="Опубликовано 17 декабря 2021" 
+ target="_blank" 
+       data-versions-item="">№&#160;11&#160;(71) • ноябрь</a>
+    <a class="versions_item"
+       href="/Collection/Collection/File/39316/CPD_2021-10.pdf"
+        data-tooltip data-tooltip-content="Опубликовано 12 ноября 2021" 
+ target="_blank" 
+       data-versions-item="">№&#160;10&#160;(70) • октябрь</a>
+    <a class="versions_item"
+       href="/Collection/Collection/File/38963/CPD_2021-09.pdf"
+        data-tooltip data-tooltip-content="Опубликовано 13 октября 2021" 
+ target="_blank" 
+       data-versions-item="">№&#160;9&#160;(69) • сентябрь </a>
+    <a class="versions_item"
+       href="/Collection/Collection/File/36621/CPD_2021-08.pdf"
+        data-tooltip data-tooltip-content="Опубликовано 13 сентября 2021" 
+ target="_blank" 
+       data-versions-item="">№&#160;8&#160;(68) • август </a>
+    <a class="versions_item"
+       href="/Collection/Collection/File/35540/CPD_2021-07.pdf"
+        data-tooltip data-tooltip-content="Опубликовано 13 августа 2021" 
+ target="_blank" 
+       data-versions-item="">№&#160;7&#160;(67) • июль </a>
+    <a class="versions_item"
+       href="/Collection/Collection/File/35468/CPD_2021-06.pdf"
+        data-tooltip data-tooltip-content="Опубликовано 12 июля 2021" 
+ target="_blank" 
+       data-versions-item="">№&#160;6&#160;(66) • июнь </a>
+    <a class="versions_item"
+       href="/Collection/Collection/File/35411/CPD_2021-05.pdf"
+        data-tooltip data-tooltip-content="Опубликовано 15 июня 2021" 
+ target="_blank" 
+       data-versions-item="">№&#160;5&#160;(65) • май&#160;</a>
+    <a class="versions_item"
+       href="/Collection/Collection/File/32283/CPD_2021-04.pdf"
+        data-tooltip data-tooltip-content="Опубликовано 14 мая 2021" 
+ target="_blank" 
+       data-versions-item="">№&#160;4&#160;(64) • апрель </a>
+    <a class="versions_item"
+       href="/Collection/Collection/File/32193/CPD_2021-03.pdf"
+        data-tooltip data-tooltip-content="Опубликовано 12 апреля 2021" 
+ target="_blank" 
+       data-versions-item="">№&#160;3&#160;(63) • март </a>
+    <a class="versions_item"
+       href="/Collection/Collection/File/32084/CPD_2021-02.pdf"
+        data-tooltip data-tooltip-content="Опубликовано 11 марта 2021" 
+ target="_blank" 
+       data-versions-item="">№&#160;2&#160;(62) • февраль </a>
+    <a class="versions_item"
+       href="/Collection/Collection/File/31990/CPD_2021-01.pdf"
+        data-tooltip data-tooltip-content="Опубликовано 15 февраля 2021" 
+ target="_blank" 
+       data-versions-item="">№&#160;1&#160;(61) • январь </a>
+                    </div>
+                    <div class="versions_items " data-versions-items="2020 г." data-item-select="2020 г.">
+                            <a class="versions_item"
+       href="/Collection/Collection/File/31914/CPD_2020-12.pdf"
+        data-tooltip data-tooltip-content="Опубликовано 20 января 2021" 
+ target="_blank" 
+       data-versions-item="">№&#160;12&#160;(60) • декабрь </a>
+    <a class="versions_item"
+       href="/Collection/Collection/File/31737/CPD_2020-11.pdf"
+        data-tooltip data-tooltip-content="Опубликовано 10 декабря 2020" 
+ target="_blank" 
+       data-versions-item="">№&#160;11&#160;(59) • ноябрь </a>
+    <a class="versions_item"
+       href="/Collection/Collection/File/31438/CPD_2020-10.pdf"
+        data-tooltip data-tooltip-content="Опубликовано 12 ноября 2020" 
+ target="_blank" 
+       data-versions-item="">№&#160;10&#160;(58) • октябрь</a>
+    <a class="versions_item"
+       href="/Collection/Collection/File/29354/CPD_2020-09.pdf"
+        data-tooltip data-tooltip-content="Опубликовано 12 октября 2020" 
+ target="_blank" 
+       data-versions-item="">№&#160;9&#160;(57) • сентябрь </a>
+    <a class="versions_item"
+       href="/Collection/Collection/File/29216/CPD_2020-08.pdf"
+        data-tooltip data-tooltip-content="Опубликовано 10 сентября 2020" 
+ target="_blank" 
+       data-versions-item="">№&#160;8&#160;(56) • август </a>
+    <a class="versions_item"
+       href="/Collection/Collection/File/29140/CPD_2020-07.pdf"
+        data-tooltip data-tooltip-content="Опубликовано 12 августа 2020" 
+ target="_blank" 
+       data-versions-item="">№&#160;7&#160;(55) • июль </a>
+    <a class="versions_item"
+       href="/Collection/Collection/File/28020/CPD_2020-06.pdf"
+        data-tooltip data-tooltip-content="Опубликовано 15 июля 2020" 
+ target="_blank" 
+       data-versions-item="">№&#160;6&#160;(54) • июнь </a>
+    <a class="versions_item"
+       href="/Collection/Collection/File/27972/CPD_2020-05.pdf"
+        data-tooltip data-tooltip-content="Опубликовано 22 июня 2020" 
+ target="_blank" 
+       data-versions-item="">№&#160;5&#160;(53) • май&#160;</a>
+    <a class="versions_item"
+       href="/Collection/Collection/File/27887/CPD_2020-04.pdf"
+        data-tooltip data-tooltip-content="Опубликовано 18 мая 2020" 
+ target="_blank" 
+       data-versions-item="">№&#160;4&#160;(52) • апрель</a>
+    <a class="versions_item"
+       href="/Collection/Collection/File/27806/CPD_2020-03.pdf"
+        data-tooltip data-tooltip-content="Опубликовано 14 апреля 2020" 
+ target="_blank" 
+       data-versions-item="">№&#160;3&#160;(51) • март</a>
+    <a class="versions_item"
+       href="/Collection/Collection/File/27649/CPD_2020-02.pdf"
+        data-tooltip data-tooltip-content="Опубликовано 13 марта 2020" 
+ target="_blank" 
+       data-versions-item="">№&#160;2&#160;(50) • февраль</a>
+    <a class="versions_item"
+       href="/Collection/Collection/File/27308/CPD_2020-01.pdf"
+        data-tooltip data-tooltip-content="Опубликовано 14 февраля 2020" 
+ target="_blank" 
+       data-versions-item="">№&#160;1&#160;(49) • январь </a>
+                    </div>
+                    <div class="versions_items " data-versions-items="2019 г." data-item-select="2019 г.">
+                            <a class="versions_item"
+       href="/Collection/Collection/File/25844/INF_2019-12.pdf"
+        data-tooltip data-tooltip-content="Опубликовано 22 января 2020" 
+ target="_blank" 
+       data-versions-item="">№&#160;12&#160;(48) • декабрь</a>
+    <a class="versions_item"
+       href="/Collection/Collection/File/25637/INF_2019-11.pdf"
+        data-tooltip data-tooltip-content="Опубликовано 16 декабря 2019" 
+ target="_blank" 
+       data-versions-item="">№&#160;11&#160;(47) • ноябрь</a>
+    <a class="versions_item"
+       href="/Collection/Collection/File/24244/INF_2019-10.pdf"
+        data-tooltip data-tooltip-content="Опубликовано 14 ноября 2019" 
+ target="_blank" 
+       data-versions-item="">№&#160;10&#160;(46) • октябрь </a>
+    <a class="versions_item"
+       href="/Collection/Collection/File/23941/INF_2019-09.pdf"
+        data-tooltip data-tooltip-content="Опубликовано 14 октября 2019" 
+ target="_blank" 
+       data-versions-item="">№&#160;9&#160;(45) • сентябрь</a>
+    <a class="versions_item"
+       href="/Collection/Collection/File/23673/INF_2019-08.pdf"
+        data-tooltip data-tooltip-content="Опубликовано 12 сентября 2019" 
+ target="_blank" 
+       data-versions-item="">№&#160;8&#160;(44) • август</a>
+    <a class="versions_item"
+       href="/Collection/Collection/File/21204/INF_2019-07.pdf"
+        data-tooltip data-tooltip-content="Опубликовано 12 августа 2019" 
+ target="_blank" 
+       data-versions-item="">№&#160;7&#160;(43) • июль </a>
+    <a class="versions_item"
+       href="/Collection/Collection/File/20063/INF_2019-06.pdf"
+        data-tooltip data-tooltip-content="Опубликовано 16 июля 2019" 
+ target="_blank" 
+       data-versions-item="">№&#160;6&#160;(42) • июнь </a>
+    <a class="versions_item"
+       href="/Collection/Collection/File/19830/INF_2019-05.pdf"
+        data-tooltip data-tooltip-content="Опубликовано 17 июня 2019" 
+ target="_blank" 
+       data-versions-item="">№&#160;5&#160;(41) • май&#160;</a>
+    <a class="versions_item"
+       href="/Collection/Collection/File/19753/INF_2019-04.pdf"
+        data-tooltip data-tooltip-content="Опубликовано 22 мая 2019" 
+ target="_blank" 
+       data-versions-item="">№&#160;4&#160;(40) • апрель </a>
+    <a class="versions_item"
+       href="/Collection/Collection/File/19401/INF_2019-03.pdf"
+        data-tooltip data-tooltip-content="Опубликовано 12 апреля 2019" 
+ target="_blank" 
+       data-versions-item="">№&#160;3&#160;(39) • март </a>
+    <a class="versions_item"
+       href="/Collection/Collection/File/16765/INF_2019-02.pdf"
+        data-tooltip data-tooltip-content="Опубликовано 14 марта 2019" 
+ target="_blank" 
+       data-versions-item="">№&#160;2&#160;(38) • февраль </a>
+    <a class="versions_item"
+       href="/Collection/Collection/File/14267/INF_2019-01.pdf"
+        data-tooltip data-tooltip-content="Опубликовано 12 февраля 2019" 
+ target="_blank" 
+       data-versions-item="">№&#160;1&#160;(37) • январь</a>
+                    </div>
+                    <div class="versions_items " data-versions-items="2018 г." data-item-select="2018 г.">
+                            <a class="versions_item"
+       href="/Collection/Collection/File/14230/INF_2018-12.pdf"
+        data-tooltip data-tooltip-content="Опубликовано 18 января 2019" 
+ target="_blank" 
+       data-versions-item="">№&#160;12&#160;• Декабрь </a>
+    <a class="versions_item"
+       href="/Collection/Collection/File/10418/INF_2018-11.pdf"
+        data-tooltip data-tooltip-content="Опубликовано 22 ноября 2018" 
+ target="_blank" 
+       data-versions-item="">№&#160;11&#160;• Ноябрь </a>
+    <a class="versions_item"
+       href="/Collection/Collection/File/9160/INF_2018-09-10.pdf"
+        data-tooltip data-tooltip-content="Опубликовано 18 октября 2018" 
+ target="_blank" 
+       data-versions-item="">№&#160;9-10&#160;• Сентябрь-октябрь </a>
+    <a class="versions_item"
+       href="/Collection/Collection/File/7427/INF_2018-08.pdf"
+        data-tooltip data-tooltip-content="Опубликовано 10 августа 2018" 
+ target="_blank" 
+       data-versions-item="">№&#160;8&#160;• Август </a>
+    <a class="versions_item"
+       href="/Collection/Collection/File/7399/INF_2018-06.pdf"
+        data-tooltip data-tooltip-content="Опубликовано 18 июля 2018" 
+ target="_blank" 
+       data-versions-item="">№&#160;6-7&#160;• Июнь-июль </a>
+    <a class="versions_item"
+       href="/Collection/Collection/File/5930/INF_2018-05.pdf"
+        data-tooltip data-tooltip-content="Опубликовано 14 мая 2018" 
+ target="_blank" 
+       data-versions-item="">№&#160;5&#160;• Май&#160;</a>
+    <a class="versions_item"
+       href="/Collection/Collection/File/5916/INF_2018-04.pdf"
+        data-tooltip data-tooltip-content="Опубликовано 20 апреля 2018" 
+ target="_blank" 
+       data-versions-item="">№&#160;4&#160;• Апрель </a>
+    <a class="versions_item"
+       href="/Collection/Collection/File/4706/INF_2018-03.pdf"
+        data-tooltip data-tooltip-content="Опубликовано 06 апреля 2018" 
+ target="_blank" 
+       data-versions-item="">№&#160;3&#160;• Март</a>
+    <a class="versions_item"
+       href="/Collection/Collection/File/4603/INF_2018-02.pdf"
+        data-tooltip data-tooltip-content="Опубликовано 21 февраля 2018" 
+ target="_blank" 
+       data-versions-item="">№&#160;2&#160;• Февраль </a>
+    <a class="versions_item"
+       href="/Collection/Collection/File/4009/INF_2018-01.pdf"
+        data-tooltip data-tooltip-content="Опубликовано 19 января 2018" 
+ target="_blank" 
+       data-versions-item="">№&#160;1&#160;• Январь </a>
+                    </div>
+                    <div class="versions_items " data-versions-items="2017 г." data-item-select="2017 г.">
+                            <a class="versions_item"
+       href="/Collection/Collection/File/3735/INF_2017-12.pdf"
+        data-tooltip data-tooltip-content="Опубликовано 25 декабря 2017" 
+ target="_blank" 
+       data-versions-item="">№&#160;12&#160;• Декабрь </a>
+    <a class="versions_item"
+       href="/Collection/Collection/File/2535/INF_2017-11.pdf"
+        data-tooltip data-tooltip-content="Опубликовано 17 ноября 2017" 
+ target="_blank" 
+       data-versions-item="">№&#160;11&#160;• Ноябрь</a>
+    <a class="versions_item"
+       href="/Collection/Collection/File/2132/INF_2017-10.pdf"
+        data-tooltip data-tooltip-content="Опубликовано 11 октября 2017" 
+ target="_blank" 
+       data-versions-item="">№&#160;10&#160;• Октябрь</a>
+    <a class="versions_item"
+       href="/Collection/Collection/File/699/INF_2017-09.pdf"
+        data-tooltip data-tooltip-content="Опубликовано 18 сентября 2017" 
+ target="_blank" 
+       data-versions-item="">№&#160;9&#160;• Сентябрь</a>
+    <a class="versions_item"
+       href="/Collection/Collection/File/580/INF_2017-08.pdf"
+        data-tooltip data-tooltip-content="Опубликовано 11 августа 2017" 
+ target="_blank" 
+       data-versions-item="">№&#160;8&#160;• Август</a>
+    <a class="versions_item"
+       href="/Collection/Collection/File/581/INF_2017-07.pdf"
+        data-tooltip data-tooltip-content="Опубликовано 12 июля 2017" 
+ target="_blank" 
+       data-versions-item="">№&#160;7&#160;• Июль</a>
+    <a class="versions_item"
+       href="/Collection/Collection/File/582/INF_2017-06.pdf"
+        data-tooltip data-tooltip-content="Опубликовано 09 июня 2017" 
+ target="_blank" 
+       data-versions-item="">№&#160;6&#160;• Июнь </a>
+    <a class="versions_item"
+       href="/Collection/Collection/File/583/INF_2017-05.pdf"
+        data-tooltip data-tooltip-content="Опубликовано 19 мая 2017" 
+ target="_blank" 
+       data-versions-item="">№&#160;5&#160;• Май&#160;</a>
+    <a class="versions_item"
+       href="/Collection/Collection/File/584/INF_2017-04.pdf"
+        data-tooltip data-tooltip-content="Опубликовано 14 апреля 2017" 
+ target="_blank" 
+       data-versions-item="">№&#160;4&#160;• Апрель</a>
+    <a class="versions_item"
+       href="/Collection/Collection/File/585/INF_2017-03.pdf"
+        data-tooltip data-tooltip-content="Опубликовано 16 марта 2017" 
+ target="_blank" 
+       data-versions-item="">№&#160;3&#160;• Март </a>
+    <a class="versions_item"
+       href="/Collection/Collection/File/586/INF_2017-02.pdf"
+        data-tooltip data-tooltip-content="Опубликовано 14 февраля 2017" 
+ target="_blank" 
+       data-versions-item="">№&#160;2&#160;• Февраль </a>
+    <a class="versions_item"
+       href="/Collection/Collection/File/587/INF_2017-01.pdf"
+        data-tooltip data-tooltip-content="Опубликовано 18 января 2017" 
+ target="_blank" 
+       data-versions-item="">№&#160;1&#160;• Январь</a>
+                    </div>
+                    <div class="versions_items " data-versions-items="2016 г." data-item-select="2016 г.">
+                            <a class="versions_item"
+       href="/Collection/Collection/File/588/INF_2016-12.pdf"
+        data-tooltip data-tooltip-content="Опубликовано 08 декабря 2016" 
+ target="_blank" 
+       data-versions-item="">№&#160;12&#160;• Декабрь </a>
+    <a class="versions_item"
+       href="/Collection/Collection/File/589/INF_2016-11.pdf"
+        data-tooltip data-tooltip-content="Опубликовано 18 ноября 2016" 
+ target="_blank" 
+       data-versions-item="">№&#160;11&#160;• Ноябрь </a>
+    <a class="versions_item"
+       href="/Collection/Collection/File/590/INF_2016-10.pdf"
+        data-tooltip data-tooltip-content="Опубликовано 12 октября 2016" 
+ target="_blank" 
+       data-versions-item="">№&#160;10&#160;• Октябрь</a>
+    <a class="versions_item"
+       href="/Collection/Collection/File/591/INF_2016-09.pdf"
+        data-tooltip data-tooltip-content="Опубликовано 22 сентября 2016" 
+ target="_blank" 
+       data-versions-item="">№&#160;9&#160;• Сентябрь </a>
+    <a class="versions_item"
+       href="/Collection/Collection/File/592/INF_2016-08.pdf"
+        data-tooltip data-tooltip-content="Опубликовано 12 августа 2016" 
+ target="_blank" 
+       data-versions-item="">№&#160;8&#160;• Август </a>
+    <a class="versions_item"
+       href="/Collection/Collection/File/593/INF_2016-07.pdf"
+        data-tooltip data-tooltip-content="Опубликовано 14 июля 2016" 
+ target="_blank" 
+       data-versions-item="">№&#160;7&#160;• Июль</a>
+    <a class="versions_item"
+       href="/Collection/Collection/File/594/INF_2016-06.pdf"
+        data-tooltip data-tooltip-content="Опубликовано 22 июня 2016" 
+ target="_blank" 
+       data-versions-item="">№&#160;6&#160;• Июнь </a>
+    <a class="versions_item"
+       href="/Collection/Collection/File/595/INF_2016-05.pdf"
+        data-tooltip data-tooltip-content="Опубликовано 17 мая 2016" 
+ target="_blank" 
+       data-versions-item="">№&#160;5&#160;• Май&#160;</a>
+    <a class="versions_item"
+       href="/Collection/Collection/File/596/INF_2016-04.pdf"
+        data-tooltip data-tooltip-content="Опубликовано 13 апреля 2016" 
+ target="_blank" 
+       data-versions-item="">№&#160;4&#160;• Апрель </a>
+    <a class="versions_item"
+       href="/Collection/Collection/File/597/INF_2016-03.pdf"
+        data-tooltip data-tooltip-content="Опубликовано 24 марта 2016" 
+ target="_blank" 
+       data-versions-item="">№&#160;3&#160;• Март </a>
+    <a class="versions_item"
+       href="/Collection/Collection/File/598/INF_2016-02.pdf"
+        data-tooltip data-tooltip-content="Опубликовано 12 февраля 2016" 
+ target="_blank" 
+       data-versions-item="">№&#160;2&#160;• Февраль</a>
+    <a class="versions_item"
+       href="/Collection/Collection/File/599/INF_2016-01.pdf"
+        data-tooltip data-tooltip-content="Опубликовано 10 февраля 2016" 
+ target="_blank" 
+       data-versions-item="">№&#160;1&#160;• Январь</a>
+                    </div>
+                <button class="more _hide" data-versions-toggle="" aria-expanded="false">
+                    <span class="open">Ещё +</span><span class="close">Свернуть -</span>
+                </button>
+            </div>
+        </div>
+
+
+
+
+    <script>
+        $(function () {
+            try {
+                if (window.sessionStorage && window.sessionStorage.setItem) {
+                    var scrollKey = "/Modules/Collection/Views/PageSwitcher/Display.cshtml";
+
+                    $('.versions-tabs .versions_item').click(function () {
+                        var scroll = $(window.document).scrollTop();
+                        window.sessionStorage.setItem(scrollKey, scroll);
+                    });
+
+                    var oldScroll = window.sessionStorage.getItem(scrollKey);
+                    if (oldScroll) {
+                        window.sessionStorage.removeItem(scrollKey);
+                        $(window.document).scrollTop(oldScroll);
+                        setTimeout(function () { $(window.document).scrollTop(oldScroll); }, 200);
+                    }
+                }
+            }
+            catch (e) { console.error(e); }
+        });
+    </script>
+
+<div class="lead-text"><p>Месячный прирост цен&nbsp;<a href="/Content/Document/File/108632/indicators_cpd.xlsx">с&nbsp;исключением сезонности</a> в&nbsp;пересчете на&nbsp;год (с.к.г.) замедлился до&nbsp;6,5% (7,5% в&nbsp;августе).</p></div>                                            <div class="landing-text">
+                            <div class="title-container"><div class="block-title"><h2><span class="referenceable" id="a_198833">Годовая инфляция в сентябре 2026 года составила 6,35%</span></h2></div><p>Годовая инфляция в&nbsp;сентябре почти не&nbsp;изменилась и&nbsp;составила 6,35% (+0,02 п.п.). Ускорились годовые приросты цен&nbsp;на&nbsp;услуги, а&nbsp;также на&nbsp;товары длительного пользования и&nbsp;продовольствие, за&nbsp;исключением овощей и&nbsp;фруктов.</p>
+<p><strong>Текущий (месячный) прирост цен</strong>&nbsp;с&nbsp;исключением сезонности в&nbsp;пересчете на&nbsp;год&nbsp;(с.к.г.)<em> </em>замедлился до&nbsp;6,5% (7,5% в&nbsp;августе).</p>
+<p><strong>Основной вклад в&nbsp;замедление текущего прироста цен&nbsp;в&nbsp;сентябре внесло удешевление овощей и&nbsp;фруктов. </strong>Ранее, в&nbsp;июле &ndash; августе, они&nbsp;дешевели слабее, чем&nbsp;обычно в&nbsp;эти&nbsp;месяцы, а&nbsp;в&nbsp;сентябре снижение цен&nbsp;на&nbsp;них&nbsp;вернулось к&nbsp;сезонной норме. Суммарный вклад волатильных и&nbsp;регулируемых компонентов снизился, но&nbsp;оставался положительным. Повышенными темпами продолжали дорожать электротовары и&nbsp;бензин. Кроме того, в&nbsp;сентябре заметно увеличились цены на&nbsp;образовательные услуги.<strong> </strong></p>
+<p><strong>Ценовое давление в&nbsp;устойчивой части&nbsp;ИПЦ&nbsp;немного снизилось, хотя показатели менялись слабо. </strong>Расчет некоторых из&nbsp;них&nbsp;включает образовательные и&nbsp;туристические услуги, подорожавшие в&nbsp;сентябре.<strong> </strong></p>
+<p><strong>Уменьшилось влияние косвенных и&nbsp;вторичных эффектов ситуации на&nbsp;топливном рынке. </strong>Однако большинство товаров с&nbsp;высокой транспортной составляющей в&nbsp;структуре себестоимости все&nbsp;еще&nbsp;дорожало повышенными темпами. Менее выраженным в&nbsp;сентябре было влияние валютного курса.</p>
+<p><strong>Проводимая Банком России денежно-кредитная политика направлена на&nbsp;возвращение годовой инфляции к&nbsp;целевому уровню 4%. </strong>Прогноз инфляции в&nbsp;составе среднесрочного прогноза Банка России будет опубликован по&nbsp;итогам опорного заседания по&nbsp;ключевой ставке 23&nbsp;октября 2026&nbsp;года.</p><p>Подробнее о&nbsp;динамике инфляции &ndash; <a href="/Collection/Collection/File/62446/CPD_2026-9.pdf" target="_blank" rel="noopener">в&nbsp;развернутом комментарии</a>.</p></div>
+                        </div>
+                    <meta property="og:title" content="Инфляция в России" />
+<meta property="og:type" content="article" />
+<meta property="article:section" content="Деятельность - ДДКП" />
+
+    <div class="chart-double-container">
+                    <div class="chart-double-container_inner ">
+<h2 class="h3">Инфляция, в&#160;% к&#160;соответствующему месяцу предыдущего года</h2>                            </div>
+            <div class="chart-double-container_inner _right">
+<h2 class="h3">Вклад в&#160;изменение годовой инфляции, п.п.</h2>                            </div>
+        <div class="chart-double-container_inner ">
+            
+
+    <div data-cms-chart-container="" class="chart-container "  id="GrafChart_ChartGroupModel_Charts_0__chart"></div>
+
+
+            <script>
+        //<![CDATA[
+        $(function () {
+            Highcharts.setOptions({
+                lang: {
+                    decimalPoint: ",",
+                    thousandsSep: " ",
+                },
+            });
+        })
+        //]]>
+            </script>
+    <script>
+//<![CDATA[
+    $(function () {
+        var chartId = "GrafChart_ChartGroupModel_Charts_0__chart";
+        var $chart = $('#' + chartId);
+
+
+        var settings = {"chart":{"height":"300","spacingBottom":5,"events":{"load":function() {
+if (this.tooltip.options.categoryHeaders) {
+    Highcharts.addEvent(this.tooltip, 'headerFormatter', function(e) {
+        var pointConfig = e.labelConfig || e.point; //hc12 polyfill
+        pointConfig.tooltipHeader = pointConfig.series.chart.tooltip.options.categoryHeaders[pointConfig.point.x];
+        return true;
+    });
+}
+}}},"xAxis":{"type":"category","labels":{"style":{}},"categories":[{"name":"2016","categories":["2016-01-01","2016-02-01","2016-03-01","2016-04-01","2016-05-01","2016-06-01","2016-07-01","2016-08-01","2016-09-01","2016-10-01","2016-11-01","2016-12-01"]},{"name":"2017","categories":["2017-01-01","2017-02-01","2017-03-01","2017-04-01","2017-05-01","2017-06-01","2017-07-01","2017-08-01","2017-09-01","2017-10-01","2017-11-01","2017-12-01"]},{"name":"2018","categories":["2018-01-01","2018-02-01","2018-03-01","2018-04-01","2018-05-01","2018-06-01","2018-07-01","2018-08-01","2018-09-01","2018-10-01","2018-11-01","2018-12-01"]},{"name":"2019","categories":["2019-01-01","2019-02-01","2019-03-01","2019-04-01","2019-05-01","2019-06-01","2019-07-01","2019-08-01","2019-09-01","2019-10-01","2019-11-01","2019-12-01"]},{"name":"2020","categories":["2020-01-01","2020-02-01","2020-03-01","2020-04-01","2020-05-01","2020-06-01","2020-07-01","2020-08-01","2020-09-01","2020-10-01","2020-11-01","2020-12-01"]},{"name":"2021","categories":["2021-01-01","2021-02-01","2021-03-01","2021-04-01","2021-05-01","2021-06-01","2021-07-01","2021-08-01","2021-09-01","2021-10-01","2021-11-01","2021-12-01"]},{"name":"2022","categories":["2022-01-01","2022-02-01","2022-03-01","2022-04-01","2022-05-01","2022-06-01","2022-07-01","2022-08-01","2022-09-01","2022-10-01","2022-11-01","2022-12-01"]},{"name":"2023","categories":["2023-01-01","2023-02-01","2023-03-01","2023-04-01","2023-05-01","2023-06-01","2023-07-01","2023-08-01","2023-09-01","2023-10-01","2023-11-01","2023-12-01"]},{"name":"2024","categories":["2024-01-01","2024-02-01","2024-03-01","2024-04-01","2024-05-01","2024-06-01","2024-07-01","2024-08-01","2024-09-01","2024-10-01","2024-11-01","2024-12-01"]},{"name":"2025","categories":["2025-01-01","2025-02-01","2025-03-01","2025-04-01","2025-05-01","2025-06-01","2025-07-01","2025-08-01","2025-09-01","2025-10-01","2025-11-01","2025-12-01"]},{"name":"2026","categories":["2026-01-01","2026-02-01","2026-03-01","2026-04-01","2026-05-01","2026-06-01","2026-07-01","2026-08-01","2026-09-01"]}],"title":{},"drawHorizontalBorders":false,"hideFirstLevelLabels":true,"crosshair":{"color":"#f5f5f5","zIndex":0}},"yAxis":[{"tickInterval":4.0,"title":{"text":""},"min":-4.0,"max":20.0,"startOnTick":false,"endOnTick":false,"minPadding":0.0,"maxPadding":0.0,"labels":{"format":"{value:,.f}","style":{}}}],"legend":{"floating":true,"navigation":{"enabled":false}},"title":{},"subtitle":{},"series":[{"type":"column","dataLabels":{"enabled":false,"format":"{point.y:,.2f}","style":{}},"tooltip":{"pointFormat":"<div class=\"chart-tooltip-line\">\r\n<div class=\"chart-tooltip-dot\" style=\"color:{point.color}\">●</div>\r\n<div class=\"chart-tooltip-series\">{series.name}: </div>\r\n<div class=\"chart-tooltip-value\">{point.y:,.2f}{series.options.units}</div>\r\n</div>"},"data":[7.92499957426101,6.13861389371036,5.26103496082152,5.44562137728913,5.1573611659777,4.83286320824099,6.53735581602481,5.75467093835927,5.10286440496168,5.63891134117614,4.15804682748802,2.08818634296715,4.23767437565328,1.31501859518896,1.38066723014661,4.0203977815631,4.8383192085535,7.58920917129413,0.643751175273991,-1.18108752835359,1.41549216448755,2.62449928315036,1.50083950536661,2.4541437211239,0.635020057847584,1.34858665935101,3.21546200475207,4.42005925959957,5.0510313848433,6.02672145544111,3.49240854139109,5.70803739538206,5.08102269327981,4.18511254779509,4.75114768830406,7.44127283109482,9.28187998995115,3.97522712861191,3.6138059016949,3.26931814348302,4.48066287936119,0.920904179143847,2.58530638237617,2.35764524142496,1.19403093548237,1.50112602459554,2.1527564788526,1.48212198620277,2.05307631241712,2.34773211974334,6.60590890721646,10.2926065599755,4.08813756195933,3.24448385345741,4.62955885378513,4.50101682109931,2.88920559263372,5.04637927513815,7.11069637863204,6.92992644855056,4.78594613653298,6.89069397088456,7.10542529354257,7.36043809863364,11.6237971149279,8.82392052556203,5.16553425317667,7.4447811635694,10.8367115943777,13.9002288965005,8.42204166245776,8.62443589208426,8.48700636226292,12.0676135445303,138.083346535118,20.1553191883894,3.61037501310778,-3.44157585688322,-3.85486956845654,-0.21149818028826,3.00694721119338,2.32162992812049,1.20372675857648,5.71094655666568,6.83367769260728,3.35967942459277,3.51280420669406,4.85167804091924,4.09910160641466,5.09775618174484,11.9761276723526,11.5489964678986,13.6929439125551,10.0666656833632,10.6033508499413,7.45037448574273,6.35178970104667,5.56038730289357,4.07116250312718,7.49984263188439,9.00464563803209,7.91690544346126,15.2501324203307,11.0364257239473,8.74656215505136,10.2012434196433,15.1110801431654,15.1304803242906,9.86936393141227,7.09970924110974,6.63121617069122,5.37107883558058,5.17289923506395,2.55445100551808,8.62994044134535,3.24612050423536,6.20353909553289,7.10308434889619,3.10243553625389,3.4238582364256,14.2598264756025,5.85526052526605,5.98512675428884,2.61363011892247,2.61424987276634,9.44907902848458,9.99420419094903,7.54168697511724,6.52581691262684],"color":"#61D889","id":"s0","name":"Прирост цен к предыдущему месяцу (с.к.г.)","units":"%"},{"dataLabels":{"enabled":true,"format":"{point.name}","padding":0,"style":{},"x":-5},"tooltip":{"pointFormat":"<div class=\"chart-tooltip-line\">\r\n<div class=\"chart-tooltip-dot\" style=\"color:{point.color}\">●</div>\r\n<div class=\"chart-tooltip-series\">{series.name}: </div>\r\n<div class=\"chart-tooltip-value\">{point.y:,.2f}{series.options.units}</div>\r\n</div>"},"type":"line","lineWidth":2,"marker":{"enabled":false,"symbol":"circle"},"data":[9.77,8.06,7.27,7.25,7.31,7.48999999999999,7.20999999999999,6.84999999999999,6.43000000000001,6.09999999999999,5.78,5.39,5.04000000000001,4.59999999999999,4.25,4.14,4.09,4.34999999999999,3.86,3.29000000000001,2.95999999999999,2.72,2.48999999999999,2.51000000000001,2.19,2.18000000000001,2.34999999999999,2.40000000000001,2.41,2.29000000000001,2.5,3.06,3.38,3.54000000000001,3.83,4.26000000000001,4.98999999999999,5.22,5.25,5.17,5.13,4.66,4.58,4.31,3.98999999999999,3.75,3.53,3.04000000000001,2.42,2.31,2.54000000000001,3.09,3.02,3.20999999999999,3.37,3.58,3.67,3.98999999999999,4.42,4.91,5.19,5.67,5.79000000000001,5.53,6.02,6.5,6.45999999999999,6.68000000000001,7.40000000000001,8.13,8.40000000000001,8.39,8.73,9.15000000000001,16.69,17.83,17.1,15.9,15.1,14.3,13.68,12.63,11.98,11.94,11.77,10.99,3.51000000000001,2.31,2.51000000000001,3.25,4.3,5.15000000000001,6.0,6.69,7.48,7.42,7.44,7.69,7.72,7.84,8.3,8.59,9.13,9.05,8.63,8.54000000000001,8.88,9.52,9.92,10.06,10.34,10.23,9.88,9.40000000000001,8.79000000000001,8.14,7.98,7.70999999999999,6.64,5.59,6.0,5.91,5.86,5.58,5.31,6.02,5.98,6.33,{"y":6.34999999999999,"name":"6,35"}],"color":"#0088cc","id":"s1","name":"Инфляция","units":"%"},{"dataLabels":{"enabled":false,"format":"{point.y:,.f}","style":{}},"tooltip":{},"type":"line","lineWidth":2,"marker":{"enabled":false,"symbol":"circle"},"data":[4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0,4.0],"color":"#ED1A34","id":"s2","name":"Цель по инфляции","units":"%"}],"tooltip":{"shared":true,"headerFormat":"<div class=\"chart-tooltip-header\">{point.tooltipHeader}</div>","pointFormat":"<div class=\"chart-tooltip-line\">\r\n<div class=\"chart-tooltip-dot\" style=\"color:{point.color}\">●</div>\r\n<div class=\"chart-tooltip-series\">{series.name}: </div>\r\n<div class=\"chart-tooltip-value\">{point.y:,.f}{series.options.units}</div>\r\n</div>","categoryHeaders":["Январь 2016","Февраль 2016","Март 2016","Апрель 2016","Май 2016","Июнь 2016","Июль 2016","Август 2016","Сентябрь 2016","Октябрь 2016","Ноябрь 2016","Декабрь 2016","Январь 2017","Февраль 2017","Март 2017","Апрель 2017","Май 2017","Июнь 2017","Июль 2017","Август 2017","Сентябрь 2017","Октябрь 2017","Ноябрь 2017","Декабрь 2017","Январь 2018","Февраль 2018","Март 2018","Апрель 2018","Май 2018","Июнь 2018","Июль 2018","Август 2018","Сентябрь 2018","Октябрь 2018","Ноябрь 2018","Декабрь 2018","Январь 2019","Февраль 2019","Март 2019","Апрель 2019","Май 2019","Июнь 2019","Июль 2019","Август 2019","Сентябрь 2019","Октябрь 2019","Ноябрь 2019","Декабрь 2019","Январь 2020","Февраль 2020","Март 2020","Апрель 2020","Май 2020","Июнь 2020","Июль 2020","Август 2020","Сентябрь 2020","Октябрь 2020","Ноябрь 2020","Декабрь 2020","Январь 2021","Февраль 2021","Март 2021","Апрель 2021","Май 2021","Июнь 2021","Июль 2021","Август 2021","Сентябрь 2021","Октябрь 2021","Ноябрь 2021","Декабрь 2021","Январь 2022","Февраль 2022","Март 2022","Апрель 2022","Май 2022","Июнь 2022","Июль 2022","Август 2022","Сентябрь 2022","Октябрь 2022","Ноябрь 2022","Декабрь 2022","Январь 2023","Февраль 2023","Март 2023","Апрель 2023","Май 2023","Июнь 2023","Июль 2023","Август 2023","Сентябрь 2023","Октябрь 2023","Ноябрь 2023","Декабрь 2023","Январь 2024","Февраль 2024","Март 2024","Апрель 2024","Май 2024","Июнь 2024","Июль 2024","Август 2024","Сентябрь 2024","Октябрь 2024","Ноябрь 2024","Декабрь 2024","Январь 2025","Февраль 2025","Март 2025","Апрель 2025","Май 2025","Июнь 2025","Июль 2025","Август 2025","Сентябрь 2025","Октябрь 2025","Ноябрь 2025","Декабрь 2025","Январь 2026","Февраль 2026","Март 2026","Апрель 2026","Май 2026","Июнь 2026","Июль 2026","Август 2026","Сентябрь 2026"],"positioner":app.chartTooltipPositioner},"responsive":
+{
+rules: [
+]}};
+        var patch = $chart.data('highchartsPatch');
+        settings = typeof (patch) === 'function' ? (patch(settings) || settings) : $.extend(true, settings, patch);
+
+        $chart.trigger('cms:loadHighchart', [settings]);
+
+
+        var chart = Highcharts.chart(chartId, settings);
+
+        
+
+            app.chartLegendDataHighlighter(chartId, chart);
+
+            app.chartAutoHeight(chartId, chart);
+                })
+//]]>
+    </script>
+
+
+
+
+        </div>
+        <div class="chart-double-container_inner _right">
+            
+
+    <div data-cms-chart-container="" class="chart-container "  id="GrafChart_ChartGroupModel_Charts_1__chart"></div>
+
+
+    <script>
+//<![CDATA[
+    $(function () {
+        var chartId = "GrafChart_ChartGroupModel_Charts_1__chart";
+        var $chart = $('#' + chartId);
+
+
+        var settings = {"chart":{"height":"300","spacingBottom":5},"xAxis":{"type":"category","labels":{"style":{}},"categories":["Август 2026","Плодоовощная продукция","Прочее продовольствие","Легковые автомобили","Прочие непродовольственные товары","Туризм","Прочие услуги","Сентябрь 2026"],"title":{},"crosshair":{"color":"#f5f5f5","zIndex":0}},"yAxis":[{"tickInterval":0.1,"title":{"text":""},"min":6.0,"max":6.4,"startOnTick":false,"endOnTick":false,"minPadding":0.0,"maxPadding":0.0,"labels":{"format":"{value:,.1f}","style":{}}}],"legend":{"enabled":false},"title":{},"subtitle":{},"series":[{"type":"bar","dataLabels":{"enabled":true,"format":"{point.y:,.2f}","style":{}},"tooltip":{"pointFormat":"<div class=\"chart-tooltip-line\">\r\n<div class=\"chart-tooltip-dot\" style=\"color:{point.color}\">●</div>\r\n<div class=\"chart-tooltip-series\">{series.name}: </div>\r\n<div class=\"chart-tooltip-value\">{point.y:,.2f}{series.options.units}</div>\r\n</div>"},"stacking":"normal","data":[6.33,null,null,null,null,null,null,6.35],"color":"rgb(176,182,192)","id":"s0","name":"Инфляция"},{"type":"bar","dataLabels":{"enabled":true,"format":"{point.name}","style":{}},"tooltip":{"pointFormat":"<div class=\"chart-tooltip-line\">\r\n<div class=\"chart-tooltip-dot\" style=\"color:{point.color}\">●</div>\r\n<div class=\"chart-tooltip-series\">{series.name}: </div>\r\n<div class=\"chart-tooltip-value\">{point.y:,.2f}{series.options.units}</div>\r\n</div>"},"stacking":"normal","data":[null,null,null,null,null,null,{"y":0.04,"name":"0.04"},null],"color":"rgb(218,55,61)","id":"s1","name":"Рост"},{"type":"bar","dataLabels":{},"tooltip":{"pointFormat":""},"stacking":"normal","pointWidth":0,"borderWidth":-1,"data":[null,null,null,null,null,null,6.31,null],"enableMouseTracking":false,"linkedTo":"s1"},{"type":"bar","dataLabels":{"enabled":true,"format":"{point.name}","style":{}},"tooltip":{"pointFormat":"<div class=\"chart-tooltip-line\">\r\n<div class=\"chart-tooltip-dot\" style=\"color:{point.color}\">●</div>\r\n<div class=\"chart-tooltip-series\">{series.name}: </div>\r\n<div class=\"chart-tooltip-value\">{point.y:,.2f}{series.options.units}</div>\r\n</div>"},"stacking":"normal","data":[null,null,null,null,null,{"y":0.01,"name":"0.01"},null,null],"color":"rgb(218,55,61)","id":"s3","name":"Рост"},{"type":"bar","dataLabels":{},"tooltip":{"pointFormat":""},"stacking":"normal","pointWidth":0,"borderWidth":-1,"data":[null,null,null,null,null,6.30,null,null],"enableMouseTracking":false,"linkedTo":"s3"},{"type":"bar","dataLabels":{"enabled":true,"format":"{point.name}","style":{}},"tooltip":{"pointFormat":"<div class=\"chart-tooltip-line\">\r\n<div class=\"chart-tooltip-dot\" style=\"color:{point.color}\">●</div>\r\n<div class=\"chart-tooltip-series\">{series.name}: </div>\r\n<div class=\"chart-tooltip-value\">{point.y:,.2f}{series.options.units}</div>\r\n</div>"},"stacking":"normal","data":[null,null,null,{"y":0.01,"name":"0.01"},null,null,null,null],"color":"rgb(218,55,61)","id":"s5","name":"Рост"},{"type":"bar","dataLabels":{},"tooltip":{"pointFormat":""},"stacking":"normal","pointWidth":0,"borderWidth":-1,"data":[null,null,null,6.32,null,null,null,null],"enableMouseTracking":false,"linkedTo":"s5"},{"type":"bar","dataLabels":{"enabled":true,"format":"{point.name}","style":{}},"tooltip":{"pointFormat":"<div class=\"chart-tooltip-line\">\r\n<div class=\"chart-tooltip-dot\" style=\"color:{point.color}\">●</div>\r\n<div class=\"chart-tooltip-series\">{series.name}: </div>\r\n<div class=\"chart-tooltip-value\">{point.y:,.2f}{series.options.units}</div>\r\n</div>"},"stacking":"normal","data":[null,null,null,null,{"y":0.03,"name":"0.03"},null,null,null],"color":"rgb(56,135,198)","id":"s7","name":"Снижение"},{"type":"bar","dataLabels":{},"tooltip":{"pointFormat":""},"stacking":"normal","pointWidth":0,"borderWidth":-1,"data":[null,null,null,null,6.30,null,null,null],"enableMouseTracking":false,"linkedTo":"s7"},{"type":"bar","dataLabels":{"enabled":true,"format":"{point.name}","style":{}},"tooltip":{"pointFormat":"<div class=\"chart-tooltip-line\">\r\n<div class=\"chart-tooltip-dot\" style=\"color:{point.color}\">●</div>\r\n<div class=\"chart-tooltip-series\">{series.name}: </div>\r\n<div class=\"chart-tooltip-value\">{point.y:,.2f}{series.options.units}</div>\r\n</div>"},"stacking":"normal","data":[null,null,{"y":0.03,"name":"0.03"},null,null,null,null,null],"color":"rgb(218,55,61)","id":"s9","name":"Рост"},{"type":"bar","dataLabels":{},"tooltip":{"pointFormat":""},"stacking":"normal","pointWidth":0,"borderWidth":-1,"data":[null,null,6.29,null,null,null,null,null],"enableMouseTracking":false,"linkedTo":"s9"},{"type":"bar","dataLabels":{"enabled":true,"format":"{point.name}","style":{}},"tooltip":{"pointFormat":"<div class=\"chart-tooltip-line\">\r\n<div class=\"chart-tooltip-dot\" style=\"color:{point.color}\">●</div>\r\n<div class=\"chart-tooltip-series\">{series.name}: </div>\r\n<div class=\"chart-tooltip-value\">{point.y:,.2f}{series.options.units}</div>\r\n</div>"},"stacking":"normal","data":[null,{"y":0.04,"name":"0.04"},null,null,null,null,null,null],"color":"rgb(56,135,198)","id":"s11","name":"Снижение"},{"type":"bar","dataLabels":{},"tooltip":{"pointFormat":""},"stacking":"normal","pointWidth":0,"borderWidth":-1,"data":[null,6.23,null,null,null,null,null,null],"enableMouseTracking":false,"linkedTo":"s11"}],"tooltip":{"headerFormat":"<div class=\"chart-tooltip-header\">{point.key}</div>","pointFormat":"<div class=\"chart-tooltip-line\">\r\n<div class=\"chart-tooltip-dot\" style=\"color:{point.color}\">●</div>\r\n<div class=\"chart-tooltip-series\">{series.name}: </div>\r\n<div class=\"chart-tooltip-value\">{point.y:,.f}{series.options.units}</div>\r\n</div>"},"responsive":
+{
+rules: [
+]}};
+        var patch = $chart.data('highchartsPatch');
+        settings = typeof (patch) === 'function' ? (patch(settings) || settings) : $.extend(true, settings, patch);
+
+        $chart.trigger('cms:loadHighchart', [settings]);
+
+
+        var chart = Highcharts.chart(chartId, settings);
+
+        
+
+            app.chartLegendDataHighlighter(chartId, chart);
+
+            app.chartAutoHeight(chartId, chart);
+                })
+//]]>
+    </script>
+
+
+
+
+        </div>
+
+    </div>
+
+
+
+<table class="data">
+<tbody>
+<tr>
+<th>Инфляция, г/г</th>
+<th>2023</th>
+<th>2024</th>
+<th>2025</th>
+<th rowspan="5" width="5%">&nbsp;</th>
+<th>Апрель<br />2026</th>
+<th>Май<br />2026</th>
+<th>Июнь<br />2026</th>
+<th rowspan="5" width="5%">&nbsp;</th>
+<th>Июль<br />2026</th>
+<th>Август<br />2026</th>
+<th>Сентябрь<br />2026</th>
+</tr>
+<tr>
+<th>Все&nbsp;товары и&nbsp;услуги</th>
+<td>7,4</td>
+<td>9,5</td>
+<td>5,6</td>
+<td>5,6</td>
+<td>5,3</td>
+<td>6,0</td>
+<td>6,0</td>
+<td>6,3</td>
+<td>6,4</td>
+</tr>
+<tr>
+<th>Продовольственные товары</th>
+<td>8,2</td>
+<td>11,1</td>
+<td>5,2</td>
+<td>4,0</td>
+<td>2,9</td>
+<td>3,4</td>
+<td>4,4</td>
+<td>5,1</td>
+<td>5,1</td>
+</tr>
+<tr>
+<th>Непродовольственные товары</th>
+<td>6,0</td>
+<td>6,1</td>
+<td>3,0</td>
+<td>3,9</td>
+<td>4,2</td>
+<td>5,3</td>
+<td>6,4</td>
+<td>6,5</td>
+<td>6,5</td>
+</tr>
+<tr>
+<th>Услуги</th>
+<td>8,3</td>
+<td>11,5</td>
+<td>9,3</td>
+<td>9,9</td>
+<td>10,1</td>
+<td>10,6</td>
+<td>7,8</td>
+<td>7,9</td>
+<td>8,0</td>
+</tr>
+</tbody>
+</table>
+                    
+
+
+<!--noindex-->
+<div class="print-button-wrap">
+    <a data-cms-save-to-pdf-btn="" data-cms-save-to-pdf-page-orientation="portrait" class="btn _medium _outline" href="/Content/SaveToPdf/Page?url=%2Fanalytics%2Fdkp%2Fdinamic%2FCPD_2026-9%2F" target="_blank" rel="nofollow">Сохранить в PDF</a>
+    <div class="copy-btn" data-copy-url="https://www.cbr.ru/analytics/dkp/dinamic/CPD_2026-9/" data-tooltip-content="Ссылка скопирована">
+        <div class="chain"></div>
+        <button class="btn _small _copy ">Копировать ссылку</button>
+    </div>
+</div>
+<!--/noindex--><div class="responsible-unit">
+<div class="responsible-unit_text">Ответственное структурное подразделение: <a href="/about_br/bankstructute/ddkp/"> Департамент денежно-кредитной политики</a></div>
+</div>                    <!--/index-->
+                    
+    <div class="page-info">
+        <!--noindex-->
+        
+
+
+<div class="page-info_helpful"
+     data-page-feedback=""
+     data-feedback-url="/Content/PageInfo/RegisterFeedback">
+    <!--noindex-->
+    <div class="helpful" data-helpful="">
+        Страница была полезной?
+        <div class="helpful_btns">
+            <button class="helpful_btn _yes" data-helpful-btn="yes"><i class="helpful_icon"></i><span>Да</span></button>
+            <button class="helpful_btn _no" data-helpful-btn="no"><i class="helpful_icon"></i><span>Нет</span></button>
+        </div>
+    </div>
+    <!--/noindex-->
+</div>
+
+            <div class="page-info_last-update">Последнее обновление страницы: 14.10.2026</div>
+        <!--/noindex-->
+    </div>
+
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <footer class="footer" id="footer">
+    <div class="offsetMenu footer_margin-left">
+        <div class="footer_main">
+            <div class="col-md-23 col-xl-22 offset-md-1 offset-xl-2 footer-size">
+                <div class="footer_top">
+                    <a class="footer_logo" href="/"></a>
+                    <div class="footer_up gotoUp">
+                        <div class="footer_up_title">Наверх</div>
+                        <div class="footer_up_icon"></div>
+                    </div>
+                </div>
+                
+<div class="footer_contacts">
+<div class="footer_address">107016, Москва, ул. Неглинная, д.&nbsp;12, к. В, Банк
+России</div>
+<div class="footer_phones">
+<div class="footer_phone"><a class="footer_phone_val" href="tel:300">300</a><span>(круглосуточно, бесплатно для&nbsp;звонков с&nbsp;мобильных телефонов)</span></div>
+<div class="footer_phone"><a class="footer_phone_val" href="tel:88003003000">8&nbsp;800 300-30-00</a><span>(круглосуточно, бесплатно для&nbsp;звонков из&nbsp;регионов России)</span></div>
+<div class="footer_phone"><a class="footer_phone_val" href="tel:+74993003000">+7&nbsp;499 300-30-00</a><span>(круглосуточно, в&nbsp;соответствии с&nbsp;тарифами вашего оператора)</span></div>
+
+</div>
+</div>
+<div class="footer_main_block">
+<div class="footer_left-menu">
+<div class="footer_left-menu_item"><a href="/lk_uio/">Личный кабинет участника информационного обмена</a></div>
+<div class="footer_left-menu_item"><a href="/about_br/irp/">Отношения с&nbsp;инвесторами</a></div>
+<div class="footer_left-menu_item"><a href="/rbr/list_inside/">Перечень инсайдерской информации Банка России</a></div>
+<div class="footer_left-menu_item"><a href="/analytics/na_vr/">Официальное опубликование нормативных актов Банка России</a></div>
+<div class="footer_left-menu_item"><a href="/project_na/">Проекты нормативных актов Банка России</a></div>
+<div class="footer_left-menu_item"><a href="/other/holidays/">Перечень нерабочих праздничных дней и&nbsp;перенесенных выходных дней</a></div>
+</div>
+<div class="networks-circle footer_networks">
+<a class="networks-circle_item _vk" href="https://vk.com/cbr_official"></a>
+<a class="networks-circle_item _yt" href="https://www.youtube.com/user/BankofRussia"></a>
+<a class="networks-circle_item _tg" href="https://telegram.me/centralbank_russia" title="Telegram"></a>
+<a class="networks-circle_item _ydzen" href="https://dzen.ru/cbr" title="Яндекс Дзен"></a>
+<a class="networks-circle_item _ok" href="https://ok.ru/group/68858679787580" title="Одноклассники"></a>
+<a class="networks-circle_item _rt" href="https://rutube.ru/channel/23873201/" title="RUTUBE"></a>
+<a class="networks-circle_item _max" href="https://max.ru/cbr_official" title="Макс"></a>
+</div>
+</div>
+<div class="footer_menu">
+<div class="footer_menu_items">
+<div class="footer_menu_item"><a href="/about/">О&nbsp;сайте</a></div>
+<div class="footer_menu_item"><a href="/contacts/">Контакты</a></div>
+<div class="footer_menu_item"><a href="/about_br/anticor/">Противодействие коррупции</a></div>
+<div class="footer_menu_item"><a href="/development/">Технические ресурсы</a></div>
+</div>
+<a class="footer_menu_item _visually-impaired" href="#" title="Версия для слабовидящих">
+	<div class="footer_visually-impaired-icon"></div>
+	<div><span class="visually-impaired-on">Версия для&nbsp;слабовидящих</span><span class="visually-impaired-off">Обычная версия</span></div>
+</a>
+</div>
+
+            </div>
+        </div>
+        <div class="footer_bottom">
+            <div class="col-md-23 col-xl-23 offset-md-1 offset-xl-2 row footer_bottom-container">
+                <div class="footer_bottom_text col-md-11 col-xl-11">&#169; Банк России, 2000–2026.</div>
+<div class="footer_bottom_aic col-md-12 col-xl-11">Дизайн сайта — <a href="https://aic.ru" target="_blank"><img src="/common/images/icons/aic-logo.svg" /></a></div>
+
+            </div>
+        </div>
+    </div>
+</footer>
+
+    
+    
+
+        <div class="popup-cookies" data-popup-cookies>
+            <div class="popup-cookies_title">
+                На сайте Банка России используются файлы cookie
+            </div>
+            <div class="popup-cookies_subtitle">
+                Оставаясь на <a href="/">www.cbr.ru</a>, вы принимаете
+                <a href='/user_agreement/'>пользовательское соглашение</a>
+            </div>
+            <button class="btn _medium _blue " data-popup-cookies-btn>
+                Подтвердить
+            </button>
+        </div>
+
+    
+<!--[if IE 9]><script>$('body').addClass('ie9')</script><![endif]-->
+<script src="/Modules/Content/Scripts/PageInfo.js?v=v3116962712" type="text/javascript"></script>
+    <script type="text/javascript">
+        $(function () {
+            Content_PageInfo.init($('[data-page-feedback]'));
+        });
+    </script>
+
+
+
+</body>
+</html>

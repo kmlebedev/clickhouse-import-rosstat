@@ -85,13 +85,14 @@ MLFLOW_PREFLIGHT := $(if $(filter 1,$(MLFLOW)),python3 scripts/mlflow_preflight.
 STAGING_HOST     ?= palmshell
 STAGING_BIN_DIR  ?= /root/.local/bin
 STAGING_ENV_FILE ?= /etc/clickhouse-import-rosstat.env
+STAGING_DAGU_BASE ?= deploy/staging/dagu-base.yaml
 DAGU_VERSION     ?= v2.18.2
 
 # Docs-портал GitHub Pages: версия mkdocs-material общая с .github/workflows/pages.yml.
 MKDOCS_VERSION ?= 9.7.7
 MKDOCS := uv run --with mkdocs-material==$(MKDOCS_VERSION) --python 3.12 mkdocs
 
-.PHONY: all lint fmt vet test build run deps clean info ch-up ch-down ch-status ch-sql mlflow-up mlflow-down mlflow-status mlflow-export mlflow-backfill mlflow-backfill-test mlflow-preflight mlflow-register mlflow-promote mlflow-models dev-check env-check import mp-llm-eval archive-registry archive-list archive-restore mcp-run mcp-user mcp-check build-ingest run-ingest deploy-staging deploy-staging-binary deploy-staging-dagu deploy-staging-mcp deploy-staging-mlflow deploy-staging-preflight deploy-staging-smoke upgrade-staging mcp-user-staging staging-precheck grafana-build grafana-validate grafana-up grafana-down grafana-deploy-test grafana-deploy-staging grafana-provision-staging grafana-check grafana-test-token key-rate-model shock-classifier shock-classifier-test key-rate-llm-forecast key-rate-forecast-log cpi-nowcast cpi-monthly cpi-monthly-v3 cpi-monthly-v3-test cpi-monthly-v3-public cpi-monthly-v3-public-test cpi-monthly-industry cpi-monthly-industry-test cpi-public-audit cpi-public-audit-test cpi-weekly-panel cpi-weekly-panel-test cb-comp-parity cb-comp-parity-test cb-comp-proxy edisclosure-login edisclosure-collect docs-check docs-build docs-serve
+.PHONY: all lint fmt vet test build run deps clean info ch-up ch-down ch-status ch-sql mlflow-up mlflow-down mlflow-status mlflow-export mlflow-backfill mlflow-backfill-test mlflow-preflight mlflow-register mlflow-promote mlflow-models ml-gate ml-gate-test ml-live-check ml-live-check-test dev-check env-check import mp-llm-eval archive-registry archive-list archive-restore mcp-run mcp-user mcp-check build-ingest run-ingest deploy-staging deploy-staging-binary deploy-staging-dagu deploy-staging-mcp deploy-staging-mlflow deploy-staging-preflight deploy-staging-smoke upgrade-staging mcp-user-staging staging-precheck grafana-build grafana-validate grafana-up grafana-down grafana-deploy-test grafana-deploy-staging grafana-provision-staging grafana-check grafana-test-token grafana-provision-alerting-staging key-rate-model key-rate-cbr-rule key-rate-cbr-rule-test key-rate-scenario-fan key-rate-scenario-fan-test key-rate-scenario-fan-v2 key-rate-scenario-fan-v2-test key-rate-scenario-fan-v3 key-rate-scenario-fan-v3-test key-rate-cpi-v3-experiment key-rate-cpi-v3-experiment-test cpi-live3-horizons cpi-live3-horizons-test shock-classifier shock-classifier-test key-rate-llm-forecast key-rate-forecast-log cpi-nowcast cpi-monthly cpi-monthly-v3 cpi-monthly-v3-test cpi-monthly-v3-public cpi-monthly-v3-public-test cpi-monthly-industry cpi-monthly-industry-test cpi-public-audit cpi-public-audit-test cpi-weekly-panel cpi-weekly-panel-test weekly-core-proxy weekly-core-proxy-test cpi-weekly-aggregate cpi-weekly-aggregate-test cpi-v4-leaderboard cpi-v4-leaderboard-test cpi-v4-grid cpi-v4-grid-test cpi-core-nnls cpi-core-nnls-test cpi-v4-h2 cpi-v4-h2-test cpi-v4-core cpi-v4-core-test cpi-sa-reconciliation cpi-sa-reconciliation-test cpi-asof-test cpi-weekly-sa-asof cpi-weekly-sa-asof-test cpi-two-stage-targets-test cpi-two-stage-folds cpi-two-stage-folds-test cpi-two-stage-s1 cpi-two-stage-s1-test cb-comp-data-reconcile cb-comp-data-reconcile-test cpi-two-stage-cb-comp cpi-two-stage-cb-comp-test cpi-two-stage-w2 cpi-two-stage-w2-test weekly-core-components weekly-core-components-test cpi-pipeline-stage1 cpi-pipeline-stage1-test cpi-pipeline-stage2 cpi-pipeline-stage2-test cpi-pipeline-sa-test publication-calendar-test cb-comp-parity cb-comp-parity-test cb-comp-live cb-comp-live-test cb-comp-live-compare cb-comp-proxy ppi-sa-weights-panel ppi-sa-weights-panel-test ppi-sa-parity ppi-sa-parity-test ppi-sa-text-anchors ppi-sa-text-anchors-test ppi-sa-industry ppi-sa-industry-test ppi-monthly-forecast ppi-monthly-forecast-test edisclosure-login edisclosure-collect docs-check docs-build docs-serve plugin-manifests-check plugin-manifests-sync
 
 all: lint test build build-ingest
 
@@ -291,6 +292,29 @@ mlflow-models:
 	$(MLFLOW_HTTP_ENV) uv run --with "mlflow==$(MLFLOW_VERSION)" --python 3.12 \
 		python3 scripts/mlflow_registry.py --tracking-uri $(MLFLOW_TRACKING_URI) list $(ARGS)
 
+# Gate промоушена (infra/4.3): champion vs challenger на общих фолдах —
+# RMSE, DM-HLN, 95% блочный бутстрап, robustness-окна и 90% MCS (>2 кандидатов).
+# make ml-gate ARGS="--challenger-run <uuid> --champion-run <uuid> --model ordered_logit"
+# Live-оценка shadow/canary: make ml-gate ARGS="--live --live-track cbr_rate:ordered_logit"
+# Артефакт — build/ml-gate/<run>.json; при MLFLOW=1 ставятся теги решения.
+ml-gate:
+	$(MLFLOW_ENV) $(MLFLOW_HTTP_ENV) uv run $(MLFLOW_PKG) \
+		--with "statsmodels>=0.15" --with scipy --with arch --python 3.12 \
+		python3 scripts/ml_gate.py $(ARGS)
+
+ml-gate-test:
+	uv run --with "statsmodels>=0.15" --with scipy --python 3.12 \
+		python3 scripts/ml_gate_test.py -v
+
+# Проверка live-прогноза до публикации (infra/4.3): production-строки
+# cbr_rate:taylor/ordered_logit на ближайшее заседание, записанные до target_date.
+# make ml-live-check [ARGS="--require-llm --warn-only"]
+ml-live-check:
+	uv run --python 3.12 python3 scripts/ml_live_check.py $(ARGS)
+
+ml-live-check-test:
+	uv run --python 3.12 python3 scripts/ml_live_check_test.py -v
+
 # Проверка окружения разработчика: наличие инструментов и версий.
 dev-check:
 	@for t in go gofmt golangci-lint uv curl; do \
@@ -308,13 +332,43 @@ env-check:
 	@if [ -n "$$GRAFANA_TEST_TOKEN" ]; then echo "OK   GRAFANA_TEST_TOKEN задан"; else echo "НЕТ  GRAFANA_TEST_TOKEN не задан (нужен для make grafana-deploy-test: сервис-аккаунт Editor на $(GRAFANA_TEST_URL))"; fi
 	@if [ -n "$$GRAFANA_STAGING_TOKEN" ]; then echo "OK   GRAFANA_STAGING_TOKEN задан"; else echo "НЕТ  GRAFANA_STAGING_TOKEN не задан (нужен для make grafana-deploy-staging: сервис-аккаунт Editor на staging, доступ через туннель $(GRAFANA_STAGING_URL))"; fi
 
-# Локальный прогон одного импортёра: make import STAT=bea (нужны CLICKHOUSE_URL и ключ импортёра из $(ROSSTAT_ENV)).
+# Локальный прогон одного импортёра или группы: make import STAT=bea / STAT=key_rate_sources
+# (нужны CLICKHOUSE_URL и ключи источников из $(ROSSTAT_ENV)).
 STAT ?=
+
+# Группа «источники контура ключевой ставки»: make import STAT=key_rate_sources.
+# Группа — не импортёр, а именованный список Name() через запятую: main.go принимает
+# список (CLICKHOUSE_IMPORT_STAT=a,b), запускает выбранные импортёры в одном процессе и
+# одном соединении, а ошибка одного не останавливает остальные (итоговый код — 1).
+# Порядок исполнения — порядок регистрации в chimport.Stats, а не порядок списка; пробелы
+# после запятых (перенос строки) parseImportFilter срезает TrimSpace. Новая группа — новая
+# переменная STATS_<имя>, рецепт import её подхватывает без правок.
+# Состав — контракт публикации (docs/KEY_RATE_PUBLICATIONS.md §6) и карта каналов
+# (docs/KEY_RATE_CHANNELS.md §8/§8.1); обоснование состава — docs/publications/README.md.
+STATS_key_rate_sources := \
+	cbr_key_rate,cbr_currency_usd,cbr_m2,cbr_credit_m2x,\
+	cbr_loans_to_corporations,cbr_loans_to_individuals,cbr_households_b_mes,\
+	cbr_infl_exp,cbr_bank_int_rate,cbr_int_rate_loans,cbr_ruania,cbr_indicators_cpd,\
+	cbr_zcyc,cbr_mp_survey,cbr_mo_br,cbr_mp_summary,cbr_bop_est,cbr_bop_standard,\
+	cbr_dip_bulletin,cbr_mt_forecast,cbr_form101,cbr_ccyb_indicators,\
+	cbr_risk_weight_addons,cbr_mpl,cbr_mp_bsu_map,cbr_publication_calendar,\
+	rosstat_ipc_mes,rosstat_ipc_weeks,rosstat_bi_cpi_weekly,rosstat_ipc_weeks_bulletins,\
+	rosstat_labour_force_mes,rosstat_salaries_mes,rosstat_vvp_kvartal,\
+	minfin_fed_bud_mes,minfin_fed_bud_mesyats,minfin_oil_gas_mes,\
+	minfin_debt_stock,minfin_debt_service,minfin_ofz_auction,\
+	moex_market,keyrate_futures,ofz_curve,\
+	sber_consumper_spending_index,sber_izmenenie_trat,bank_company_metrics,domrf_mortgage,\
+	fedstat_weekly_prices,fedstat_ipc,news_watch,events_calendar
+# В Makefile выше стоит голый export (строка 2): без unexport имя группы с запятыми и
+# пробелами уехало бы в окружение дочернего процесса.
+unexport STATS_key_rate_sources
+
 import:
 	@test -n "$(STAT)" || { echo "укажите импортёр: make import STAT=bea"; exit 1; }
+	@if [ -n "$(STATS_$(STAT))" ]; then echo "группа $(STAT): $(STATS_$(STAT))"; fi
 	@mkdir -p $(BUILD_DIR)
 	go build -o $(BUILD_DIR)/$(BINARY)-native .
-	CLICKHOUSE_IMPORT_STAT=$(STAT) ./$(BUILD_DIR)/$(BINARY)-native
+	CLICKHOUSE_IMPORT_STAT="$(or $(STATS_$(STAT)),$(STAT))" ./$(BUILD_DIR)/$(BINARY)-native
 
 # Живой harness сравнения LLM-моделей разметки cbr_mp_summary (спека §3.4): читает документы
 # ЦБ и ClickHouse, пишет артефакты в $(CURDIR)/build/mp-llm-eval (MP_LLM_EVAL_OUT).
@@ -380,7 +434,7 @@ mcp-user:
 # Пишет sql/dcf_mine_plans_seed.sql и polyus_lom_reconciled_long.csv, в ClickHouse НЕ пишет —
 # вставка отдельно: make ch-sql FILE=sql/dcf_mine_plans_seed.sql.
 dcf-aisc:
-	python3 scripts/extrapolation_aisc.py
+	python3 scripts/models/polyus/aisc.py
 
 # ОПР-выпуск Сухого Лога 2025-2027: руда перерабатывается на Вернинской ЗИФ, и Полюс
 # показывает результат в производственных результатах Вернинского (сноска 13 пресс-релиза 1П2026),
@@ -388,7 +442,7 @@ dcf-aisc:
 # polyus_output_attribution_long.csv, в ClickHouse НЕ пишет — вставка отдельно:
 # make ch-sql FILE=sql/polyus_output_seed.sql
 polyus-output:
-	python3 scripts/polyus_output_model.py
+	python3 scripts/models/polyus/polyus_output_model.py
 
 # Дополнительные аргументы цели key-rate-model (например, экспорт фикстур тестов).
 ARGS ?=
@@ -403,7 +457,75 @@ ARGS ?=
 # повторяет конвенцию репозитория для uv-прогонов (README/ARCHITECTURE: --python 3.12).
 key-rate-model:
 	@$(MLFLOW_PREFLIGHT)
-	$(MLFLOW_ENV) $(MLFLOW_HTTP_ENV) uv run $(MLFLOW_PKG) --with "statsmodels>=0.15" --with pandas --with scikit-learn --with scipy --python 3.12 python3 scripts/key_rate_model.py $(ARGS)
+	$(MLFLOW_ENV) $(MLFLOW_HTTP_ENV) uv run $(MLFLOW_PKG) --with "statsmodels>=0.15" --with pandas --with scikit-learn --with scipy --python 3.12 python3 scripts/models/key_rate/key_rate_model.py $(ARGS)
+
+# cbr_rule — калиброванное правило ДДКП ЦБ как отдельный экспериментальный трек
+# (issue #268, спека docs/superpowers/specs/2026-10-20-cbr-rule-design.md).
+# Читает ClickHouse, пишет ЛОКАЛЬНЫЕ артефакты (report/predictions/diagnostics/
+# forecast) и НЕ пишет в forecast_log; ML_LOG=1 — паспорт и fold-предсказания
+# через ml_experiment. ARGS: --as-of YYYY-MM-DD, --out-dir DIR, --rolling.
+key-rate-cbr-rule:
+	@$(MLFLOW_PREFLIGHT)
+	$(MLFLOW_ENV) $(MLFLOW_HTTP_ENV) uv run $(MLFLOW_PKG) --with "statsmodels>=0.15" --with pandas --with scikit-learn --with scipy --python 3.12 python3 scripts/models/key_rate/key_rate_cbr_rule.py $(ARGS)
+
+# Офлайн-тесты cbr_rule: без ClickHouse и сети.
+key-rate-cbr-rule-test:
+	uv run --with "statsmodels>=0.15" --with pandas --with scikit-learn --with scipy --python 3.12 python3 scripts/models/key_rate/key_rate_cbr_rule_test.py -v
+
+# Сценарный веер ставки с shock-aware слоем (issue #272, Task 1;
+# спека docs/superpowers/specs/2026-10-20-cbr-scenario-fan-design.md).
+# Читает ClickHouse, пишет ЛОКАЛЬНЫЕ артефакты (report/predictions/diagnostics/
+# forecast) и НЕ пишет в forecast_log; ML_LOG=1 — паспорт и fold-предсказания.
+# ARGS: --as-of YYYY-MM-DD, --out-dir DIR, --rolling.
+key-rate-scenario-fan:
+	@$(MLFLOW_PREFLIGHT)
+	$(MLFLOW_ENV) $(MLFLOW_HTTP_ENV) uv run $(MLFLOW_PKG) --with "statsmodels>=0.15" --with pandas --with scikit-learn --with scipy --python 3.12 python3 scripts/models/key_rate/key_rate_scenario_fan.py $(ARGS)
+
+# Офлайн-тесты веера: без ClickHouse и сети.
+key-rate-scenario-fan-test:
+	uv run --with "statsmodels>=0.15" --with pandas --with scikit-learn --with scipy --python 3.12 python3 scripts/models/key_rate/key_rate_scenario_fan_test.py -v
+
+# Веер v2: ядро ordered logit/ML + модель дисперсии (issue #286, Task 3;
+# спека docs/superpowers/specs/2026-10-20-cbr-scenario-fan-v2-design.md).
+# Читает ClickHouse, пишет ЛОКАЛЬНЫЕ артефакты и НЕ пишет в forecast_log;
+# ML_LOG=1 — паспорт и fold-предсказания через ml_experiment.
+key-rate-scenario-fan-v2:
+	@$(MLFLOW_PREFLIGHT)
+	$(MLFLOW_ENV) $(MLFLOW_HTTP_ENV) uv run $(MLFLOW_PKG) --with "statsmodels>=0.15" --with pandas --with scikit-learn --with scipy --python 3.12 python3 scripts/models/key_rate/key_rate_scenario_fan_v2.py $(ARGS)
+
+# Офлайн-тесты веера v2: без ClickHouse и сети.
+key-rate-scenario-fan-v2-test:
+	uv run --with "statsmodels>=0.15" --with pandas --with scikit-learn --with scipy --python 3.12 python3 scripts/models/key_rate/key_rate_scenario_fan_v2_test.py -v
+
+# Веер v3: channel-complete ядро ElasticNetCV + volatility-дисперсия
+# (issue #289, Task 4; спека docs/superpowers/specs/2026-10-20-cbr-scenario-fan-v3-design.md).
+# Читает ClickHouse, пишет ЛОКАЛЬНЫЕ артефакты и НЕ пишет в forecast_log;
+# ML_LOG=1 — паспорт и fold-предсказания через ml_experiment.
+key-rate-scenario-fan-v3:
+	@$(MLFLOW_PREFLIGHT)
+	$(MLFLOW_ENV) $(MLFLOW_HTTP_ENV) uv run $(MLFLOW_PKG) --with "statsmodels>=0.15" --with pandas --with scikit-learn --with scipy --python 3.12 python3 scripts/models/key_rate/key_rate_scenario_fan_v3.py $(ARGS)
+
+# Офлайн-тесты веера v3: без ClickHouse и сети.
+key-rate-scenario-fan-v3-test:
+	uv run --with "statsmodels>=0.15" --with pandas --with scikit-learn --with scipy --python 3.12 python3 scripts/models/key_rate/key_rate_scenario_fan_v3_test.py -v
+
+# CPI v3 h1/h3/h6 как model-based прокси ожидаемой инфляции
+# (issue #296, Task 4.1; спека docs/superpowers/specs/2026-10-20-cpi-v3-expectations-design.md).
+# Читает ClickHouse, пишет ЛОКАЛЬНЫЕ артефакты в build/; в forecast_log не пишет.
+key-rate-cpi-v3-experiment:
+	@$(MLFLOW_PREFLIGHT)
+	$(MLFLOW_ENV) $(MLFLOW_HTTP_ENV) uv run $(MLFLOW_PKG) --with "catboost>=1.2" --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/key_rate/key_rate_cpi_v3_experiment.py $(ARGS)
+
+# Live-диагностика CPI h1/h3/h6 для заседания: make cpi-live3-horizons ARGS="--as-of 2026-10-23 --meeting 2026-10-23".
+cpi-live3-horizons:
+	$(MLFLOW_ENV) $(MLFLOW_HTTP_ENV) uv run $(MLFLOW_PKG) --with "catboost>=1.2" --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/cpi/cpi_live3_horizons.py $(ARGS)
+
+# Офлайн-тесты CPI h1/h3/h6 и эксперимента: без ClickHouse и сети.
+cpi-live3-horizons-test:
+	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/cpi/cpi_live3_horizons_test.py -v
+
+key-rate-cpi-v3-experiment-test:
+	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/key_rate/key_rate_cpi_v3_experiment_test.py -v
 
 # Классификатор шоков ключевой ставки (спека 2026-10-19, §8): панель заседаний,
 # as-of каналы, причинные веса (Махаланобис + Ledoit–Wolf) и описательный
@@ -416,11 +538,11 @@ key-rate-model:
 # make shock-classifier ARGS="--export-fixtures scripts/testdata/shock_classifier"
 shock-classifier:
 	@$(MLFLOW_PREFLIGHT)
-	$(MLFLOW_ENV) $(MLFLOW_HTTP_ENV) uv run $(MLFLOW_PKG) --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/shock_classifier.py $(ARGS)
+	$(MLFLOW_ENV) $(MLFLOW_HTTP_ENV) uv run $(MLFLOW_PKG) --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/key_rate/shock_classifier.py $(ARGS)
 
 # Офлайн-тесты классификатора шоков: без ClickHouse и сети.
 shock-classifier-test:
-	uv run --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/shock_classifier_test.py -v
+	uv run --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/key_rate/shock_classifier_test.py -v
 
 # Запись текущего прогноза ставки в forecast_log через ingest (POST /v1/key_rate_forecast).
 # Читает локальные артефакты key_rate_model_forecast.json (и, при наличии,
@@ -437,14 +559,14 @@ key-rate-forecast-log:
 # LLM_MODEL (последние — только в ~/.config/rosstat/env). В ClickHouse скрипт
 # НЕ пишет; ARGS="--log" готовит payload для ingest #127 и печатает его.
 key-rate-llm-forecast:
-	uv run --python 3.12 python3 scripts/key_rate_llm_forecast.py $(ARGS)
+	uv run --python 3.12 python3 scripts/models/key_rate/key_rate_llm_forecast.py $(ARGS)
 # ML-трек контура ставки: nowcast месячного ИПЦ до публикации Росстата (CatBoost + бенчмарки).
 # Читает ClickHouse, пишет локальные артефакты; в ClickHouse по умолчанию не пишет;
 # с ML_LOG=1 пишет паспорт и fold-предсказания.
 # Фикстуры: make cpi-nowcast ARGS="--export-fixtures scripts/testdata/cpi_nowcast"
 cpi-nowcast:
 	@$(MLFLOW_PREFLIGHT)
-	$(MLFLOW_ENV) $(MLFLOW_HTTP_ENV) uv run $(MLFLOW_PKG) --with "catboost>=1.2" --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/cpi_nowcast.py $(ARGS)
+	$(MLFLOW_ENV) $(MLFLOW_HTTP_ENV) uv run $(MLFLOW_PKG) --with "catboost>=1.2" --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/cpi/cpi_nowcast.py $(ARGS)
 
 # ML-трек v2: месячный nowcast ИПЦ с мониторингом предприятий ЦБ (с МП vs без МП).
 # Читает ClickHouse, пишет локальные артефакты; по умолчанию в ClickHouse НЕ пишет;
@@ -452,50 +574,255 @@ cpi-nowcast:
 # Фикстуры: make cpi-monthly ARGS="--export-fixtures scripts/testdata/cpi_monthly"
 cpi-monthly:
 	@$(MLFLOW_PREFLIGHT)
-	$(MLFLOW_ENV) $(MLFLOW_HTTP_ENV) uv run $(MLFLOW_PKG) --with "catboost>=1.2" --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/cpi_monthly.py $(ARGS)
+	$(MLFLOW_ENV) $(MLFLOW_HTTP_ENV) uv run $(MLFLOW_PKG) --with "catboost>=1.2" --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/cpi/cpi_monthly.py $(ARGS)
 
 # Stage 1 #76: публичные недельные признаки в месячном nowcast ИПЦ.
 cpi-monthly-v3:
 	@$(MLFLOW_PREFLIGHT)
-	$(MLFLOW_ENV) $(MLFLOW_HTTP_ENV) uv run $(MLFLOW_PKG) --with "catboost>=1.2" --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/cpi_monthly_v3.py $(ARGS)
+	$(MLFLOW_ENV) $(MLFLOW_HTTP_ENV) uv run $(MLFLOW_PKG) --with "catboost>=1.2" --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/cpi/cpi_monthly_v3.py $(ARGS)
 
 cpi-monthly-v3-test:
-	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/cpi_monthly_v3_test.py -v
+	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/cpi/cpi_monthly_v3_test.py -v
 
 # Task 4 #237: v3 на публичных данных — industry MP из v_cbr_survey (#239),
 # h1/h2/h3/h6, direct/bottom-up, B1–B3, DM/CI/MDE; в ClickHouse не пишет.
 cpi-monthly-v3-public:
 	@$(MLFLOW_PREFLIGHT)
-	$(MLFLOW_ENV) $(MLFLOW_HTTP_ENV) uv run $(MLFLOW_PKG) --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/cpi_monthly_v3_public.py $(ARGS)
+	$(MLFLOW_ENV) $(MLFLOW_HTTP_ENV) uv run $(MLFLOW_PKG) --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/cpi/cpi_monthly_v3_public.py $(ARGS)
 
 cpi-monthly-v3-public-test:
-	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/cpi_monthly_v3_public_test.py -v
+	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/cpi/cpi_monthly_v3_public_test.py -v
+
+# Live-адаптация production-пайплайна CB_COMP (схема авторов): официальные
+# 4 компонента + недельные товары + МП + FAO/USD/ставка → 3 компонентных
+# CatBoost → агрегат, ошибки, дашборд, ЖКУ, экспертные корректировки, Россия.
+# Читает ClickHouse и архив; в БД не пишет.
+cb-comp-live:
+	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/cb_comp/cb_comp_live_pipeline.py $(ARGS)
+
+# Офлайн-тесты live-пайплайна: без ClickHouse и архива.
+cb-comp-live-test:
+	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/cb_comp/cb_comp_live_pipeline_test.py -v
+
+# Сравнение live 3-компонентной модели, per-sheet и CB_COMP на общем таргете
+# TARGET_FULL (54 normal-месяца, origin M−(h−1)). Читает ClickHouse и архив.
+cb-comp-live-compare:
+	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/cb_comp/cb_comp_live_compare.py $(ARGS)
 
 # Stage 2 #235: отраслевые МП-признаки (16 листов mp_survey_data.xlsx) в
 # компонентном nowcast ИПЦ. Читает ClickHouse и публичный xlsx; в БД не пишет.
 cpi-monthly-industry:
 	@$(MLFLOW_PREFLIGHT)
-	$(MLFLOW_ENV) $(MLFLOW_HTTP_ENV) uv run $(MLFLOW_PKG) --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/cpi_monthly_industry.py $(ARGS)
+	$(MLFLOW_ENV) $(MLFLOW_HTTP_ENV) uv run $(MLFLOW_PKG) --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/cpi/cpi_monthly_industry.py $(ARGS)
 
 cpi-monthly-industry-test:
-	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/cpi_monthly_industry_test.py -v
+	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/cpi/cpi_monthly_industry_test.py -v
 
 # Task 1 #234: аудит публичной панели ИПЦ. Читает ClickHouse и публичные xlsx,
 # в БД не пишет; JSON — docs/research/2026-10-19-cpi-public-data-audit.json.
 cpi-public-audit:
-	uv run --with openpyxl --python 3.12 python3 scripts/cpi_public_panel_audit.py $(ARGS)
+	uv run --with openpyxl --python 3.12 python3 scripts/models/cpi/cpi_public_panel_audit.py $(ARGS)
 
 cpi-public-audit-test:
-	uv run --with openpyxl --python 3.12 python3 scripts/cpi_public_panel_audit_test.py -v
+	uv run --with openpyxl --python 3.12 python3 scripts/models/cpi/cpi_public_panel_audit_test.py -v
+
+# #348: недельный прокси базовой инфляции — 4-нед. средняя, календарная
+# регрессия, STL(52) и Gate 0 X-13. Читает ClickHouse, в БД не пишет;
+# JSON — docs/research/2026-10-22-weekly-core-proxy.json.
+weekly-core-proxy:
+	uv run --with "statsmodels>=0.15" --with numpy --with scipy --with "holidays>=0.60" --python 3.12 python3 scripts/models/cpi/weekly_core_proxy.py $(ARGS)
+
+weekly-core-proxy-test:
+	uv run --with "statsmodels>=0.15" --with numpy --with scipy --with "holidays>=0.60" --python 3.12 python3 scripts/models/cpi/weekly_core_proxy_test.py -v
+
+# #396 Task 1: аудит недельного агрегата ИПЦ 2009+ (признаки wkagg_* — Task 2).
+# Читает ClickHouse; в БД не пишет.
+cpi-weekly-aggregate:
+	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/cpi/cpi_weekly_aggregate.py $(ARGS)
+
+cpi-weekly-aggregate-test:
+	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/cpi/cpi_weekly_aggregate_test.py -v
+
+# #396 Task 4: каркас лидерборда CPI v4 и регрессионный гейт v2/v3 на S_W22.
+# Читает ClickHouse; в БД не пишет. `ARGS="--gate"` — гейт Stage 1.
+cpi-v4-leaderboard:
+	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --with arch --python 3.12 python3 scripts/models/cpi/cpi_v4_leaderboard.py $(ARGS)
+
+cpi-v4-leaderboard-test:
+	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --with arch --python 3.12 python3 scripts/models/cpi/cpi_v4_leaderboard_test.py -v
+
+# #396 Task 5: сетка 3 таргета × h1/h3/h6 (эксперимент 1). `ARGS="--sample S_L09"`,
+# `--quick` — только итерации, `--cells T_NSA:1`. `ML_LOG=1` — паспорт (cpi_v4).
+cpi-v4-grid:
+	@$(MLFLOW_PREFLIGHT)
+	$(MLFLOW_ENV) $(MLFLOW_HTTP_ENV) uv run $(MLFLOW_PKG) --with "catboost>=1.2" --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --with arch --python 3.12 python3 scripts/models/cpi/cpi_v4_grid.py $(ARGS)
+
+cpi-v4-grid-test:
+	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --with arch --python 3.12 python3 scripts/models/cpi/cpi_v4_grid_test.py -v
+
+# Issue #396 Task 3: core_nnls (NNLS-веса по 14 корзинам панели #364, as-of) и
+# модели v4c/v4d для T_CORE. Диагностика читает CSV панели и ClickHouse.
+cpi-core-nnls:
+	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --with arch --with "holidays>=0.60" --python 3.12 python3 scripts/models/cpi/cpi_core_nnls.py $(ARGS)
+
+cpi-core-nnls-test:
+	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --with arch --with "holidays>=0.60" --python 3.12 python3 scripts/models/cpi/cpi_core_nnls_test.py -v
+
+# Issue #396 Task 6: решение gate эксперимента 2 (H2) по ячейкам cpi-v4-grid;
+# читает build/cpi-v4/, пишет build/ml-gate/cpi_v4_h2.{json,md}; без сети и БД.
+cpi-v4-h2:
+	uv run --with numpy --with scipy --with arch --with pandas --python 3.12 python3 scripts/models/cpi/cpi_v4_h2.py $(ARGS)
+
+cpi-v4-h2-test:
+	uv run --with numpy --with scipy --with arch --with pandas --python 3.12 python3 scripts/models/cpi/cpi_v4_h2_test.py -v
+
+# Issue #396 Task 7: эксперимент 3 (H3) — v4c/v4d на T_CORE, B0f/M1f, решение gate.
+# Читает ClickHouse и CSV панели #364; пишет build/cpi-v4/core_*/ и build/ml-gate/cpi_v4_h3.*.
+cpi-v4-core:
+	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --with arch --with "holidays>=0.60" --python 3.12 python3 scripts/models/cpi/cpi_v4_core.py $(ARGS)
+
+cpi-v4-core-test:
+	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --with arch --with "holidays>=0.60" --python 3.12 python3 scripts/models/cpi/cpi_v4_core_test.py -v
+
+cpi-sa-reconciliation:
+	uv run --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/cpi/cpi_sa_reconciliation.py $(ARGS)
+
+cpi-sa-reconciliation-test:
+	uv run --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/cpi/cpi_sa_reconciliation_test.py
+
+cpi-asof-test:
+	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --with arch --with "holidays>=0.60" --python 3.12 python3 scripts/models/cpi/cpi_asof_test.py && python3 scripts/models/cpi/cpi_release_dates_test.py
+
+cpi-weekly-sa-asof:
+	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --with arch --with "holidays>=0.60" --python 3.12 python3 scripts/models/cpi/weekly_sa_asof.py $(ARGS)
+
+cpi-weekly-sa-asof-test:
+	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --with arch --with "holidays>=0.60" --python 3.12 python3 scripts/models/cpi/weekly_sa_asof_test.py
+
+cpi-two-stage-targets-test:
+	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --with arch --with "holidays>=0.60" --python 3.12 python3 scripts/models/cpi/cpi_two_stage_targets_test.py
+
+cpi-two-stage-folds:
+	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --with arch --with "holidays>=0.60" --python 3.12 python3 scripts/models/cpi/cpi_two_stage_folds.py $(ARGS)
+
+cpi-two-stage-s1:
+	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --with arch --with "holidays>=0.60" --python 3.12 python3 scripts/models/cpi/cpi_two_stage_s1.py $(ARGS)
+
+cb-comp-data-reconcile:
+	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --with arch --with "holidays>=0.60" --python 3.12 python3 scripts/models/cpi/cb_comp_data_reconcile.py $(ARGS)
+
+cpi-two-stage-cb-comp:
+	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --with arch --with "holidays>=0.60" --python 3.12 python3 scripts/models/cpi/cpi_two_stage_cb_comp.py $(ARGS)
+
+cpi-two-stage-cb-comp-test:
+	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --with arch --with "holidays>=0.60" --python 3.12 python3 scripts/models/cpi/cpi_two_stage_cb_comp_test.py
+
+cb-comp-data-reconcile-test:
+	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --with arch --with "holidays>=0.60" --python 3.12 python3 scripts/models/cpi/cb_comp_data_reconcile_test.py
+
+cpi-two-stage-s1-test:
+	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --with arch --with "holidays>=0.60" --python 3.12 python3 scripts/models/cpi/cpi_two_stage_s1_test.py
+
+cpi-two-stage-folds-test:
+	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --with arch --with "holidays>=0.60" --python 3.12 python3 scripts/models/cpi/cpi_two_stage_folds_test.py
+
+cpi-two-stage-w2:
+	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --with arch --with "holidays>=0.60" --python 3.12 python3 scripts/models/cpi/cpi_two_stage_w2.py $(ARGS)
+
+cpi-two-stage-w2-test:
+	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --with arch --with "holidays>=0.60" --python 3.12 python3 scripts/models/cpi/cpi_two_stage_w2_test.py
+
+# Issue #364: core-прокси ИПЦ из недельных компонент 2021+ и короткие модели
+# (M1 raw, M2 Fourier-OLS, M3 UCM, M4 ridge-бридж, M5 seasonal naive).
+# Читает CSV-панель и ClickHouse, в БД не пишет; JSON — docs/research/.
+weekly-core-components:
+	uv run --with "statsmodels>=0.15" --with numpy --with scipy --with "holidays>=0.60" --python 3.12 python3 scripts/models/cpi/weekly_core_components.py $(ARGS)
+
+weekly-core-components-test:
+	uv run --with "statsmodels>=0.15" --with numpy --with scipy --with "holidays>=0.60" --python 3.12 python3 scripts/models/cpi/weekly_core_components_test.py -v
 
 # Task 3 #236: недельная компонентная панель ИПЦ — месячный m/m товаров,
 # реконструкция food/nonfood/services, покрытие весов и гейт bottom-up.
 # Читает ClickHouse, в БД не пишет; артефакты — docs/research/.
 cpi-weekly-panel:
-	uv run --with openpyxl --python 3.12 python3 scripts/cpi_weekly_component_panel.py $(ARGS)
+	uv run --with openpyxl --python 3.12 python3 scripts/models/cpi/cpi_weekly_component_panel.py $(ARGS)
 
 cpi-weekly-panel-test:
-	uv run --with openpyxl --python 3.12 python3 scripts/cpi_weekly_component_panel_test.py -v
+	uv run --with openpyxl --python 3.12 python3 scripts/models/cpi/cpi_weekly_component_panel_test.py -v
+
+# Конвейер CPI → SA → ставка (#309): календарь публикаций, stage 1, real-time SA,
+# stage 2. Gate 2 FAIL — stage 3 не строился; в forecast_log не пишется.
+publication-calendar-test:
+	uv run --python 3.12 python3 scripts/lib/publication_calendar_test.py -v
+
+cpi-pipeline-stage1:
+	@$(MLFLOW_PREFLIGHT)
+	$(MLFLOW_ENV) $(MLFLOW_HTTP_ENV) uv run $(MLFLOW_PKG) --with "catboost>=1.2" --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/cpi/cpi_pipeline_stage1.py $(ARGS)
+
+cpi-pipeline-stage1-test:
+	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/cpi/cpi_pipeline_stage1_test.py -v
+
+cpi-pipeline-sa-test:
+	uv run --with "statsmodels>=0.15" --with pandas --with scipy --python 3.12 python3 scripts/models/cpi/cpi_pipeline_sa_test.py -v
+
+cpi-pipeline-stage2:
+	@$(MLFLOW_PREFLIGHT)
+	$(MLFLOW_ENV) $(MLFLOW_HTTP_ENV) uv run $(MLFLOW_PKG) --with "catboost>=1.2" --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/cpi/cpi_pipeline_stage2.py $(ARGS)
+
+cpi-pipeline-stage2-test:
+	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/cpi/cpi_pipeline_stage2_test.py -v
+
+# T4 #279: одноразовый экспорт полной панели весов КИПЦ (52 кода/476 строк)
+# из Vesa-tov-KIPC_2012-2026.xlsx; требует openpyxl (как T3), в CH не пишет.
+ppi-sa-weights-panel:
+	uv run --with openpyxl --python 3.12 python3 scripts/ppi_sa_weights_panel.py
+
+ppi-sa-weights-panel-test:
+	uv run --with openpyxl --python 3.12 python3 scripts/ppi_sa_weights_panel_test.py -v
+
+# T4 #279: паритет ppi_sa с 10 текстовыми якорями «Инфляции в России».
+# Читает ClickHouse read-only (через scripts/lib/clickhouse.py), в БД не пишет;
+# JSON — docs/research/2026-10-21-ppi-sa-parity.json. Цель ±0,3 п.п. может быть
+# не достигнута — отчёт публикует расхождение, а не подгоняет веса.
+ppi-sa-parity:
+	python3 scripts/ppi_sa_parity.py
+
+ppi-sa-parity-test:
+	python3 scripts/ppi_sa_parity_test.py -v
+
+# T3/T4: сверка ppi_sa с текстовыми якорями 12 выпусков «Инфляции в России»
+# (2025-10…2026-09). Точные числа — где они есть; качественные формулировки —
+# отдельный класс проверок. Читает ClickHouse read-only, пишет CSV/JSON в docs/research/.
+ppi-sa-text-anchors:
+	python3 scripts/ppi_sa_text_anchors.py --print
+
+ppi-sa-text-anchors-test:
+	python3 scripts/ppi_sa_text_anchors_test.py -v
+
+# Task 1 #317: research-only отраслевой ИЦП, официальные XLSX 08-2026, без ClickHouse.
+ppi-sa-industry:
+	uv run --with openpyxl==3.1.5 --python 3.12 python3 scripts/ppi_sa_industry.py --print
+
+ppi-sa-industry-test:
+	uv run --with openpyxl==3.1.5 --python 3.12 python3 scripts/ppi_sa_industry_test.py -v
+
+# Task 2 #318: research-only direct h1/h3/h6 прогноз CPI/PPI с aggregate
+# ценовыми ожиданиями и парными B2/B3 без ожиданий. Читает ClickHouse
+# read-only, пишет локальные Markdown/JSON/CSV; ML_LOG=1 — паспорт и folds,
+# без registry/promote и без forecast_log. Официальный прогон:
+# make ppi-monthly-forecast ARGS="--out-dir docs/research"
+ppi-monthly-forecast:
+	@$(MLFLOW_PREFLIGHT)
+	$(MLFLOW_ENV) $(MLFLOW_HTTP_ENV) uv run $(MLFLOW_PKG) --with numpy --with pandas --with scikit-learn --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/ppi/ppi_monthly_forecast.py $(ARGS)
+
+ppi-monthly-forecast-test:
+	uv run --with numpy --with pandas --with scikit-learn --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/ppi/ppi_monthly_forecast_test.py -v
+
+# Live-диагностика per_sheet: экспорт v_cbr_mp_public_panel (87 кодов × 3
+# индикатора, но 33 различные серии) и v_cbr_mp_bsu_map (код → industry_slug)
+# в build/cb-comp-parity. Только чтение ClickHouse.
+cb-comp-public-export:
+	uv run --with pandas --python 3.12 python3 scripts/models/cb_comp/cb_comp_public_export.py --out-dir build/cb-comp-parity
 
 # Паритет ML-трека с CB_COMP (issue #190): таргет TARGET_FULL из архива авторов,
 # архивные per-period прогнозы CB_COMP, две CatBoost-direct модели (с МП/без МП),
@@ -504,19 +831,19 @@ cpi-weekly-panel-test:
 # Читает ClickHouse (ряды v2), пишет локальные артефакты; в ClickHouse не пишет.
 cb-comp-parity:
 	@$(MLFLOW_PREFLIGHT)
-	$(MLFLOW_ENV) $(MLFLOW_HTTP_ENV) uv run $(MLFLOW_PKG) --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/cb_comp_parity.py $(ARGS)
+	$(MLFLOW_ENV) $(MLFLOW_HTTP_ENV) uv run $(MLFLOW_PKG) --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/cb_comp/cb_comp_parity.py $(ARGS)
 
 # Офлайн-тесты parity-скрипта: без ClickHouse и без архива.
 cb-comp-parity-test:
-	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/cb_comp_parity_test.py -v
-	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/cb_comp_bottomup_test.py -v
+	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/cb_comp/cb_comp_parity_test.py -v
+	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/cb_comp/cb_comp_bottomup_test.py -v
 
 # Прокси-путь CB_COMP (issue #190): SA ИПЦ без КУ из публичных рядов ЦБ/Росстата
 # и RMSE нашего месячного nowcast на окне статьи 2019-01…2024-07. Читает ClickHouse,
 # в ClickHouse не пишет. Нужен CSV месячного трека v2 (--nowcast-csv), который
 # создаётся `make cpi-monthly ARGS="--sample long"` в ветке feat/key-rate-ml-v2.
 cb-comp-proxy:
-	uv run --with pandas --with scipy --with "statsmodels>=0.15" --python 3.12 python3 scripts/cb_comp_proxy.py $(ARGS)
+	uv run --with pandas --with scipy --with "statsmodels>=0.15" --python 3.12 python3 scripts/models/cb_comp/cb_comp_proxy.py $(ARGS)
 
 # Документы e-disclosure.ru: headed Chrome с постоянным профилем build/edisclosure-profile
 # (gitignored, 0700). Капчу решает владелец вручную; коллектор только ждёт её --wait секунд.
@@ -571,6 +898,32 @@ clean:
 
 DAGU_URL := https://github.com/dagu-org/dagu/releases/download/$(DAGU_VERSION)/dagu_$(DAGU_VERSION:v%=%)_linux_amd64.tar.gz
 
+# Base DAG (env шагов + SMTP-уведомления): /root/.config/dagu/base.yaml.
+# Без env шаг `run: "$ROSSTAT_IMPORT_BIN"` — пустая команда: dagu рапортует
+# succeeded, импорт не выполняется (инцидент staging 2026-10-25).
+# SMTP-поля dagu 2.18.2 не раскрывает ${…} (в отличие от env шагов), поэтому
+# шаблон рендерится на хосте из env-файла render-dagu-base.py; секреты не
+# покидают хост и не попадают в git. Идемпотентно по cmp; старый файл — .bak;
+# перезапуск только активного dagu, чтобы первый deploy не начал выполнять
+# DAG-и до preflight/smoke.
+deploy-staging-dagu-base: staging-precheck
+	@ssh $(STAGING_HOST) 'install -d -m 755 /root/dagu/certs'
+	@scp -q russian_trusted_root_ca_pem.crt russian_trusted_sub_ca_pem.crt russian_trusted_sub_ca_2024_pem.crt litessl_rsa_ca_2025.pem $(STAGING_HOST):/root/dagu/certs/
+	@scp -q $(STAGING_DAGU_BASE) $(STAGING_HOST):/tmp/dagu-base.template.yaml
+	@scp -q deploy/staging/render-dagu-base.py $(STAGING_HOST):/tmp/render-dagu-base.py
+	@ssh $(STAGING_HOST) 'set -e; \
+		python3 /tmp/render-dagu-base.py /tmp/dagu-base.template.yaml $(STAGING_ENV_FILE) /root/.config/dagu/base.yaml.new; \
+		if cmp -s /root/.config/dagu/base.yaml.new /root/.config/dagu/base.yaml; then \
+			rm -f /root/.config/dagu/base.yaml.new /tmp/dagu-base.template.yaml /tmp/render-dagu-base.py; \
+			echo "OK   base.yaml актуален"; \
+		else \
+			test -f /root/.config/dagu/base.yaml && cp -a /root/.config/dagu/base.yaml /root/.config/dagu/base.yaml.bak || true; \
+			install -o root -g root -m 600 /root/.config/dagu/base.yaml.new /root/.config/dagu/base.yaml; \
+			rm -f /root/.config/dagu/base.yaml.new /tmp/dagu-base.template.yaml /tmp/render-dagu-base.py; \
+			if systemctl is-active --quiet dagu; then systemctl restart dagu; echo "base.yaml установлен, dagu перезапущен"; \
+			else echo "base.yaml установлен (dagu ещё не запущен)"; fi; \
+		fi'
+
 # dagu: скачать релизный tarball, подменить бинарник, поставить юнит. Идемпотентно по версии.
 # Старый бинарник сохраняется в .bak — им пользуется откат (см. deploy/staging/README.md).
 deploy-staging-dagu: staging-precheck
@@ -594,6 +947,7 @@ deploy-staging-dagu: staging-precheck
 	fi
 	scp deploy/staging/dagu.service $(STAGING_HOST):/etc/systemd/system/dagu.service
 	ssh $(STAGING_HOST) 'systemctl daemon-reload'
+	@$(MAKE) deploy-staging-dagu-base --no-print-directory
 
 # mcp-clickhouse: юнит + прогрев кэша uv (пакет разрешается при старте сервиса).
 # Отдельного «скачивания» нет: uv разрешает пакет по пину MCP_VERSION.
@@ -617,12 +971,22 @@ deploy-staging-mlflow: staging-precheck
 	@echo "прогрев кэша uv (скачивание mlflow==$(MLFLOW_VERSION))..."
 	@ssh $(STAGING_HOST) '$(STAGING_BIN_DIR)/uv run --with mlflow==$(MLFLOW_VERSION) --python 3.12 python -c "pass" >/dev/null 2>&1 || true'
 
+# Данные-артефакты DCF/датапаков: без них падают databook_polyus и databook_ugk
+# (импортёры читают относительный путь polyus/data/... и financial/data/...).
+# Копируются в оба возможных рабочих каталога: CLI-прогон из /root и сервисный
+# WorkingDirectory=/root/dagu.
+deploy-staging-data: staging-precheck
+	@ssh $(STAGING_HOST) 'install -d -m 755 /root/polyus/data /root/financial/data /root/dagu/polyus/data /root/dagu/financial/data'
+	@scp -q polyus/data/polyus_datapack_fy2025_new.xlsx $(STAGING_HOST):/root/polyus/data/
+	@scp -q 'financial/data/ЮГК_databook_2024.xlsx' $(STAGING_HOST):/root/financial/data/
+	@ssh $(STAGING_HOST) 'cp /root/polyus/data/polyus_datapack_fy2025_new.xlsx /root/dagu/polyus/data/ && cp "/root/financial/data/ЮГК_databook_2024.xlsx" "/root/dagu/financial/data/" && echo "OK   датапаки Polyus/ЮГК на месте"'
+
 # Полный деплой: бинарь → dagu → mcp → mlflow → DAG'и → проверка ДО включения → включение → smoke.
 #
 # Порядок критичен. Сервисы включаются последними: dagu после `enable --now` немедленно
 # начинает выполнять DAG'и по расписанию, поэтому сначала проверяется, что бинарь и
 # DAG-файлы на месте (deploy-staging-preflight), и только потом сервисы запускаются.
-deploy-staging: deploy-staging-binary deploy-staging-dagu deploy-staging-mcp deploy-staging-mlflow
+deploy-staging: deploy-staging-binary deploy-staging-dagu deploy-staging-data deploy-staging-mcp deploy-staging-mlflow
 	ssh $(STAGING_HOST) 'install -d -m 755 /root/dagu'
 	scp dagu/*.yaml $(STAGING_HOST):/root/dagu/
 	# scp копирует, но не удаляет: снятый с репозитория DAG остался бы на хосте и продолжил бы
@@ -648,11 +1012,25 @@ deploy-staging-preflight:
 	@ssh $(STAGING_HOST) 'test -f /root/dagu/cbr.yaml && echo "OK   DAG-файлы на месте"' || { echo "FAIL /root/dagu/cbr.yaml отсутствует"; exit 1; }
 	@ssh $(STAGING_HOST) 'set -a; . $(STAGING_ENV_FILE); set +a; \
 		test -n "$$CLICKHOUSE_MCP_AUTH_TOKEN" && echo "OK   CLICKHOUSE_MCP_AUTH_TOKEN задан" || { echo "FAIL CLICKHOUSE_MCP_AUTH_TOKEN пуст — mcp-clickhouse не стартует в HTTP-режиме"; exit 1; }'
+	@ssh $(STAGING_HOST) 'grep -q "ROSSTAT_IMPORT_BIN" /root/.config/dagu/base.yaml && echo "OK   base.yaml задаёт ROSSTAT_IMPORT_BIN"' || { echo "FAIL base.yaml не задаёт ROSSTAT_IMPORT_BIN — шаги dagu выполнят пустую команду"; exit 1; }
+	@ssh $(STAGING_HOST) 'test -f /root/dagu/certs/russian_trusted_root_ca_pem.crt && test -f /root/dagu/certs/litessl_rsa_ca_2025.pem && echo "OK   сертификаты РФ и LiteSSL на месте"' || { echo "FAIL нет сертификатов в /root/dagu/certs — rosstat.gov.ru/sberindex.ru упадут на x509"; exit 1; }
+	@ssh $(STAGING_HOST) 'set -a; . $(STAGING_ENV_FILE); set +a; \
+		missing=""; \
+		for v in SMTP_HOST SMTP_PORT SMTP_USER SMTP_PASSWORD MAIL_FROM MAIL_TO; do \
+			eval "val=\$$v"; [ -n "$$val" ] || missing="$$missing $$v"; \
+		done; \
+		[ -z "$$missing" ] && echo "OK   SMTP-переменные заданы" || { echo "FAIL не заданы:$$missing — письма dagu не уйдут на шлюз CMC"; exit 1; }'
 
 # Smoke после включения сервисов. Токен читается на хосте и не выводится.
 deploy-staging-smoke:
 	@echo "--- smoke: dagu ---"
 	@ssh $(STAGING_HOST) 'systemctl is-active --quiet dagu && curl -sf -m 5 -o /dev/null http://127.0.0.1:8080/ && echo "OK   dagu отвечает"' || { echo "FAIL dagu: journalctl -u dagu -n 50"; exit 1; }
+	@echo "--- smoke: dagu видит окружение шага ---"
+	@scp -q deploy/staging/dagu-env-smoke.yaml $(STAGING_HOST):/tmp/dagu-env-smoke.yaml
+	@ssh $(STAGING_HOST) 'set -a; . $(STAGING_ENV_FILE); set +a; cd /root; \
+		$(STAGING_BIN_DIR)/dagu start /tmp/dagu-env-smoke.yaml >/tmp/dagu-env-smoke.log 2>&1; rc=$$?; \
+		grep -q "ENV_OK" /tmp/dagu-env-smoke.log && echo "OK   dagu видит ROSSTAT_IMPORT_BIN и CLICKHOUSE_URL" || { echo "FAIL env-smoke: шаг не увидел окружение"; cat /tmp/dagu-env-smoke.log; rc=1; }; \
+		rm -f /tmp/dagu-env-smoke.yaml /tmp/dagu-env-smoke.log; exit $$rc'
 	@echo "--- smoke: mcp-clickhouse /health ---"
 	@ssh $(STAGING_HOST) 'systemctl is-active --quiet mcp-clickhouse && curl -sf -m 5 -o /dev/null http://127.0.0.1:8000/health && echo "OK   MCP /health = 200"' || { \
 		echo "FAIL mcp-clickhouse /health — сервис не отвечает или не видит ClickHouse."; \
@@ -677,6 +1055,17 @@ deploy-staging-smoke:
 			sleep 2; \
 		done; \
 		echo "FAIL mlflow /health: последний ответ HTTP $$code после 10 попыток — смотрите journalctl -u mlflow -n 50"; exit 1'
+
+# Контролируемое падение DAG: проверка письма на шлюз CMC (email→SMS).
+# В deploy не входит: запускается вручную после заполнения SMTP_* в env-файле.
+deploy-staging-notify-test: staging-precheck
+	@scp -q deploy/staging/dagu-notify-test.yaml $(STAGING_HOST):/tmp/dagu-notify-test.yaml
+	@ssh $(STAGING_HOST) 'set -a; . $(STAGING_ENV_FILE); set +a; cd /root; \
+		$(STAGING_BIN_DIR)/dagu start /tmp/dagu-notify-test.yaml >/tmp/dagu-notify-test.log 2>&1; rc=$$?; \
+		rm -f /tmp/dagu-notify-test.yaml; \
+		if [ $$rc -eq 0 ]; then echo "FAIL тестовый DAG не упал — проверка письма недействительна"; cat /tmp/dagu-notify-test.log; exit 1; fi; \
+		echo "OK   тестовый DAG упал (код $$rc); проверьте письмо [DAGU palmshell] на MAIL_TO (CMC→SMS)"; \
+		rm -f /tmp/dagu-notify-test.log'
 
 # Обновление ТОЛЬКО dagu, mcp-clickhouse и mlflow до версий из репозитория.
 # apt upgrade сюда НЕ входит: ClickHouse (данные) и Grafana обновляются вручную.
@@ -728,6 +1117,8 @@ grafana-build:
 #     dashboard/gold-thesis.json dashboard/key-rate-publications.json dashboard/finance-polyus.json
 grafana-validate:
 	cd grafana && go vet ./... && go test ./...
+	@go test ./views -run TestMLLiveAlertProvisioning
+	@uv run --python 3.12 python3 scripts/grafana_alert_check_test.py
 
 # Локальный стенд Grafana для проверки дашборда: тот же провижининг, что уедет в деплой.
 # Плагин ставится CLI Grafana в $(GF_PLUGINS) (флаг --pluginsDir), сервер читает его
@@ -802,6 +1193,8 @@ grafana-check:
 		echo "smoke uid=$$uid"; \
 		GRAFANA_URL=$(GRAFANA_TEST_URL) python3 scripts/grafana_check.py --uid $$uid || exit 1; \
 	done
+	@echo "smoke alert rules"
+	@GRAFANA_URL=$(GRAFANA_TEST_URL) python3 scripts/grafana_alert_check.py
 
 # Токен локального стенда одной командой: сервис-аккаунт создаётся идемпотентно (повторный прогон
 # переиспользует $(GRAFANA_SA_NAME) и говорит «уже есть»), а токен — всегда новый: Grafana показывает
@@ -895,6 +1288,22 @@ grafana-provision-staging:
 			echo "  (или не перезапустит grafana-server), датасорс ch-rosstat не активен и smoke упадёт: см. deploy/staging/README.md"; \
 		fi'
 
+# Provisioning алертов live-мониторинга ML (infra/4.3) на staging: файл кладётся
+# в /etc/grafana/provisioning/alerting/ рядом с датасорсом. Grafana применяет
+# alerting-provisioning при старте; после копирования нужен admin-reload
+# (POST /api/admin/provisioning/alert-rules/reload) или рестарт grafana-server.
+# Админ-пароль не хранится в репозитории: цель только печатает команду.
+grafana-provision-alerting-staging:
+	@test -f grafana/provisioning/alerting/ml-live.yaml || { echo "нет grafana/provisioning/alerting/ml-live.yaml"; exit 1; }
+	@scp -q grafana/provisioning/alerting/ml-live.yaml "$(STAGING_HOST):/tmp/ml-live-alerting.yaml" || { echo "scp: alerting-файл не доехал до $(STAGING_HOST)"; exit 1; }
+	@ssh $(STAGING_HOST) 'set -eu; \
+		install -d -o root -g grafana -m 755 /etc/grafana/provisioning/alerting; \
+		install -o root -g grafana -m 640 /tmp/ml-live-alerting.yaml /etc/grafana/provisioning/alerting/ml-live.yaml; \
+		rm -f /tmp/ml-live-alerting.yaml; \
+		echo "OK   alerting provisioning установлен: /etc/grafana/provisioning/alerting/ml-live.yaml"; \
+		echo "     reload: curl -u admin:<пароль> -X POST http://127.0.0.1:3000/api/admin/provisioning/alert-rules/reload"; \
+		echo "     (или systemctl restart grafana-server)"'
+
 # Деплой всех трёх дашбордов ($(DASHBOARDS)) на staging: провижининг датасорса → push → smoke.
 # Токен (GRAFANA_STAGING_TOKEN, сервис-аккаунт Editor на staging) живёт только у владельца
 # в $(ROSSTAT_ENV); gcx общается с инстансом через туннель, а панели — с ClickHouse хоста.
@@ -903,6 +1312,7 @@ grafana-deploy-staging:
 	@test -n "$$GRAFANA_STAGING_TOKEN" || { echo "задайте GRAFANA_STAGING_TOKEN в $(ROSSTAT_ENV) — токен сервис-аккаунта Editor на staging; создаётся одноразово вручную (runbook: docs/superpowers/specs/2026-10-12-grafana-gold-thesis-design.md §6)"; exit 1; }
 	@curl -sf -m 3 $(GRAFANA_STAGING_URL)/api/health >/dev/null 2>&1 || { echo "staging Grafana не отвечает на $(GRAFANA_STAGING_URL): поднимите туннель — ssh -N -L 3001:127.0.0.1:3000 $(STAGING_HOST)"; exit 1; }
 	@$(MAKE) grafana-provision-staging --no-print-directory
+	@$(MAKE) grafana-provision-alerting-staging --no-print-directory
 	@for uid in $(DASHBOARDS); do \
 		echo "push dashboard/$$uid.json"; \
 		GRAFANA_SERVER=$(GRAFANA_STAGING_URL) GRAFANA_ORG_ID=$(GRAFANA_ORG_ID) GRAFANA_TOKEN="$$GRAFANA_STAGING_TOKEN" \
@@ -925,6 +1335,16 @@ info:
 docs-check:
 	python3 scripts/docs_build.py --check
 	python3 scripts/docs_build_test.py
+
+# Метаданные LLM-плагина: канон — .claude-plugin/plugin.json (version,
+# длинное description) и .claude-plugin/marketplace.json (name, короткое
+# description); sync-manifests.yml проверяет дрейф на PR и дописывает на main.
+plugin-manifests-check:
+	python3 scripts/plugin_manifests.py --check
+	python3 scripts/plugin_manifests_test.py
+
+plugin-manifests-sync:
+	python3 scripts/plugin_manifests.py --write
 
 docs-build:
 	python3 scripts/docs_build.py --out build/site-docs

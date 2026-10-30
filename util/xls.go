@@ -108,6 +108,17 @@ func init() {
 	HttpClient = &http.Client{Transport: tr, Jar: jar}
 }
 
+// NewDefaultTLSClient — новый клиент со стандартным TLS-стеком (http.DefaultTransport, без
+// CERT_FILES) и собственным cookie jar. Нужен источникам, чей WAF отвергает кастомный
+// TLS-конфиг проекта: POST ЕМИСС 37426 (fedstat_weekly_prices) через HttpClient/голый
+// Transport отдаёт HTTP 200 + GenericData без Series или частичный ответ, а через чистый
+// http.DefaultTransport — все 56 201 серию (живая сверка 2026-10-20). Клиент создаётся на
+// прогон, а не в init(): состояние cookie jar не должно переживать импорт.
+func NewDefaultTLSClient() *http.Client {
+	jar, _ := cookiejar.New(&cookiejar.Options{PublicSuffixList: publicsuffix.List})
+	return &http.Client{Transport: http.DefaultTransport, Jar: jar}
+}
+
 // fileTimeout — дедлайн одного запроса GetFile. Переменная (а не константа), чтобы тест
 // мог подставить короткий дедлайн вместо двухминутного. Прецеденты — xmlTimeout и
 // jsonTimeout (util/xml.go, util/json.go), у обоих минута: они обслуживают фиды и API, а
@@ -171,6 +182,77 @@ func GetFileBytes(url string) ([]byte, error) {
 		return nil, closeErr
 	}
 	return body, nil
+}
+
+// GetFileBytesChecked — GetFileBytes с проверкой статуса: не-2xx и пустое тело — ошибка,
+// тело не-2xx попадает в текст ошибки обрезанным (диагностика, а не данные). Отличие от
+// GetFileBytes намеренное: GetFile статус не проверяет, потому что его потребители качают
+// XLSX/HTML по стабильным ссылкам и заглушку WAF там ловит разбор. Источнику, который берёт
+// свежесгенерированный одноразовый URL и повторяет запрос, нужен статус в ошибке: заглушка
+// «успешными» байтами ушла бы в разбор и упала бы уже вне ретрая.
+func GetFileBytesChecked(url string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), fileTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", randomUA)
+	resp, err := HttpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return nil, fmt.Errorf("GET %s: статус %d: %s", url, resp.StatusCode, ErrorSnippet(body))
+	}
+	if len(body) == 0 {
+		return nil, fmt.Errorf("GET %s: пустое тело", url)
+	}
+	return body, nil
+}
+
+// PostFileBytes — POST через общий HttpClient (тот же UA и дедлайн fileTimeout, что у
+// GetFile) с произвольными заголовками. Нужен источникам, которые отдают файл не по
+// прямому GET, а через RPC: GWT-RPC BI Росстата возвращает путь к temp-CSV, а сам файл
+// потом качается GetFileBytes. Ответ не-2xx — ошибка: иначе HTML-заглушка WAF ушла бы
+// в разбор как «успешный» CSV. Тело ответа в тексте ошибки обрезается: это диагностика,
+// а не данные.
+func PostFileBytes(url string, body []byte, headers map[string]string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), fileTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", randomUA)
+	for name, value := range headers {
+		req.Header.Set(name, value)
+	}
+	resp, err := HttpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		detail := string(respBody)
+		if len(detail) > 512 {
+			detail = detail[:512]
+		}
+		return nil, fmt.Errorf("POST %s: status %d: %s", url, resp.StatusCode, detail)
+	}
+	if len(respBody) == 0 {
+		return nil, fmt.Errorf("POST %s: body size is empty", url)
+	}
+	return respBody, nil
 }
 
 func GetXlsx(url string) (xlsx *excelize.File, err error) {

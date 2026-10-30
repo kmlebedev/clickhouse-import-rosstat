@@ -12,6 +12,7 @@
 | `scripts/*.py` вне ML, коллектор, harvest, docs-генератор, MCP-check, forecast-log sender, ingest-payload | Python-инженер | [`python-engineer`](.kimi-code/skills/python-engineer/SKILL.md) | Не пишет в ClickHouse напрямую, не делает DDL/GRANT |
 | nowcast, CatBoost, бэктест, MLflow, семантика `forecast_log`, DM/CI | ML-инженер | [`ml-engineer`](.kimi-code/skills/ml-engineer/SKILL.md) | Не делает DDL/витрины/гранты и Go-импортёры |
 | Разведка источника, аудит покрытия/винтажей, методология, research-документ, спека | Research-инженер | [`research-engineer`](.kimi-code/skills/research-engineer/SKILL.md) | Не пишет прод-код и не делает запись в БД |
+| Публикация (предзаседание, постзаседание, после резюме, недельный разбор), пост-апдейт, ревью/факт-чек статьи, шаблон публикации | Главный редактор | [`editor-in-chief`](.kimi-code/skills/editor-in-chief/SKILL.md) | Не пишет прод-код/DDL; не публикует без записи в журнал; числа — только из витрин и артефактов |
 | Issue, Project V2, роадмап, PR-протокол | все | [`github-tracker`](.kimi-code/skills/github-tracker/SKILL.md) | Источник истины — файл роадмапа |
 | Дашборд как код, миграция легаси-экспорта | Go-инженер | [`dashboard-migration`](.kimi-code/skills/dashboard-migration/SKILL.md) | Артефакт и код — в одном PR |
 | Новый RSS/Telegram-источник | Go-инженер | [`news-source-onboarding`](.kimi-code/skills/news-source-onboarding/SKILL.md) | Bootstrap LLM-разметки обязателен |
@@ -19,6 +20,8 @@
 | Выбор модели и диспатч субагентов | все | [`subagent-dispatch`](.kimi-code/skills/subagent-dispatch/SKILL.md) | Модель — только явным `model:` |
 
 Скилы не отменяют правила 1–12 и [стандарт пакета импортёров](docs/IMPORTER_PACKAGE_STANDARD.md). Смешанный пункт (например, #184) делится по ролям в спеке/плане; Go-часть ревьюит Go-разработчик, ML-часть — ML-инженер.
+
+Плагин: этот же набор скилов публикуется как LLM-плагин; манифесты — в корне (`kimi.plugin.json`, `.claude-plugin/`, `.codex-plugin/`, `.agents/plugins/`, `.cursor-plugin/`, `qwen-extension.json`), источник скилов один — `.kimi-code/skills/`; метаданные — `make plugin-manifests-check` / `make plugin-manifests-sync`.
 
 ## Обязательный порядок в начале сессии
 
