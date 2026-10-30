@@ -37,8 +37,8 @@
 
 Ветка `exp/cb-comp-88-groups-task2`. Протокол — спека §13.
 
-- [ ] **2.1 Протокол** — спека §13 и этот раздел; роадмап.
-- [ ] **2.2 Код до прогона** — `scripts/models/cb_comp/cb_comp_live_bottomup.py` (+ `_test.py`): загрузка панели групп, `T_LIVE`, признаки и модели через `cb_comp_bottomup`, R0 через `run_bottomup(per_sheet)`, G2/E2/E3/E4 через `cpi_two_stage_cb_comp.compare_to_cb`; `make cb-comp-live-bottomup(-test)`. Тесты: `T_LIVE` (нормировка, лаг весов, накопление), выбор лагов full/as-of, origin и отсутствие утечки, порог G2, сборка паспорта.
-- [ ] **2.3 Данные** — `make cb-comp-groups-panel ARGS="--asof --jobs 8"`, `make cb-comp-public-export`.
-- [ ] **2.4 Прогон и повтор** — `make cb-comp-live-bottomup`, повтор для детерминизма.
+- [x] **2.1 Протокол** — спека §13 и этот раздел; роадмап.
+- [x] **2.2 Код до прогона** — `scripts/models/cb_comp/cb_comp_live_bottomup.py` (+ `_test.py`): загрузка панели групп, `T_LIVE`, признаки и модели через `cb_comp_bottomup`, R0 через `run_bottomup(per_sheet)`, G2/E2/E3/E4 через `cpi_two_stage_cb_comp.compare_to_cb`; `make cb-comp-live-bottomup(-test)`. Тесты: `T_LIVE` (нормировка, лаг весов, накопление), выбор лагов full/as-of, origin и отсутствие утечки, порог G2, сборка паспорта.
+- [x] **2.3 Данные** — `make cb-comp-groups-panel ARGS="--asof --jobs 8"`, `make cb-comp-public-export`.
+- [x] **2.4 Прогон и повтор** — `make cb-comp-live-bottomup`, повтор для детерминизма.
 - [ ] **2.5 Отчёт** — `docs/research/2026-10-30-cb-comp-88-groups-task2.{md,json}`; роадмап, README, `docs/site-pages.json`; `make all`, `make docs-check`; PR с `Closes #422`.
