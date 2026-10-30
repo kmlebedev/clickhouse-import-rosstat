@@ -280,9 +280,11 @@ def run(archive: Path, panel_csv: Path, public_dir: Path, out_dir: Path, skip_r0
     codes = [spec.code for spec in specs]
     weights = bu.load_weights(archive, WEIGHT_YEARS, specs)
     sa_full, sa_asof = load_group_panel(panel_csv)
-    missing = [c for c in codes if c not in sa_full]
-    if missing:
-        raise SystemExit(f"в панели групп нет кодов: {missing}")
+    # Группа без SA (9218 — X-13 не сходится, спека §11–§12) не стоп: у неё нет
+    # цели и прогноза, агрегаты нормируются на группы с данными.
+    groups_without_sa = sorted(c for c in codes if not sa_full.get(c))
+    if len(groups_without_sa) > 2:
+        raise SystemExit(f"в панели групп нет SA у {groups_without_sa}: панель не та, что в Task 1")
     last = max(m for values in sa_full.values() for m in values)
     months = cp.month_range(date(2010, 1, 1), last)
     diff_full = log_diff_frame(sa_full, codes, months)
@@ -348,6 +350,7 @@ def run(archive: Path, panel_csv: Path, public_dir: Path, out_dir: Path, skip_r0
         "config_hash": hashlib.sha256(json.dumps(config, sort_keys=True).encode()).hexdigest(),
         "inputs": inputs,
         "r0": r0,
+        "groups_without_sa": groups_without_sa,
         "g2_pass": g2_pass,
         "comparisons": comparisons,
         "target_gap": gaps,
