@@ -47,7 +47,7 @@
 
 Ветка `exp/cb-comp-88-groups-task3` (от ветки Task 2). Протокол — спека §14.
 
-- [ ] **3.1 Протокол** — спека §14 и этот раздел; роадмап.
-- [ ] **3.2 Код до прогона** — `scripts/models/cb_comp/cb_comp_live_en.py` (+ `_test.py`): EN группы (конфигурация B3, импутация медианой train, без `month`), комбинация CB+EN, классификация, MCS, попарные сравнения, правило выбора и G3; `make cb-comp-live-en(-test)`. Переиспользуются загрузка данных, признаки и CatBoost из `cb_comp_live_bottomup`.
-- [ ] **3.3 Прогон и повтор** — `make cb-comp-live-en`; входы — те же артефакты Task 2.
+- [x] **3.1 Протокол** — спека §14 и этот раздел; роадмап.
+- [x] **3.2 Код до прогона** — `scripts/models/cb_comp/cb_comp_live_en.py` (+ `_test.py`): EN группы (конфигурация B3, импутация медианой train, без `month`), комбинация CB+EN, классификация, MCS, попарные сравнения, правило выбора и G3; `make cb-comp-live-en(-test)`. Переиспользуются загрузка данных, признаки и CatBoost из `cb_comp_live_bottomup`.
+- [x] **3.3 Прогон и повтор** — `make cb-comp-live-en`; входы — те же артефакты Task 2.
 - [ ] **3.4 Отчёт** — `docs/research/2026-10-30-cb-comp-88-groups-task3.{md,json}`; роадмап, README, `docs/site-pages.json`; `make all`, `make docs-check`.
