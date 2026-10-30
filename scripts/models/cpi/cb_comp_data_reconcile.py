@@ -143,6 +143,13 @@ def history_vs_target(levels: dict, target) -> dict:
     return {"n": len(diffs), "max_abs": max(diffs) if diffs else float("nan")}
 
 
+def compare_history_code(history: dict, code: str, ref: dict, windows: tuple) -> dict:
+    """Сверка ряда CB_COMP (`history[code]`) с эталоном; код отсутствует в файле — `{"status": "code_absent"}`, а не ошибка."""
+    if code not in history:
+        return {"status": "code_absent", "code": code}
+    return compare_on_windows(levels_to_mm(history[code]), ref, windows)
+
+
 def history_from_frame(frame) -> dict:
     """`{код: {месяц: SA-уровень}}` из листа `cpi_sa_target_history.xlsx` (колонки `Код`, `Наименование`, месяцы)."""
     import pandas as pd
@@ -238,12 +245,14 @@ def run(archive: Optional[str] = None, runner: Optional[Callable] = None) -> dic
     aggregates = {}
     cbr_pairs = {"all": cbr_sa, "core": cbr_core}
     for key, ref in cbr_pairs.items():
-        aggregates[f"{key}_theirs_vs_cbr"] = compare_on_windows(levels_to_mm(history[HISTORY_CODES[key]]), ref, ("history",))
+        aggregates[f"{key}_theirs_vs_cbr"] = compare_history_code(history, HISTORY_CODES[key], ref, ("history",))
     for key, name in (("food", "cpi_food"), ("nonfood", "cpi_nonfood"), ("services", "cpi_services")):
         component = _component_nsa(name)
         months = [m for m in sorted(component) if m >= tt.FIRST_MONTH]
         ours = rec.x13_series(months, {m: component[m] for m in months}, rec.NO_RT if hasattr(rec, "NO_RT") else 10**6, runner)["full"]
-        aggregates[f"{key}_ours_x13_vs_theirs"] = compare_on_windows({m: v for m, v in ours.items() if v == v}, levels_to_mm(history[HISTORY_CODES[key]]), ("history",))
+        aggregates[f"{key}_ours_x13_vs_theirs"] = compare_on_windows(
+            {m: v for m, v in ours.items() if v == v}, levels_to_mm(history[HISTORY_CODES[key]]), ("history",)
+        )
     result["aggregates"] = aggregates
 
     # 4. КУ и вес.

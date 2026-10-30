@@ -163,6 +163,18 @@ class TargetHistoryConsistencyTest(unittest.TestCase):
         self.assertEqual(out["n"], 6)
 
 
+class CompareHistoryCodeTest(unittest.TestCase):
+    def test_absent_code_is_reported(self):
+        self.assertEqual(rc.compare_history_code({"1": {}}, "3", {}, ("history",)), {"status": "code_absent", "code": "3"})
+
+    def test_present_code_compared(self):
+        months = months_range(date(2016, 1, 1), 40)
+        levels = {m: 100.0 + 0.3 for m in months}
+        ref = {m: 0.3 for m in months}
+        out = rc.compare_history_code({"1": levels}, "1", ref, ("history",))
+        self.assertAlmostEqual(out["history"]["rmse"], 0.0, places=9)
+
+
 class FrameReadersTest(unittest.TestCase):
     def test_history_from_frame_reads_codes_and_levels(self):
         frame = pd.DataFrame(
