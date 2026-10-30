@@ -176,6 +176,7 @@ make mlflow-down
 | `make mcp-check` | MCP end-to-end |
 | `make cb-comp-parity` / `make cb-comp-parity-test` | паритет nowcast с CB_COMP (direct + bottom-up, архив авторов) / офлайн-тесты parity-скриптов |
 | `make cb-comp-groups-panel` / `make cb-comp-groups-panel-test` | Task 1 #421: live-панель 88 групп CB_COMP из ЕМИСС 31074 (`v_fedstat_ipc`) — маппинг, NSA, X-13 по группам (R `seasonal`), сборка против `TARGET_FULL` (гейт #190); `ARGS="--asof --jobs N"`; нужен локальный архив CB_COMP; в ClickHouse не пишет, артефакты `build/cb-comp-groups/` / офлайн-тесты без ClickHouse, R и архива |
+| `make cb-comp-live-bottomup` / `make cb-comp-live-bottomup-test` | Task 2 #422: live bottom-up по 88 группам на нашей панели (цель `T_LIVE`, МП по листам) — R0 (регрессия #252), G2, сравнение с CB_COMP «каждый на своей цели» и на `TARGET_FULL`; нужны артефакты `make cb-comp-groups-panel ARGS="--asof"` и `make cb-comp-public-export`; в ClickHouse не пишет / офлайн-тесты |
 | `make ppi-sa-parity` / `make ppi-sa-parity-test` | паритет `ppi_sa` с 10 якорями «Инфляции в России» (read-only, JSON `docs/research/2026-10-21-ppi-sa-parity.json`) / офлайн-тесты паритетного скрипта |
 | `make ppi-monthly-forecast` / `make ppi-monthly-forecast-test` | research-only direct h1/h3/h6 CPI/PPI с aggregate ценовыми ожиданиями: парные B2/B3, strict survey as-of, DM/Holm/CI/MDE; Markdown/JSON/CSV в `docs/research/`, `ML_LOG=1` — паспорт и folds, без production promotion / офлайн-тесты без ClickHouse и сети |
 | `make docs-check` / `make docs-build` | проверка и сборка docs-портала |
