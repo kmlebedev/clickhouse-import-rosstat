@@ -18,7 +18,11 @@
 * **Q4 сборка** — функция гейта #190 (`cb_comp_bottomup.reconstruction`) на
   наших SA-группах против `TARGET_FULL`; веса — лаг год;
 * **Q6 швы** — NSA-ошибка до 2023 и 2023+ (РФ без новых субъектов), смены
-  состава листьев по годам словаря.
+  состава листьев по годам словаря;
+* **поправка §11** — для групп `9540`, `9950`, `9218` спецификация X-13
+  выбирается из `C0…C4` только по данным 2010–2018 (9540/9950 — RMSE против
+  архивного `mom_sa` 2016–2018, 9218 — AICc) и применяется на всей выборке;
+  основной прогон (C0 везде) и прогон с поправкой пишутся рядом.
 
 Пороги — спека §7, константы ниже; после первого прогона не меняются.
 Только чтение ClickHouse и локального архива CB_COMP; в БД не пишет.
@@ -28,6 +32,8 @@
 import argparse
 import csv
 import hashlib
+import subprocess
+import tempfile
 import json
 import math
 import re
@@ -69,6 +75,15 @@ SA_CORR_MIN = 0.90
 ASSEMBLY_RMSE_H1_MAX = 0.10
 
 SERVICES_CODE = "9000"
+
+# Поправка §11: группы, кандидаты и окно выбора (только 2010–2018).
+AMENDED_GROUPS = ("9540", "9950", "9218")
+AICC_GROUPS = frozenset({"9218"})
+SPEC_CANDIDATES = ("C0", "C1", "C2", "C3", "C4")
+SELECTION_END = date(2018, 12, 1)
+SELECTION_REF = (date(2016, 1, 1), date(2018, 12, 1))
+SPEC_TIE = 1e-6
+R_SPEC_SCRIPT = Path(__file__).resolve().parent / "cb_comp_groups_x13.R"
 
 # Ручные псевдонимы группы: прежние названия ряда в 31074, когда Росстат
 # переименовал позицию. Каждый — с причиной; fuzzy-подбор запрещён (спека §5.1).
@@ -334,6 +349,87 @@ def group_sa(mm: dict, last: date, runner_factory, asof: bool) -> dict:
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# Поправка §11: явные спецификации X-13
+# ---------------------------------------------------------------------------
+
+
+class SpecRunner:
+    """Мост к `cb_comp_groups_x13.R` для одной спецификации и стартового месяца.
+
+    Вызов — как у `cpi_sa_reconciliation.make_r_runner`: `(levels, first_rt)` →
+    строки `(full, rt)`; AICc модели на всей поданной выборке — в `self.aicc`.
+    """
+
+    def __init__(self, spec: str, start: date):
+        if spec not in SPEC_CANDIDATES:
+            raise ValueError(f"неизвестная спецификация {spec}")
+        self.spec, self.start, self.aicc = spec, start, float("nan")
+
+    def __call__(self, levels: list, first_rt: int) -> list:
+        with tempfile.TemporaryDirectory() as tmp:
+            source, target = Path(tmp) / "level.csv", Path(tmp) / "sa.csv"
+            lines = ["month,level"]
+            for i, value in enumerate(levels):
+                lines.append(f"{month_from_index(month_index(self.start) + i).isoformat()},{value!r}")
+            source.write_text("\n".join(lines) + "\n", encoding="utf-8")
+            subprocess.run(
+                ["Rscript", str(R_SPEC_SCRIPT), str(source), str(first_rt), str(target), self.spec],
+                check=True, capture_output=True, text=True,
+            )
+            raw = Path(str(target) + ".aicc").read_text(encoding="utf-8").strip()
+            self.aicc = float("nan") if raw in ("", "NA") else float(raw)
+            return [
+                tuple(float("nan") if row[k] == "NA" else float(row[k]) for k in ("full", "rt"))
+                for row in csv.DictReader(target.open(encoding="utf-8"))
+            ]
+
+
+def spec_factory(spec: str):
+    """`runner_factory(start)` для `group_sa`; последний созданный раннер — в `.runners`."""
+    def factory(start: date):
+        runner = SpecRunner(spec, start)
+        factory.runners.append(runner)
+        return runner
+
+    factory.runners = []
+    return factory
+
+
+def truncate(mm: dict, last: date) -> dict:
+    return {m: v for m, v in mm.items() if m <= last}
+
+
+def choose_spec(scores: dict) -> str:
+    """Кандидат с минимальной метрикой; NaN не участвует; равенство до `SPEC_TIE` — меньший id."""
+    valid = [(value, spec) for spec, value in scores.items() if value is not None and not math.isnan(value)]
+    if not valid:
+        return ""
+    best = min(value for value, _ in valid)
+    return min(spec for value, spec in valid if value - best <= SPEC_TIE)
+
+
+def select_spec(code: str, mm: dict, mom_sa: dict, factory_for=spec_factory) -> dict:
+    """Выбор спецификации группы по данным ≤ 2018-12 (спека §11).
+
+    9540/9950 — RMSE SA м/м против архивного `mom_sa` на 2016–2018; 9218 —
+    AICc regARIMA. 2019+ в выбор не попадает: ряд обрезается до подгонки.
+    """
+    by_aicc = code in AICC_GROUPS
+    window = truncate(mm, SELECTION_END)
+    scores, detail = {}, {}
+    for spec in SPEC_CANDIDATES:
+        factory = factory_for(spec)
+        sa = group_sa(window, SELECTION_END, factory, asof=False)
+        aicc = factory.runners[-1].aicc if factory.runners else float("nan")
+        metric = compare(sa["full"], mom_sa, *SELECTION_REF)
+        converged = sa["status"] == "ok"
+        scores[spec] = (aicc if by_aicc else metric["rmse"]) if converged else float("nan")
+        detail[spec] = {"status": sa["status"], "aicc": aicc, "rmse_2016_2018": metric["rmse"], "n": metric["n"]}
+    return {"criterion": "aicc" if by_aicc else "rmse_mom_sa_2016_2018", "chosen": choose_spec(scores),
+            "candidates": detail}
+
+
 def compare(ours: dict, ref: dict, first: date, last: date) -> dict:
     months = [m for m in month_grid(first, last) if m in ours and m in ref]
     if not months:
@@ -517,16 +613,36 @@ def run(archive: Path, out_dir: Path, runner_factory, asof: bool, jobs: int) -> 
     services = {c: sa_metrics[c] for c in codes if c in services_codes}
     services_rmse, _ = weighted_rmse(services, weights_2024)
 
+    # Поправка §11 — выбор на 2010–2018 и SA трёх групп выбранной спецификацией.
+    selection, sa_amended = {}, dict(sa)
+    for code in AMENDED_GROUPS:
+        if code not in nsa:
+            continue
+        selection[code] = select_spec(code, nsa[code], mom_sa.get(code, {}))
+        chosen = selection[code]["chosen"]
+        sa_amended[code] = (
+            group_sa(nsa[code], last, spec_factory(chosen), asof) if chosen
+            else {"full": {}, "rt": {}, "status": "sa_failed", "months": 0}
+        )
+    sa_full_amended = {c: sa_amended[c]["full"] for c in codes}
+    sa_metrics_amended = {c: compare(sa_full_amended[c], mom_sa.get(c, {}), *SA_WINDOW) for c in codes}
+    sa_rmse_amended, _ = weighted_rmse(sa_metrics_amended, weights_2024)
+    sa_corr_amended = weighted_mean(sa_metrics_amended, weights_2024, "corr")
+    services_amended, _ = weighted_rmse({c: sa_metrics_amended[c] for c in codes if c in services_codes}, weights_2024)
+
     # Q4 — сборка; справочно — сборка архивного mom_sa теми же функциями.
     target_full = cp.read_target_full(archive)
     test_months = cp.month_range(cp.TEST_START, cp.TEST_END)
     ours = assembly(sa_full, target_full, group_weights, test_months)
     reference = assembly({c: mom_sa.get(c, {}) for c in codes}, target_full, group_weights, test_months)
-    ours_asof = None
+    amended = assembly(sa_full_amended, target_full, group_weights, test_months)
+    ours_asof = amended_asof = None
     if asof:
         ours_asof = assembly({c: sa[c]["rt"] for c in codes}, target_full, group_weights, test_months)
+        amended_asof = assembly({c: sa_amended[c]["rt"] for c in codes}, target_full, group_weights, test_months)
 
     decision = decisions(coverage_abs, nsa_rmse, sa_rmse, sa_corr, ours["test_67"][1]["rmse"])
+    decision_amended = decisions(coverage_abs, nsa_rmse, sa_rmse_amended, sa_corr_amended, amended["test_67"][1]["rmse"])
     result = {
         "spec": "docs/superpowers/specs/2026-10-30-cb-comp-88-groups-live-design.md",
         "thresholds": {
@@ -554,8 +670,18 @@ def run(archive: Path, out_dir: Path, runner_factory, asof: bool, jobs: int) -> 
         "sa": {"weighted_rmse": sa_rmse, "weighted_corr": sa_corr, "services_weighted_rmse": services_rmse,
                "failed": sorted(c for c in codes if sa[c]["status"] != "ok")},
         "assembly": {"ours_full": _jsonable(ours), "archive_mom_sa": _jsonable(reference),
-                     "ours_asof": _jsonable(ours_asof) if ours_asof else None},
+                     "ours_asof": _jsonable(ours_asof) if ours_asof else None,
+                     "amended_full": _jsonable(amended),
+                     "amended_asof": _jsonable(amended_asof) if amended_asof else None},
         "decisions": decision,
+        "amendment": {
+            "spec": "§11", "groups": list(AMENDED_GROUPS), "selection": selection,
+            "sa": {"weighted_rmse": sa_rmse_amended, "weighted_corr": sa_corr_amended,
+                   "services_weighted_rmse": services_amended,
+                   "groups": {c: sa_metrics_amended[c] for c in AMENDED_GROUPS if c in sa_metrics_amended},
+                   "failed": sorted(c for c in codes if sa_amended[c]["status"] != "ok")},
+            "decisions": decision_amended,
+        },
         "groups": {
             c: {
                 "name": groups[c].name, "method": groups[c].method, "chain": list(groups[c].chain),
@@ -572,6 +698,7 @@ def run(archive: Path, out_dir: Path, runner_factory, asof: bool, jobs: int) -> 
     }
     out_dir.mkdir(parents=True, exist_ok=True)
     write_panel(out_dir / "panel.csv", codes, months, nsa, sa)
+    write_panel(out_dir / "panel_amended.csv", codes, months, nsa, sa_amended)
     (out_dir / "result.json").write_text(json.dumps(_jsonable(result), ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return result
 
@@ -619,8 +746,9 @@ def main(argv=None) -> int:
 
     archive = cp.resolve_archive(args.archive)
     result = run(archive, Path(args.out), sar.make_r_runner, args.asof, args.jobs)
-    print(json.dumps({k: _jsonable(result[k]) for k in ("mapping", "nsa", "sa", "decisions")}, ensure_ascii=False, indent=2))
-    print(json.dumps(_jsonable(result["assembly"]["ours_full"]["test_67"]), ensure_ascii=False))
+    print(json.dumps({k: _jsonable(result[k]) for k in ("mapping", "nsa", "sa", "decisions", "amendment")}, ensure_ascii=False, indent=2))
+    print("primary", json.dumps(_jsonable(result["assembly"]["ours_full"]["test_67"]), ensure_ascii=False))
+    print("amended", json.dumps(_jsonable(result["assembly"]["amended_full"]["test_67"]), ensure_ascii=False))
     return 0
 
 
