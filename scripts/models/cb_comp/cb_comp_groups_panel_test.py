@@ -417,5 +417,73 @@ class AmendmentTest(unittest.TestCase):
             g.SpecRunner("C9", date(2010, 1, 1))
 
 
+class FitRoutingTest(unittest.TestCase):
+    """Маршрутизация окна → ряд и старт подгонки (ревью #431)."""
+
+    def groups(self):
+        return {
+            "9550": g.GroupMap(code="9550", name="Экскурсии", method="direct", chain=("s",)),
+            "10": g.GroupMap(code="10", name="Мясо", method="aggregated"),
+        }
+
+    def test_fit_window_start(self):
+        self.assertEqual(g.fit_window_start("9550", date(2010, 1, 1), g.SELECTION_FIRST), date(2009, 1, 1))
+        self.assertEqual(g.fit_window_start("9550", date(2009, 1, 1), g.SELECTION_FIRST), date(2009, 1, 1))
+        self.assertEqual(g.fit_window_start("10", date(2010, 1, 1), g.SELECTION_FIRST), date(2010, 1, 1))
+
+    def test_fit_series_map_history_only_for_direct(self):
+        groups = self.groups()
+        months = g.month_grid(date(2010, 1, 1), date(2010, 3, 1))
+        nsa = {code: {m: 1.0 for m in months} for code in groups}
+        head = g.month_grid(date(2009, 1, 1), date(2009, 12, 1))
+        fit_mm = {"s": {**{m: 2.0 for m in head}, **{m: 1.0 for m in months}}}
+        out = g.fit_series_map(list(groups), groups, nsa, fit_mm, {},
+                               date(2010, 1, 1), date(2010, 3, 1), g.SELECTION_FIRST)
+        self.assertIn(date(2009, 1, 1), out["9550"])
+        self.assertEqual(out["9550"][date(2009, 1, 1)], 2.0)
+        self.assertEqual(out["9550"][date(2010, 1, 1)], 1.0)
+        self.assertNotIn(date(2009, 1, 1), out["10"])
+
+    def test_group_nsa_no_leaves_fallback_before_panel_start(self):
+        group = g.GroupMap(code="10", name="Мясо", method="aggregated",
+                           leaves_by_year={2010: {"111": "leaf"}})
+        months = [date(2009, 1, 1), date(2010, 1, 1)]
+        out, sources = g.group_nsa(group, {"leaf": {m: 1.0 for m in months}}, {2010: {"111": 1.0}}, months)
+        self.assertNotIn(date(2009, 1, 1), out)
+        self.assertEqual(sources.get(date(2010, 1, 1)), "leaves")
+
+    def test_select_spec_reports_window_and_tie(self):
+        months = g.month_grid(date(2009, 1, 1), date(2019, 6, 1))
+        seen = []
+        factory_for = self._factory({"C0": -734.020286966, "C1": -734.020286961,
+                                     "C2": -734.020286961, "C3": -734.020286966,
+                                     "C4": -734.020286961}, seen)
+        out = g.select_spec("9550", {m: 0.3 for m in months}, {}, factory_for=factory_for, first=date(2009, 1, 1))
+        self.assertEqual(out["window"], ["2009-01-01", "2018-12-01"])
+        self.assertEqual(out["chosen"], "C0")
+        self.assertEqual(out["tied"], ["C0", "C1", "C2", "C3", "C4"])
+        self.assertLess(out["spread"], g.SPEC_TIE)
+
+    def _factory(self, aiccs, seen):
+        def factory_for(spec):
+            def factory(start):
+                class Runner:
+                    aicc = float("nan")
+
+                    def __call__(self, levels, first_rt):
+                        seen.append((spec, start, len(levels)))
+                        self.aicc = aiccs[spec]
+                        return [(0.1, float("nan"))] * len(levels)
+
+                runner = Runner()
+                factory.runners.append(runner)
+                return runner
+
+            factory.runners = []
+            return factory
+
+        return factory_for
+
+
 if __name__ == "__main__":
     unittest.main()
