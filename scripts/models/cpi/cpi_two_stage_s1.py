@@ -141,6 +141,7 @@ def _row(month: date, static: dict, vintage: Optional[dict], y: dict) -> cm.Row:
     vint = vintage or {}
     nan = float("nan")
     features = {**static, "sax_l1": vint.get(_shift(month, -1), nan), "sax_l2": vint.get(_shift(month, -2), nan)}
+    features["month"] = int(features["month"])  # CatBoost: категориальный признак — целое
     return cm.Row(month=month, y=y, features={name: features[name] for name in FEATURES})
 
 

@@ -180,6 +180,21 @@ class FoldRowsTest(unittest.TestCase):
         for r in train:
             self.assertEqual(set(r.features), set(s1.FEATURES))
 
+    def test_month_is_integer_for_catboost_categorical(self):
+        months, static, data = synthetic_world()
+        test = months[60]
+        folds = tf.make_folds("T_SAX", 1, [test], months, months[12], 24, None)
+        train, row, _ = s1.fold_rows(static, data, "T_SAX", folds[0])
+        for r in train + [row]:
+            self.assertIsInstance(r.features["month"], int)
+
+    def test_catboost_model_runs_on_fold_rows(self):
+        months, static, data = synthetic_world()
+        test = months[60]
+        folds = tf.make_folds("T_SAX", 1, [test], months, months[12], 24, None)
+        train, row, _ = s1.fold_rows(static, data, "T_SAX", folds[0])
+        self.assertTrue(math.isfinite(s1.predict_catboost(train, row, "T_SAX")))
+
     def test_train_origins_all_before_test(self):
         months, static, data = synthetic_world()
         test = months[60]
