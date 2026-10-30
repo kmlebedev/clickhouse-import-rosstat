@@ -1,0 +1,32 @@
+<?xml version='1.0' encoding='utf-8'?>
+<ns0:GenericData xmlns:generic="http://www.SDMX.org/resources/SDMXML/schemas/v1_0/generic" xmlns:ns0="http://www.SDMX.org/resources/SDMXML/schemas/v1_0/message" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.SDMX.org/resources/SDMXML/schemas/v1_0/message SDMXMessage.xsd"><generic:Series>
+		<generic:SeriesKey>
+			<generic:Value concept="s_OKATO" value="643" />
+			<generic:Value concept="s_grtov" value="1" />
+			<generic:Value concept="s_POK" value="44" />
+		</generic:SeriesKey>
+		<generic:Attributes>
+			<generic:Value concept="EI" value="процент" />
+			<generic:Value concept="PERIOD" value="январь" />
+		</generic:Attributes>
+		<generic:Obs>
+			<generic:Time>2022</generic:Time>
+			<generic:ObsValue value="100,99" />
+		</generic:Obs>
+	</generic:Series>
+	<generic:Series>
+		<generic:SeriesKey>
+			<generic:Value concept="s_OKATO" value="643" />
+			<generic:Value concept="s_grtov" value="1" />
+			<generic:Value concept="s_POK" value="44" />
+		</generic:SeriesKey>
+		<generic:Attributes>
+			<generic:Value concept="EI" value="процент" />
+			<generic:Value concept="PERIOD" value="февраль" />
+		</generic:Attributes>
+		<generic:Obs>
+			<generic:Time>2022</generic:Time>
+			<generic:ObsValue value="101,17" />
+		</generic:Obs>
+	</generic:Series>
+	</ns0:GenericData>

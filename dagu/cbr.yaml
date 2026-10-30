@@ -202,3 +202,65 @@ steps:
     retry_policy:
       limit: 3
       interval_sec: 300
+
+  # Публичный кроссворд 87 BSU-кодов → 16 отраслевых листов (Task 7, #248). Внешнего
+  # артефакта нет, сеть не нужна; повтор идемпотентен. Витрина с именами появится после
+  # rosstat_okved2 (dagu/rosstat.yaml), публичная панель — сразу после cbr_mp_survey.
+  - id: cbr_mp_bsu_map
+    run: "$ROSSTAT_IMPORT_BIN"
+    env:
+      - CLICKHOUSE_IMPORT_STAT=cbr_mp_bsu_map
+    retry_policy:
+      limit: 3
+      interval_sec: 300
+
+  # График публикаций ЦБ и исторические published_at (Task 1, #299). Шаг в хвосте:
+  # календарь не источник точек контура, падение не лишает данных проверенные шаги.
+  # Повтор в тот же день — дельта 0 строк (окно статистики сдвигается раз в день).
+  - id: cbr_publication_calendar
+    run: "$ROSSTAT_IMPORT_BIN"
+    env:
+      - CLICKHOUSE_IMPORT_STAT=cbr_publication_calendar
+    retry_policy:
+      limit: 3
+      interval_sec: 300
+
+  # Оперативная точка инфляционных ожиданий из PDF «Оперативная справка» (inFOM_ГГ-ММ.pdf):
+  # ЦБ публикует его раньше книги Infl_exp_ГГ-ММ.xlsx. Гейт по max(date) своей таблицы —
+  # в обычный день 0 строк без скачивания; книга, вышедшая позже, перезаписывает значение
+  # точным. Шаг в хвосте: сбой PDF-разбора (например, выпуск-скан) не лишает данных
+  # остальные шаги контура.
+  - id: cbr_infl_exp_op
+    run: "$ROSSTAT_IMPORT_BIN"
+    env:
+      - CLICKHOUSE_IMPORT_STAT=cbr_infl_exp_op
+    retry_policy:
+      limit: 3
+      interval_sec: 300
+
+  # Пресс-релизы по ключевой ставке (пункт key-rate/phase-4-cbr-key-rate-press, #368):
+  # даты и ссылки — из календаря cbr.ru/dkp/cal_mp/, текст — со страницы релиза. Шаг в
+  # хвосте: сбой разбора вёрстки релиза не лишает данных проверенные шаги контура.
+  # Ежедневный прогон в 09:17 в день заседания видит ещё не опубликованный релиз
+  # (выходит в 13:30 МСК) и пропускает его с warn; импорт в день заседания после
+  # 13:30 — ручным `make import STAT=cbr_key_rate_press` (публикационный контур).
+  - id: cbr_key_rate_press
+    run: "$ROSSTAT_IMPORT_BIN"
+    env:
+      - CLICKHOUSE_IMPORT_STAT=cbr_key_rate_press
+    retry_policy:
+      limit: 3
+      interval_sec: 300
+
+  # Стенограммы пресс-конференций по ключевой ставке (пункт
+  # key-rate/phase-4-cbr-key-rate-pressconf, #370): плейлист YouTube ЦБ → player API →
+  # русские автосубтитры. Шаг в хвосте: сбой YouTube не лишает данных проверенные шаги
+  # контура. Ежедневный прогон в 09:17 видит вчерашнюю конференцию; импорт в день
+  # заседания после 15:00 МСК — ручным `make import STAT=cbr_key_rate_pressconf`.
+  - id: cbr_key_rate_pressconf
+    run: "$ROSSTAT_IMPORT_BIN"
+    env:
+      - CLICKHOUSE_IMPORT_STAT=cbr_key_rate_pressconf
+    retry_policy:
+      limit: 3
+      interval_sec: 300

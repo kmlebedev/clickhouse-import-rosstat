@@ -23,7 +23,7 @@ type cbrImporter struct {
 }
 
 // cbrImporters — единственная точка регистрации импортёров ЦБ: персональных
-// init()-append по файлам импортёров больше нет (25 записей в одном месте вместо
+// init()-append по файлам импортёров больше нет (27 записей в одном месте вместо
 // 13 прежних). Порядок повторяет dagu/cbr.yaml; в chimport.Stats порядок значения
 // не имеет.
 //
@@ -98,6 +98,25 @@ var cbrImporters = []cbrImporter{
 	{cbrCcybImporter, "cbr_ccyb_indicators", "SELECT count() FROM cbr_ccyb_indicators FINAL"},
 	{cbrRiskWeightAddonsImporter, "cbr_risk_weight_addons", "SELECT count() FROM cbr_risk_weight_addons FINAL"},
 	{cbrMPLImporter, "cbr_mpl", "SELECT count() FROM cbr_mpl FINAL"},
+	{cbrMpBsuMapImporter, "cbr_mp_bsu_map", ""},
+	{cbrPublicationCalendarImporter, "cbr_publication_calendar", ""},
+	// Хвост реестра повторяет хвост dagu/cbr.yaml. cbr_infl_exp_op пишет в ту же
+	// cbr_infl_exp, что и книга: оперативная точка PDF до выхода Infl_exp_ГГ-ММ.xlsx.
+	// Имя импортёра поэтому отличается от таблицы, а тест реестра держит пару
+	// «имя → общая таблица» в литеральном allowlist.
+	{cbrInflExpOpImporter, "cbr_infl_exp", "SELECT count() FROM cbr_infl_exp FINAL"},
+	// cbr_key_rate_press — пресс-релизы по ключевой ставке: три свои таблицы, поэтому
+	// префлайта нет по той же причине, что у cbr_mp_summary. Артефакт — не один файл,
+	// а набор из 8 выпусков в год, и count() всей таблицы у известной версии не сошёлся
+	// бы ни разу. Известность выпуска держит гейт по meeting_date, а неполноту
+	// документа — проверка блоков и квартальных строк (спека §5).
+	{cbrKeyRatePressImporter, "cbr_key_rate_press", ""},
+	// cbr_key_rate_pressconf — стенограммы пресс-конференций по ключевой ставке: две
+	// свои таблицы, префлайта нет по той же причине, что у cbr_key_rate_press.
+	// Артефакт — набор видео из плейлиста YouTube, а не один файл, поэтому известность
+	// выпуска держит гейт по meeting_date, а неполноту документа — сверка числа реплик
+	// (спека §5).
+	{cbrKeyRatePressconfImporter, "cbr_key_rate_pressconf", ""},
 }
 
 // init — единственная регистрация импортёров ЦБ в chimport.Stats. Порядок

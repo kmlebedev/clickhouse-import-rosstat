@@ -1,0 +1,139 @@
+{
+  "by_series": {
+    "core": {
+      "bias": -1.7265262939936117,
+      "corr": 1.0,
+      "mae": 1.7265262939936117,
+      "max_abs": 2.021167387206246,
+      "n": 2
+    },
+    "food": {
+      "bias": 0.015577220508163903,
+      "corr": 0.9859955154823171,
+      "mae": 2.0812748052858687,
+      "max_abs": 4.13139516955541,
+      "n": 4
+    },
+    "nonfood": {
+      "bias": 0.8697562555041063,
+      "corr": 0.7897603595498569,
+      "mae": 0.9835963266971013,
+      "max_abs": 2.267841385518006,
+      "n": 4
+    }
+  },
+  "generated_at": "2026-10-20T21:10:22+00:00",
+  "overall": {
+    "bias": 0.008828131606185785,
+    "corr": 0.8527833546472897,
+    "mae": 1.5712537115919105,
+    "max_abs": 4.13139516955541,
+    "n": 10
+  },
+  "rows": [
+    {
+      "anchor": -4.1,
+      "anchor_series": "food",
+      "diff": 3.742634108837069,
+      "issue": "2026-5",
+      "ours": -0.3573658911629307,
+      "series": "food",
+      "source": "https://www.cbr.ru/analytics/dkp/dinamic/CPD_2026-5/",
+      "target": "2026-04-01"
+    },
+    {
+      "anchor": 2.9,
+      "anchor_series": "nonfood",
+      "diff": -0.22768014238599,
+      "issue": "2026-5",
+      "ours": 2.67231985761401,
+      "series": "nonfood",
+      "source": "https://www.cbr.ru/analytics/dkp/dinamic/CPD_2026-5/",
+      "target": "2026-04-01"
+    },
+    {
+      "anchor": 2.9,
+      "anchor_series": "all",
+      "diff": -1.4318852007809775,
+      "issue": "2026-6",
+      "ours": 1.4681147992190224,
+      "series": "core",
+      "source": "https://www.cbr.ru/analytics/dkp/dinamic/CPD_2026-6/",
+      "target": "2026-05-01"
+    },
+    {
+      "anchor": 0.7,
+      "anchor_series": "food",
+      "diff": 0.1797355945728799,
+      "issue": "2026-7",
+      "ours": 0.8797355945728799,
+      "series": "food",
+      "source": "https://www.cbr.ru/analytics/dkp/dinamic/CPD_2026-7/",
+      "target": "2026-06-01"
+    },
+    {
+      "anchor": 5.4,
+      "anchor_series": "nonfood",
+      "diff": 1.4117309986503708,
+      "issue": "2026-7",
+      "ours": 6.811730998650371,
+      "series": "nonfood",
+      "source": "https://www.cbr.ru/analytics/dkp/dinamic/CPD_2026-7/",
+      "target": "2026-06-01"
+    },
+    {
+      "anchor": 0.8,
+      "anchor_series": "food",
+      "diff": 0.2713343481781174,
+      "issue": "2026-8",
+      "ours": 1.0713343481781175,
+      "series": "food",
+      "source": "https://www.cbr.ru/analytics/dkp/dinamic/CPD_2026-8/",
+      "target": "2026-07-01"
+    },
+    {
+      "anchor": 3.6,
+      "anchor_series": "nonfood",
+      "diff": 2.267841385518006,
+      "issue": "2026-8",
+      "ours": 5.867841385518006,
+      "series": "nonfood",
+      "source": "https://www.cbr.ru/analytics/dkp/dinamic/CPD_2026-8/",
+      "target": "2026-07-01"
+    },
+    {
+      "anchor": 8.1,
+      "anchor_series": "all",
+      "diff": -2.021167387206246,
+      "issue": "2026-9",
+      "ours": 6.078832612793754,
+      "series": "core",
+      "source": "https://www.cbr.ru/analytics/dkp/dinamic/CPD_2026-9/",
+      "target": "2026-08-01"
+    },
+    {
+      "anchor": 9.9,
+      "anchor_series": "food",
+      "diff": -4.13139516955541,
+      "issue": "2026-9",
+      "ours": 5.76860483044459,
+      "series": "food",
+      "source": "https://www.cbr.ru/analytics/dkp/dinamic/CPD_2026-9/",
+      "target": "2026-08-01"
+    },
+    {
+      "anchor": 6.5,
+      "anchor_series": "nonfood",
+      "diff": 0.0271327802340382,
+      "issue": "2026-9",
+      "ours": 6.527132780234038,
+      "series": "nonfood",
+      "source": "https://www.cbr.ru/analytics/dkp/dinamic/CPD_2026-9/",
+      "target": "2026-08-01"
+    }
+  ],
+  "spec_version": "ppi-sa-2026-v1",
+  "taxonomy_version": "okpd2-kipc-2026-v2",
+  "tolerance_pp": 0.3,
+  "tolerance_reached": false
+}

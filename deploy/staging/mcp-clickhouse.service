@@ -13,7 +13,7 @@ Environment="CLICKHOUSE_USER=kimi_reader"
 Environment="CLICKHOUSE_DATABASE=default"
 Environment="CLICKHOUSE_SECURE=false"
 Environment="CLICKHOUSE_MCP_SERVER_TRANSPORT=http"
-Environment="CLICKHOUSE_MCP_BIND_HOST=127.0.0.1"
+Environment="CLICKHOUSE_MCP_BIND_HOST=0.0.0.0"
 Environment="CLICKHOUSE_MCP_BIND_PORT=8000"
 Restart=always
 RestartSec=10

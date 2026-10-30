@@ -43,12 +43,67 @@ steps:
       limit: 3
       interval_sec: 300
 
-  # Шестой шаг — последним: падение нового шага не лишает данных уже проверенные пять, а после
-  # первого прогона он всегда no-op по гейту, поэтому исчезновение живого буфера цепочку не ломает.
+  # Шестой шаг — после macro-рядов: падение нового шага не лишает данных уже проверенные пять, а
+  # после первого прогона он всегда no-op по гейту, поэтому исчезновение живого буфера цепочку не ломает.
   - id: rosstat_ipc_weeks_bulletins
     run: "$ROSSTAT_IMPORT_BIN"
     env:
       - CLICKHOUSE_IMPORT_STAT=rosstat_ipc_weeks_bulletins
+    retry_policy:
+      limit: 3
+      interval_sec: 300
+
+  # Седьмой шаг — публичный классификатор ОКВЭД2: не зависит от macro-рядов и не меняет их.
+  # Падение классификатора не лишает данных предыдущие шесть; после первого прогона —
+  # HEAD-префлайт и no-op до следующего месячного выпуска.
+  - id: rosstat_okved2
+    run: "$ROSSTAT_IMPORT_BIN"
+    env:
+      - CLICKHOUSE_IMPORT_STAT=rosstat_okved2
+    retry_policy:
+      limit: 3
+      interval_sec: 300
+
+  # Восьмой шаг — ИЦП по ВЭД: месячная выгрузка, публикация 12–16-й рабочий день.
+  # Шаг в хвосте цепочки: падение нового шага не лишает данных уже проверенные семь.
+  # После первого прогона — HEAD-префлайт и no-op; окно расписания уточнит T6.
+  - id: rosstat_ppi_ved
+    run: "$ROSSTAT_IMPORT_BIN"
+    env:
+      - CLICKHOUSE_IMPORT_STAT=rosstat_ppi_ved
+    retry_policy:
+      limit: 3
+      interval_sec: 300
+
+  # Девятый шаг — недельный агрегат ИПЦ из BI Росстата: в хвосте цепочки, чтобы падение
+  # нового шага не лишало данных проверенные восемь. Export-URL динамический (новый
+  # tmp/exp<uuid> на каждый POST), поэтому HEAD-preflight нет; версия содержимого считается
+  # по SHA-256 точек и пишется в source_publications, повтор — no-op (`Imported 0 rows`).
+  - id: rosstat_bi_cpi_weekly
+    run: "$ROSSTAT_IMPORT_BIN"
+    env:
+      - CLICKHOUSE_IMPORT_STAT=rosstat_bi_cpi_weekly
+    retry_policy:
+      limit: 3
+      interval_sec: 300
+
+  # Десятый шаг — ИЦП по товарам/ОКПД2: месячная выгрузка, публикация 12–16-й рабочий
+  # день. Шаг в хвосте: падение не лишает данных проверенные девять; после первого
+  # прогона — HEAD-префлайт и no-op. Окно расписания уточнит T6.
+  - id: rosstat_ppi_product
+    run: "$ROSSTAT_IMPORT_BIN"
+    env:
+      - CLICKHOUSE_IMPORT_STAT=rosstat_ppi_product
+    retry_policy:
+      limit: 3
+      interval_sec: 300
+
+  # Одиннадцатый шаг — веса ИЦП по ВЭД: файл обновляется раз в год (март), поэтому
+  # будничный прогон — HEAD-префлайт и no-op. Шаг в хвосте цепочки.
+  - id: rosstat_ppi_weights
+    run: "$ROSSTAT_IMPORT_BIN"
+    env:
+      - CLICKHOUSE_IMPORT_STAT=rosstat_ppi_weights
     retry_policy:
       limit: 3
       interval_sec: 300

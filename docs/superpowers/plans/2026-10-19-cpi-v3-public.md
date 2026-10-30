@@ -30,7 +30,7 @@
 
 ## Task 2: загрузчик industry из #239
 
-**Files:** `scripts/cpi_monthly_v3_public.py`, `scripts/cpi_monthly_v3_public_test.py`.
+**Files:** `scripts/models/cpi/cpi_monthly_v3_public.py`, `scripts/models/cpi/cpi_monthly_v3_public_test.py`.
 
 1. `CH_INDUSTRY_SLUGS` (16), `CH_INDICATORS` (3), `CH_INDUSTRY_SERIES` (48 имён).
 2. `load_industry_panel_ch()`:
@@ -43,7 +43,7 @@
 
 ## Task 3: horizon-сборка
 
-**Files:** `scripts/cpi_monthly_v3_public.py`.
+**Files:** `scripts/models/cpi/cpi_monthly_v3_public.py`.
 
 1. `horizon_rows(rows, horizon)`:
    - h1 — исходные `Row` без изменений;
@@ -54,7 +54,7 @@
 
 ## Task 4: признаки и модели
 
-**Files:** `scripts/cpi_monthly_v3_public.py`.
+**Files:** `scripts/models/cpi/cpi_monthly_v3_public.py`.
 
 1. `build_sample(sample)`:
    - `rows, skipped = cmv3.build_sample_v3(sample)`;
@@ -70,7 +70,7 @@
 
 ## Task 5: оценка, гейты, решение
 
-**Files:** `scripts/cpi_monthly_v3_public.py`.
+**Files:** `scripts/models/cpi/cpi_monthly_v3_public.py`.
 
 1. `evaluate_window(rows_h, models, horizon, start, embargo)`:
    - `cm.walk_forward(rows_h, models, start_eff, embargo_eff)`;
@@ -84,7 +84,7 @@
 
 ## Task 6: отчёт, JSON, MLflow, CLI
 
-**Files:** `scripts/cpi_monthly_v3_public.py`.
+**Files:** `scripts/models/cpi/cpi_monthly_v3_public.py`.
 
 1. CLI: `--sample`, `--horizons`, `--start`, `--embargo`, `--models`, `--out-dir`, `--verify-xlsx`, `--allow-gate-diff`.
 2. `run_window(...)` → per-window report/JSON в `build/cpi-monthly-v3-public/<sample>__h<h>__embargo<e>/`.

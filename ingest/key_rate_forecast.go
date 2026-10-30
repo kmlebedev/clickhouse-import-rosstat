@@ -24,6 +24,14 @@ var keyRateTracks = map[string]bool{
 	"llm":           true,
 }
 
+// keyRateStages — стадии промоушена (infra/4.3). Стадия — третий сегмент
+// metric: `cbr_rate:<track>:shadow`/`:canary`; production — без суффикса.
+// Список закрытый: ingest не должен принимать произвольные стадии.
+var keyRateStages = map[string]bool{
+	"shadow": true,
+	"canary": true,
+}
+
 // keyRateProbabilityAliases — допустимые ключи распределения и их канонический
 // вид. Модель v0 отдаёт классы строками "-1"/"0"/"+1", LLM-трек (#189) — словами
 // cut/hold/hike; endpoint принимает оба набора, чтобы writer не переписывал
@@ -54,9 +62,9 @@ const keyRateForecastMaxRate = 1000.0
 // резолвер считает error_bp = (predicted − actual) × 100. `Probabilities` —
 // необязательное распределение по классам {cut, hold, hike} в процентах.
 //
-// `Model`, `PromptVersion` и `DataVersion` пока не имеют колонок в forecast_log
-// (см. спеку §4/§7): endpoint их валидирует и пишет в лог ingest, чтобы контракт
-// writer'а и LLM-трека (#189) не менялся при добавлении колонок follow-up'ом.
+// `Model`, `PromptVersion` и `DataVersion` пишутся в одноимённые колонки
+// forecast_log (добавлены #127): endpoint валидирует их до вставки, чтобы
+// контракт writer'а и LLM-трека (#189) не расходился с журналом.
 type KeyRateForecast struct {
 	ForecastDate  string             `json:"forecast_date"`
 	TargetDate    string             `json:"target_date"`
@@ -86,10 +94,11 @@ func ValidateKeyRateForecast(f KeyRateForecast) error {
 		return fmt.Errorf("target_date %q is before forecast_date %q", f.TargetDate, f.ForecastDate)
 	}
 
-	track, ok := keyRateForecastTrack(f.Metric)
+	track, _, ok := keyRateForecastTrack(f.Metric)
 	if !ok {
-		return fmt.Errorf("metric %q must be %q or %q:<track> with track one of: %s",
-			f.Metric, keyRateMetric, keyRateMetric, strings.Join(sortedKeys(keyRateTracks), ", "))
+		return fmt.Errorf("metric %q must be %q, %q:<track> or %q:<track>:shadow|canary with track one of: %s",
+			f.Metric, keyRateMetric, keyRateMetric, keyRateMetric,
+			strings.Join(sortedKeys(keyRateTracks), ", "))
 	}
 
 	if math.IsNaN(f.Predicted) || math.IsInf(f.Predicted, 0) || f.Predicted <= 0 || f.Predicted >= keyRateForecastMaxRate {
@@ -126,16 +135,35 @@ func parseKeyRateForecastDate(field, raw string) (time.Time, error) {
 	return date, nil
 }
 
-// keyRateForecastTrack — суффикс трека метрики; пустая строка — базовое имя.
-func keyRateForecastTrack(metric string) (string, bool) {
+// keyRateForecastTrack — разбор metric на трек и стадию.
+//
+// Грамматика (infra/4.3): `cbr_rate`, `cbr_rate:<track>`,
+// `cbr_rate:<track>:shadow|canary`. Стадия допустима только вместе с треком:
+// `cbr_rate:shadow` и `cbr_rate::shadow` отвергаются, чтобы стадия не
+// выглядела как чужой трек. Пустой трек/стадия — ошибка.
+func keyRateForecastTrack(metric string) (track, stage string, ok bool) {
 	if metric == keyRateMetric {
-		return "", true
+		return "", "", true
 	}
-	track, found := strings.CutPrefix(metric, keyRateMetric+":")
-	if !found || !keyRateTracks[track] {
-		return "", false
+	suffix, found := strings.CutPrefix(metric, keyRateMetric+":")
+	if !found {
+		return "", "", false
 	}
-	return track, true
+	parts := strings.Split(suffix, ":")
+	if len(parts) > 2 {
+		return "", "", false
+	}
+	track = parts[0]
+	if !keyRateTracks[track] {
+		return "", "", false
+	}
+	if len(parts) == 2 {
+		stage = parts[1]
+		if !keyRateStages[stage] {
+			return "", "", false
+		}
+	}
+	return track, stage, true
 }
 
 // validateKeyRateProbabilities проверяет распределение: ключи — только классы

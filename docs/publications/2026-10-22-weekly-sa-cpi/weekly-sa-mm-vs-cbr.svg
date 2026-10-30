@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="560" viewBox="0 0 1100 560" role="img" aria-labelledby="title desc">
+<title id="title">Недельный SA м/м ИПЦ против SA м/м ЦБ</title>
+<desc id="desc">2021-01 … 2026-09; октябрь 2026 — nowcast; % м/м.</desc>
+<rect x="0" y="0" width="1100" height="560" fill="#ffffff"/>
+<text x="78" y="30" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="22" font-weight="bold" fill="#222222">Недельный SA м/м ИПЦ против SA м/м ЦБ</text>
+<text x="78" y="52" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="14" fill="#555555">2021-01 … 2026-09; октябрь 2026 — nowcast; % м/м</text>
+<line x1="78" y1="470.0" x2="1040" y2="470.0" stroke="#e3e3e3" stroke-width="1"/>
+<text x="68" y="474.0" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12" text-anchor="end" fill="#666666">-0,5</text>
+<line x1="78" y1="393.2" x2="1040" y2="393.2" stroke="#b8b8b8" stroke-width="1"/>
+<text x="68" y="397.2" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12" text-anchor="end" fill="#666666">0,0</text>
+<line x1="78" y1="316.4" x2="1040" y2="316.4" stroke="#e3e3e3" stroke-width="1"/>
+<text x="68" y="320.4" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12" text-anchor="end" fill="#666666">0,5</text>
+<line x1="78" y1="239.6" x2="1040" y2="239.6" stroke="#e3e3e3" stroke-width="1"/>
+<text x="68" y="243.6" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12" text-anchor="end" fill="#666666">1,0</text>
+<line x1="78" y1="162.8" x2="1040" y2="162.8" stroke="#e3e3e3" stroke-width="1"/>
+<text x="68" y="166.8" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12" text-anchor="end" fill="#666666">1,5</text>
+<line x1="78" y1="86.0" x2="1040" y2="86.0" stroke="#e3e3e3" stroke-width="1"/>
+<text x="68" y="90.0" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12" text-anchor="end" fill="#666666">2,0</text>
+<line x1="78.0" y1="86" x2="78.0" y2="470" stroke="#f0f0f0" stroke-width="1"/>
+<text x="78.0" y="492" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="11" text-anchor="middle" fill="#666666">2021-01</text>
+<line x1="161.7" y1="86" x2="161.7" y2="470" stroke="#f0f0f0" stroke-width="1"/>
+<text x="161.7" y="492" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="11" text-anchor="middle" fill="#666666">2021-07</text>
+<line x1="245.3" y1="86" x2="245.3" y2="470" stroke="#f0f0f0" stroke-width="1"/>
+<text x="245.3" y="492" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="11" text-anchor="middle" fill="#666666">2022-01</text>
+<line x1="329.0" y1="86" x2="329.0" y2="470" stroke="#f0f0f0" stroke-width="1"/>
+<text x="329.0" y="492" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="11" text-anchor="middle" fill="#666666">2022-07</text>
+<line x1="412.6" y1="86" x2="412.6" y2="470" stroke="#f0f0f0" stroke-width="1"/>
+<text x="412.6" y="492" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="11" text-anchor="middle" fill="#666666">2023-01</text>
+<line x1="496.3" y1="86" x2="496.3" y2="470" stroke="#f0f0f0" stroke-width="1"/>
+<text x="496.3" y="492" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="11" text-anchor="middle" fill="#666666">2023-07</text>
+<line x1="579.9" y1="86" x2="579.9" y2="470" stroke="#f0f0f0" stroke-width="1"/>
+<text x="579.9" y="492" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="11" text-anchor="middle" fill="#666666">2024-01</text>
+<line x1="663.6" y1="86" x2="663.6" y2="470" stroke="#f0f0f0" stroke-width="1"/>
+<text x="663.6" y="492" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="11" text-anchor="middle" fill="#666666">2024-07</text>
+<line x1="747.2" y1="86" x2="747.2" y2="470" stroke="#f0f0f0" stroke-width="1"/>
+<text x="747.2" y="492" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="11" text-anchor="middle" fill="#666666">2025-01</text>
+<line x1="830.9" y1="86" x2="830.9" y2="470" stroke="#f0f0f0" stroke-width="1"/>
+<text x="830.9" y="492" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="11" text-anchor="middle" fill="#666666">2025-07</text>
+<line x1="914.5" y1="86" x2="914.5" y2="470" stroke="#f0f0f0" stroke-width="1"/>
+<text x="914.5" y="492" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="11" text-anchor="middle" fill="#666666">2026-01</text>
+<line x1="1040.0" y1="86" x2="1040.0" y2="470" stroke="#f0f0f0" stroke-width="1"/>
+<text x="1040.0" y="492" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="11" text-anchor="end" fill="#666666">2026-10</text>
+<text x="78" y="74" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12" fill="#666666">% м/м, SA</text>
+<line x1="273.2" y1="86" x2="273.2" y2="470" stroke="#c9c9c9" stroke-width="1" stroke-dasharray="3,3"/>
+<text x="279.2" y="100" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="11" fill="#777777">март 2022: 7,04 / 7,50 — выше шкалы</text>
+<polyline points="78.0,333.3 91.9,307.2 105.9,305.6 119.8,302.6 133.8,251.9 147.7,284.1 161.7,328.7 175.6,301.0 189.5,261.1 203.5,225.8 217.4,288.8 231.4,287.2 245.3,288.8 259.2,247.3 273.2,86.0 287.1,156.7 301.1,347.1 315.0,437.7 329.0,443.9 342.9,396.3 356.8,354.8 370.8,364.0 384.7,377.8 398.7,322.5 412.6,308.7 426.6,350.2 440.5,348.7 454.4,331.8 468.4,341.0 482.3,328.7 496.3,247.3 510.2,253.4 524.1,227.3 538.1,270.3 552.0,264.2 566.0,301.0 579.9,314.9 593.9,324.1 607.8,342.5 621.7,301.0 635.7,282.6 649.6,294.9 663.6,210.4 677.5,258.0 691.4,285.7 705.4,268.8 719.3,212.0 733.3,212.0 747.2,271.9 761.2,305.6 775.1,310.3 789.0,325.6 803.0,328.7 816.9,360.9 830.9,287.2 844.8,351.7 858.8,316.4 872.7,305.6 886.6,354.8 900.6,350.2 914.5,221.2 928.5,319.5 942.4,317.9 956.3,359.4 970.3,359.4 984.2,276.5 998.2,270.3 1012.1,299.5 1026.1,311.8" fill="none" stroke="#c0392b" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round"/>
+<polyline points="78.0,311.4 91.9,320.4 105.9,298.3 119.8,299.6 133.8,289.5 147.7,279.9 161.7,307.0 175.6,293.9 189.5,284.5 203.5,251.6 217.4,282.0 231.4,336.9 245.3,290.3 259.2,108.2 273.2,86.0 287.1,118.0 301.1,353.3 315.0,402.7 329.0,415.6 342.9,399.0 356.8,379.6 370.8,379.0 384.7,371.0 398.7,308.3 412.6,334.2 426.6,333.4 440.5,365.1 454.4,329.3 468.4,337.2 482.3,311.4 496.3,285.2 510.2,282.4 524.1,264.3 538.1,293.1 552.0,248.8 566.0,329.3 579.9,350.7 593.9,313.5 607.8,348.9 621.7,323.2 635.7,288.1 649.6,276.2 663.6,305.0 677.5,297.2 691.4,296.9 705.4,300.4 719.3,243.3 733.3,237.9 747.2,286.2 761.2,286.8 775.1,313.4 789.0,310.9 803.0,327.2 816.9,354.7 830.9,286.2 844.8,349.4 858.8,310.7 872.7,287.4 886.6,360.3 900.6,339.5 914.5,199.3 928.5,314.0 942.4,304.7 956.3,343.7 970.3,344.6 984.2,258.4 998.2,290.7 1012.1,325.6 1026.1,325.9" fill="none" stroke="#1f5fae" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round"/>
+<polyline points="78.0,311.4 91.9,320.4 105.9,298.3 119.8,299.6 133.8,289.5 147.7,279.9 161.7,307.0 175.6,293.9 189.5,284.5 203.5,251.6 217.4,282.0 231.4,336.9 245.3,290.3 259.2,108.2 273.2,86.0 287.1,118.0 301.1,353.3 315.0,402.7 329.0,415.6 342.9,399.0 356.8,379.6 370.8,379.0 384.7,371.0 398.7,308.3 412.6,334.2 426.6,333.4 440.5,365.1 454.4,329.3 468.4,337.2 482.3,311.4 496.3,285.2 510.2,282.4 524.1,264.3 538.1,293.1 552.0,248.8 566.0,329.3 579.9,350.7 593.9,313.5 607.8,348.9 621.7,323.2 635.7,288.1 649.6,276.2 663.6,305.0 677.5,297.2 691.4,296.9 705.4,300.4 719.3,243.3 733.3,237.9 747.2,286.2 761.2,286.8 775.1,313.4 789.0,310.9 803.0,327.2 816.9,354.7 830.9,286.2 844.8,349.4 858.8,310.7 872.7,287.4 886.6,360.3 900.6,339.5 914.5,199.3 928.5,314.0 942.4,304.7 956.3,343.7 970.3,344.6 984.2,258.4 998.2,290.7 1012.1,325.6 1026.1,325.9 1040.0,243.2" fill="none" stroke="#1f5fae" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="5,4"/>
+<circle cx="78.0" cy="333.3" r="3.2" fill="#c0392b"/>
+<circle cx="273.2" cy="86.0" r="3.2" fill="#c0392b"/>
+<circle cx="1026.1" cy="311.8" r="3.2" fill="#c0392b"/>
+<circle cx="78.0" cy="311.4" r="3.2" fill="#1f5fae"/>
+<circle cx="1026.1" cy="325.9" r="3.2" fill="#1f5fae"/>
+<circle cx="1040.0" cy="243.2" r="4.5" fill="#ffffff" stroke="#1f5fae" stroke-width="2.4"/>
+<text x="1032.0" y="122" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="11" text-anchor="end" fill="#1f5fae">окт. — nowcast, as_of 12.10</text>
+<line x1="665" y1="86" x2="693" y2="86" stroke="#1f5fae" stroke-width="2.4"/>
+<text x="701" y="90" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12" fill="#333333">недельный SA м/м</text>
+<line x1="665" y1="108" x2="693" y2="108" stroke="#c0392b" stroke-width="2.4"/>
+<text x="701" y="112" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12" fill="#333333">SA м/м ЦБ</text>
+<text x="78" y="512" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="11" fill="#777777">Октябрь 2026 — неполный месяц (nowcast); март 2022 (7,04 и 7,50) выходит за верхнюю границу шкалы.</text>
+<text x="78" y="544" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="11" fill="#777777">Источник: Росстат, недельный агрегат; ЦБ, indicators_cpd.xlsx; расчёт — 4-нед. индекс + X-13ARIMA-SEATS.</text>
+</svg>

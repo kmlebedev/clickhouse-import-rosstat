@@ -222,7 +222,8 @@ func TestNewsViewStatementsShape(t *testing.T) {
 				// У пары (url, content_hash) может быть несколько doc-строк (модели/редакции):
 				// витрине нужна одна — последняя.
 				"LIMIT 1 BY url, content_hash",
-				"groupArrayIf(tuple(t.dimension, t.tag, t.direction), t.tag != '') AS tags",
+				"groupArrayIf(tuple(t.dimension, ",
+				", t.direction), t.tag != '') AS tags",
 				// Пустой content_hash — строка до миграции: в JOIN не участвует.
 				"content_hash != ''",
 				"ORDER BY date DESC",
@@ -251,7 +252,8 @@ func TestNewsViewStatementsShape(t *testing.T) {
 				// другой редакции промпта.
 				"d.url = v.url AND d.content_hash = v.content_hash",
 				"t.model = d.model AND t.prompt_version = d.prompt_version",
-				"groupArrayIf(tuple(t.dimension, t.tag, t.direction), t.tag != '') AS tags",
+				"groupArrayIf(tuple(t.dimension, ",
+				", t.direction), t.tag != '') AS tags",
 				"WHERE v.last_deleted = 0",
 				"GROUP BY v.date",
 				"ORDER BY date DESC, message_id DESC",
@@ -378,6 +380,32 @@ func newsViewCommentStatements(name string) []string {
 func TestNewsSQLStringEscapesLiterals(t *testing.T) {
 	if got, want := newsSQLString(`a'b\c`), `'a''b\\c'`; got != want {
 		t.Errorf("newsSQLString = %s, want %s", got, want)
+	}
+}
+
+// TestNewsViewsCanonicalizeChannelAliases — legacy-слаги каналов живут только в истории
+// news_annotation (prompt_version ≤ 2): обе витрины обязаны нормализовать их на чтении, а
+// статический реестр v_news_tags — не содержать. Иначе агент снова увидит два имени одного
+// канала: канон у новых строк и legacy у старых.
+func TestNewsViewsCanonicalizeChannelAliases(t *testing.T) {
+	// Пиним точное выражение, а не отдельные подстроки: перестановка пар (savings → external_fx)
+	// или порядка ветвей multiIf должна валить тест, а не проходить по совпадению литералов.
+	const wantTags = "groupArrayIf(tuple(t.dimension, " +
+		"multiIf(t.dimension = 'cb_channel' AND t.tag = 'credit_transmission', 'lending_transmission', " +
+		"t.dimension = 'cb_channel' AND t.tag = 'external_conditions', 'external_fx', " +
+		"t.dimension = 'cb_channel' AND t.tag = 'savings', 'savings_behavior', " +
+		"t.dimension = 'cb_channel' AND t.tag = 'macroprudential', 'autonomous_factors', t.tag), " +
+		"t.direction), t.tag != '') AS tags"
+	for _, name := range []string{"v_news_events", "v_news_flash"} {
+		if view := newsViewByName(t, name); !strings.Contains(view, wantTags) {
+			t.Errorf("%s: нет канонизации legacy-слагов ожидаемым выражением:\n%s", name, wantTags)
+		}
+	}
+	tagsView := newsViewByName(t, "v_news_tags")
+	for _, alias := range newsTagAliases {
+		if strings.Contains(tagsView, "'"+alias.Legacy+"'") {
+			t.Errorf("v_news_tags содержит legacy-слаг %q: реестр обязан быть каноническим", alias.Legacy)
+		}
 	}
 }
 
