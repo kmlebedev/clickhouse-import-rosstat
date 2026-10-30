@@ -94,6 +94,8 @@ whenToUse: When a task involves an ML experiment, model, feature set, backtest, 
 | `make cpi-v4-h2` / `-test` | #396 эксперимент 2: решение gate по `wkagg_*` из ячеек сетки; пишет `build/ml-gate/cpi_v4_h2.*` |
 | `make cpi-core-nnls` / `-test`, `make cpi-v4-core` / `-test` | #396 эксперимент 3: `core_nnls` (NNLS по 14 корзинам панели #364, as-of), `v4c`/`v4d` на `T_CORE`; `ARGS="--sample S_L09"`, `ARGS="--decide"` |
 | `make cpi-weekly-sa-asof` / `-test` | #401 W1: as-of перефит недельного X-13 `weekly_cpi_sa` (порт `weeklysa/grid.go`, parity с таблицей, ревизии, gate); `build/cpi-two-stage/weekly_sa_asof.{json,csv}`; нужен R `seasonal` |
+| `make cpi-two-stage-targets-test`, `make cpi-two-stage-w2` / `-test` | #401 W2: `T_SAX` (окончательный и винтажный X-13), варианты КУ `V0/V1/V2` и выбор на dev; `build/cpi-two-stage/w2_select.json`; нужен R `seasonal` |
+| `make cpi-two-stage-folds` / `-test` | #401 W3: таргеты `T_SAX`/`T_CORE`/`T_NSA`, доступность (Росстат/ЦБ), purge и фолды Stage 1/2, отпечатки; `build/cpi-two-stage/w3_folds.json`; нужен R `seasonal` |
 | `make cpi-asof-test` | #401 W0: as-of конвенция `publication` (cutoff = публикация ИПЦ `M−1`, 9-е `M`) и тесты на утечку; `with cm.asof_convention("publication")` |
 | `make cpi-sa-reconciliation` / `-test` | #399: сверка SA из сырого месячного ИПЦ (X-13, STL), ИПЦ без КУ из `ipc31074` и недельного SA `weekly_cpi_sa` с SA/core ЦБ; пишет `build/cpi-sa/reconciliation.json`; нужен R `seasonal` |
 | `make key-rate-model` | ставка: Тейлор, ordered logit, walk-forward; `ML_LOG=1` |

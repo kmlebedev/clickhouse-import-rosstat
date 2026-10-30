@@ -33,16 +33,19 @@ W0 as-of конвенция ──┬─> W1 as-of недельный X-13 ─�
 
 ## W2: КУ и таргет `T_SAX`
 
-**Файлы:** `cpi_two_stage_targets.py` (+тест); переиспользует `level_from_mm`, `ex_utilities_mm`, мост X-13 из `cpi_sa_reconciliation.py` (#400).
-- [ ] `T_SAX` окончательный и as-of (винтажная история на `P_k`); тесты формулы и утечки.
-- [ ] Варианты `V0/V1/V2` входа; выбор на dev 2016–2021 по RMSE Stage 1 h1; запись выбора.
-**Done:** ряды `T_SAX`, выбранный вариант, отчётная таблица dev.
+**Файлы:** `scripts/models/cpi/cpi_two_stage_targets.py`, `cpi_two_stage_w2.py` (+тесты); переиспользует `ex_utilities_mm`, `x13_series`, мост X-13 из `cpi_sa_reconciliation.py` и as-of срез W1.
+- [x] `T_SAX` окончательный и винтажный (`≤ O−1`); тесты формулы, утечки, ревизий (23 теста, мутационная проверка 7/7 после дополнения).
+- [x] Варианты `V0/V1/V2`; протокол выбора зафиксирован в спеке до результатов (`d7d129f`), код — до запуска (`47c361d`).
+- [x] Выбор на dev 2018-01…2021-12 (45 общих origin'ов): RMSE `V0` 0,2084, `V1` 0,2096, `V2` 0,2156 → **`V0`**. Отчёт: `docs/research/2026-10-30-cpi-two-stage-w2-tsax-variants.md`.
+**Done:** вариант `V0` зафиксирован, ряды `T_SAX` реализованы; находка — календарь `TARIFF_DATES` расходится с данными; модель отбора не побила `weekly_naive` (риск для gate S1).
 
 ## W3: таргеты, доступность, фолды
 
-- [ ] `T_CORE`, `T_NSA`; доступность (Росстат 9-е, ЦБ 18-е `M+1`); purge по спеке §3; `common_folds`.
-- [ ] Хэши `feature_sha256`/`predictions_sha256` для детерминизма.
-**Done:** тесты доступности и purge.
+**Файлы:** `scripts/models/cpi/cpi_two_stage_folds.py` (+тест); использует `cpi_two_stage_targets` (W2), `weekly_sa_asof.publication_cutoff` (W0/W1), таблицу релизов Росстата.
+- [x] `T_CORE`, `T_NSA`, `T_SAX` (`TargetData`, загрузчики); доступность (Росстат — день релиза/9-е, ЦБ — 18-е `M+1`); purge по доступности = формуле спеки §3 (тест); `common_folds`; `make_folds`, `assert_no_lookahead`.
+- [x] Отпечатки `predictions_digest`/`feature_digests`/`fold_summary`; детерминизм (два прогона побайтно одинаковы).
+- [x] Документ фолдов: `docs/research/2026-10-30-cpi-two-stage-w3-targets-folds.md` (Stage 1: 94–105 фолдов на ячейку, Stage 2: 222–233).
+**Done:** 32 теста, мутационная проверка 7/8 (выживший — эквивалентный); `make cpi-two-stage-folds(-test)`.
 
 ## W3b: сверка данных CPI с датасетом CB_COMP
 
