@@ -44,7 +44,7 @@
 | **calib (a + b·лист, OLS на train)** | **−0,312** | **0,141** | **−0,036** |
 | ridge: все вопросы своего листа | −0,457 | 0,005 | −0,168 |
 | ridge: свой лист + разрез по размеру | −0,397 | −0,011 | −0,151 |
-| ridge: тот же вопрос по всем 16 листам | −0,200 | 0,065 | −0,211 |
+| ridge: тот же вопрос по всем 16 листам | −0,215 | 0,065 | −0,211 |
 | ridge: все 496 SA-рядов | −0,272 | −0,025 | −0,229 |
 | *PR #435: лучший поиск* | *−0,129* | *0,044* | *0,063* |
 
@@ -152,7 +152,7 @@
 
 ### 7.2. Проверка: воспроизведение и live-вариант
 
-Код авторов переписан 1:1 (`bs2.py`): с их рядами получается h1 0,1672 / 0,1694 — точно как в статье. Для честного live-варианта (`bs3.py`) на каждом месяце t обучаемся только на строках с индексом ≤ t − h (таргет известен к дате прогноза), выбросы исключены как у авторов. Таргет — `TARGET_FULL`, те же 54 normal-месяца. `combo3` — простое среднее per-sheet live + BS_ECON16 + BS_ROZN16, без подбора весов.
+Код авторов переписан 1:1 (в репозитории — `cb_comp_h1_bs_combo.authors_bs_predict`, R9a Task 9): с их рядами получается h1 0,1672 / 0,1694 — точно как в статье. Для честного live-варианта на каждом месяце t обучаемся только на строках с индексом ≤ t − h (таргет известен к дате прогноза), выбросы исключены как у авторов. Таргет — `TARGET_FULL`, те же 54 normal-месяца. `combo3` — простое среднее per-sheet live + BS_ECON16 + BS_ROZN16, без подбора весов.
 
 | h | модель | RMSE | к CB_COMP | DM p против per-sheet | DM p против CB_COMP | RMSE 2019–21 | RMSE 2023–24 |
 |---:|---|---:|---:|---:|---:|---:|---:|
@@ -166,7 +166,7 @@
 | 3 | combo3 (публичные ряды) | 0,4279 | 0,965 | 0,243 | 0,600 | 0,3845 | 0,4982 |
 | 6 | combo3 (публичные ряды) | 0,8484 | 0,873 | 0,272 | 0,250 | 0,7635 | 0,9858 |
 
-Для сравнения per-sheet live на h2/h3/h6: 0,3084 / 0,4639 / 0,9713 (§6.3). Полная таблица — `h1_combo_results.csv`.
+Для сравнения per-sheet live на h2/h3/h6: 0,3084 / 0,4639 / 0,9713 (§6.3). Подтверждение на предрегистрированном протоколе с базой `live_cb` — [Task 9](2026-10-31-cb-comp-88-groups-task9.md): `combo3` 1,035 / 0,957 / 1,010 / 0,894, G9 пройден.
 
 - **Разрыв на h1 закрывается на ~84 %:** 1,204 → 1,031 к CB_COMP, улучшение против per-sheet значимо (p = 0,026), от CB_COMP значимо не отличается (p = 0,62). Гейт §6 (≤ 1,10 при p < 0,10) пройден.
 - Результат не зависит от винтажа рядов (публичные 2026 / авторские 2024: 0,1638 / 0,1637) и держится в обоих подпериодах: в 2019–21 выигрыш большой, в 2023–24 небольшой (0,179 против 0,186).
@@ -194,15 +194,25 @@
 
 ## 9. Воспроизводимость
 
-Скрипты — во временной папке сессии (не в репозитории), запуск через `uv run --with pandas --with numpy --with pyarrow --with openpyxl --python 3.12 python3 -I <script>`:
+Код — `scripts/models/cb_comp/cb_comp_per_code_review.py` (+ `_test.py`, 12 офлайн-тестов; `cb_comp_per_code_review_x13.R` — X-13 по рецепту авторов). Результаты шагов пишутся в `build/cb-comp-per-code-review/<step>.json`.
 
-- `a1.py` — различимость 87 × 3 рядов;
-- `a2.py` — лист против среднего по кодам (train/test, уровни/изменения/смещение);
-- `parse.py` — сборка всех публичных колонок (1 070 рядов: 557 NSA + 513 SA) из трёх книг;
-- `exp.py` — таблица §2.3;
-- `noise.py`, `off.py` — §2.4 и альтернативные приоры;
-- `nsa.py`, `x13.R` (`Rscript`, пакет `seasonal`), `cmp.py` — §6.1–6.2;
-- `bs.py`, `bs2.py`, `bs3.py` — §7 (сверка регрессоров, воспроизведение BS-моделей, live-комбинация, DM);
-- `mkpanels.py` + четыре прогона `make cb-comp-parity --feature-mode per_sheet` (~4 мин каждый), `dm.py` — §6.3.
+```bash
+make cb-comp-per-code-review-test                                # 12 тестов OK
+make cb-comp-per-code-review-books                               # три книги ЦБ (curl, cbr.ru)
+make cb-comp-per-code-review ARGS="--step distinct"              # §2.1
+make cb-comp-per-code-review ARGS="--step forward"               # §2.2
+make cb-comp-per-code-review ARGS="--step inverse"               # §2.3 (ridge, ~2 мин)
+make cb-comp-per-code-review ARGS="--step noise"                 # §2.4
+make cb-comp-per-code-review ARGS="--step priors"                # §2.3, скользящий offset и AR-затухание
+make cb-comp-per-code-review ARGS="--step sa-inputs"             # §6.1, NSA/SA листов
+make cb-comp-per-code-review-x13                                 # §6.1, R seasonal
+make cb-comp-per-code-review ARGS="--step sa-compare"            # §6.2
+make cb-comp-per-code-review ARGS="--step panels"                # §6.3, панели per_sheet
+# §6.3: четыре прогона parity (~4 мин каждый), затем DM
+make cb-comp-parity ARGS="--archive <архив> --feature-mode per_sheet --public-panel build/cb-comp-per-code-review/panel_<вариант>.csv --sheet-map build/cb-comp-parity/sheet_map.csv --out-dir build/cb-comp-per-code-review/run_<вариант>"
+make cb-comp-per-code-review ARGS="--step dm"
+```
 
-Если документ идёт в PR, скрипты стоит оформить как `scripts/models/cb_comp/cb_comp_per_code_review.py` с тестами, по образцу скрипта PR #435.
+Входы `build/cb-comp-parity/`: `panel.csv` (архив авторов, 87 кодов × 3 — из ветки PR #435), `public_panel.csv`, `sheet_map.csv`. §7 (BS-модели и комбинация) воспроизводится протоколом Task 9 — `make cb-comp-h1-bs-combo`, [отчёт](2026-10-31-cb-comp-88-groups-task9.md); пробные числа §7.2 (база per-sheet #252) получены временными скриптами до протокола Task 9 и в репозиторий не вошли — их заменяет Task 9 с базой `live_cb`.
+
+Проверка воспроизведения (2026-10-31): шаги `distinct`, `forward`, `noise`, `priors`, `sa-compare`, `dm` дают ровно числа §2 и §6, панели `panels` побайтно совпадают с панелями прогонов §6.3; `inverse` совпадает во всех ячейках, кроме «тот же вопрос по всем 16 листам» для ibk: −0,215 вместо первоначальных −0,200 (временный скрипт включал в выборку ещё колонки ИБК «(факт)» и «(ожид)»; в таблице §2.3 — значение скрипта).
