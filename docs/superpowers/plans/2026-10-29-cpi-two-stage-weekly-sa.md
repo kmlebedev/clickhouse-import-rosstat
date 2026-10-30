@@ -41,9 +41,11 @@ W0 as-of конвенция ──┬─> W1 as-of недельный X-13 ─�
 
 ## W3: таргеты, доступность, фолды
 
-- [ ] `T_CORE`, `T_NSA`; доступность (Росстат 9-е, ЦБ 18-е `M+1`); purge по спеке §3; `common_folds`.
-- [ ] Хэши `feature_sha256`/`predictions_sha256` для детерминизма.
-**Done:** тесты доступности и purge.
+**Файлы:** `scripts/models/cpi/cpi_two_stage_folds.py` (+тест); использует `cpi_two_stage_targets` (W2), `weekly_sa_asof.publication_cutoff` (W0/W1), таблицу релизов Росстата.
+- [x] `T_CORE`, `T_NSA`, `T_SAX` (`TargetData`, загрузчики); доступность (Росстат — день релиза/9-е, ЦБ — 18-е `M+1`); purge по доступности = формуле спеки §3 (тест); `common_folds`; `make_folds`, `assert_no_lookahead`.
+- [x] Отпечатки `predictions_digest`/`feature_digests`/`fold_summary`; детерминизм (два прогона побайтно одинаковы).
+- [x] Документ фолдов: `docs/research/2026-10-30-cpi-two-stage-w3-targets-folds.md` (Stage 1: 94–105 фолдов на ячейку, Stage 2: 222–233).
+**Done:** 32 теста, мутационная проверка 7/8 (выживший — эквивалентный); `make cpi-two-stage-folds(-test)`.
 
 ## W3b: сверка данных CPI с датасетом CB_COMP
 
