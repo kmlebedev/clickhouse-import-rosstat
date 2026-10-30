@@ -256,8 +256,14 @@ def asof_snapshot(
     runner: Callable,
     first_month: date = FIRST_MONTH,
     min_months: int = MIN_MONTHS,
+    month_adjust: Optional[Callable] = None,
 ) -> Snapshot:
-    """Перефит на данных, доступных к `cutoff`; `runner(months) → список SA-уровней`."""
+    """Перефит на данных, доступных к `cutoff`; `runner(months) → список SA-уровней`.
+
+    `month_adjust(полные месяцы) → месяцы` — хук коррекции входа (W2, вариант `V2`):
+    применяется только к полным месяцам, неполный месяц остаётся сырым; `Snapshot.months`
+    хранит исходные (нескорректированные) точки.
+    """
     avail = available_points(points, cutoff)
     if len(avail) < 2:
         raise ValueError(f"к {cutoff} доступно {len(avail)} недельных точек")
@@ -269,12 +275,15 @@ def asof_snapshot(
     last = grid[-1][0]
     months = monthly_last_in_month(index, last, first_month, min_months)
     partial = partial_month(index, last)
-    sa_complete = list(runner(months))
+    fit_months = list(month_adjust(months)) if month_adjust is not None else list(months)
+    if len(fit_months) != len(months):
+        raise ValueError(f"month_adjust вернул {len(fit_months)} месяцев вместо {len(months)}")
+    sa_complete = list(runner(fit_months))
     if len(sa_complete) != len(months):
         raise ValueError(f"runner вернул {len(sa_complete)} значений вместо {len(months)}")
     sa_partial = None
     if partial is not None:
-        with_partial = list(months) + [partial]
+        with_partial = fit_months + [partial]
         out = list(runner(with_partial))
         if len(out) != len(with_partial):
             raise ValueError(f"runner вернул {len(out)} значений вместо {len(with_partial)}")
