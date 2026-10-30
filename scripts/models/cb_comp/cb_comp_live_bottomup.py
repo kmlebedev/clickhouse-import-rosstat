@@ -290,7 +290,7 @@ def run(archive: Path, panel_csv: Path, public_dir: Path, out_dir: Path, skip_r0
     diff_full = log_diff_frame(sa_full, codes, months)
     diff_asof = log_diff_frame(asof_series(sa_full, sa_asof), codes, months)
     targets = bu.component_targets(diff_full)
-    live = t_live({c: sa_full[c] for c in codes}, weights, months)
+    live = t_live({c: sa_full.get(c, {}) for c in codes}, weights, months)
 
     mp_lookup = bu._sheet_lookup(public_panel, sheet_map)
     # Признаки — на месяцах train ∪ test, как в `run_bottomup` (#190/#252): origin,
