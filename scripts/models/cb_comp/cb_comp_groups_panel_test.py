@@ -191,6 +191,21 @@ class SaTest(unittest.TestCase):
         self.assertNotIn(grid[0], out["full"])
         self.assertEqual(out["status"], "ok")
 
+    def test_series_ended_early_keeps_history(self):
+        grid = g.month_grid(date(2015, 1, 1), date(2024, 10, 1))
+        seen = {}
+
+        def factory(start):
+            def run(levels, first_rt):
+                seen["n"] = len(levels)
+                return [(0.1, float("nan"))] * len(levels)
+
+            return run
+
+        out = g.group_sa({m: 0.2 for m in grid}, date(2026, 9, 1), factory, asof=False)
+        self.assertEqual(out["status"], "ok")
+        self.assertEqual(seen["n"], len(grid))
+
     def test_asof_off_runs_no_rt(self):
         grid = g.month_grid(date(2015, 1, 1), date(2019, 6, 1))
         seen = {}

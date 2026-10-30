@@ -308,7 +308,10 @@ def group_sa(mm: dict, last: date, runner_factory, asof: bool) -> dict:
     Ряд короче `MIN_SA_MONTHS` или неудачный фит — `sa_failed`: NaN, NSA не
     подставляется. `runner_factory(start)` — мост X-13 для ряда с первого месяца `start`.
     """
-    grid = contiguous_tail(mm, last)
+    # Хвост ряда — от его собственного последнего месяца в пределах `last`:
+    # ряд, снятый с публикации раньше (9260 — до 2024-10), не теряет историю.
+    own_last = max((m for m in mm if m <= last), default=None)
+    grid = contiguous_tail(mm, own_last) if own_last else []
     if len(grid) < MIN_SA_MONTHS:
         return {"full": {}, "rt": {}, "status": "sa_failed", "months": len(grid)}
     levels = [1.0]
