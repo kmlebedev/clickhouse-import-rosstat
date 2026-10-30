@@ -312,7 +312,7 @@ def run(archive: Path, panel_csv: Path, public_dir: Path, out_dir: Path) -> dict
         "inputs": {"panel_csv": lb.sha256(panel_csv), "public_panel_csv": lb.sha256(public_dir / "public_panel.csv"),
                    "sheet_map_csv": lb.sha256(public_dir / "sheet_map.csv"), "target_xlsx": lb.sha256(archive / cp.TARGET_XLSX),
                    "series2016_xlsx": lb.sha256(archive / SERIES2016), "series2009_xlsx": lb.sha256(archive / SERIES2009)},
-        "regressors": {m: {"first": min(v), "last": max(v), "n": len(v)} for m, v in regressors.items()},
+        "regressors": {m: {"first": min(v).isoformat(), "last": max(v).isoformat(), "n": len(v)} for m, v in regressors.items()},
         "groups_without_sa": data["groups_without_sa"],
     })
     out_dir.mkdir(parents=True, exist_ok=True)
