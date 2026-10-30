@@ -2,10 +2,10 @@
 """EN_COMP и CB+EN на нашей панели 88 групп, истина `TARGET_FULL` — Task 3 #423.
 
 Пункт `key-rate/phase-4-cb-comp-88-groups-live`, зонтик #419. Протокол —
-спека `docs/superpowers/specs/2026-10-30-cb-comp-88-groups-live-design.md` §14.
+спека `docs/superpowers/specs/2026-10-30-cb-comp-88-groups-live-design.md` §15.
 
 * **данные, окна, цели групп, признаки** — как в Task 2 (`cb_comp_live_bottomup`):
-  SA групп из `panel_amended.csv`, МП по листам публичной книги, макро v2;
+  SA групп из `panel.csv`, МП по листам публичной книги, макро v2;
 * **кандидаты** — `live_cb` (CatBoost = `live_per_sheet` Task 2), `live_en`
   (ElasticNetCV в конфигурации B3 `cpi_monthly._fit_enet`, без `month`,
   импутация медианой train), `live_cb_en` (среднее CB и EN с равными весами);
@@ -45,7 +45,7 @@ from models.cb_comp import cb_comp_parity as cp
 from models.cpi import cpi_monthly as cm
 
 # ---------------------------------------------------------------------------
-# Предзарегистрированные константы (спека §14)
+# Предзарегистрированные константы (спека §15)
 # ---------------------------------------------------------------------------
 
 HORIZONS = bu.HORIZONS
@@ -155,7 +155,7 @@ def better_than_cb(pair: dict) -> bool:
 
 
 def choose_model(ratios: dict, in_mcs: dict, beats_cb: dict) -> tuple:
-    """Правило §14: `(модель, причина)`.
+    """Правило §15: `(модель, причина)`.
 
     `ratios[m][h]` — отношение к CB_COMP; `in_mcs[h]` — множество MCS;
     `beats_cb[m][h]` — «лучше `live_cb`». EN/CB+EN без значимого выигрыша над
@@ -258,9 +258,9 @@ def run(archive: Path, panel_csv: Path, public_dir: Path, out_dir: Path) -> dict
     aggregated = {m: lb.aggregate_predictions(groups[m], data["weights"], data["test_months"]) for m in CANDIDATES}
     result = evaluate(aggregated, data)
     result.update({
-        "spec": "docs/superpowers/specs/2026-10-30-cb-comp-88-groups-live-design.md §14",
+        "spec": "docs/superpowers/specs/2026-10-30-cb-comp-88-groups-live-design.md §15",
         "git_sha": lb.git_sha(),
-        "inputs": {"panel_amended_csv": lb.sha256(panel_csv), "public_panel_csv": lb.sha256(public_dir / "public_panel.csv"),
+        "inputs": {"panel_csv": lb.sha256(panel_csv), "public_panel_csv": lb.sha256(public_dir / "public_panel.csv"),
                    "sheet_map_csv": lb.sha256(public_dir / "sheet_map.csv"), "target_xlsx": lb.sha256(archive / cp.TARGET_XLSX)},
         "enet": {"alphas": [float(a) for a in cm.ENET_ALPHAS], "l1_ratio": list(cm.ENET_L1_RATIOS),
                  "cv_splits": cm.ENET_CV_SPLITS, "non_converged_fits": non_converged},

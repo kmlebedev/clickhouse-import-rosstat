@@ -857,7 +857,7 @@ cb-comp-live-bottomup-test:
 	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/cb_comp/cb_comp_live_bottomup_test.py -v
 
 # Task 3 #423: EN_COMP и CB+EN на нашей панели, истина TARGET_FULL —
-# классификация против CB_COMP, MCS, выбор модели, гейт G3 (спека §14).
+# классификация против CB_COMP, MCS, выбор модели, гейт G3 (спека §15).
 cb-comp-live-en:
 	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --with arch --with "holidays>=0.60" --python 3.12 python3 scripts/models/cb_comp/cb_comp_live_en.py $(ARGS)
 
