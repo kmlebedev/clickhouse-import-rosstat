@@ -359,15 +359,17 @@ def _origins(first: date, last: date) -> list:
     return out
 
 
-def build_v3_rows(release_dates: dict) -> dict:
-    """Строки `v3` (`feature_names_v3`) под конвенцией `publication`: МП — последняя доступная точка (режим `live`)."""
+def build_v3_rows(release_dates: dict, first: Optional[date] = None) -> dict:
+    """Строки `v3` (`feature_names_v3`) под конвенцией `publication`: МП — последняя доступная точка (режим `live`).
+
+    `first` — первый месяц строк (по умолчанию граница long-выборки v3, 2013-10)."""
     import cpi_monthly_v3 as v3
 
     targets, survey = cm.load_targets(), cm.load_survey()
     usd, key_rate, fao = cm.load_usd(), cm.load_key_rate(), cm.load_fao()
     panel = v3.weekly_panel(v3.load_weekly())
     index = cm.target_index(targets)
-    first = v3.SAMPLE_BOUNDS["long"][0]
+    first = first or v3.SAMPLE_BOUNDS["long"][0]
     rows = {}
     with cm.asof_convention("publication", release_dates=release_dates):
         for month in cm.sample_months(targets):
