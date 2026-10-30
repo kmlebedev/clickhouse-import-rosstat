@@ -34,6 +34,7 @@ import (
 	_ "github.com/kmlebedev/clickhouse-import-rosstat/polyus"
 	_ "github.com/kmlebedev/clickhouse-import-rosstat/ppi"
 	_ "github.com/kmlebedev/clickhouse-import-rosstat/rosstat"
+	_ "github.com/kmlebedev/clickhouse-import-rosstat/transaq"
 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
 	_ "github.com/kmlebedev/clickhouse-import-rosstat/views"
 	_ "github.com/kmlebedev/clickhouse-import-rosstat/weeklysa"

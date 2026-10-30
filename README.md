@@ -65,6 +65,7 @@ SELECT venue, count(), max(date) FROM gold_prices FINAL GROUP BY venue;
 | [`wgc`](docs/IMPORTERS.md), [`bold`](docs/IMPORTERS.md) | золотые ETF и резервы ЦБ, цена дня | `macro_series`, `bold_fund_snapshot`, `gold_prices` | ежедневно |
 | [`news`](docs/IMPORTERS.md) | 16 лент RSS/Telegram | `news_events`, `news_message_version`, `news_annotation` | каждые 30 мин |
 | [`gold`](docs/IMPORTERS.md), [`moex`](docs/IMPORTERS.md) | цена золота, PLZL, ОФЗ, KEYRATE, Brent-фронт-месяц | `gold_prices`, `stock_prices`, `ofz_curve`, `keyrate_*`, `moex_market` | ежедневно 18:47/19:13 |
+| [`transaq`](docs/IMPORTERS.md) | нетто-объёмы покупок и продаж по публичным сделкам MOEX из ленты внешнего `transaq-clickhouse-exporter` (вселенная — акции IMOEX и ОФЗ TQOB); минута и день | `transaq_net_flows`; витрины `v_transaq_net_flows`, `v_transaq_net_flows_daily` | каждые 15 мин 09:00–18:59 и 19:20 по будням |
 | [`calendar`](docs/IMPORTERS.md), [`forecast`](docs/IMPORTERS.md) | календарь событий, резолвер прогнозов | `events_calendar`, `forecast_log` | ежедневно |
 | [`views`](docs/IMPORTERS.md) | витрины контура, метрик компаний, сводный дашборд ключевой ставки и live-точность (`key_rate_views`) | `v_*`, `v_key_rate_dashboard`, `v_ml_live_accuracy`, `company_financials` | понедельник / вручную |
 | [`mlregistry`](docs/IMPORTERS.md) | реестр ML-экспериментов: DDL и витрины (schema-only, внешнего источника нет) | `ml_runs`, `ml_predictions`, `v_ml_*` | ежедневно 06:07 |

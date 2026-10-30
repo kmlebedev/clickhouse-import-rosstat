@@ -126,3 +126,9 @@ GRANT SELECT ON default.v_edisclosure_documents TO kimi_reader;
 -- только витрины с комментариями колонок.
 GRANT SELECT ON default.v_domrf_mortgage TO kimi_reader;
 GRANT SELECT ON default.v_domrf_price_index TO kimi_reader;
+
+-- Нетто-объёмы сделок MOEX (пункт ofz-market/1.5, issue #414): минутные и дневные
+-- buy/sell/net из ленты transaq_trades. Сырые transaq_* и transaq_net_flows агенту
+-- не выданы — только витрины с комментариями единиц и оговоркой про FORTS.
+GRANT SELECT ON default.v_transaq_net_flows TO kimi_reader;
+GRANT SELECT ON default.v_transaq_net_flows_daily TO kimi_reader;
