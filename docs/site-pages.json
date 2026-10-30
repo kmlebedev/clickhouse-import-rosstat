@@ -436,5 +436,11 @@
     "page": "research-2026-10-30-cb-comp-88-groups-task3.md",
     "title": "CB_COMP: EN_COMP и CB+EN на 88 группах (Task 3)",
     "section": "Исследования"
+  },
+  {
+    "source": "docs/research/2026-10-31-cb-comp-per-code-mp-reconstruction.md",
+    "page": "research-2026-10-31-cb-comp-per-code-mp-reconstruction.md",
+    "title": "CB_COMP: восстановление per-code МП из агрегатов (Task 8)",
+    "section": "Исследования"
   }
 ]

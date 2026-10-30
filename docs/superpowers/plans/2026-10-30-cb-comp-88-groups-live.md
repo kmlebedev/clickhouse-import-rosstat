@@ -83,11 +83,11 @@
 
 Ветка `research/cb-comp-per-code-mp-reconstruction`, worktree `.worktrees/cb-comp-per-code`. Протокол — спека §16; data request исключён владельцем.
 
-- [ ] **8.1 Протокол** — спека §16 и этот раздел; issue #434; до кода и результатов.
-- [ ] **8.2 Данные** — экспорт 87 × 3 из архива (регион 643), 11 листов `v_cbr_mp_public_panel` и 16 листов `cbr_mp_survey`; sha256 входов; forward-оператор.
-- [ ] **8.3 Методы** — `identity`/`offset`, `ridge_prior`, `factor`, `omp`, `coord`, `elim`; офлайн-тесты на синтетике.
-- [ ] **8.4 Прогон** — G-R1 (forward), G-R2 (inverse); downstream G-R3 только при пройденном G-R2.
-- [ ] **8.5 Отчёт** — `docs/research/2026-10-31-cb-comp-per-code-mp-reconstruction.{md,json}`; роадмап, `docs/site-pages.json`; `make all`, `make docs-check`; PR `Closes #434`.
+- [x] **8.1 Протокол** — спека §16 и этот раздел; issue #434; до кода и результатов.
+- [x] **8.2 Данные** — экспорт 87 × 3 из архива (регион 643), 11 листов `v_cbr_mp_public_panel` и 16 листов `cbr_mp_survey`; sha256 входов; forward-оператор.
+- [x] **8.3 Методы** — `identity`/`offset`, `ridge_prior`, `factor`, `omp`, `coord`, `elim`; офлайн-тесты на синтетике.
+- [x] **8.4 Прогон** — G-R1 (forward), G-R2 (inverse); downstream G-R3 только при пройденном G-R2. **Результат: no-go** — G-R1 (forward) и G-R2 (inverse) не пройдены.
+- [x] **8.5 Отчёт** — `docs/research/2026-10-31-cb-comp-per-code-mp-reconstruction.{md,json}`; роадмап, `docs/site-pages.json`; `make all`, `make docs-check`; PR `Closes #434`.
 
 ## Риски Task 8
 
