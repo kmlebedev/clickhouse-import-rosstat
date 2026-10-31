@@ -48,7 +48,7 @@ class ConstantsTest(unittest.TestCase):
         self.assertEqual(len(ex.UTIL_SERIES), 6)
         self.assertEqual(ex.EXCLUDED_HOUSING_CODE, "9416")
         self.assertEqual(ex.UTIL_COV_MIN, 0.5)
-        self.assertEqual(ex.R13_PINNED["coverage"], 0.8315)
+        self.assertEqual(ex.R13_PINNED["coverage"], 0.8314)
         self.assertEqual(ex.R12_PREDICTIONS_SHA256[:8], "0a67483f")
 
 
@@ -78,7 +78,7 @@ class UtilitiesTest(unittest.TestCase):
     def test_coverage_by_year(self):
         rows = ex.coverage_by_year({2024: leaf_weights()}, {2024: {"9470": 0.05944}}, years=[2024])
         self.assertEqual(rows[0]["year"], 2024)
-        self.assertAlmostEqual(rows[0]["coverage"], 0.8315, places=3)
+        self.assertAlmostEqual(rows[0]["coverage"], 0.8314, places=3)
 
 
 class ExValueTest(unittest.TestCase):

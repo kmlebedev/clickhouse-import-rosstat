@@ -13,7 +13,7 @@
    - primary 2023+ = 45 месяцев; G11/Holm границы; R12/R13-константы.
 3. **Код** — `cb_comp_h1_weekly_ex.py`: переиспользует `cb_comp_h1_weekly` (`prepare`, `weekly_inputs`, `attach_weekly`, `evaluate`, `mcs`, `holm`), `cb_comp_weekly_groups` (`weekly_group_features`), `cpi_weekly_aggregate` (`wkagg_features`); добавляет `load_base_predictions` (Task 4 `predictions.csv`, sha256/R12), `utilities_map`, `zhku_features`, `agg_ex_features`, `ols_ex_predict`, `g11_check`, R12/R13, артефакты.
 4. **Make** — `cb-comp-h1-weekly-ex` / `-test` (те же `--with`, что `cb-comp-h1-weekly`); `.PHONY`; коммит кода **до** прогона.
-5. **Прогон** — `make cb-comp-h1-weekly-ex ARGS="--archive …"`; повтор в `build/cb-comp-h1-weekly-ex-run2`; `cmp`/sha256. Task 4b обучает только OLS (`wk_agg_ex`), `combo3`/`combo3_wk` — из Task 4 `predictions.csv`: R12 — sha256 `0a67483f…`, RMSE 0,9698445785532128 / 0,9630314456250352 на 57 месяцах (1e-6). R13: 0,04942/0,05944/0,8315.
+5. **Прогон** — `make cb-comp-h1-weekly-ex ARGS="--archive …"`; повтор в `build/cb-comp-h1-weekly-ex-run2`; `cmp`/sha256. Task 4b обучает только OLS (`wk_agg_ex`), `combo3`/`combo3_wk` — из Task 4 `predictions.csv`: R12 — sha256 `0a67483f…`, RMSE 0,9698445785532128 / 0,9630314456250352 на 57 месяцах (1e-6). R13: 0,04942/0,05944/0,8314.
 6. **Отчёт** — `docs/research/2026-10-31-cb-comp-88-groups-task4b.{md,json}`: маппинг ЖКУ и покрытие, `agg_ex`, primary 2023+ (45), reference 2022+ и без 2022-03, G11, подпериоды, MCS/MDE, «что не проверено».
 7. **Документы** — README, `docs/site-pages.json`, роадмап; `make all`, `make docs-check`.
 8. **PR** — `Closes #446`, протокол приёмки комментарием, Project V2 → `In Review`.
