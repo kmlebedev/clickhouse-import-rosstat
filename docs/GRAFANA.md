@@ -86,6 +86,8 @@ curl -u admin:<пароль> -X POST http://localhost:3001/api/admin/provisionin
 
 (либо один `systemctl restart grafana-server`). Цель Grafana не перезапускает и сама печатает эту команду; подробности — `deploy/staging/README.md`.
 
+**Датасорс и `readonly`.** `kimi_reader` создаётся с `readonly = 2` (`sql/mcp_kimi_reader.sql`, обновляется `make mcp-user` / `make mcp-user-staging`): запись на постоянные таблицы запрещена и на этом уровне, но плагин `grafana-clickhouse-datasource` 4.14+ при подключении выставляет `max_execution_time`. На `readonly = 1` health датасорса возвращает `failed to create ClickHouse client`, а в логе Grafana — `Cannot modify 'max_execution_time' setting in readonly mode` (проверено на staging 2026-10-31).
+
 ### Алерты live-мониторинга ML (`infra/4.3`)
 
 `grafana/provisioning/alerting/ml-live.yaml` — два правила Grafana Alerting:

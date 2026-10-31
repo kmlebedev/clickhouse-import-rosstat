@@ -248,7 +248,8 @@ Grafana и systemd на хосте цель **не трогает**: тольк�
 ### Датасорс
 
 - Шаблон: `grafana-datasource.yaml` — `host: localhost`, `port: 8123`, `protocol: http`,
-  пользователь `kimi_reader` (тот же readonly-пользователь, что у MCP), uid `ch-rosstat`
+  пользователь `kimi_reader` (тот же readonly-пользователь, что у MCP; `readonly = 2` — запись
+  запрещена, но плагин Grafana может менять настройки сессии, в т.ч. `max_execution_time`), uid `ch-rosstat`
   (совпадает с `grafana/clickhouse.go` и с таргетами панелей дашборда).
 - Пароля в репозитории нет: плейсхолдер `__CLICKHOUSE_PASSWORD__` подставляет **на хосте**
   `make grafana-provision-staging` из `/etc/clickhouse-import-rosstat.env` (600). Подстановка —
@@ -292,10 +293,11 @@ Grafana и systemd на хосте цель **не трогает**: тольк�
   `GRAFANA_STAGING_TOKEN` в `~/.config/rosstat/env`. На самом хосте токен не нужен: push идёт через туннель.
 - admin-reload провижининга датасорса (см. выше) — при первом деплое и после каждой правки
   `grafana-datasource.yaml`. Цель печатает напоминание, когда файл был переустановлен.
-- Пользователь ClickHouse `kimi_reader` уже есть на хосте (гранты readonly на витрины `v_*`).
+- Пользователь ClickHouse `kimi_reader` уже есть на хосте (гранты только на витрины `v_*`,
+  `readonly = 2` — запись запрещена; создаётся/обновляется `make mcp-user-staging`).
 
 Приёмка полного прогона: `make grafana-deploy-staging` → по каждому uid из `DASHBOARDS`
-(`gold-thesis`, `key-rate-publications`, `finance-polyus`) `OK   дашборд виден` и непустые точки по первым панелям,
+(`gold-thesis`, `key-rate-publications`, `finance-polyus`, `transaq-trades`) `OK   дашборд виден` и непустые точки по первым панелям,
 затем `gcx dashboards list` показывает все дашборды из `DASHBOARDS` (существующие на staging не затронуты).
 
 ## Отладка и откат
