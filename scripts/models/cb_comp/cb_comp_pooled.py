@@ -366,6 +366,14 @@ def aggregate_pooled(predictions: dict, weights: dict, months: list) -> tuple:
     return aggregated, coverage
 
 
+def combo_with_pooled(pooled_main: dict, bs: dict) -> dict:
+    """`combo3_pooled`: среднее агрегированного pooled и двух BS-моделей."""
+    return {
+        horizon: h1.combine_mean([pooled_main[horizon], bs[h1.MODEL_ECON][horizon], bs[h1.MODEL_ROZN][horizon]])
+        for horizon in HORIZONS
+    }
+
+
 def reference_forecasts(data: dict, public_dir: Path) -> tuple:
     """`live_cb`, BS-модели и `combo3` — кодом Task 3/9."""
     groups = lb.fit_predict(data["specs"], data["features"], data["features"], data["targets"],
@@ -584,22 +592,20 @@ def run(archive: Path, panel_csv: Path, public_dir: Path, out_dir: Path, iterati
             WINDOW_START[window], test_months, overrides,
         )
 
+    pooled_main, coverage_main = aggregate_pooled(pooled[WINDOW_MAIN], data["weights"], test_months)
+    pooled_control, coverage_control = aggregate_pooled(pooled[WINDOW_CONTROL], data["weights"], test_months)
     live_cb, bs, combo = reference_forecasts(data, public_dir)
-    combo_pooled = {
-        horizon: h1.combine_mean([pooled[WINDOW_MAIN][horizon], bs[h1.MODEL_ECON][horizon], bs[h1.MODEL_ROZN][horizon]])
-        for horizon in HORIZONS
-    }
+    combo_pooled = combo_with_pooled(pooled_main, bs)
     forecasts = {
-        MODEL_POOLED_MAIN: pooled[WINDOW_MAIN],
-        MODEL_POOLED_CONTROL: pooled[WINDOW_CONTROL],
+        MODEL_POOLED_MAIN: pooled_main,
+        MODEL_POOLED_CONTROL: pooled_control,
         MODEL_COMBO: combo,
         MODEL_COMBO_POOLED: combo_pooled,
         MODEL_CB: live_cb,
     }
-    aggregated = {model: aggregate_pooled(forecasts[model], data["weights"], test_months) for model in forecasts}
 
-    evaluation = evaluate({model: aggregated[model][0] for model in forecasts}, data)
-    coverage = {model: aggregated[model][1] for model in (MODEL_POOLED_MAIN, MODEL_POOLED_CONTROL)}
+    evaluation = evaluate(forecasts, data)
+    coverage = {MODEL_POOLED_MAIN: coverage_main, MODEL_POOLED_CONTROL: coverage_control}
     min_coverage = min(
         coverage[MODEL_POOLED_MAIN][horizon][month]
         for horizon in HORIZONS for month in normal
@@ -657,7 +663,7 @@ def run(archive: Path, panel_csv: Path, public_dir: Path, out_dir: Path, iterati
     }
 
     out_dir.mkdir(parents=True, exist_ok=True)
-    write_predictions(out_dir / "predictions.csv", {model: aggregated[model][0] for model in forecasts}, data, normal)
+    write_predictions(out_dir / "predictions.csv", forecasts, data, normal)
     (out_dir / "result.json").write_text(
         json.dumps(_jsonable(result), ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )

@@ -226,6 +226,28 @@ class AggregateTest(unittest.TestCase):
         self.assertAlmostEqual(aggregated[1][month], 2.0)
 
 
+class ComboPooledTest(unittest.TestCase):
+    def test_combo_is_mean_of_aggregated_series(self):
+        pooled_series = {horizon: {date(2019, 1, 1): 1.0 * horizon} for horizon in pooled.HORIZONS}
+        bs = {
+            "bs_econ16": {horizon: {date(2019, 1, 1): 2.0 * horizon} for horizon in pooled.HORIZONS},
+            "bs_rozn16": {horizon: {date(2019, 1, 1): 3.0 * horizon} for horizon in pooled.HORIZONS},
+        }
+        combo = pooled.combo_with_pooled(pooled_series, bs)
+        for horizon in pooled.HORIZONS:
+            self.assertAlmostEqual(combo[horizon][date(2019, 1, 1)], 2.0 * horizon)
+
+    def test_common_months_only(self):
+        month, other = date(2019, 1, 1), date(2019, 2, 1)
+        pooled_series = {horizon: {month: 1.0, other: 1.0} for horizon in pooled.HORIZONS}
+        bs = {
+            "bs_econ16": {horizon: {month: 2.0} for horizon in pooled.HORIZONS},
+            "bs_rozn16": {horizon: {month: 3.0} for horizon in pooled.HORIZONS},
+        }
+        combo = pooled.combo_with_pooled(pooled_series, bs)
+        self.assertEqual(sorted(combo[1]), [month])
+
+
 class GateTest(unittest.TestCase):
     @staticmethod
     def pair(left: float, right: float, p: float) -> dict:
