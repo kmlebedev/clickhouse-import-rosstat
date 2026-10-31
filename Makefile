@@ -873,6 +873,15 @@ cb-comp-h1-bs-combo:
 cb-comp-h1-bs-combo-test:
 	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/cb_comp/cb_comp_h1_bs_combo_test.py -v
 
+# Task 10 #438: pooled CatBoost на 87 группах (окно 2016+ / control 2010-03+),
+# годовая переподготовка без утечки; G10 против combo3, MCS 90 %.
+# Входы — как у cb-comp-h1-bs-combo.
+cb-comp-pooled:
+	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --with arch --with "holidays>=0.60" --python 3.12 python3 scripts/models/cb_comp/cb_comp_pooled.py $(ARGS)
+
+cb-comp-pooled-test:
+	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/cb_comp/cb_comp_pooled_test.py -v
+
 # Task 4 #424: h1 — недельный ИПЦ поверх combo3: маппинг 148 недельных позиций
 # на 88 групп, wk_g_* в live_cb, смешивание с недельным агрегатом, walk-forward
 # 2022+ (ежемесячный expanding) и G10/Holm. Только чтение ClickHouse и архива.
