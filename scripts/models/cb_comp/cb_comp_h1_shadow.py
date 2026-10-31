@@ -238,6 +238,18 @@ def prepare_through(archive: Path, panel_csv: Path, public_dir: Path, through: d
         return data
     if cp.shift_month(last, 1) != through:
         raise SystemExit(f"прогноз {through}: панель кончается {last}; нужен ровно следующий месяц")
+    data["features"] = feature_table_asof(data, panel_csv, public_dir, through)
+    data["feature_months"] = cp.month_range(TRAIN_START, through)
+    return data
+
+
+def feature_table_asof(data: dict, panel_csv: Path, public_dir: Path, through: date) -> dict:
+    """Таблица признаков Task 4 до `through` на активном cutoff (`late`/`publication`).
+
+    Как `tw.prepare`, но без паритетных строк окна CB_COMP: на cutoff
+    `publication` макро-месяцы с недоступным `fao_mm` выпадают (признаки NaN),
+    а `assert_no_leakage` окна статьи для walk-forward не нужен.
+    """
     feature_rows, _ = cp.load_feature_rows()
     macro = {row.month: row.features for row in feature_rows}
     public_panel = bu.load_public_panel(public_dir / "public_panel.csv")
@@ -245,12 +257,10 @@ def prepare_through(archive: Path, panel_csv: Path, public_dir: Path, through: d
     sa_full, _sa_asof = lb.load_group_panel(panel_csv)
     months = cp.month_range(date(2010, 1, 1), through)
     diff_full = lb.log_diff_frame(sa_full, data["codes"], months)
-    feature_months = cp.month_range(TRAIN_START, through)
-    data["features"] = bu.feature_table(
-        data["specs"], feature_months, diff_full, macro, bu._sheet_lookup(public_panel, sheet_map), feature_mode="per_sheet"
+    return bu.feature_table(
+        data["specs"], cp.month_range(TRAIN_START, through), diff_full, macro,
+        bu._sheet_lookup(public_panel, sheet_map), feature_mode="per_sheet",
     )
-    data["feature_months"] = feature_months
-    return data
 
 
 def wf_combo(data: dict, features: dict, regressors: dict, months: list, jobs: int) -> dict:
@@ -340,8 +350,8 @@ def robustness(archive: Path, panel_csv: Path, public_dir: Path, base_prediction
         release_dates = releases.load_release_dates()
         regressors = bs9.load_regressors(public_dir)
         with cm.asof_convention(cm.ASOF_PUBLICATION, release_dates):
-            data_pub = tw.prepare(archive, panel_csv, public_dir)
-            combo_pub = wf_combo(data_pub, data_pub["features"], regressors, primary, jobs)
+            features_mp = feature_table_asof(data, panel_csv, public_dir, data["feature_months"][-1])
+            combo_pub = wf_combo(data, features_mp, regressors, primary, jobs)
             features_pub = weekly_ex_features(context["weekly"], context["leaf_weights"], context["group_weights"], data["feature_months"])
             cutoffs = {m.isoformat(): cm.cutoff_for(m).isoformat() for m in primary}
         wk_pub = weekly_models(features_pub, t_live, all_train, primary, combo_pub[MODEL_COMBO])
