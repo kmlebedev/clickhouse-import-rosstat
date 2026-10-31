@@ -288,9 +288,9 @@ class WkaggLeakageTest(unittest.TestCase):
 
 class TariffWeekTest(unittest.TestCase):
     def test_calendar_flag_by_month(self):
-        for month in (date(2022, 7, 1), date(2023, 7, 1), date(2024, 7, 1), date(2025, 7, 1), date(2026, 10, 1)):
+        for month in (date(2022, 7, 1), date(2022, 12, 1), date(2024, 7, 1), date(2025, 7, 1), date(2026, 10, 1)):
             self.assertEqual(wkagg_features([], month, month + timedelta(days=40))["tariff_week"], 1, month)
-        for month in (date(2022, 3, 1), date(2022, 8, 1), date(2024, 10, 1), date(2020, 7, 1)):
+        for month in (date(2022, 3, 1), date(2022, 8, 1), date(2023, 7, 1), date(2024, 10, 1), date(2020, 7, 1)):
             self.assertEqual(wkagg_features([], month, month + timedelta(days=40))["tariff_week"], 0, month)
 
     def test_january_first_week_counts(self):
