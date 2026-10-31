@@ -202,6 +202,7 @@ make mlflow-down
 | Go-инженер | [`go-engineer`](.kimi-code/skills/go-engineer/SKILL.md) |
 | Python-инженер (не-ML) | [`python-engineer`](.kimi-code/skills/python-engineer/SKILL.md) |
 | ML-инженер | [`ml-engineer`](.kimi-code/skills/ml-engineer/SKILL.md) |
+| ML-инженер-тимлид | [`ml-engineer-teamlead`](.kimi-code/skills/ml-engineer-teamlead/SKILL.md) |
 | Research-инженер | [`research-engineer`](.kimi-code/skills/research-engineer/SKILL.md) |
 | Главный редактор | [`editor-in-chief`](.kimi-code/skills/editor-in-chief/SKILL.md) |
 

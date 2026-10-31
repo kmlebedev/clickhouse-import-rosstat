@@ -40,7 +40,7 @@ You have GitHub MCP tools (`mcp__github__*`) — if the task is an issue, read
 its `role:*` label via `issue_read` and open the corresponding role skill.
 
 Before coding, read `AGENTS.md` and the role skill for the task:
-`go-engineer`, `python-engineer`, `ml-engineer` or `research-engineer`.
+`go-engineer`, `python-engineer`, `ml-engineer`, `ml-engineer-teamlead` or `research-engineer`.
 If the role skill is not available in your tool set, report
 `DONE_WITH_CONCERNS` instead of guessing. Role skills do not override
 `AGENTS.md` rules 1–12.
