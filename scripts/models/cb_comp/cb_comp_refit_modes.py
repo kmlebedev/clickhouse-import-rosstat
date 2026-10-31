@@ -483,23 +483,43 @@ def gate(per_mode: dict, mcs_by_h: dict) -> dict:
                 "p1_normal": item["ratio_frozen"] <= 1 + NOHARM_MARGIN + 1e-12,
                 "p2_2023_2024": item["subperiods"]["2023_2024"]["rmse"] <= (1 + NOHARM_MARGIN + 1e-12) * frozen_2023,
                 "p3_all67": item["ratio_all67_frozen"] <= 1 + SHOCK_WINDOW_MARGIN + 1e-12,
-                "p4_dm_ci": pair["dm_p"] >= DM_ALPHA and pair["delta_ci"][0] <= 0,
-                "p5_mcs": mode in mcs_by_h[horizon]["included"],
+                # P4: значимо хуже = p < 0,05 и CI ΔRMSE целиком выше 0. Значимое
+                # улучшение не штрафуется — иначе гейт не может принять улучшение.
+                "p4_not_worse": not (pair["dm_p"] < DM_ALPHA and pair["delta_ci"][0] > 0),
+                # Литеральное чтение §17.3 (p ≥ 0,05) — для прозрачности, в решение не входит.
+                "p4_literal": pair["dm_p"] >= DM_ALPHA and pair["delta_ci"][0] <= 0,
+                # Базовая строка — статус-кво: её исключение из MCS не блокирует keep_frozen.
+                "p5_mcs": mode == MODE_FROZEN or mode in mcs_by_h[horizon]["included"],
             }
-            per_h[horizon] = {**passed, "ok": all(passed.values())}
+            per_h[horizon] = {
+                **passed,
+                "ok": all(value for key, value in passed.items() if key != "p4_literal"),
+                "literal_ok": all(value for key, value in passed.items() if key != "p4_not_worse"),
+            }
             scores.append(item["ratio_frozen"])
         checks[mode] = {
             "horizons": per_h,
             "ok": all(item["ok"] for item in per_h.values()),
+            "literal_ok": all(item["literal_ok"] for item in per_h.values()),
             "score": float(np.mean(scores)),
         }
+
+    def select(modes: list) -> tuple:
+        if not modes:
+            return MODE_FROZEN, "keep_frozen"
+        best = min(modes, key=lambda mode: (round(checks[mode]["score"], 12), MODE_RANK[mode]))
+        return best, ("keep_frozen" if best == MODE_FROZEN else f"adopt:{best}")
+
     passed = [mode for mode in CANDIDATES if checks[mode]["ok"]]
-    if passed:
-        best = min(passed, key=lambda mode: (round(checks[mode]["score"], 12), MODE_RANK[mode]))
-        decision = "keep_frozen" if best == MODE_FROZEN else f"adopt:{best}"
-    else:
-        best, decision = MODE_FROZEN, "keep_frozen"
-    return {"candidates": checks, "passed": passed, "selected": best, "decision": decision}
+    literal_passed = [mode for mode in CANDIDATES if checks[mode]["literal_ok"]]
+    best, decision = select(passed)
+    _, decision_literal = select(literal_passed)
+    return {
+        "candidates": checks, "passed": passed, "literal_passed": literal_passed,
+        "selected": best, "decision": decision, "decision_literal": decision_literal,
+        "p4_interpretation": "p4_not_worse: p < 0,05 и CI ΔRMSE выше 0; литеральное p4_literal (p ≥ 0,05) "
+                             "запрещает и значимое улучшение — в решение не входит, показано для прозрачности",
+    }
 
 
 def hypothesis_live_cb(per_mode: dict) -> dict:
