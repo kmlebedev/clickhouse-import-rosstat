@@ -355,7 +355,7 @@ def aggregate_pooled(predictions: dict, weights: dict, months: list) -> tuple:
     """`({h: {M: агрегат}}, {h: {M: число групп}})`, веса СПР с лагом год."""
     aggregated, coverage = {}, {}
     for horizon in HORIZONS:
-        by_group = {code: per_h[horizon] for code, per_h in predictions.items() if per_h.get(horizon)}
+        by_group = predictions.get(horizon, {})
         values, _denominator = bu.aggregate(by_group, weights, months)
         aggregated[horizon] = {month: value for month, value in values.items() if not math.isnan(value)}
         per_month = {}
