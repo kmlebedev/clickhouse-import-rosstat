@@ -2,7 +2,7 @@
 
 > **Пункт:** `key-rate/phase-4-cb-comp-88-groups-live`, зонтик [#419](https://github.com/kmlebedev/clickhouse-import-rosstat/issues/419), Task 4 [#424](https://github.com/kmlebedev/clickhouse-import-rosstat/issues/424), `role:ml`. База — `combo3` из PR [#437](https://github.com/kmlebedev/clickhouse-import-rosstat/pull/437).
 > **Протокол:** [2026-10-31-cb-comp-h1-weekly-design.md](../superpowers/specs/2026-10-31-cb-comp-h1-weekly-design.md) (коммит `10c696e`, до кода и прогона), [план](../superpowers/plans/2026-10-31-cb-comp-h1-weekly.md). **Код:** `scripts/models/cb_comp/cb_comp_weekly_groups.py`, `cb_comp_h1_weekly.py` (+ 36 офлайн-тестов), `make cb-comp-h1-weekly(-test)`; код закоммичен до прогона (`8bc1f0f`).
-> **Артефакты:** [JSON](2026-10-31-cb-comp-88-groups-task4.json), [mapping CSV](2026-10-31-cb-comp-88-groups-task4-mapping.csv), `build/cb-comp-h1-weekly/` (gitignored). Прогон — `2e8d950` + код Task 4, повтор — `build/cb-comp-h1-weekly-run2`.
+> **Артефакты:** [JSON](2026-10-31-cb-comp-88-groups-task4.json), [mapping CSV](2026-10-31-cb-comp-88-groups-task4-mapping.csv), `build/cb-comp-h1-weekly/` (gitignored). Прогон — `2e8d950` + код Task 4; повтор до правки ревью — `build/cb-comp-h1-weekly-run2`; после правки — `build/cb-comp-h1-weekly-v2`.
 
 ## 1. Короткий вывод
 
@@ -169,4 +169,4 @@ make cb-comp-h1-weekly ARGS="--archive <BusinessSurveyCBRCpiForecastingSourceCod
 
 Входы (sha256 в JSON): `build/cb-comp-groups/panel.csv` `aec91f99…` (C0), `build/cb-comp-parity/public_panel.csv` `47176baa…`, `sheet_map.csv` `0d8a6ab5…`, `TARGET_FULL` `d5278124…`; ClickHouse — `v_rosstat_macro` (148 W-рядов + агрегат), `macro_series` (`cbr_survey/price_expectations_sa`), `v_cbr_mp_public_panel`.
 
-Повторный прогон — `build/cb-comp-h1-weekly-run2`; `predictions.csv` sha256 `0a67483f…`, `result.json` `2c8cbd9b…` — побайтно совпадают с первым прогоном (`cmp` — identical).
+Повторный прогон до правки ревью — `build/cb-comp-h1-weekly-run2`: `predictions.csv` `0a67483f…`, `result.json` `2c8cbd9b…` — identical. После правки ревью — `build/cb-comp-h1-weekly-v2`: `predictions.csv` `0a67483f…` (identical), `result.json` `9281055f…` (исправленный Holm, блок `sensitivity`).
