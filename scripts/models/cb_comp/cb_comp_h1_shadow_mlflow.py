@@ -22,9 +22,15 @@ shadow-JSON `docs/research/cb-comp-h1-shadow/<YYYY-MM>.json` (P0.6, #455) и
 меняет, alias не двигает, mlflow импортируется лениво (зависимость ставит
 Makefile-цель через `uv run --with mlflow==...`).
 
-Запуск:
+**Канонический backend — staging MLflow, не локальный `build/mlflow`.** Для
+реального прогона URI обязателен: `--tracking-uri` или `MLFLOW_TRACKING_URI`.
+Локальный `http://127.0.0.1:5000` (`build/mlflow`) — только dev/офлайн.
+`--dry-run` работает без URI.
 
-    make cb-comp-h1-shadow-mlflow ARGS="--backfill"
+Запуск (staging через SSH-туннель):
+
+    ssh -N -L 15001:127.0.0.1:5000 palmshell
+    MLFLOW_TRACKING_URI=http://127.0.0.1:15001 make cb-comp-h1-shadow-mlflow ARGS="--backfill"
     make cb-comp-h1-shadow-mlflow ARGS="--month 2026-10 --dry-run"
 
 Тесты — офлайн (`sqlite:///<tmp>/mlflow.db`, без сети и ClickHouse):
@@ -44,7 +50,14 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
 SHADOW_DIR = ROOT / "docs" / "research" / "cb-comp-h1-shadow"
-DEFAULT_URI = "http://127.0.0.1:5000"
+TRACKING_URI_ENV = "MLFLOW_TRACKING_URI"
+MISSING_URI_MESSAGE = (
+    "MLflow tracking URI не задан: укажите --tracking-uri или "
+    f"{TRACKING_URI_ENV}. Канонический backend — staging, не локальный "
+    "build/mlflow: ssh -N -L 15001:127.0.0.1:5000 palmshell, затем "
+    "MLFLOW_TRACKING_URI=http://127.0.0.1:15001. "
+    "Локальный http://127.0.0.1:5000 — только dev/офлайн-тесты."
+)
 
 EXPERIMENT = "cb_comp_h1_shadow"
 VERSION = "wk_mix_ex@v1"
@@ -78,6 +91,21 @@ TAG_MAX = 5000
 
 class ShadowJsonError(ValueError):
     """Shadow-JSON не соответствует схеме P0.6 или не читается."""
+
+
+class MissingTrackingUriError(ValueError):
+    """Для реального прогона не задан MLflow tracking URI."""
+
+
+def resolve_tracking_uri(value: str = None) -> str:
+    """`--tracking-uri` → `MLFLOW_TRACKING_URI` → пусто.
+
+    Локальный `127.0.0.1:5000` не подставляется: канонический backend —
+    staging, URI передаётся явно или через env.
+    """
+    if value:
+        return value
+    return os.environ.get(TRACKING_URI_ENV) or None
 
 
 # ---------------------------------------------------------------------------
@@ -425,9 +453,12 @@ def _log_mlflow(plan: dict, raw_text: str, tracking_uri: str, force: bool) -> di
             "experiment_id": experiment_id, "run_name": plan["run_name"]}
 
 
-def log_path(path: Path, tracking_uri: str, expected_month: str = None,
+def log_path(path: Path, tracking_uri: str = None, expected_month: str = None,
              force: bool = False, dry_run: bool = False) -> dict:
-    """Логирует один shadow-JSON; при `dry_run` MLflow не импортируется."""
+    """Логирует один shadow-JSON; при `dry_run` URI и MLflow не нужны."""
+    tracking_uri = resolve_tracking_uri(tracking_uri)
+    if not dry_run and not tracking_uri:
+        raise MissingTrackingUriError(MISSING_URI_MESSAGE)
     payload, text, sha = load_payload(path)
     if expected_month is not None and payload["month"] != expected_month:
         raise ShadowJsonError(
@@ -472,9 +503,10 @@ def _parse_args(argv=None) -> argparse.Namespace:
                         help="валидировать и напечатать план, не трогая MLflow")
     parser.add_argument("--force", action="store_true",
                         help="создать новый run, даже если (month, json_sha256) уже есть")
-    parser.add_argument("--tracking-uri",
-                        default=os.environ.get("MLFLOW_TRACKING_URI") or DEFAULT_URI,
-                        help="MLflow tracking URI (по умолчанию MLFLOW_TRACKING_URI или %(default)s)")
+    parser.add_argument("--tracking-uri", default=None,
+                        help="MLflow tracking URI; канонический backend — staging "
+                             "(SSH-туннель 15001). Если не задан, берётся "
+                             f"{TRACKING_URI_ENV}; локальный build/mlflow не подставляется")
     args = parser.parse_args(argv)
     if args.month is not None and not _valid_month(args.month):
         parser.error(f"--month: ожидается YYYY-MM, получено {args.month!r}")
@@ -485,6 +517,10 @@ def _parse_args(argv=None) -> argparse.Namespace:
 
 def main(argv=None) -> int:
     args = _parse_args(argv)
+    tracking_uri = resolve_tracking_uri(args.tracking_uri)
+    if not args.dry_run and not tracking_uri:
+        print(MISSING_URI_MESSAGE, file=sys.stderr)
+        return 1
     try:
         paths = collect_paths(args.month, args.path, args.backfill)
     except ShadowJsonError as exc:
@@ -500,7 +536,7 @@ def main(argv=None) -> int:
                     f"имя файла {path.name!r} не совпадает с month {payload['month']!r}"
                 )
             result = log_path(
-                path, args.tracking_uri, expected_month=args.month,
+                path, tracking_uri, expected_month=args.month,
                 force=args.force, dry_run=args.dry_run,
             )
         except (OSError, ShadowJsonError) as exc:

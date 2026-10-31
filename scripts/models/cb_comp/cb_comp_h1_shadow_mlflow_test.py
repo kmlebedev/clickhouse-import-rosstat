@@ -297,12 +297,31 @@ class MLflowTest(unittest.TestCase):
         self.assertNotEqual(forced["run_id"], first["run_id"])
         self.assertEqual(len(self.runs()), 2)
 
-    def test_dry_run_no_write(self):
-        result = m.log_path(self.path, "http://127.0.0.1:1", dry_run=True)
+    def test_dry_run_no_write_without_uri(self):
+        with mock.patch.dict(os.environ, {m.TRACKING_URI_ENV: ""}, clear=False):
+            result = m.log_path(self.path, None, dry_run=True)
         self.assertEqual(result["status"], "would-create")
         self.assertEqual(result["plan"]["run_name"], "shadow__2026-10__wk_mix_ex@v1")
         self.assertIsNone(self.client.get_experiment_by_name(m.EXPERIMENT))
         self.assertEqual(self.runs(), [])
+
+    def test_missing_tracking_uri(self):
+        with mock.patch.dict(os.environ, {m.TRACKING_URI_ENV: ""}, clear=False):
+            with self.assertRaises(m.MissingTrackingUriError) as ctx:
+                m.log_path(self.path, None)
+        self.assertIn("staging", str(ctx.exception))
+        self.assertIn("--tracking-uri", str(ctx.exception))
+        self.assertIn("build/mlflow", str(ctx.exception))
+        self.assertIsNone(self.client.get_experiment_by_name(m.EXPERIMENT))
+        self.assertEqual(self.runs(), [])
+
+    def test_resolve_tracking_uri_prefers_argument_then_env(self):
+        with mock.patch.dict(os.environ, {m.TRACKING_URI_ENV: "http://127.0.0.1:15001"},
+                             clear=False):
+            self.assertEqual(m.resolve_tracking_uri(None), "http://127.0.0.1:15001")
+            self.assertEqual(m.resolve_tracking_uri("sqlite:///x.db"), "sqlite:///x.db")
+        with mock.patch.dict(os.environ, {m.TRACKING_URI_ENV: ""}, clear=False):
+            self.assertIsNone(m.resolve_tracking_uri(None))
 
     def test_actual_metrics_logged(self):
         write_json(self.path, payload(actual={"t_live_rt": 0.5, "t_live": 0.55}))
@@ -336,16 +355,36 @@ class MLflowTest(unittest.TestCase):
             self.assertEqual(len(self.runs()), 2)
             self.assertIn("skipped", out.getvalue())
 
-    def test_main_month_dry_run(self):
-        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(m, "SHADOW_DIR", Path(tmp)):
+    def test_main_month_dry_run_without_uri(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(m, "SHADOW_DIR", Path(tmp)), \
+                mock.patch.dict(os.environ, {m.TRACKING_URI_ENV: ""}, clear=False):
             write_json(Path(tmp) / "2026-10.json", payload())
             with contextlib.redirect_stdout(io.StringIO()) as out:
                 self.assertEqual(
-                    m.main(["--month", "2026-10", "--dry-run",
-                            "--tracking-uri", "http://127.0.0.1:1"]), 0
+                    m.main(["--month", "2026-10", "--dry-run"]), 0
                 )
             self.assertIn("shadow__2026-10__wk_mix_ex@v1", out.getvalue())
             self.assertIsNone(self.client.get_experiment_by_name(m.EXPERIMENT))
+
+    def test_main_requires_tracking_uri(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(m, "SHADOW_DIR", Path(tmp)), \
+                mock.patch.dict(os.environ, {m.TRACKING_URI_ENV: ""}, clear=False):
+            write_json(Path(tmp) / "2026-10.json", payload())
+            with contextlib.redirect_stderr(io.StringIO()) as err:
+                self.assertEqual(m.main(["--month", "2026-10"]), 1)
+            self.assertIn("staging", err.getvalue())
+            self.assertIn("--tracking-uri", err.getvalue())
+            self.assertEqual(self.runs(), [])
+
+    def test_main_uses_tracking_uri_env(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(m, "SHADOW_DIR", Path(tmp)), \
+                mock.patch.dict(os.environ, {m.TRACKING_URI_ENV: self.uri}, clear=False):
+            write_json(Path(tmp) / "2026-10.json", payload())
+            self.assertEqual(m.main(["--month", "2026-10"]), 0)
+        self.assertEqual(len(self.runs()), 1)
 
     def test_main_backfill_name_mismatch(self):
         with tempfile.TemporaryDirectory() as tmp, mock.patch.object(m, "SHADOW_DIR", Path(tmp)):
