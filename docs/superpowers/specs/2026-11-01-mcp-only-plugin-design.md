@@ -1,8 +1,8 @@
-# Спека: `infra/5.10` — MCP-only плагин без скилов и малой установкой
+# Спека: `infra/5.10` — MCP-only плагин в отдельном репозитории
 
 **Дата:** 2026-11-01
 **Пункт:** `infra/5.10` (issue [#474](https://github.com/kmlebedev/clickhouse-import-rosstat/issues/474)); зависит от `infra/5.9` (#456)
-**Роль:** Go-инженер (манифесты, контрактный тест, Makefile/CI, docs)
+**Роль:** Go-инженер (манифесты, CI, Makefile, docs)
 
 ## 1. Цель
 
@@ -11,120 +11,97 @@
 1. Плагин распространяет **только подключение к MCP** `https://mcp.selfinvesting.ru:8443/mcp` (сервер `rosstat-staging`), без скилов и агентов.
 2. При установке не скачивается ничего, что не нужно для MCP.
 3. Размер плагина и маркетплейса при установке снижается кардинально.
+4. Путь установки — **единообразный во всех клиентах, через отдельный репозиторий** (2026-11-01, после отклонения варианта с подкаталогом как слишком сложного).
 
-Ролевые скилы `.kimi-code/skills/` и агент `.kimi-code/agents/coder.md` остаются в репозитории для сессий, работающих в нём самом (роутер `AGENTS.md`); из плагина они уходят.
+Ролевые скилы `.kimi-code/skills/` и агент `.kimi-code/agents/coder.md` остаются в этом репозитории для сессий, работающих в нём самом (роутер `AGENTS.md`); плагином они больше не публикуются.
 
-## 2. Почему сейчас много
+## 2. Почему сейчас много и почему отдельный репозиторий
 
-Каждый клиент получает весь репозиторий: Claude Code и Codex клонируют маркетплейс-репо по `owner/repo`, Kimi качает zip всего репо, Qwen делает shallow-клон, а плагин объявлен корнем репо (`"source": "./"`). Убрать `skills` из манифестов недостаточно — нужен маленький **источник** плагина.
+Все пять клиентов получают плагин как git-репозиторий целиком: Claude Code и Codex клонируют маркетплейс-репо, Kimi качает zip репо, Qwen делает shallow-клон, Cursor импортирует репо. Сейчас плагин — это корень `clickhouse-import-rosstat` (`"source": "./"`), поэтому клиент получает весь проект.
 
-## 3. Разведка (2026-11-01)
+Разведка 2026-11-01 (Claude Code 2.1.287 — замер; Codex, Kimi, Qwen, Cursor — по документации и исходникам) показала, что подкаталог в этом репо уменьшает установку только в Claude Code (`git-subdir`, 12 КБ) и Codex (`--sparse`, ≈ 3 МБ), а Kimi, Qwen и Cursor всё равно берут весь репо и потребовали бы zip-релизов. Отдельный крошечный репозиторий решает задачу одинаково для всех: весь репо и есть плагин.
 
-Замеры Claude Code 2.1.287 в изолированном `CLAUDE_CONFIG_DIR`:
+## 3. Решение
 
-| Вариант | Маркетплейс | Плагин |
-|---|---|---|
-| Сейчас: `marketplace add kmlebedev/clickhouse-import-rosstat` | 123 МБ | 91 МБ |
-| `marketplace add … --sparse .claude-plugin` | 2,9 МБ (cone-режим тянет все файлы корня) | — |
-| Источник плагина `git-subdir` (частичный клон, один подкаталог) | — | **12 КБ**, 5,7 с |
-| Маркетплейс по прямому URL на `marketplace.json` | один файл | — |
+### 3.1 Репозиторий `kmlebedev/rosstat-mcp`
 
-Остальные клиенты (документация и исходники; клиенты не ставились):
-
-| Клиент | Подкаталог репо | Что скачивает |
-|---|---|---|
-| Codex (`openai/codex`, `marketplace_add/install.rs`, `loader.rs`) | да: `marketplace add --sparse <paths>` и источник `git-subdir` | `--sparse` → `git clone --filter=blob:none` + sparse-checkout; `git-subdir` → то же в no-cone режиме |
-| Kimi Code (`MoonshotAI/kimi-code`, `source.ts`, `github-resolver.ts`) | нет: путь после `/tree/` читается как имя ref | zip всего репо с `codeload.github.com`; **zip по прямому URL поддержан** |
-| Qwen Code (`QwenLM/qwen-code`, `extension/github.ts`) | нет | `git clone --depth 1` всего репо; **zip/tar.gz по URL поддержан** |
-| Cursor | marketplace в корне репо с относительным `source` на подкаталог | импорт репо на стороне Cursor; размер на клиенте не документирован |
-
-## 4. Решение
-
-### 4.1 Каталог плагина
-
-Плагин целиком живёт в `plugins/rosstat-mcp/`; в нём только манифесты, MCP-конфиги и README:
+Публичный (клиенты клонируют без git-учётки; токена в нём нет), лицензия MIT. Создаёт ассистент через `gh` после одобрения спеки и плана; первая версия приходит в `main` нового репо через PR.
 
 ```text
-plugins/rosstat-mcp/
-  README.md
+rosstat-mcp/
+  README.md                         # что даёт плагин, токен, установка, миграция, проверка
+  LICENSE                           # MIT
+  .gitignore                        # .DS_Store
   .claude-plugin/plugin.json        # Claude Code: mcpServers inline
-  .claude-plugin/marketplace.json   # маркетплейс Claude Code (добавляется по URL)
+  .claude-plugin/marketplace.json   # Claude Code: source "./"
   .codex-plugin/plugin.json         # Codex: mcpServers → ./.codex-plugin/mcp.json
   .codex-plugin/mcp.json
+  .agents/plugins/marketplace.json  # Codex: source → этот репозиторий, ref main
   .cursor-plugin/plugin.json        # Cursor: mcpServers → ./.cursor-plugin/mcp.json, variables.ROSSTAT_MCP_TOKEN
+  .cursor-plugin/marketplace.json   # Cursor: source "."
   .cursor-plugin/mcp.json
   kimi.plugin.json                  # Kimi Code: mcpServers inline
   qwen-extension.json               # Qwen Code: mcpServers inline
+  tests/test_manifests.py           # контракт манифестов, Python stdlib
+  .github/workflows/check.yml       # CI: python3 -m unittest на каждый push/PR
 ```
 
+- **Имя плагина и маркетплейсов — `rosstat-mcp`, версия — 0.3.0** (продолжение линии 0.2.0).
+- Описание длинное: «Read-only MCP connection to Rosstat/CBR data marts (v_* views, point-in-time layer) on the clickhouse-import-rosstat staging server.»; короткое: «Read-only MCP to Rosstat/CBR data marts».
 - Поля `skills`, `agents`, `commands`, `hooks` не объявляются ни в одном манифесте.
-- MCP-контракт `infra/5.9` не меняется: сервер `rosstat-staging`, URL `https://mcp.selfinvesting.ru:8443/mcp`, токен только ссылкой на `ROSSTAT_MCP_TOKEN` в синтаксисе клиента.
-- **Имя плагина и маркетплейса — `rosstat-mcp`**, версия **0.3.0**. Состав другой, а маркетплейс Claude всё равно новый (другой адрес), поэтому имя `clickhouse-import-rosstat` не сохраняется; описание — «Read-only MCP to Rosstat/CBR data marts (v_* views) on staging».
+- MCP-контракт `infra/5.9` без изменений: сервер `rosstat-staging`, URL `https://mcp.selfinvesting.ru:8443/mcp`, токен только ссылкой на `ROSSTAT_MCP_TOKEN` в синтаксисе клиента (Claude/Qwen/Cursor — `Authorization: Bearer ${ROSSTAT_MCP_TOKEN}`, Kimi — `bearerTokenEnvVar`, Codex — `bearer_token_env_var`, Cursor — плюс `variables.ROSSTAT_MCP_TOKEN`, required).
+- Синхронизатора метаданных нет: манифестов девять и они меняются редко; равенство `name`/`version`/описаний во всех манифестах проверяет тест.
 
-### 4.2 Корень репозитория
+### 3.2 Установка
 
-Удаляются: `kimi.plugin.json`, `qwen-extension.json`, `.claude-plugin/`, `.codex-plugin/`, `.cursor-plugin/plugin.json`, `.cursor-plugin/mcp.json`.
+| Клиент | Команда |
+|---|---|
+| Claude Code | `claude plugin marketplace add kmlebedev/rosstat-mcp`<br>`claude plugin install rosstat-mcp@rosstat-mcp` |
+| Codex | `codex plugin marketplace add kmlebedev/rosstat-mcp`<br>`codex plugin add rosstat-mcp@rosstat-mcp` |
+| Kimi Code | `/plugins install https://github.com/kmlebedev/rosstat-mcp` |
+| Qwen Code | `qwen extensions install kmlebedev/rosstat-mcp` |
+| Cursor | `/add-plugin https://github.com/kmlebedev/rosstat-mcp` |
 
-Остаются в корне только маркетплейсы, которые клиент обязан искать в корне репо:
+Ожидаемый размер — десятки КБ на клиент (весь репо плюс его `.git`).
 
-- `.agents/plugins/marketplace.json` (Codex) — запись `rosstat-mcp` с локальным источником `./plugins/rosstat-mcp`;
-- `.cursor-plugin/marketplace.json` (Cursor) — запись `rosstat-mcp` с `source: "plugins/rosstat-mcp"`.
+### 3.3 Этот репозиторий
 
-### 4.3 Доставка по клиентам
+Удаляются: `kimi.plugin.json`, `qwen-extension.json`, `.claude-plugin/`, `.codex-plugin/`, `.cursor-plugin/`, `.agents/plugins/marketplace.json`, `plugin_manifest_test.go`, `scripts/plugin_manifests.py`, `scripts/plugin_manifests_test.py`, `.github/workflows/sync-manifests.yml`, цели Makefile `plugin-manifests-check`/`plugin-manifests-sync`. `LICENSE` остаётся (лицензия проекта).
 
-| Клиент | Установка | Ожидаемый размер |
-|---|---|---|
-| Claude Code | `claude plugin marketplace add https://raw.githubusercontent.com/kmlebedev/clickhouse-import-rosstat/main/plugins/rosstat-mcp/.claude-plugin/marketplace.json`<br>`claude plugin install rosstat-mcp@rosstat-mcp` | маркетплейс — один файл; плагин ≈ 12 КБ |
-| Codex | `codex plugin marketplace add kmlebedev/clickhouse-import-rosstat --sparse .agents --sparse plugins/rosstat-mcp`<br>`codex plugin add rosstat-mcp@rosstat-mcp` | blobless sparse-клон: каталоги `.agents`, `plugins/rosstat-mcp` и файлы корня (≈ 3 МБ, замер — при приёмке) |
-| Kimi Code | `/plugins install https://github.com/kmlebedev/clickhouse-import-rosstat/releases/download/rosstat-mcp-v0.3.0/rosstat-mcp.zip` | несколько КБ |
-| Qwen Code | `qwen extensions install https://github.com/kmlebedev/clickhouse-import-rosstat/releases/download/rosstat-mcp-v0.3.0/rosstat-mcp.zip` | несколько КБ |
-| Cursor | импорт репозитория как team marketplace / публикация; плагин `rosstat-mcp` из `.cursor-plugin/marketplace.json` | на клиенте не контролируется |
+Документация: раздел README «Подключение как плагин LLM-клиента» — ссылка на `kmlebedev/rosstat-mcp` и таблица §3.2; `AGENTS.md` — абзац «Плагин:» говорит, что плагин живёт отдельно и публикует только MCP; `ARCHITECTURE.md` — §2 (раскладка), §6.5 (абзац «Плагин репозитория → MCP»), конвенция 17; роадмап — строка `5.10`. Исторические спеки и строки `5.7`–`5.9` не правятся.
 
-Источник плагина в маркетплейсе Claude — `{"source": "git-subdir", "url": "https://github.com/kmlebedev/clickhouse-import-rosstat.git", "path": "plugins/rosstat-mcp", "ref": "main"}`. Маркетплейс добавляется по URL, поэтому относительный источник (`./…`) там невозможен — Claude Code скачивает только `marketplace.json`.
+### 3.4 Миграция установленных копий
 
-### 4.4 Zip для Kimi и Qwen
+Старый маркетплейс `clickhouse-import-rosstat` после мержа не находит манифестов. README нового репо даёт по одной команде удаления на клиент (`claude plugin marketplace remove clickhouse-import-rosstat`, `codex plugin marketplace remove clickhouse-import-rosstat`, удаление плагина/расширения `clickhouse-import-rosstat` в Kimi, Qwen и Cursor) и затем установку по §3.2.
 
-- `python3 scripts/plugin_manifests.py --zip build/rosstat-mcp.zip` собирает детерминированный zip (фиксированные mtime и порядок, корень архива = корень плагина) только из разрешённых файлов §4.1; цель Makefile — `make plugin-zip`.
-- Workflow `.github/workflows/rosstat-mcp-release.yml`: на push тега `rosstat-mcp-v*` проверяет, что версия тега равна `version` в `plugins/rosstat-mcp/.claude-plugin/plugin.json`, гоняет `make plugin-manifests-check`, собирает zip и создаёт GitHub Release с ассетом `rosstat-mcp.zip` и SHA-256 в описании; релиз помечается `--latest=false`. Тег `rosstat-mcp-v*` не совпадает с `v*` у `release.yml` (goreleaser), так что бинарный релиз не запускается.
-- Тег ставит владелец после мержа; ассистент тег не пушит.
+## 4. Проверки
 
-### 4.5 Синхронизация метаданных
+**Новый репо, `tests/test_manifests.py` (unittest, stdlib):**
 
-`scripts/plugin_manifests.py`: канон переезжает в `plugins/rosstat-mcp/.claude-plugin/plugin.json` (`name`, `version`, длинное описание) и `plugins/rosstat-mcp/.claude-plugin/marketplace.json` (`name` маркетплейса, короткое описание). Цели синхронизации — манифесты §4.1 и два корневых маркетплейса §4.2. `--check`/`--write` и `sync-manifests.yml` — на новых путях.
+- все JSON разбираются; у пяти манифестов плагина и трёх маркетплейсов `name == "rosstat-mcp"`, версии равны `.claude-plugin/plugin.json`, описания равны каноническим из `.claude-plugin/plugin.json` и `.claude-plugin/marketplace.json`;
+- в манифестах нет ключей `skills`, `agents`, `commands`, `hooks`;
+- у каждого манифеста плагина есть сервер `rosstat-staging` с URL выше и токеном только из `ROSSTAT_MCP_TOKEN`; строковый `mcpServers` указывает на существующий файл внутри репо; сервера `clickhouse` нет;
+- нет ключей вида `token|secret|password|api_key` со значениями и литеральных `Bearer <значение>` (перенос `TestLLMPluginManifestsNoSecrets`);
+- источники маркетплейсов: Claude — `"./"`, Cursor — `"."`, Codex — `{"source": "url", "url": "https://github.com/kmlebedev/rosstat-mcp.git", "ref": "main"}`;
+- множество отслеживаемых файлов (`git ls-files`) равно списку §3.1, суммарно ≤ 64 КБ.
 
-### 4.6 Миграция установленных копий
+**Этот репо:** `make all` зелёный; в корне нет удалённых файлов §3.3; `grep` по README/AGENTS/ARCHITECTURE не находит удалённых путей.
 
-Старый маркетплейс `clickhouse-import-rosstat` после мержа перестаёт находить свой `marketplace.json` в корне. README плагина даёт одну команду удаления на клиент (`claude plugin marketplace remove clickhouse-import-rosstat` и аналоги), затем установку по §4.3. Карта `renames` не используется: адрес и имя маркетплейса новые.
+**Живая приёмка (после первого PR в новом репо):**
 
-## 5. Проверки
+1. CI нового репо зелёный; `claude plugin validate .` в новом репо — без ошибок и warnings.
+2. Claude Code в изолированном `CLAUDE_CONFIG_DIR`: команды §3.2, размеры `plugins/marketplaces` и `plugins/cache`, состав кэша; `claude mcp list` с токеном (через `make`) → `plugin:rosstat-mcp:rosstat-staging … ✔ Connected`.
+3. Kimi — установка в изолированный домашний каталог клиента, если CLI это позволяет; Codex, Qwen, Cursor — если клиент установлен; иначе «не проверено».
 
-`plugin_manifest_test.go` переписывается под новый контракт:
+## 5. Вне объёма
 
-- `TestLLMPluginManifests` — пять манифестов в `plugins/rosstat-mcp/` разбираются, `name = rosstat-mcp`, версии равны; ни в одном нет `skills`, `agents`, `commands`, `hooks`; в корне нет удалённых манифестов §4.2.
-- `TestLLMPluginDirAllowlist` — в `plugins/rosstat-mcp/` только файлы из §4.1, суммарно ≤ 64 КБ.
-- `TestLLMPluginMarketplaces` — Claude: источник `git-subdir` на `plugins/rosstat-mcp` этого репозитория; Codex и Cursor: источник указывает на `plugins/rosstat-mcp`.
-- `TestLLMPluginManifestsNoSecrets` и `TestLLMPluginRemoteMCP` — без изменения смысла, на новых путях.
-
-`scripts/plugin_manifests_test.py` — тесты синхронизации на новых путях плюс тест `--zip` (состав архива = allowlist, корень архива = корень плагина, две сборки побайтно равны).
-
-Живая приёмка:
-
-1. `make all`, `make plugin-manifests-check`, `make plugin-zip`, `claude plugin validate plugins/rosstat-mcp`.
-2. Claude Code в изолированном `CLAUDE_CONFIG_DIR`: маркетплейс по URL (до мержа — URL ветки), установка, размеры `plugins/marketplaces` и `plugins/cache`, состав кэша (нет `.kimi-code/`), `claude mcp list` с токеном → ✔ Connected.
-3. Codex: команда §4.3 на ветке и замер клона — если `codex` установлен; иначе «не проверено».
-4. Kimi/Qwen: установка из локально собранного zip — если клиент установлен; установка из релиза — после тега владельцем.
-5. Cursor — «не проверено» (нет CLI-установки).
-
-## 6. Вне объёма
-
-- Отдельный репозиторий плагина (владелец выбрал подкаталог).
+- Синхронизация манифестов между репозиториями (в основном репо манифестов больше нет).
 - Публикация в каталоги Cursor/Anthropic.
 - Изменения MCP-сервера, токенов, TLS (`infra/5.9`).
-- Сокращение файлов корня репозитория ради sparse-клона Codex.
+- Перенос ролевых скилов в отдельный плагин.
 
-## 7. Риски
+## 6. Риски
 
-- **Codex/Cursor** всё ещё тянут больше, чем плагин: Codex — файлы корня в sparse-клоне, Cursor — неизвестно. Размер Codex фиксируется замером.
-- **Qwen**: подстановка `${ROSSTAT_MCP_TOKEN}` в `headers` не подтверждена документацией; при приёмке без Qwen — «не проверено».
-- **URL маркетплейса Claude** привязан к ветке `main` и пути файла; переименование каталога ломает установку — путь фиксируется тестом.
-- **Zip-ссылка** версионная: каждый релиз меняет URL в README; README обновляется тем же PR, что и версия.
+- **Два репозитория — два PR.** Изменение MCP-контракта (URL, имя сервера, переменная токена) теперь правится в `kmlebedev/rosstat-mcp`; `ARCHITECTURE.md` §6.5 ссылается на него как на источник истины для манифестов.
+- **Qwen**: подстановка `${ROSSTAT_MCP_TOKEN}` в `headers` не подтверждена документацией; без установленного Qwen — «не проверено».
+- **Cursor**: CLI-установки нет; приёмка — «не проверено».

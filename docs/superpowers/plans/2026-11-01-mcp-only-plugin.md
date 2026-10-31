@@ -1,197 +1,140 @@
-# MCP-only плагин (`infra/5.10`) — план реализации
+# MCP-only плагин в отдельном репозитории (`infra/5.10`) — план реализации
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** плагин `rosstat-mcp` 0.3.0 в `plugins/rosstat-mcp/` подключает только MCP `rosstat-staging` и ставится килобайтами вместо 214 МБ.
+**Goal:** публичный репозиторий `kmlebedev/rosstat-mcp` с плагином `rosstat-mcp` 0.3.0, который подключает только MCP `rosstat-staging` и ставится десятками КБ во всех пяти клиентах; из `clickhouse-import-rosstat` манифесты плагина и их тулинг удаляются.
 
-**Architecture:** все манифесты клиентов переезжают в подкаталог; Claude Code берёт маркетплейс по URL и плагин через `git-subdir`, Codex — sparse-клон, Kimi/Qwen — zip из GitHub Release, Cursor — маркетплейс в корне. Контракт держат `plugin_manifest_test.go` (Go) и `scripts/plugin_manifests.py` (синхронизация метаданных + сборка zip).
+**Architecture:** весь новый репо — это плагин: манифесты пяти клиентов в корне, маркетплейсы ссылаются на корень. Контракт держит `tests/test_manifests.py` (stdlib unittest) в CI нового репо. В основном репо остаются ролевые скилы для работы в нём и ссылка на новый репо в документации.
 
-**Tech Stack:** JSON-манифесты, Go `testing`, Python 3.9+ stdlib (`zipfile`, `unittest`), GitHub Actions, Makefile.
+**Tech Stack:** JSON-манифесты, Python 3.9+ stdlib `unittest`, GitHub Actions, `gh`, Makefile.
 
 **Spec:** [docs/superpowers/specs/2026-11-01-mcp-only-plugin-design.md](../specs/2026-11-01-mcp-only-plugin-design.md)
 
 ## Global Constraints
 
-- Каталог плагина: `plugins/rosstat-mcp/`; имя плагина и маркетплейсов — `rosstat-mcp`; версия — `0.3.0`.
-- MCP: сервер `rosstat-staging`, URL `https://mcp.selfinvesting.ru:8443/mcp`, токен только ссылкой на `ROSSTAT_MCP_TOKEN` (Claude/Qwen/Cursor — `Authorization: Bearer ${ROSSTAT_MCP_TOKEN}`, Kimi — `bearerTokenEnvVar`, Codex — `bearer_token_env_var`; Cursor дополнительно `variables.ROSSTAT_MCP_TOKEN`, required).
-- В манифестах нет ключей `skills`, `agents`, `commands`, `hooks`.
-- Каталог плагина — только файлы спеки §4.1, суммарно ≤ 64 КБ (65536 байт).
+- Новый репо: `kmlebedev/rosstat-mcp`, публичный, MIT, ветка по умолчанию `main`; локальный клон — `/Users/whitefox/GolandProjects/rosstat-mcp`.
+- Имя плагина и всех маркетплейсов — `rosstat-mcp`; версия — `0.3.0`.
 - Длинное описание: `Read-only MCP connection to Rosstat/CBR data marts (v_* views, point-in-time layer) on the clickhouse-import-rosstat staging server.`; короткое: `Read-only MCP to Rosstat/CBR data marts`.
-- Источник плагина в маркетплейсе Claude: `{"source": "git-subdir", "url": "https://github.com/kmlebedev/clickhouse-import-rosstat.git", "path": "plugins/rosstat-mcp", "ref": "main"}`; `version` в записи маркетплейса не дублируется (её держит `plugin.json`).
-- Тег релиза zip — `rosstat-mcp-v<version>`, ассет — `rosstat-mcp.zip`, релиз `--latest=false`; тег ставит владелец, ассистент тег не пушит.
-- Секреты не печатаются; GitHub-вызовы — `gh`; коммиты — по-английски, кратко, с trailer `Co-Authored-By`.
+- MCP: сервер `rosstat-staging`, URL `https://mcp.selfinvesting.ru:8443/mcp`, токен только ссылкой на `ROSSTAT_MCP_TOKEN` (Claude/Qwen/Cursor — `Authorization: Bearer ${ROSSTAT_MCP_TOKEN}`, Kimi — `bearerTokenEnvVar`, Codex — `bearer_token_env_var`; Cursor — плюс `variables.ROSSTAT_MCP_TOKEN` в `required`).
+- В манифестах нет ключей `skills`, `agents`, `commands`, `hooks`; сервера `clickhouse` нет.
+- Источники маркетплейсов: Claude `"./"`, Cursor `"."`, Codex `{"source": "url", "url": "https://github.com/kmlebedev/rosstat-mcp.git", "ref": "main"}`.
+- Состав нового репо — ровно 16 файлов спеки §3.1, суммарно ≤ 65536 байт.
+- Секреты не печатаются; токен для приёмки — только через `make` основного репо (env-файл); GitHub-вызовы — `gh`; коммиты — по-английски, кратко, с trailer `Co-Authored-By`.
 
 ## Review Focus
 
-1. **Относительные пути MCP-конфигов Codex/Cursor** (`"mcpServers": "./.codex-plugin/mcp.json"`) разрешаются от корня плагина, а не репо: тест обязан искать файл в `plugins/rosstat-mcp/` — Task 1, `TestLLMPluginRemoteMCP`.
-2. **Посторонний файл в каталоге плагина** (`.DS_Store`, скопированный скил) молча попадёт в zip и в кэш клиента — Task 1, `TestLLMPluginDirAllowlist`; Task 2, `test_zip_contains_exactly_plugin_files`.
-3. **Недетерминированный zip** (mtime, порядок) меняет SHA-256 при пересборке того же коммита — Task 2, `test_zip_is_reproducible`.
-4. **Тег не совпал с версией** (`rosstat-mcp-v0.3.1` при `version: 0.3.0`) выпустит релиз со старыми манифестами — Task 3, шаг проверки версии в workflow.
-5. **Забытый корневой манифест** (`kimi.plugin.json` остался) — клиент по-прежнему ставит весь репо со скилами — Task 1, `TestLLMPluginRootHasNoPluginManifests`.
+1. **Относительный `mcpServers` Codex/Cursor** (`./.codex-plugin/mcp.json`) должен указывать на существующий файл внутри репо — Task 1, `test_mcp_server_contract`.
+2. **Литеральный токен** в любом JSON (`"Authorization": "Bearer abc…"`, ключ `token`) — Task 1, `test_no_secrets`.
+3. **Расхождение версии** между девятью манифестами после ручной правки (синхронизатора нет) — Task 1, `test_names_versions_descriptions`.
+4. **Посторонний файл** в репо (`.DS_Store`, скопированный скил) уезжает к каждому пользователю — Task 1, `test_tracked_files_allowlist` + `.gitignore`.
+5. **Старый маркетплейс у пользователей** перестанет обновляться после мержа в основном репо — Task 1 README (миграция), Task 2 README основного репо.
 
 ---
 
-### Task 1: Каталог плагина, чистка корня и Go-контракт
+### Task 1: Репозиторий `kmlebedev/rosstat-mcp`
 
-**Files:**
-- Create: `plugins/rosstat-mcp/.claude-plugin/plugin.json`, `plugins/rosstat-mcp/.claude-plugin/marketplace.json`, `plugins/rosstat-mcp/.codex-plugin/plugin.json`, `plugins/rosstat-mcp/.codex-plugin/mcp.json`, `plugins/rosstat-mcp/.cursor-plugin/plugin.json`, `plugins/rosstat-mcp/.cursor-plugin/mcp.json`, `plugins/rosstat-mcp/kimi.plugin.json`, `plugins/rosstat-mcp/qwen-extension.json`, `plugins/rosstat-mcp/README.md` (заглушка в одну строку; содержание — Task 4)
-- Delete (`git rm`): `kimi.plugin.json`, `qwen-extension.json`, `.claude-plugin/`, `.codex-plugin/`, `.cursor-plugin/plugin.json`, `.cursor-plugin/mcp.json`
-- Modify: `.agents/plugins/marketplace.json`, `.cursor-plugin/marketplace.json`
-- Test: `plugin_manifest_test.go` (переписать)
+**Files (в новом репо):**
+- Create: `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, `.codex-plugin/plugin.json`, `.codex-plugin/mcp.json`, `.agents/plugins/marketplace.json`, `.cursor-plugin/plugin.json`, `.cursor-plugin/marketplace.json`, `.cursor-plugin/mcp.json`, `kimi.plugin.json`, `qwen-extension.json`, `README.md`, `LICENSE`, `.gitignore`, `tests/test_manifests.py`, `.github/workflows/check.yml`
 
 **Interfaces:**
-- Produces: файлы каталога плагина и константа `pluginDir = "plugins/rosstat-mcp"` в тесте; Task 2 читает канон из `plugins/rosstat-mcp/.claude-plugin/{plugin,marketplace}.json`.
+- Produces: репо `kmlebedev/rosstat-mcp` с `main` = версия 0.3.0; Task 2 ссылается на него URL `https://github.com/kmlebedev/rosstat-mcp`; Task 3 ставит из него.
 
-- [ ] **Step 1: Переписать `plugin_manifest_test.go` под новый контракт**
+- [ ] **Step 1: Создать репо и клон**
 
-Константы: `pluginDir = "plugins/rosstat-mcp"`, `pluginName = "rosstat-mcp"`, `pluginVersion = "0.3.0"`, `pluginMaxBytes = 65536`, MCP-константы без изменений. Пути манифестов — через `filepath.Join(pluginDir, …)`. Удалить `assertSkillDir`, проверку `skills`/`agents` и `license`.
+```bash
+gh repo create kmlebedev/rosstat-mcp --public --license mit \
+  --description "Read-only MCP to Rosstat/CBR data marts — plugin for Claude Code, Codex, Cursor, Kimi Code and Qwen Code" \
+  --clone=false
+git clone https://github.com/kmlebedev/rosstat-mcp.git /Users/whitefox/GolandProjects/rosstat-mcp
+git -C /Users/whitefox/GolandProjects/rosstat-mcp switch -c feat/initial-plugin
+```
 
-Тесты и утверждения:
+Expected: в `main` один коммит с `LICENSE`.
 
-- `TestLLMPluginManifests` — для 5 манифестов `name == "rosstat-mcp"`, `version == "0.3.0"`; в сыром JSON нет ключей `skills`, `agents`, `commands`, `hooks`.
-- `TestLLMPluginDirAllowlist` — множество файлов под `pluginDir` (относительные пути, `filepath.WalkDir`) **равно** 9 файлам из Files выше; сумма размеров ≤ `pluginMaxBytes`.
-- `TestLLMPluginRootHasNoPluginManifests` — `os.Stat` возвращает `fs.ErrNotExist` для `kimi.plugin.json`, `qwen-extension.json`, `.claude-plugin`, `.codex-plugin`, `.cursor-plugin/plugin.json`, `.cursor-plugin/mcp.json`.
-- `TestLLMPluginMarketplaces`:
-  - `plugins/rosstat-mcp/.claude-plugin/marketplace.json`: `name == "rosstat-mcp"`, одна запись `rosstat-mcp`, `source` == объект из Global Constraints, у записи нет `version`;
-  - `.agents/plugins/marketplace.json`: `name == "rosstat-mcp"`, `source == {"source":"local","path":"./plugins/rosstat-mcp"}`;
-  - `.cursor-plugin/marketplace.json`: `name == "rosstat-mcp"`, `source == "plugins/rosstat-mcp"`.
-- `TestLLMPluginManifestsNoSecrets` — по всем JSON под `pluginDir` и двум корневым маркетплейсам; `walkJSON` без изменений.
-- `TestLLMPluginRemoteMCP` — как раньше, но строковый `mcpServers` разрешается от `pluginDir`: `filepath.Join(pluginDir, ref)`; проверка, что путь не выходит за `pluginDir`. Подтест Cursor читает `plugins/rosstat-mcp/.cursor-plugin/plugin.json`.
+- [ ] **Step 2: Написать `tests/test_manifests.py`**
 
-- [ ] **Step 2: Убедиться, что тесты падают**
+Константы из Global Constraints; корень репо — `Path(__file__).resolve().parent.parent`. Тесты (`unittest.TestCase`):
 
-Run: `go test -run 'TestLLMPlugin' -v .`
-Expected: FAIL — `read plugins/rosstat-mcp/...: no such file or directory` и `kimi.plugin.json exists`.
+- `test_names_versions_descriptions` — `name == "rosstat-mcp"` у пяти манифестов плагина, трёх маркетплейсов и их `plugins[0].name`; `version == "0.3.0"` у манифестов плагина и `.claude-plugin/marketplace.json`; длинное описание — у манифестов плагина, `plugins[0].description` маркетплейсов Claude/Cursor и `interface.longDescription` Codex/Kimi; короткое — `description` маркетплейса Claude, `metadata.description` Cursor, `interface.shortDescription` Codex/Kimi.
+- `test_no_component_fields` — нет ключей `skills`, `agents`, `commands`, `hooks` в манифестах плагина.
+- `test_mcp_server_contract` — для каждого манифеста плагина: строковый `mcpServers` разрешается от корня репо, файл существует и не выходит за корень; сервер `rosstat-staging` есть, `clickhouse` нет; `url`/`httpUrl` == URL; токен — `headers.Authorization == "Bearer ${ROSSTAT_MCP_TOKEN}"` или `bearerTokenEnvVar`/`bearer_token_env_var == "ROSSTAT_MCP_TOKEN"`; Cursor `variables.properties` и `variables.required` содержат `ROSSTAT_MCP_TOKEN`.
+- `test_no_secrets` — обход всех JSON: ключи по `(?i)(api[_-]?key|token|password|secret)` запрещены, кроме `bearerTokenEnvVar`/`bearer_token_env_var`/`ROSSTAT_MCP_TOKEN` со значением `ROSSTAT_MCP_TOKEN`; строки `Bearer …` только вида `Bearer ${ROSSTAT_MCP_TOKEN}`.
+- `test_marketplace_sources` — источники из Global Constraints.
+- `test_tracked_files_allowlist` — `git ls-files` == 16 файлов из Files; сумма размеров ≤ 65536.
 
-- [ ] **Step 3: Создать каталог плагина и удалить корневые манифесты**
+- [ ] **Step 3: Убедиться, что тесты падают**
 
-Содержимое — из текущих корневых манифестов (`git show HEAD:<path>`) с правками: `name`/`version`/описания — по Global Constraints; поля `skills`/`agents` удалить; `keywords`/`tags` — `rosstat`, `cbr`, `clickhouse`, `mcp`, `macro`; `displayName` — `Rosstat MCP`; Codex `interface.capabilities` — `["Read"]`, `category` — `Data`. Claude `plugin.json` — `mcpServers` inline (как в 0.2.0). Claude `marketplace.json` — `$schema`, `name`, `version`, `description` (короткое), `owner`, одна запись с `description` (длинное) и `source` из Global Constraints. MCP-файлы Codex/Cursor копируются без изменений. `git rm -r` корневых путей из Files; корневые маркетплейсы Codex/Cursor правятся по Step 1.
+Run: `python3 -m unittest discover -s tests -v`
+Expected: FAIL / ERROR — файлов манифестов нет.
 
-- [ ] **Step 4: Прогнать тесты и валидатор**
+- [ ] **Step 4: Создать манифесты, README, `.gitignore`, CI**
 
-Run: `go test -run 'TestLLMPlugin' -v .` → PASS.
-Run: `claude plugin validate plugins/rosstat-mcp` → `✔ Validation passed` без warnings о версии.
+Манифесты — из `git show 27df17f:<path>` основного репо (версия 0.2.0) с правками по Global Constraints: `name`/`version`/описания, удалить `skills`/`agents`, `displayName` — `Rosstat MCP`, `keywords`/`tags` — `rosstat`, `cbr`, `clickhouse`, `mcp`, `macro`, `homepage`/`repository` — `https://github.com/kmlebedev/rosstat-mcp`. README — что даёт плагин (только MCP, витрины `v_*`, read-only, staging), токен `ROSSTAT_MCP_TOKEN` (выдаёт владелец), таблица установки спеки §3.2, миграция §3.4, проверка `claude mcp list` → `✔ Connected`, ссылка на основной репо. `check.yml` — `on: [push, pull_request]`, `actions/checkout@v4`, `actions/setup-python@v5` (3.12), `python3 -m unittest discover -s tests -v`.
+
+- [ ] **Step 5: Прогнать тесты и валидатор**
+
+Run: `python3 -m unittest discover -s tests -v` → OK (6 тестов) — после `git add -A`, иначе allowlist по `git ls-files` не увидит файлы.
+Run: `claude plugin validate .` → `✔ Validation passed`, без warnings.
+
+- [ ] **Step 6: Commit, push, PR**
+
+```bash
+git add -A
+git commit -m "add rosstat-mcp plugin manifests 0.3.0"
+git push -u origin feat/initial-plugin
+gh pr create --repo kmlebedev/rosstat-mcp --title "rosstat-mcp 0.3.0: MCP-only plugin" --body "<состав, установка, ссылка на kmlebedev/clickhouse-import-rosstat#474>"
+```
+
+Expected: CI `check` зелёный на PR.
+
+---
+
+### Task 2: Чистка основного репозитория и документация
+
+**Files (в worktree `.worktrees/mcp-only-plugin`):**
+- Delete (`git rm -r`): `kimi.plugin.json`, `qwen-extension.json`, `.claude-plugin/`, `.codex-plugin/`, `.cursor-plugin/`, `.agents/plugins/marketplace.json`, `plugin_manifest_test.go`, `scripts/plugin_manifests.py`, `scripts/plugin_manifests_test.py`, `.github/workflows/sync-manifests.yml`
+- Modify: `Makefile` (удалить цели `plugin-manifests-check`/`plugin-manifests-sync`, их комментарий и записи в `.PHONY`), `README.md`, `AGENTS.md`, `ARCHITECTURE.md` (§2 раскладка, §6.5 «Плагин репозитория → MCP», конвенция 17), `docs/ROADMAP_INFRA.md` (строка `5.10`)
+
+**Interfaces:**
+- Consumes: URL `https://github.com/kmlebedev/rosstat-mcp` (Task 1).
+
+- [ ] **Step 1: Удалить файлы и цели Makefile**
+
+После удаления: `.agents/` пуст — удалить каталог целиком, если в нём больше ничего нет.
+
+- [ ] **Step 2: Проверить отсутствие ссылок**
+
+Run: `grep -rn -e plugin_manifests -e plugin-manifests -e sync-manifests -e "kimi.plugin.json" -e "qwen-extension.json" -e ".claude-plugin" -e ".codex-plugin" -e ".cursor-plugin" --include=*.md --include=*.yml --include=Makefile --include=*.go --include=*.py . | grep -v -e docs/superpowers -e "docs/ROADMAP_INFRA.md" -e "^./.worktrees"`
+Expected: только строки README/AGENTS/ARCHITECTURE, которые Step 3 переписывает; после Step 3 — пусто.
+
+- [ ] **Step 3: Документация**
+
+- README, раздел «Подключение как плагин LLM-клиента»: плагин — отдельный репо `kmlebedev/rosstat-mcp`, даёт только MCP `rosstat-staging`; таблица установки спеки §3.2; токен `ROSSTAT_MCP_TOKEN`; скилы `.kimi-code/skills/` — для сессий в этом репо, плагином не публикуются; локальный dev-MCP — `.kimi-code/mcp.json`. Удалить фразы про ~86 МБ, namespace скилов, агента `coder` и синхронизацию манифестов.
+- `AGENTS.md`, абзац «Плагин:»: плагин публикует только MCP и живёт в `kmlebedev/rosstat-mcp`; скилы — источник `.kimi-code/skills/` для работы в репо.
+- `ARCHITECTURE.md`: §2 — убрать строки манифестов из раскладки; §6.5 — манифесты и их инварианты живут в `kmlebedev/rosstat-mcp` (`tests/test_manifests.py`), MCP-контракт прежний; конвенция 17 — переписать: скилы в `.kimi-code/skills/` для сессий в репо, LLM-плагин MCP-only в отдельном репо.
+- `docs/ROADMAP_INFRA.md`: строка `5.10` — содержание по спеке, статус `🔶 In Progress`, критерий приёмки из #474.
+
+- [ ] **Step 4: Проверки**
+
+Run: `make all` → exit 0. Run: `make docs-check` → exit 0. Run: grep из Step 2 → пусто.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add -A plugins/rosstat-mcp plugin_manifest_test.go .agents/plugins/marketplace.json .cursor-plugin/marketplace.json
-git commit -m "infra 5.10: move plugin to plugins/rosstat-mcp as MCP-only 0.3.0"
-```
-
-(`git rm` из Step 3 уже в индексе.)
-
----
-
-### Task 2: Синхронизация метаданных и сборка zip
-
-**Files:**
-- Modify: `scripts/plugin_manifests.py`, `scripts/plugin_manifests_test.py`, `Makefile` (цель `plugin-zip`, `.PHONY`), `.github/workflows/sync-manifests.yml`
-
-**Interfaces:**
-- Consumes: каталог `plugins/rosstat-mcp/` из Task 1.
-- Produces: `PLUGIN_DIR = "plugins/rosstat-mcp"`; `build_zip(root: Path, dest: Path) -> list[str]` (возвращает имена в архиве); CLI `--zip PATH` (взаимоисключающе с `--check`/`--write`); `make plugin-zip` → `build/rosstat-mcp.zip`. Task 3 вызывает `python3 scripts/plugin_manifests.py --zip build/rosstat-mcp.zip`.
-
-- [ ] **Step 1: Обновить тесты**
-
-`plugin_manifests_test.py`: фикстуры `base_manifests()` — на новых путях констант (`pm.CLAUDE_PLUGIN` и т. д.), `NAME = "rosstat-mcp"`; из ожиданий синхронизации убрать `plugins.0.version` Claude-маркетплейса. Новые тесты:
-
-- `test_zip_contains_exactly_plugin_files` — во временном корне создать `plugins/rosstat-mcp/{a.json,.claude-plugin/plugin.json}` и файл вне каталога; `build_zip` → `namelist() == [".claude-plugin/plugin.json", "a.json"]` (отсортировано, без префикса `plugins/rosstat-mcp/`, без файла вне каталога и без записей-каталогов).
-- `test_zip_is_reproducible` — две сборки в разные пути, `os.utime` между ними → байты равны.
-- `test_zip_missing_plugin_dir_fails` — нет каталога → `ManifestError`.
-
-- [ ] **Step 2: Убедиться, что тесты падают**
-
-Run: `python3 scripts/plugin_manifests_test.py -v`
-Expected: FAIL — `AttributeError: module 'plugin_manifests' has no attribute 'build_zip'` и ошибки путей.
-
-- [ ] **Step 3: Реализовать**
-
-- Константы путей: `PLUGIN_DIR`; `CLAUDE_PLUGIN`, `CLAUDE_MARKETPLACE`, `CURSOR_PLUGIN`, `CODEX_PLUGIN`, `QWEN`, `KIMI` — под `PLUGIN_DIR`; `CURSOR_MARKETPLACE = ".cursor-plugin/marketplace.json"`, `CODEX_MARKETPLACE = ".agents/plugins/marketplace.json"` — в корне. Docstring модуля — о новом каноне.
-- `updates()`: из Claude-маркетплейса убрать `plugins.0.version`; остальное без изменений.
-- `build_zip`: обход `root / PLUGIN_DIR` (`rglob`, только файлы), имена — POSIX-пути относительно каталога, отсортированы; `zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))`, `external_attr = 0o644 << 16`, `ZIP_DEFLATED`; `dest.parent.mkdir(parents=True, exist_ok=True)`; нет каталога → `ManifestError`.
-- `main`: `--zip` печатает `OK: <dest> (<n> files, <bytes> bytes)`.
-- `Makefile`: `plugin-zip:` → `python3 scripts/plugin_manifests.py --zip build/rosstat-mcp.zip`; добавить в `.PHONY`; комментарий над целями плагина — о новом каноне.
-- `sync-manifests.yml`: `paths` и `git add` — новые пути (`plugins/rosstat-mcp/**` целиком и два корневых маркетплейса).
-
-- [ ] **Step 4: Прогнать проверки**
-
-Run: `python3 scripts/plugin_manifests_test.py -v` → все OK.
-Run: `make plugin-manifests-check` → `OK: plugin manifests in sync`.
-Run: `make plugin-zip && unzip -l build/rosstat-mcp.zip` → 9 файлов, корень архива — `.claude-plugin/`, `kimi.plugin.json`…
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add scripts/plugin_manifests.py scripts/plugin_manifests_test.py Makefile .github/workflows/sync-manifests.yml
-git commit -m "infra 5.10: sync manifests from plugin dir and build plugin zip"
+git add -A Makefile README.md AGENTS.md ARCHITECTURE.md docs/ROADMAP_INFRA.md
+git commit -m "infra 5.10: drop plugin manifests, point to kmlebedev/rosstat-mcp"
 ```
 
 ---
 
-### Task 3: Workflow релиза zip
-
-**Files:**
-- Create: `.github/workflows/rosstat-mcp-release.yml`
-
-**Interfaces:**
-- Consumes: `python3 scripts/plugin_manifests.py --check` и `--zip build/rosstat-mcp.zip` (Task 2).
-
-- [ ] **Step 1: Написать workflow**
-
-- `on: push: tags: ['rosstat-mcp-v*']` — единственный триггер.
-- `permissions: contents: write`; `concurrency: rosstat-mcp-release`.
-- Шаги: `actions/checkout@v4`; `actions/setup-python@v5` (3.12); проверка версии — `python3 -c` читает `version` из `plugins/rosstat-mcp/.claude-plugin/plugin.json` и падает, если `rosstat-mcp-v<version> != $GITHUB_REF_NAME`; `--check`; `python3 scripts/plugin_manifests_test.py`; `--zip build/rosstat-mcp.zip`; `sha256sum`; `gh release create "$GITHUB_REF_NAME" build/rosstat-mcp.zip --title "rosstat-mcp <version>" --notes "<SHA-256 и команды установки Kimi/Qwen>" --latest=false` с `GH_TOKEN: ${{ github.token }}`.
-
-- [ ] **Step 2: Проверить синтаксис**
-
-Run: `actionlint .github/workflows/rosstat-mcp-release.yml` (если установлен), иначе `python3 -c "import yaml,sys; yaml.safe_load(open(sys.argv[1]))" .github/workflows/rosstat-mcp-release.yml`.
-Expected: без ошибок. Шаг проверки версии прогнать локально с `GITHUB_REF_NAME=rosstat-mcp-v0.3.0` (exit 0) и `rosstat-mcp-v9.9.9` (exit ≠ 0).
-
-- [ ] **Step 3: Commit**
-
-```bash
-git add .github/workflows/rosstat-mcp-release.yml
-git commit -m "infra 5.10: release workflow for rosstat-mcp plugin zip"
-```
-
----
-
-### Task 4: Документация
-
-**Files:**
-- Modify: `plugins/rosstat-mcp/README.md`, `README.md` (раздел «Подключение как плагин LLM-клиента»), `AGENTS.md` (абзац «Плагин:»), `ARCHITECTURE.md` (§2 строки про манифесты, §6.5 абзац «Плагин репозитория → MCP», конвенция 17), `docs/ROADMAP_INFRA.md` (строка `5.10`, «Границы фазы»)
-
-- [ ] **Step 1: README плагина** — что даёт плагин (только MCP `rosstat-staging`, витрины `v_*`, read-only), токен `ROSSTAT_MCP_TOKEN` (выдаёт владелец), таблица установки — команды спеки §4.3, миграция с `clickhouse-import-rosstat` (§4.6: `claude plugin marketplace remove clickhouse-import-rosstat`, `codex plugin marketplace remove clickhouse-import-rosstat`, Kimi/Qwen — удаление плагина/расширения `clickhouse-import-rosstat`), проверка — `claude mcp list` → `✔ Connected`.
-- [ ] **Step 2: Корневой README** — раздел сокращается до: плагин = только MCP, скилы — в репо для сессий в нём, ссылка на `plugins/rosstat-mcp/README.md`, таблица установки (та же), метаданные синхронизирует `scripts/plugin_manifests.py` из `plugins/rosstat-mcp/.claude-plugin/`. Удалить фразы про ~86 МБ, namespace скилов и агента `coder`.
-- [ ] **Step 3: `AGENTS.md` и `ARCHITECTURE.md`** — плагин MCP-only в `plugins/rosstat-mcp/`; скилы плагином не публикуются; корень держит только маркетплейсы Codex/Cursor; инварианты — `plugin_manifest_test.go`, zip — `make plugin-zip` и `rosstat-mcp-release.yml`. `AGENTS.md`: из строки манифестов убрать список корневых файлов.
-- [ ] **Step 4: Роадмап** — строка `5.10`: содержание по спеке, статус `🔶 In Progress` (финальный — после приёмки, Task 5), критерий приёмки из issue #474.
-- [ ] **Step 5: Проверка** — `make docs-check` → exit 0; `grep -rn "kimi.plugin.json\|qwen-extension.json" --include=*.md . | grep -v -e docs/superpowers -e docs/ROADMAP_INFRA.md -e plugins/rosstat-mcp` → пусто (исторические спеки и строки 5.7–5.9 не правятся).
-- [ ] **Step 6: Commit**
-
-```bash
-git add plugins/rosstat-mcp/README.md README.md AGENTS.md ARCHITECTURE.md docs/ROADMAP_INFRA.md
-git commit -m "infra 5.10: document MCP-only plugin install"
-```
-
----
-
-### Task 5: Полная проверка и живая приёмка
+### Task 3: Живая приёмка и PR
 
 **Files:**
 - Modify: `docs/ROADMAP_INFRA.md` (статус и протокол `5.10`)
 
-- [ ] **Step 1: CI-набор** — `make all` → exit 0; `make plugin-manifests-check`; `python3 scripts/plugin_manifests_test.py`; `make docs-check`.
-- [ ] **Step 2: Push ветки** — `git push -u origin feat/infra-5.10-mcp-only-plugin` (нужно, чтобы `git-subdir` мог взять каталог до мержа).
-- [ ] **Step 3: Claude Code** — в изолированном `CLAUDE_CONFIG_DIR` (scratchpad): копия `plugins/rosstat-mcp/.claude-plugin/marketplace.json` с `ref` = имя ветки, добавленная как локальный файл; `claude plugin install rosstat-mcp@rosstat-mcp`; `du -sh plugins/marketplaces plugins/cache`; `find plugins/cache -type f` — только файлы §4.1; через `make` (токен из env-файла) `claude mcp list` → `plugin:rosstat-mcp:rosstat-staging … ✔ Connected`. Отдельно: `curl -sI` raw-URL маркетплейса на ветке → 200.
-- [ ] **Step 4: Codex** — если `codex` установлен: `codex plugin marketplace add kmlebedev/clickhouse-import-rosstat@feat/infra-5.10-mcp-only-plugin --sparse .agents --sparse plugins/rosstat-mcp` в изолированном `CODEX_HOME`, замер размера; иначе — «не проверено».
-- [ ] **Step 5: Kimi / Qwen** — если клиент установлен: установка из `build/rosstat-mcp.zip` (локальный путь) в изолированный домашний каталог клиента, MCP-сервер виден; иначе — «не проверено». Релиз по тегу — после мержа владельцем.
-- [ ] **Step 6: Роадмап** — строка `5.10`: `🟢 In Review` с результатами шагов 1–5 (размеры, «не проверено» явно).
-- [ ] **Step 7: Commit**
+- [ ] **Step 1: Claude Code из ветки нового репо** — изолированный `CLAUDE_CONFIG_DIR` в scratchpad, `CLAUDE_CODE_PLUGIN_PREFER_HTTPS=1`: `claude plugin marketplace add kmlebedev/rosstat-mcp#feat/initial-plugin`, `claude plugin install rosstat-mcp@rosstat-mcp`; `du -sh plugins/marketplaces plugins/cache`; `find plugins/cache -type f` — только файлы Task 1; через `make` основного репо (токен из env-файла, не печатается) `claude mcp list` → `plugin:rosstat-mcp:rosstat-staging … ✔ Connected`.
+- [ ] **Step 2: Прочие клиенты** — Kimi (`~/.kimi-code/bin/kimi`): установка в изолированный домашний каталог, если CLI это позволяет неинтерактивно; Codex, Qwen, Cursor — если установлены; иначе «не проверено».
+- [ ] **Step 3: Роадмап** — строка `5.10`: `🟢 In Review` с размерами и результатами шагов 1–2; commit `infra 5.10: record live acceptance`.
+- [ ] **Step 4: PR основного репо** — `git push -u origin feat/infra-5.10-mcp-only-plugin`; `gh pr create` с `Closes #474` вне backticks и ссылкой на PR нового репо; протокол приёмки — комментарием в PR; Project V2 → `In Review`, поле `PR`.
 
-```bash
-git add docs/ROADMAP_INFRA.md
-git commit -m "infra 5.10: record live acceptance"
-```
-
-PR: один, в конце, `Closes #474` вне backticks, протокол приёмки — комментарием в PR; Project V2 → `In Review`, поле `PR`.
+Мерж обоих PR — решение владельца; порядок: сначала `kmlebedev/rosstat-mcp`, затем основной репо.
