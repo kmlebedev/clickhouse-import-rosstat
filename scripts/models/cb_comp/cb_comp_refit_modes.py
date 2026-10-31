@@ -576,7 +576,8 @@ def _jsonable(value):
 
 
 def run(archive: Path, panel_csv: Path, public_dir: Path, out_dir: Path, jobs: int = 8,
-        skip_w5b: bool = False, skip_asof: bool = False, cache_dir: Path = None) -> dict:
+        skip_w5b: bool = False, skip_asof: bool = False, cache_dir: Path = None,
+        skip_wf: bool = False) -> dict:
     import cpi_two_stage_cb_comp as w5b
 
     data = prepare(archive, panel_csv, public_dir)
@@ -593,8 +594,9 @@ def run(archive: Path, panel_csv: Path, public_dir: Path, out_dir: Path, jobs: i
     if not skip_asof and data["features_asof"] is not None:
         fits[MODE_FROZEN_ASOF] = fit_predict_frozen(data, data["features_asof"], test_months)
         fits[MODE_ANNUAL_ASOF] = fit_predict_annual(data, test_months, MODE_ANNUAL, jobs, data["features_asof"])
-    for mode, exclude in ((MODE_WF_SHOCK, False), (MODE_WF_NOSHOCK, True)):
-        fits[mode] = fit_predict_wf(data, test_months, exclude_shocks=exclude, pool=jobs)
+    if not skip_wf:
+        for mode, exclude in ((MODE_WF_SHOCK, False), (MODE_WF_NOSHOCK, True)):
+            fits[mode] = fit_predict_wf(data, test_months, exclude_shocks=exclude, pool=jobs)
 
     aggregated = {mode: aggregate(predictions, data, test_months) for mode, predictions in fits.items()}
     regressors = h1.load_regressors(public_dir)
@@ -674,6 +676,33 @@ def run(archive: Path, panel_csv: Path, public_dir: Path, out_dir: Path, jobs: i
     return result
 
 
+def run_wf_only(archive: Path, panel_csv: Path, public_dir: Path, out_dir: Path, jobs: int = 8,
+                horizons=WF_HORIZONS) -> dict:
+    """Повтор только wf-контролей (R16): предсказания и метрики без годовой сетки."""
+    data = prepare(archive, panel_csv, public_dir)
+    test_months = data["test_months"]
+    fits = {MODE_FROZEN: fit_predict_frozen(data, data["features"], test_months)}
+    for mode, exclude in ((MODE_WF_SHOCK, False), (MODE_WF_NOSHOCK, True)):
+        fits[mode] = fit_predict_wf(data, test_months, exclude_shocks=exclude, pool=jobs, horizons=horizons)
+    aggregated = {mode: aggregate(predictions, data, test_months) for mode, predictions in fits.items()}
+    cb_errors = {horizon: cp._cb_errors(data["archive_data"]["sheet"], data["target_full"], horizon, data["normal"])
+                 for horizon in HORIZONS}
+    per_mode = evaluate_modes(error_sets(aggregated, data), data, cb_errors)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    write_predictions(out_dir / "wf_predictions.csv", aggregated, {}, data, test_months)
+    config = {"only": "wf", "seed": bu.SEED, "horizons": list(horizons), "jobs": jobs}
+    result = {
+        "spec": "docs/superpowers/specs/2026-10-30-cb-comp-88-groups-live-design.md §17",
+        "git_sha": git_sha(), "config": config,
+        "config_hash": hashlib.sha256(json.dumps(_jsonable(config), sort_keys=True).encode()).hexdigest(),
+        "modes": per_mode,
+        "hypothesis": hypothesis_live_cb(per_mode),
+    }
+    (out_dir / "wf_result.json").write_text(
+        json.dumps(_jsonable(result), ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return result
+
+
 def write_predictions(path: Path, aggregated: dict, combos: dict, data: dict, test_months: list) -> None:
     truth = {horizon: data["target_full"][horizon].dropna().to_dict() for horizon in HORIZONS}
     normal = set(data["normal"])
@@ -721,12 +750,15 @@ def main(argv=None) -> int:
     parser.add_argument("--cache-dir", default=str(W5B_CACHE), help="кэш wf-предсказаний W5b")
     parser.add_argument("--skip-w5b", action="store_true", help="без прямого теста гипотезы на v3/v5_direct")
     parser.add_argument("--skip-asof", action="store_true", help="без контролей frozen_asof/annual_asof")
-    parser.add_argument("--w5b-only", action="store_true", help="только диагностика W5b")
+    parser.add_argument("--w5b-only", action="store_true", help="то же, что --only w5b")
+    parser.add_argument("--wf-horizons", default="1,6", help="горизонты wf-контролей (по умолчанию 1,6)")
+    parser.add_argument("--only", choices=("all", "grid", "wf", "w5b"), default="all",
+                        help="часть прогона для повтора R16: grid — годовые режимы, wf — wf-контроли, w5b — диагностика")
     args = parser.parse_args(argv)
     archive = cp.resolve_archive(args.archive)
     out_dir = Path(args.out) if args.out else OUT_DIR
     cache_dir = Path(args.cache_dir) if args.cache_dir else None
-    if args.w5b_only:
+    if args.w5b_only or args.only == "w5b":
         import cpi_two_stage_cb_comp as w5b
 
         body = w5b.hypothesis_check(archive, cache_dir=cache_dir)
@@ -736,7 +768,13 @@ def main(argv=None) -> int:
         print(json.dumps(_jsonable({"verdict": body["verdict"]}), ensure_ascii=False))
         return 0
     panel = Path(args.panel) if args.panel else PANEL_CSV
-    result = run(archive, panel, Path(args.public_dir), out_dir, args.jobs, args.skip_w5b, args.skip_asof, cache_dir)
+    if args.only == "wf":
+        horizons = tuple(int(value) for value in args.wf_horizons.split(",") if value.strip())
+        result = run_wf_only(archive, panel, Path(args.public_dir), out_dir, args.jobs, horizons)
+        print(json.dumps(_jsonable({"hypothesis": result["hypothesis"]}), ensure_ascii=False, indent=2))
+        return 0
+    result = run(archive, panel, Path(args.public_dir), out_dir, args.jobs,
+                 args.skip_w5b or args.only == "grid", args.skip_asof, cache_dir, args.only == "grid")
     print(json.dumps(_jsonable(summary(result)), ensure_ascii=False, indent=2))
     return 0
 
