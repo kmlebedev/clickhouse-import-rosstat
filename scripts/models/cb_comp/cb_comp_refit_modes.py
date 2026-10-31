@@ -26,9 +26,10 @@ import csv
 import hashlib
 import json
 import math
+import multiprocessing as mp
 import subprocess
 import sys
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from datetime import date
 from pathlib import Path
 
@@ -187,15 +188,114 @@ def test_rows(spec, features: dict, targets: dict, horizon: int, months: list, s
     return rows
 
 
-def _per_group(pool: int, specs: list, worker) -> dict:
+_WORKER_STATE: dict = {}
+
+
+def _init_worker(state: dict) -> None:
+    _WORKER_STATE.clear()
+    _WORKER_STATE.update(state)
+
+
+def _group_frozen_honest(code: str) -> tuple:
+    spec = _WORKER_STATE["specs"][code]
+    features = _WORKER_STATE["features"]
+    targets = _WORKER_STATE["targets"]
+    test_months = _WORKER_STATE["test_months"]
+    first = min(test_months)
     out = {}
-    with ThreadPoolExecutor(max_workers=max(1, pool)) as executor:
-        futures = [executor.submit(worker, spec) for spec in specs]
-        for future in futures:
-            code, values = future.result()
-            if values:
-                out[code] = values
-    return out
+    names = model_names(spec, True)
+    for horizon in HORIZONS:
+        origin_min = cp.shift_month(first, -(horizon - 1))
+        cutoff = training_cutoff(WINDOW_START, origin_min)
+        months = train_months(cutoff, horizon, exclude_shocks=True)
+        assert_no_leakage(months, cutoff, horizon)
+        rows = train_rows(spec, features, targets, horizon, months)
+        if len(rows) < bu.MIN_TRAIN_ROWS:
+            continue
+        rows_test = test_rows(spec, features, targets, horizon, test_months)
+        if not rows_test:
+            continue
+        model = bu.fit_component(rows, names, horizon, thread_count=1)
+        values = bu.predict_component(model, rows_test, names)
+        out[horizon] = {row[0]: value for row, value in zip(rows_test, values)}
+    return code, out
+
+
+def _group_annual(code: str) -> tuple:
+    state = _WORKER_STATE
+    spec = state["specs"][code]
+    features, features_test, targets = state["features"], state["features_test"], state["targets"]
+    shock_feature = state["shock_feature"]
+    out = {}
+    extra = [SHOCK_FEATURE] if shock_feature else ()
+    names = model_names(spec, True, extra)
+    for horizon in HORIZONS:
+        for year, months_test in state["by_year"].items():
+            window = state["windows"][horizon][year]
+            months = window["train"]
+            assert_no_leakage(months, window["cutoff"], horizon)
+            rows = train_rows(spec, features, targets, horizon, months, shock_feature)
+            if len(rows) < bu.MIN_TRAIN_ROWS:
+                continue
+            rows_test = test_rows(spec, features_test, targets, horizon, months_test, shock_feature)
+            if not rows_test:
+                continue
+            model = bu.fit_component(rows, names, horizon, thread_count=1)
+            values = bu.predict_component(model, rows_test, names)
+            out.setdefault(horizon, {}).update({row[0]: value for row, value in zip(rows_test, values)})
+    return code, out
+
+
+def _group_wf(code: str) -> tuple:
+    state = _WORKER_STATE
+    spec = state["specs"][code]
+    features, targets = state["features"], state["targets"]
+    test_months = state["test_months"]
+    exclude_shocks = state["exclude_shocks"]
+    out = {}
+    names = model_names(spec, True)
+    for horizon in state["horizons"]:
+        bu.assert_no_leakage_bottomup(test_months, horizon)
+        for month in test_months:
+            origin = cp.shift_month(month, -(horizon - 1))
+            cutoff = training_cutoff(WINDOW_START, origin)
+            months = train_months(cutoff, horizon, exclude_shocks=exclude_shocks)
+            assert_no_leakage(months, cutoff, horizon)
+            rows = train_rows(spec, features, targets, horizon, months)
+            if len(rows) < bu.MIN_TRAIN_ROWS:
+                continue
+            rows_test = test_rows(spec, features, targets, horizon, [month])
+            if not rows_test:
+                continue
+            model = bu.fit_component(rows, names, horizon, thread_count=1)
+            out.setdefault(horizon, {})[month] = bu.predict_component(model, rows_test, names)[0]
+    return code, out
+
+
+def _worker(task: tuple) -> tuple:
+    kind, code = task
+    if kind == "frozen_honest":
+        return _group_frozen_honest(code)
+    if kind == "annual":
+        return _group_annual(code)
+    if kind == "wf":
+        return _group_wf(code)
+    raise ValueError(f"неизвестный вид задачи {kind!r}")
+
+
+def _collect(kind: str, state: dict, codes: list, pool: int = 8, parallel: str = "thread") -> dict:
+    """Сбор прогнозов по группам; `parallel="process"` — устойчиво к SIGSEGV CatBoost в потоках."""
+    tasks = [(kind, code) for code in codes]
+    if parallel == "process":
+        context = mp.get_context("spawn")
+        with ProcessPoolExecutor(max_workers=max(1, pool), mp_context=context,
+                                 initializer=_init_worker, initargs=(state,)) as executor:
+            results = list(executor.map(_worker, tasks, chunksize=1))
+    else:
+        _init_worker(state)
+        with ThreadPoolExecutor(max_workers=max(1, pool)) as executor:
+            results = [future.result() for future in [executor.submit(_worker, task) for task in tasks]]
+    return {code: values for code, values in results if values}
 
 
 def fit_predict_frozen(data: dict, features_test: dict, test_months: list) -> dict:
@@ -204,88 +304,36 @@ def fit_predict_frozen(data: dict, features_test: dict, test_months: list) -> di
                           data["train_months"], test_months, with_mp=True)
 
 
-def fit_predict_frozen_honest(data: dict, test_months: list, pool: int = 8) -> dict:
+def fit_predict_frozen_honest(data: dict, test_months: list, pool: int = 8,
+                              parallel: str = "thread") -> dict:
     """Frozen с cutoff по первому origin года для каждого h — контроль асимметрии 2019."""
-    first = min(test_months)
-
-    def worker(spec):
-        out = {}
-        names = model_names(spec, True)
-        for horizon in HORIZONS:
-            origin_min = cp.shift_month(first, -(horizon - 1))
-            cutoff = training_cutoff(WINDOW_START, origin_min)
-            months = train_months(cutoff, horizon, exclude_shocks=True)
-            assert_no_leakage(months, cutoff, horizon)
-            rows = train_rows(spec, data["features"], data["targets"], horizon, months)
-            if len(rows) < bu.MIN_TRAIN_ROWS:
-                continue
-            rows_test = test_rows(spec, data["features"], data["targets"], horizon, test_months)
-            if not rows_test:
-                continue
-            model = bu.fit_component(rows, names, horizon, thread_count=1)
-            values = bu.predict_component(model, rows_test, names)
-            out[horizon] = {row[0]: value for row, value in zip(rows_test, values)}
-        return spec.code, out
-
-    return _per_group(pool, data["specs"], worker)
+    state = {"features": data["features"], "targets": data["targets"], "test_months": test_months,
+             "specs": {spec.code: spec for spec in data["specs"]}}
+    return _collect("frozen_honest", state, list(state["specs"]), pool, parallel)
 
 
 def fit_predict_annual(data: dict, test_months: list, mode: str, pool: int = 8,
-                       features_test: dict = None) -> dict:
+                       features_test: dict = None, parallel: str = "thread") -> dict:
     """Годовой перефит: один фит на (группа, h, год), прогноз месяцев своего года."""
     features_test = features_test if features_test is not None else data["features"]
     years = sorted({month.year for month in test_months})
-    windows = {horizon: annual_windows(horizon, years, mode) for horizon in HORIZONS}
-    by_year = {year: [month for month in test_months if month.year == year] for year in years}
-    shock_feature = mode == MODE_ANNUAL_DUMMY
-
-    def worker(spec):
-        out = {}
-        extra = [SHOCK_FEATURE] if shock_feature else ()
-        names = model_names(spec, True, extra)
-        for horizon in HORIZONS:
-            for year in years:
-                window = windows[horizon][year]
-                months = window["train"]
-                assert_no_leakage(months, window["cutoff"], horizon)
-                rows = train_rows(spec, data["features"], data["targets"], horizon, months, shock_feature)
-                if len(rows) < bu.MIN_TRAIN_ROWS:
-                    continue
-                rows_test = test_rows(spec, features_test, data["targets"], horizon, by_year[year], shock_feature)
-                if not rows_test:
-                    continue
-                model = bu.fit_component(rows, names, horizon, thread_count=1)
-                values = bu.predict_component(model, rows_test, names)
-                out.setdefault(horizon, {}).update({row[0]: value for row, value in zip(rows_test, values)})
-        return spec.code, out
-
-    return _per_group(pool, data["specs"], worker)
+    state = {
+        "features": data["features"], "features_test": features_test, "targets": data["targets"],
+        "specs": {spec.code: spec for spec in data["specs"]},
+        "windows": {horizon: annual_windows(horizon, years, mode) for horizon in HORIZONS},
+        "by_year": {year: [month for month in test_months if month.year == year] for year in years},
+        "shock_feature": mode == MODE_ANNUAL_DUMMY,
+    }
+    return _collect("annual", state, list(state["specs"]), pool, parallel)
 
 
 def fit_predict_wf(data: dict, test_months: list, exclude_shocks: bool, pool: int = 8,
-                   horizons=WF_HORIZONS) -> dict:
+                   horizons=WF_HORIZONS, parallel: str = "thread") -> dict:
     """Месячный expanding wf: train `[WINDOW_START, cutoff(origin)]`, перефит на каждом M."""
-    def worker(spec):
-        out = {}
-        names = model_names(spec, True)
-        for horizon in horizons:
-            bu.assert_no_leakage_bottomup(test_months, horizon)
-            for month in test_months:
-                origin = cp.shift_month(month, -(horizon - 1))
-                cutoff = training_cutoff(WINDOW_START, origin)
-                months = train_months(cutoff, horizon, exclude_shocks=exclude_shocks)
-                assert_no_leakage(months, cutoff, horizon)
-                rows = train_rows(spec, data["features"], data["targets"], horizon, months)
-                if len(rows) < bu.MIN_TRAIN_ROWS:
-                    continue
-                rows_test = test_rows(spec, data["features"], data["targets"], horizon, [month])
-                if not rows_test:
-                    continue
-                model = bu.fit_component(rows, names, horizon, thread_count=1)
-                out.setdefault(horizon, {})[month] = bu.predict_component(model, rows_test, names)[0]
-        return spec.code, out
-
-    return _per_group(pool, data["specs"], worker)
+    state = {"features": data["features"], "targets": data["targets"], "test_months": test_months,
+             "specs": {spec.code: spec for spec in data["specs"]},
+             "exclude_shocks": exclude_shocks, "horizons": tuple(horizons)}
+    return _collect("wf", state, list(state["specs"]), pool, parallel)
 
 
 def aggregate(predictions: dict, data: dict, test_months: list) -> dict:
@@ -597,7 +645,7 @@ def _jsonable(value):
 
 def run(archive: Path, panel_csv: Path, public_dir: Path, out_dir: Path, jobs: int = 8,
         skip_w5b: bool = False, skip_asof: bool = False, cache_dir: Path = None,
-        skip_wf: bool = False) -> dict:
+        skip_wf: bool = False, parallel: str = "thread") -> dict:
     import cpi_two_stage_cb_comp as w5b
 
     data = prepare(archive, panel_csv, public_dir)
@@ -605,18 +653,18 @@ def run(archive: Path, panel_csv: Path, public_dir: Path, out_dir: Path, jobs: i
 
     fits = {
         MODE_FROZEN: fit_predict_frozen(data, data["features"], test_months),
-        MODE_FROZEN_HONEST: fit_predict_frozen_honest(data, test_months, jobs),
+        MODE_FROZEN_HONEST: fit_predict_frozen_honest(data, test_months, jobs, parallel),
     }
     for mode in CANDIDATES:
         if mode == MODE_FROZEN:
             continue
-        fits[mode] = fit_predict_annual(data, test_months, mode, jobs)
+        fits[mode] = fit_predict_annual(data, test_months, mode, jobs, parallel=parallel)
     if not skip_asof and data["features_asof"] is not None:
         fits[MODE_FROZEN_ASOF] = fit_predict_frozen(data, data["features_asof"], test_months)
-        fits[MODE_ANNUAL_ASOF] = fit_predict_annual(data, test_months, MODE_ANNUAL, jobs, data["features_asof"])
+        fits[MODE_ANNUAL_ASOF] = fit_predict_annual(data, test_months, MODE_ANNUAL, jobs, data["features_asof"], parallel)
     if not skip_wf:
         for mode, exclude in ((MODE_WF_SHOCK, False), (MODE_WF_NOSHOCK, True)):
-            fits[mode] = fit_predict_wf(data, test_months, exclude_shocks=exclude, pool=jobs)
+            fits[mode] = fit_predict_wf(data, test_months, exclude_shocks=exclude, pool=jobs, parallel=parallel)
 
     aggregated = {mode: aggregate(predictions, data, test_months) for mode, predictions in fits.items()}
     regressors = h1.load_regressors(public_dir)
@@ -697,13 +745,14 @@ def run(archive: Path, panel_csv: Path, public_dir: Path, out_dir: Path, jobs: i
 
 
 def run_wf_only(archive: Path, panel_csv: Path, public_dir: Path, out_dir: Path, jobs: int = 8,
-                horizons=WF_HORIZONS) -> dict:
+                horizons=WF_HORIZONS, parallel: str = "thread") -> dict:
     """Повтор только wf-контролей (R16): предсказания и метрики без годовой сетки."""
     data = prepare(archive, panel_csv, public_dir)
     test_months = data["test_months"]
     fits = {MODE_FROZEN: fit_predict_frozen(data, data["features"], test_months)}
     for mode, exclude in ((MODE_WF_SHOCK, False), (MODE_WF_NOSHOCK, True)):
-        fits[mode] = fit_predict_wf(data, test_months, exclude_shocks=exclude, pool=jobs, horizons=horizons)
+        fits[mode] = fit_predict_wf(data, test_months, exclude_shocks=exclude, pool=jobs,
+                                    horizons=horizons, parallel=parallel)
     aggregated = {mode: aggregate(predictions, data, test_months) for mode, predictions in fits.items()}
     cb_errors = {horizon: cp._cb_errors(data["archive_data"]["sheet"], data["target_full"], horizon, data["normal"])
                  for horizon in HORIZONS}
@@ -767,6 +816,8 @@ def main(argv=None) -> int:
     parser.add_argument("--public-dir", default=str(PUBLIC_DIR), help="каталог public_panel.csv и sheet_map.csv")
     parser.add_argument("--out", default=None, help=f"по умолчанию {OUT_DIR}")
     parser.add_argument("--jobs", type=int, default=8, help="параллелизм по группам (фиты thread_count=1)")
+    parser.add_argument("--parallel", choices=("process", "thread"), default="process",
+                        help="process (spawn) — устойчиво к SIGSEGV CatBoost в потоках; thread — быстрее, но падает на длинных прогонах")
     parser.add_argument("--cache-dir", default=str(W5B_CACHE), help="кэш wf-предсказаний W5b")
     parser.add_argument("--skip-w5b", action="store_true", help="без прямого теста гипотезы на v3/v5_direct")
     parser.add_argument("--skip-asof", action="store_true", help="без контролей frozen_asof/annual_asof")
@@ -790,11 +841,11 @@ def main(argv=None) -> int:
     panel = Path(args.panel) if args.panel else PANEL_CSV
     if args.only == "wf":
         horizons = tuple(int(value) for value in args.wf_horizons.split(",") if value.strip())
-        result = run_wf_only(archive, panel, Path(args.public_dir), out_dir, args.jobs, horizons)
+        result = run_wf_only(archive, panel, Path(args.public_dir), out_dir, args.jobs, horizons, args.parallel)
         print(json.dumps(_jsonable({"hypothesis": result["hypothesis"]}), ensure_ascii=False, indent=2))
         return 0
     result = run(archive, panel, Path(args.public_dir), out_dir, args.jobs,
-                 args.skip_w5b or args.only == "grid", args.skip_asof, cache_dir, args.only == "grid")
+                 args.skip_w5b or args.only == "grid", args.skip_asof, cache_dir, args.only == "grid", args.parallel)
     print(json.dumps(_jsonable(summary(result)), ensure_ascii=False, indent=2))
     return 0
 
