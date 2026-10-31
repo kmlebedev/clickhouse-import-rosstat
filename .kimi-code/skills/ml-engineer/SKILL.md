@@ -158,7 +158,7 @@ Python-тесты — офлайн, через `uv run --with ... python3 script
 | Preflight | `make mlflow-preflight` (или автоматически перед `make`-целью). Недоступный API в не-TTY — стоп; `MLFLOW_ALLOW_NO_LOG=1` — явное решение, не обход. |
 | Staging — единственный канонический backend | `ps-palmshell` (ssh-алиас `palmshell`): systemd `mlflow.service`, backend `sqlite:////var/lib/mlflow/mlflow.db`, артефакты `/var/lib/mlflow/artifacts`, API `127.0.0.1:5000` хоста. Доступ — SSH-туннель `ssh -N -L 15001:127.0.0.1:5000 palmshell` (локальный порт 15001 или свободный; 5000 — если свободен), `MLFLOW_TRACKING_URI=http://127.0.0.1:15001`. |
 | Локальный `build/mlflow` | Только офлайн-тесты/изолированные прогоны: SQLite `build/mlflow/mlflow.db`, артефакты `build/mlflow/artifacts`; `/build/` gitignored; `make mlflow-up/down/status` — только dev. Не канонический backend, не evidence, не называть его staging/production. |
-| Канонические run'ы | Не логировать в локальный сервер. Если `MLFLOW_TRACKING_URI` указывает на локальный dev (`:5000`, `build/mlflow`) — это ошибка политики: run не станет evidence; канонический URI — staging-туннель. |
+| Канонические run'ы | Не логировать в локальный сервер. Если `MLFLOW_TRACKING_URI` ведёт на локальный сервер `build/mlflow`, а не на staging-туннель, это ошибка политики: run не станет evidence; локальный порт 5000 допустим только как туннель к staging. |
 | Хранение артефактов | Не только в MLflow и не только в `build/`: паспорт/отчёт/JSON с sha256 — в git или research-артефакте. |
 
 ### 7.3 Реестр и aliases
