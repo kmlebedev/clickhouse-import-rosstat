@@ -28,7 +28,7 @@ whenToUse: When a task involves an ML experiment, model, feature set, backtest, 
 3. [stat-ml-models.md](../../../docs/guides/stat-ml-models.md) §4 (валидация), §6 (ловушки), §7 (данные).
 4. [ml-experiment-management.md](../../../docs/research/2026-10-18-ml-experiment-management.md) §4 (паспорт run), §7 (цикл и gates).
 5. [KEY_RATE_MODEL.md](../../../docs/KEY_RATE_MODEL.md) §4/§6 — если задача про ставку или CPI-nowcast.
-6. Для линии live 88 групп / `combo3` — [cb-comp-live-model-map.md](../../../docs/guides/cb-comp-live-model-map.md): model card, данные, канонические числа, реестр исследований, что уже отвергнуто и следующие шаги. Не переоткрывать закрытые вопросы без новых данных.
+6. Для линии live 88 групп / `combo3` — [cb-comp-live-model-map.md](../../../docs/guides/cb-comp-live-model-map.md): model card, данные, канонические числа, реестр исследований, что уже отвергнуто, следующие шаги и §7.8 — порядок смены базы после пройденного гейта (решение `shadow` → заморозка → robustness → paper shadow → правило решения → переключение в границах арены). Не переоткрывать закрытые вопросы без новых данных.
 7. Спека/план своего пункта; для промоушена и live — [2026-10-20-ml-promotion-live-monitoring-design.md](../../../docs/superpowers/specs/2026-10-20-ml-promotion-live-monitoring-design.md); для витрин/грантов — [IMPORTER_PACKAGE_STANDARD.md](../../../docs/IMPORTER_PACKAGE_STANDARD.md).
 
 ## 3. Границы ролей
