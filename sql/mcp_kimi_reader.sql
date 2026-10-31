@@ -1,7 +1,13 @@
--- Пользователь MCP-агента: только чтение витрин. Пароль подставьте вручную (<your-password>) и не коммитьте результат.
+-- Пользователь MCP-агента и датасорса Grafana: только чтение витрин. readonly = 2 разрешает
+-- менять настройки сессии (плагин grafana-clickhouse-datasource 4.14+ выставляет
+-- max_execution_time при подключении; при readonly = 1 это падает с READONLY), запись на
+-- постоянные таблицы по-прежнему запрещена, гранты выданы только на витрины. ALTER — для уже
+-- созданных пользователей: CREATE USER IF NOT EXISTS настройку существующего не меняет.
+-- Пароль подставьте вручную (<your-password>) и не коммитьте результат.
 -- Запуск: clickhouse-client --multiquery < sql/mcp_kimi_reader.sql
 
-CREATE USER IF NOT EXISTS kimi_reader IDENTIFIED BY '<your-password>' DEFAULT DATABASE default SETTINGS readonly = 1;
+CREATE USER IF NOT EXISTS kimi_reader IDENTIFIED BY '<your-password>' DEFAULT DATABASE default SETTINGS readonly = 2;
+ALTER USER kimi_reader SETTINGS readonly = 2;
 
 GRANT SELECT ON default.v_bea_pce TO kimi_reader;
 GRANT SELECT ON default.v_series_catalog TO kimi_reader;

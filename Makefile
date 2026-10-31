@@ -38,7 +38,7 @@ GF_PLUGINS   := $(GF_DIR)/plugins
 # уходит в окружение процесса gcx (make экспортирует переменные) и не светится в командной строке.
 # Список uid всех дашбордов контура — источник истины для деплоя и smoke: цели ниже идут по нему
 # циклом, поэтому новый дашборд добавляется здесь одной строкой (свои uid генератор grafana/ знает сам).
-DASHBOARDS       := gold-thesis key-rate-publications finance-polyus
+DASHBOARDS       := gold-thesis key-rate-publications finance-polyus transaq-trades
 GRAFANA_TEST_URL ?= http://localhost:3000
 GRAFANA_ORG_ID   ?= 1
 GRAFANA_TOKEN    ?= $(GRAFANA_TEST_TOKEN)
@@ -1257,10 +1257,11 @@ grafana-build:
 # Без конфига/кредов команда падает: «context references no stack with grafana config» (exit 1),
 # с неверными кредами — 401 (exit 3); basic auth поддержан (GRAFANA_USER/GRAFANA_PASSWORD).
 # Офлайновая альтернатива в CI (тоже gcx, без секретов) — линтер по файлам артефактов:
-# `gcx dev lint run PATH...` принимает несколько путей и линтит их одним прогоном (проверено на gcx 1.5.0:
-# «3 files linted. No violations found.», exit 0):
+# `gcx dev lint run PATH...` принимает несколько путей и линтит их одним прогоном (на gcx 1.5.0 —
+# «4 files linted. No violations found.», exit 0):
 #   gcx dev lint run --disable uneditable-dashboard --disable panel-title-description \
-#     dashboard/gold-thesis.json dashboard/key-rate-publications.json dashboard/finance-polyus.json
+#     dashboard/gold-thesis.json dashboard/key-rate-publications.json dashboard/finance-polyus.json \
+#     dashboard/transaq-trades.json
 grafana-validate:
 	cd grafana && go vet ./... && go test ./...
 	@go test ./views -run TestMLLiveAlertProvisioning
@@ -1311,7 +1312,7 @@ grafana-down:
 		echo "PID-файл $(GF_PID) не найден или процесс не запущен (сервер, поднятый вне make, не останавливается)"; \
 	fi
 
-# Выгрузка артефактов dashboard/<uid>.json всех трёх дашбордов на тест-стенд и smoke-проверка панелей.
+# Выгрузка артефактов dashboard/<uid>.json всех четырёх дашбордов на тест-стенд и smoke-проверка панелей.
 # Рабочая форма вызова подобрана живьём на стенде Grafana 13.2.3 (gcx 1.5.0): selector dashboards
 # + --path на файл-артефакт; push принимает apiVersion dashboard.grafana.app/v1beta1 и идемпотентен
 # (повторный прогон обновляет тот же ресурс metadata.name=<uid>, дубль не создаётся).
@@ -1450,7 +1451,7 @@ grafana-provision-alerting-staging:
 		echo "     reload: curl -u admin:<пароль> -X POST http://127.0.0.1:3000/api/admin/provisioning/alert-rules/reload"; \
 		echo "     (или systemctl restart grafana-server)"'
 
-# Деплой всех трёх дашбордов ($(DASHBOARDS)) на staging: провижининг датасорса → push → smoke.
+# Деплой всех четырёх дашбордов ($(DASHBOARDS)) на staging: провижининг датасорса → push → smoke.
 # Токен (GRAFANA_STAGING_TOKEN, сервис-аккаунт Editor на staging) живёт только у владельца
 # в $(ROSSTAT_ENV); gcx общается с инстансом через туннель, а панели — с ClickHouse хоста.
 # Grafana и systemd на хосте не трогаются: нужен только поднятый туннель.
