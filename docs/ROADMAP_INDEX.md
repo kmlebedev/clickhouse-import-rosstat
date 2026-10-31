@@ -82,7 +82,7 @@ Labels: `roadmap:<slug>` — группировка до появления Proj
 ## 6. Живой Project V2
 
 - **Project:** [clickhouse-import-rosstat — Roadmap](https://github.com/users/kmlebedev/projects/11) (number 11), привязан к репозиторию.
-- **Items:** 75 — 57 новых issue открытого фронта (#109–#165) + 18 существующих; #105 (`infra/3.3`) и #47 (`gold-thesis/phase-5`) не дублируются.
+- **Items:** 76 — 57 новых issue открытого фронта (#109–#165) + 19 существующих; #105 (`infra/3.3`) и #47 (`gold-thesis/phase-5`) не дублируются.
 - **Inbox:** 11 issue без роадмапа — #90, #89, #88, #85, #81, #77, #76, #58, #52, #51, #48.
 - **Закрыты как принятые:** #86, #75, #74, #42; в Project отмечены `Done`.
 - **Поля и виды:** по спеке [2026-10-18-github-project-v2-design.md](superpowers/specs/2026-10-18-github-project-v2-design.md) §3–§4.
