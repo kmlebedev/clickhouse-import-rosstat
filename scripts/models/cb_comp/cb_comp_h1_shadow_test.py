@@ -185,5 +185,72 @@ class ShadowTest(unittest.TestCase):
         self.assertTrue(math.isfinite(len(text)))
 
 
+class VersionTest(unittest.TestCase):
+    """Task 16 #466: версия цели @2009 — свои каталоги, пины и незасчитываемый shadow."""
+
+    def test_paths_by_version(self):
+        canon = sh.version_paths("2010")
+        alt = sh.version_paths("2009")
+        self.assertEqual(canon["shadow_dir"], sh.SHADOW_DIR)
+        self.assertEqual(alt["shadow_dir"].name, "cb-comp-h1-shadow-2009")
+        self.assertEqual(alt["out"].name, "cb-comp-h1-shadow-2009")
+        self.assertEqual(alt["base_predictions"].parent.name, "cb-comp-h1-weekly-2009")
+        self.assertEqual(alt["ex_predictions"].parent.name, "cb-comp-h1-weekly-ex-2009")
+        self.assertEqual(canon["base_predictions"], ex.BASE_PREDICTIONS)
+
+    def test_counted_version(self):
+        self.assertEqual(sh.MODEL_VERSIONS["2009"], "wk_mix_ex@v2")
+        self.assertEqual(sh.MODEL_VERSIONS["2010"], sh.VERSION)
+        self.assertTrue(sh.is_counted("2009", date(2026, 10, 1)))
+        self.assertTrue(sh.is_counted("2009", date(2027, 3, 1)))
+        self.assertFalse(sh.is_counted("2009", date(2026, 9, 1)))
+        self.assertFalse(sh.is_counted("2010", date(2026, 11, 1)))
+
+    def test_r_p0_pins(self):
+        months = [date(2023, 1, 1), date(2023, 2, 1)]
+        truth = {m: 0.0 for m in months}
+        wrong = {sh.MODEL_COMBO: {m: 1.0 for m in months}, sh.MODEL_MIX_EX: {m: 1.0 for m in months}}
+        self.assertFalse(sh.r_p0_check(wrong, truth, months, "2010")["ok"])
+        old = dict(sh.R_P0_PINS["2009"])
+        sh.R_P0_PINS["2009"].clear()
+        try:
+            unpinned = sh.r_p0_check(wrong, truth, months, "2009")
+            self.assertTrue(unpinned["ok"])
+            self.assertFalse(unpinned["pinned"])
+        finally:
+            sh.R_P0_PINS["2009"].update(old)
+
+    def test_train_start_rules(self):
+        first = date(2009, 1, 1)
+        ex.check_train_start(ex.TRAIN_START, "2010", first)
+        with self.assertRaises(SystemExit):
+            ex.check_train_start(date(2009, 3, 1), "2010", date(2010, 2, 1))
+        ex.check_train_start(date(2009, 3, 1), "2009", first)
+        with self.assertRaises(SystemExit):
+            ex.check_train_start(date(2009, 2, 1), "2009", first)
+        months = [date(2010, 3, 1), date(2010, 4, 1)]
+        self.assertEqual(ex.train_months(months, first, ex.TRAIN_START), months)
+        extended = ex.train_months(months, first, date(2009, 3, 1))
+        self.assertEqual(extended[0], date(2009, 3, 1))
+        self.assertEqual(extended[-1], date(2010, 4, 1))
+        self.assertEqual(len(extended), 14)
+
+    def test_r12_unpinned_version_records_only(self):
+        evaluation = {"per_model": {ex.MODEL_COMBO: {"rmse": 0.5}, ex.MODEL_COMBO_WK: {"rmse": 0.4}}}
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "predictions.csv"
+            path.write_text("arena,model,month,y_pred\n", encoding="utf-8")
+            old = dict(ex.R12_PINS["2009"])
+            ex.R12_PINS["2009"].update({"rmse": {}, "sha256": None})
+            try:
+                out = ex.r12_check(evaluation, path, "2009")
+                self.assertTrue(out["ok"])
+                self.assertFalse(out["pinned"])
+            finally:
+                ex.R12_PINS["2009"].clear()
+                ex.R12_PINS["2009"].update(old)
+            self.assertFalse(ex.r12_check(evaluation, path, "2010")["ok"])
+
+
 if __name__ == "__main__":
     unittest.main()
