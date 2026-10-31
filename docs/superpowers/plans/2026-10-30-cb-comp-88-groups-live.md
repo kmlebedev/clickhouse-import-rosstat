@@ -100,11 +100,13 @@
 Ветка `exp/cb-comp-88-groups-task5`, worktree `.worktrees/cb-comp-88-task5`. Протокол — спека §17 (записан до кода и результатов); решение владельца Q1 = **A** (`live_cb`, `combo3` справочно).
 
 - [x] **5.1 Протокол** — спека §17 и этот раздел; роадмап; issue #425: комментарий с решением Q1 = A, `needs-answer` снят, Project `In Progress`.
-- [ ] **5.2 Код до прогона** — `scripts/models/cb_comp/cb_comp_refit_modes.py` (+ `_test.py`): `year_windows`, `train_months(exclude_shocks)`, `rolling_start`, `fit_predict_mode`, `fit_predict_wf`, `evaluate`, `gate`, `hypothesis_*`, паспорт; `cpi_two_stage_cb_comp.py`: `exclude_months` (default `()`), `hypothesis_check()`, `--hypothesis-check`, вариант в ключе кэша; тесты фильтра в `cpi_two_stage_cb_comp_test.py`; `make cb-comp-refit-modes(-test)`; README. **Коммит до прогона.**
-- [ ] **5.3 Данные** — `make ch-status`; `make cb-comp-public-export`; `build/cb-comp-groups/panel.csv` (sha `aec91f99…`) и архив `resolve_archive()`.
-- [ ] **5.4 Прогон ×2** — `make cb-comp-refit-modes ARGS="--jobs 8"`; повтор в отдельный `--out`; sha256 `result.json`/`predictions.csv` совпадают (R16). W5b-диагностика — в том же прогоне; кэш `build/cpi-two-stage/w5b-cache-task5`.
-- [ ] **5.5 Отчёт** — `docs/research/2026-10-31-cb-comp-88-groups-task5.{md,json}`: вердикт гейта, таблица режимов, подпериоды, MCS, H-W5b (A и B), R14–R16, «что не проверено», детерминизм; гайд `cb-comp-live-model-map.md` §P0.2 и реестр исследований; `docs/site-pages.json`; README; роадмап — итог Task 5.
+- [x] **5.2 Код до прогона** — `scripts/models/cb_comp/cb_comp_refit_modes.py` (+ `_test.py`): `year_windows`, `train_months(exclude_shocks)`, `rolling_start`, `fit_predict_mode`, `fit_predict_wf`, `evaluate`, `gate`, `hypothesis_*`, паспорт; `cpi_two_stage_cb_comp.py`: `exclude_months` (default `()`), `hypothesis_check()`, `--hypothesis-check`, вариант в ключе кэша; тесты фильтра в `cpi_two_stage_cb_comp_test.py`; `make cb-comp-refit-modes(-test)`; README. **Коммит до прогона.**
+- [x] **5.3 Данные** — `make ch-status`; `make cb-comp-public-export`; `build/cb-comp-groups/panel.csv` (sha `aec91f99…`) и архив `resolve_archive()`.
+- [x] **5.4 Прогон ×2** — `make cb-comp-refit-modes`; полный повтор дважды падал SIGSEGV в CatBoost (потоки), поэтому повтор — процессный пул (`--parallel process`) и три части (`--only grid`, `--only wf --wf-horizons 6`, `--only w5b`); совпадение побайтное: 4 824 строки grid, 134 строки wf h6, все W5b-числа (`build/determinism.json`). W5b-кэш `build/cpi-two-stage/w5b-cache-task5`.
+- [x] **5.5 Отчёт** — `docs/research/2026-10-31-cb-comp-88-groups-task5.{md,json}`: вердикт гейта, таблица режимов, подпериоды, MCS, H-W5b (A и B), R14–R16, «что не проверено», детерминизм; гайд `cb-comp-live-model-map.md` §P0.2 и реестр исследований; `docs/site-pages.json`; README; роадмап — итог Task 5.
 - [ ] **5.6 Приёмка** — `make cb-comp-refit-modes-test`, `make cpi-two-stage-cb-comp-test`, `make cb-comp-live-bottomup-test`, `make all`, `make docs-check`; протокол — комментарием в PR; PR `Closes #425`.
+
+**Итог Task 5:** гейт — `adopt:rolling120` после исправления P4 (литеральное чтение — `keep_frozen`, спека §17.8); `annual` эквивалентен. H-W5b — `partial`. Смена режима — Task 7/решение владельца.
 
 ## Риски Task 5
 
