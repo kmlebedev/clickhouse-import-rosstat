@@ -58,14 +58,16 @@ STL_PERIOD = 52
 STL_MIN_POINTS = 2 * STL_PERIOD
 CAL_MIN_WEEKS = 26
 
+# Сверка 2026-10-31: июль 2022, декабрь 2022 (перенос индексации 2023 года),
+# июль 2024–2025, октябрь 2026; в июле 2023 индексации не было.
 TARIFF_DATES = (
     date(2022, 7, 1),
-    date(2023, 7, 1),
+    date(2022, 12, 1),
     date(2024, 7, 1),
     date(2025, 7, 1),
     date(2026, 10, 1),
 )
-TARIFF_MONTHS = ("2022-07", "2023-07", "2024-07", "2025-07", "2026-10")
+TARIFF_MONTHS = ("2022-07", "2022-12", "2024-07", "2025-07", "2026-10")
 TARIFF_MONTHS_SENSITIVITY = TARIFF_MONTHS + ("2026-07",)
 
 FEATURES = ("days", "holidays", "tariff", "jan_first", "may")
