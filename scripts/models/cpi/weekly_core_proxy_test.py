@@ -156,8 +156,12 @@ class CalendarRegressorsTest(unittest.TestCase):
 
 
 class TariffTest(unittest.TestCase):
-    def test_july_and_october_intervals(self):
+    def test_tariff_calendar(self):
         dates = [
+            date(2022, 11, 28),
+            date(2022, 12, 5),
+            date(2023, 6, 26),
+            date(2023, 7, 3),
             date(2024, 6, 24),
             date(2024, 7, 1),
             date(2024, 7, 8),
@@ -167,6 +171,8 @@ class TariffTest(unittest.TestCase):
         rows = [WeeklyRow(day, 100.0, 1) for day in dates]
         growth = growth_rows(rows, set(), tariff_dates=TARIFF_DATES)
         flags = {row.date: row.tariff for row in growth}
+        self.assertEqual(flags[date(2022, 12, 5)], 1)
+        self.assertEqual(flags[date(2023, 7, 3)], 0)
         self.assertEqual(flags[date(2024, 7, 1)], 1)
         self.assertEqual(flags[date(2024, 7, 8)], 0)
         self.assertEqual(flags[date(2026, 10, 5)], 1)
