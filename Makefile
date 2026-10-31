@@ -923,6 +923,13 @@ cb-comp-h1-shadow-forecast:
 	uv run --with pandas --python 3.12 python3 scripts/models/cb_comp/cb_comp_public_export.py --out-dir build/cb-comp-h1-shadow/public
 	$(CB_COMP_SHADOW_UV) scripts/models/cb_comp/cb_comp_h1_shadow.py forecast --month $(MONTH) --public-dir build/cb-comp-h1-shadow/public $(ARGS)
 
+# Решение владельца 2026-10-31 (#419): ежемесячно — засчитываемый v2 (@2009,
+# docs/research/cb-comp-h1-shadow-2009/) и контроль v1 (@2010) на тех же входах.
+cb-comp-h1-shadow-forecast-v2:
+	@test -n "$(MONTH)" || (echo "MONTH=YYYY-MM обязателен" && exit 1)
+	$(MAKE) cb-comp-h1-shadow-forecast MONTH=$(MONTH) ARGS="--version 2009 $(ARGS)"
+	$(MAKE) cb-comp-h1-shadow-forecast MONTH=$(MONTH) ARGS="--version 2010 $(ARGS)"
+
 cb-comp-h1-shadow-test:
 	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/cb_comp/cb_comp_h1_shadow_test.py -v
 	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/cb_comp/cb_comp_h1_p06_versions_test.py -v
