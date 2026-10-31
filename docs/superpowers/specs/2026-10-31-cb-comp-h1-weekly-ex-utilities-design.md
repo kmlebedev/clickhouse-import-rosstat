@@ -38,28 +38,30 @@
 
 `log agg_ex = (log agg − w_ЖКУ·log ЖКУ_wk) / (1 − w_ЖКУ)`.
 
-Признаки: `wkagg_ex_mtd` (за месяц M) и `wkagg_ex_4w` (4-недельное окно, той же формулой); `util_cov` — диагностика. `NaN` при отсутствии агрегата/ЖКУ или `util_cov < 0,5`; 0 не подставляется.
+Признак: `wkagg_ex_mtd` (за месяц M); `util_cov` — диагностика. `wkagg_ex_4w` не используется: недельное 4-недельное окно ЖКУ не совпадает с окном агрегата, и подмешивать его без нового протокола нельзя. `NaN` при отсутствии агрегата/ЖКУ или `util_cov < 0,5`; 0 не подставляется.
 
-**Сезонность.** `wk_agg_ex` — OLS с константой, `wkagg_ex_mtd`, `wkagg_ex_4w` и **11 месячными дамми** (январь — база). `NaN` признаков — медиана train; пустая колонка — 0. Reference — та же OLS **без** месячных дамми (`wk_agg_ex_nodummies`), чтобы показать вклад сезонности.
+**Сезонность.** `wk_agg_ex` — OLS с константой, `wkagg_ex_mtd` и **11 месячными дамми** (январь — база). `NaN` признаков — медиана train; пустая колонка — 0. Reference — та же OLS **без** месячных дамми (`wk_agg_ex_nodummies`), чтобы показать вклад сезонности.
 
 ## 4. Модели
 
 | id | определение |
 |---|---|
-| `combo3` | база Task 9: `mean(live_cb, bs_econ16, bs_rozn16)`; WF-перефит на каждом M |
-| `combo3_wk` | контроль Task 4: `mean(live_cb_wk, bs_econ16, bs_rozn16)` |
-| `wk_agg_ex` | OLS с месячными дамми, цель `T_LIVE[1]`, признаки `wkagg_ex_mtd`, `wkagg_ex_4w`; перефит на каждом M |
+| `combo3` | база Task 9: `mean(live_cb, bs_econ16, bs_rozn16)`; **готовая строка Task 4** (`predictions.csv`, sha256 `0a67483f…`), не пересчитывается |
+| `combo3_wk` | контроль Task 4: `mean(live_cb_wk, bs_econ16, bs_rozn16)`; **готовая строка Task 4**, не пересчитывается |
+| `wk_agg_ex` | OLS с месячными дамми, цель `T_LIVE[1]`, признак `wkagg_ex_mtd`; перефит на каждом M |
 | `wk_mix_ex` | `0,5·combo3 + 0,5·wk_agg_ex` |
 | `wk_agg_ex_nodummies` | reference без месячных дамми |
 | `wk_mix_ex_nodummies` | `0,5·combo3 + 0,5·wk_agg_ex_nodummies` |
 
-Веса комбинаций равные, не подбираются. `combo3`/`combo3_wk` считаются тем же кодом Task 4 (`cb_comp_h1_weekly`); `bs_*` обучаются на `T_LIVE`, как в Task 4/9.
+**Переиспользование базы.** `combo3`/`combo3_wk` берутся из `build/cb-comp-h1-weekly-v2/predictions.csv` Task 4 (копия — `build/cb-comp-h1-weekly-ex/base_predictions.csv`, sha256 `0a67483f…`): это тот же код и данные, R12 проверяет 57-месячные RMSE и хеш. Task 4b пересчитывает только `wk_agg_ex`/`wk_mix_ex` (OLS), поэтому прогон детерминирован и быстрый. Если артефакта Task 4 нет — прогон останавливается с явной ошибкой; регенерация — `make cb-comp-h1-weekly` Task 4.
+
+Веса комбинаций равные, не подбираются. `bs_*` обучаются на `T_LIVE`, как в Task 4/9.
 
 ## 5. Окна и режимы
 
 - **Primary — 2023-01…2026-09, 45 месяцев** (2022 исключён; 2022-03 не входит). Reference — 2022+ (57) и 2022+ без 2022-03 (56).
 - Ежемесячный expanding walk-forward: для каждого M train — целевые месяцы `t ≤ M−1` с 2010-03, без шоков статьи (2014-12…2015-03, 2020-04, 2022); признаки строки `t` — на origin `t`; M в train не входит; минимум 20 строк на группу.
-- `live_cb`/`live_cb_wk` и `wk_agg_ex` перефитятся на каждом M; в CatBoost — `thread_count=1` (детерминизм при параллельных группах).
+- `wk_agg_ex` перефитится на каждом M (OLS); `combo3`/`combo3_wk` — фиксированные прогнозы Task 4 (`base_predictions.csv`, R12); CatBoost в Task 4b не обучается.
 - Все модели в одной арене считаются на одних месяцах; пропуск месяца — стоп, а не тихое сужение выборки.
 
 ## 6. Оценка и гейт G11
@@ -85,12 +87,12 @@ Reference-арены (57 и 56 месяцев) — только отчёт; в �
 
 ## 8. Детерминизм и паспорт
 
-CatBoost seed 20261018, `thread_count=1` в WF; OLS детерминирован. Повтор даёт побайтно те же `predictions.csv`/`result.json`; в JSON — git SHA, sha256 входов (`panel.csv`, `public_panel.csv`, `sheet_map.csv`, `TARGET_FULL`), config hash, значения R12/R13. `ML_LOG`/MLflow не используются (как Task 2/3/4/9).
+OLS детерминирован; прогнозы Task 4 зафиксированы по sha256 (`0a67483f…`). Повтор даёт побайтно те же `predictions.csv`/`result.json`; в JSON — git SHA, sha256 входов (`panel.csv`, `public_panel.csv`, `sheet_map.csv`, `TARGET_FULL`), config hash, значения R12/R13. `ML_LOG`/MLflow не используются (как Task 2/3/4/9).
 
 ## 9. Выходы
 
 - `scripts/models/cb_comp/cb_comp_h1_weekly_ex.py` (+ `_test.py`), `make cb-comp-h1-weekly-ex` / `-test`;
-- `build/cb-comp-h1-weekly-ex/{predictions.csv,result.json,utilities_map.csv}`;
+- `build/cb-comp-h1-weekly-ex/{base_predictions.csv,predictions.csv,result.json,utilities_map.csv}`;
 - отчёт `docs/research/2026-10-31-cb-comp-88-groups-task4b.md` + JSON;
 - роадмап, README, `docs/site-pages.json` — тем же PR.
 
