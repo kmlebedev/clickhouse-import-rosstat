@@ -66,6 +66,7 @@
 | Go-инженер | [`go-engineer`](../.kimi-code/skills/go-engineer/SKILL.md) | Go-код, DDL, витрины, гранты, ingest, Makefile/CI |
 | Python-инженер | [`python-engineer`](../.kimi-code/skills/python-engineer/SKILL.md) | немодельные инструменты `scripts/`; общий код `scripts/lib/`; запись — только через ingest |
 | ML-инженер | [`ml-engineer`](../.kimi-code/skills/ml-engineer/SKILL.md) | ML-эксперименты, MLflow, `forecast_log` |
+| ML-инженер-тимлид | [`ml-engineer-teamlead`](../.kimi-code/skills/ml-engineer-teamlead/SKILL.md) | приёмка гейта G-N, смена базы/champion, протокол shadow → production |
 | Research-инженер | [`research-engineer`](../.kimi-code/skills/research-engineer/SKILL.md) | разведка источника, аудит, research-документ |
 
 Общий роутер — [AGENTS.md](../AGENTS.md); диспатч — [`subagent-dispatch`](../.kimi-code/skills/subagent-dispatch/SKILL.md).
