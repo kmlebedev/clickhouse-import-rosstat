@@ -48,6 +48,14 @@ class NormalizeTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             g.product_index({"ipc31074/Сыр": {}, "ipc31074/сыр ": {}})
 
+    def test_product_index_prefers_longer_series(self):
+        collisions = []
+        index = g.product_index({"ipc31074/Сыр": {date(2020, 1, 1): 1.0},
+                                 "ipc31074/сыр ": {date(2020, 1, 1): 1.0, date(2020, 2, 1): 1.0}},
+                                collisions)
+        self.assertEqual(index["сыр"], "ipc31074/сыр ")
+        self.assertEqual(collisions[0]["dropped"], "ipc31074/Сыр")
+
 
 class DictionaryTest(unittest.TestCase):
     def test_leaves_by_ancestor(self):
@@ -254,6 +262,15 @@ class ReferenceWindowTest(unittest.TestCase):
         self.assertEqual(g.FIT_WINDOWS, ("live", "csv", "fst"))
         self.assertEqual(g.DATA_START, date(2009, 1, 1))
 
+    def test_version_presets(self):
+        self.assertEqual(g.DEFAULT_VERSION, "2010")
+        self.assertEqual(g.VERSION_PRESETS["2010"]["panel_start"], date(2010, 1, 1))
+        self.assertEqual(g.VERSION_PRESETS["2010"]["fit_start"], date(2010, 1, 1))
+        self.assertEqual(g.VERSION_PRESETS["2009"]["panel_start"], date(2009, 1, 1))
+        self.assertEqual(g.VERSION_PRESETS["2009"]["fit_start"], date(2008, 12, 1))
+        self.assertEqual(g.MAPPING_START, date(2010, 1, 1))
+        self.assertEqual(g.LEAF_FALLBACK_START, date(2010, 1, 1))
+
     def test_fst_reference_converts_log_to_pct(self):
         cpi = pd.DataFrame({
             "date": [pd.Timestamp("2009-01-01"), pd.Timestamp("2009-02-01"), pd.Timestamp("2009-02-01")],
@@ -429,7 +446,21 @@ class FitRoutingTest(unittest.TestCase):
     def test_fit_window_start(self):
         self.assertEqual(g.fit_window_start("9550", date(2010, 1, 1), g.SELECTION_FIRST), date(2009, 1, 1))
         self.assertEqual(g.fit_window_start("9550", date(2009, 1, 1), g.SELECTION_FIRST), date(2009, 1, 1))
+        self.assertEqual(g.fit_window_start("9550", date(2008, 12, 1), g.SELECTION_FIRST), date(2008, 12, 1))
         self.assertEqual(g.fit_window_start("10", date(2010, 1, 1), g.SELECTION_FIRST), date(2010, 1, 1))
+        self.assertEqual(g.fit_window_start("10", date(2008, 12, 1), g.SELECTION_FIRST), date(2008, 12, 1))
+
+    def test_fit_series_map_2009_head(self):
+        groups = self.groups()
+        months = g.month_grid(date(2009, 1, 1), date(2009, 3, 1))
+        nsa = {code: {m: 1.0 for m in months} for code in groups}
+        fit_mm = {"s": {date(2008, 12, 1): 2.0, **{m: 1.0 for m in months}}}
+        out = g.fit_series_map(list(groups), groups, nsa, fit_mm, {},
+                               date(2008, 12, 1), date(2009, 3, 1), g.SELECTION_FIRST,
+                               panel_start=date(2009, 1, 1))
+        self.assertEqual(out["9550"][date(2008, 12, 1)], 2.0)
+        self.assertEqual(out["9550"][date(2009, 1, 1)], 1.0)
+        self.assertNotIn(date(2008, 12, 1), out["10"])
 
     def test_fit_series_map_history_only_for_direct(self):
         groups = self.groups()

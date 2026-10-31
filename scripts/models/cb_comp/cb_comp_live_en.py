@@ -195,7 +195,8 @@ def prepare(archive: Path, panel_csv: Path, public_dir: Path) -> dict:
     weights = bu.load_weights(archive, lb.WEIGHT_YEARS, specs)
     sa_full, _sa_asof = lb.load_group_panel(panel_csv)
     last = max(m for values in sa_full.values() for m in values)
-    months = cp.month_range(date(2010, 1, 1), last)
+    first = lb.first_sa_month(sa_full)
+    months = cp.month_range(first, last)
     diff_full = lb.log_diff_frame(sa_full, codes, months)
     train_months = [row.month for row in train_rows]
     test_months = [row.month for row in test_rows]
