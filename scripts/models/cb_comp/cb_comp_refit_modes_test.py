@@ -235,11 +235,20 @@ class GateTest(unittest.TestCase):
     def test_significantly_worse_fails_dm(self):
         out = rm.gate(per_mode(**{rm.MODE_ANNUAL: per_h(0.99, 0.99, 0.99, dm_p=0.01, ci=(0.001, 0.2))}),
                       mcs_all())
-        self.assertFalse(out["candidates"][rm.MODE_ANNUAL]["horizons"][1]["p4_dm_ci"])
+        self.assertFalse(out["candidates"][rm.MODE_ANNUAL]["horizons"][1]["p4_not_worse"])
+
+    def test_significantly_better_passes(self):
+        out = rm.gate(per_mode(**{rm.MODE_ANNUAL: per_h(0.88, 0.88, 0.99, dm_p=0.001, ci=(-0.04, -0.01))}),
+                      mcs_all())
+        self.assertTrue(out["candidates"][rm.MODE_ANNUAL]["horizons"][1]["ok"])
+        self.assertEqual(out["decision"], "adopt:annual")
+        # Литеральное чтение p ≥ 0,05 не принимает улучшение — показано отдельно.
+        self.assertFalse(out["candidates"][rm.MODE_ANNUAL]["literal_ok"])
+        self.assertEqual(out["decision_literal"], "keep_frozen")
 
     def test_nothing_passes_keeps_frozen(self):
         out = rm.gate(per_mode(), mcs_all(["cb_comp"]))
-        self.assertEqual(out["passed"], [])
+        self.assertFalse(out["candidates"][rm.MODE_ANNUAL]["ok"])
         self.assertEqual(out["decision"], "keep_frozen")
 
 
