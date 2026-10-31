@@ -6,13 +6,14 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 )
 
 const (
 	pluginName    = "clickhouse-import-rosstat"
-	pluginVersion = "0.1.0"
+	pluginVersion = "0.2.0"
 )
 
 var (
@@ -28,8 +29,24 @@ var (
 		".agents/plugins/marketplace.json",
 		".cursor-plugin/marketplace.json",
 	}
-	allManifestPaths = append(append([]string{}, pluginManifestPaths...), marketplaceManifestPaths...)
+	// Файлы MCP-конфигурации, на которые ссылаются манифесты Codex и Cursor.
+	mcpConfigPaths   = []string{".codex-plugin/mcp.json", ".cursor-plugin/mcp.json"}
+	allManifestPaths = append(append(append([]string{}, pluginManifestPaths...), marketplaceManifestPaths...), mcpConfigPaths...)
 	forbiddenKey     = regexp.MustCompile(`(?i)(api[_-]?key|token|password|secret)`)
+	// Ключи, которые называют переменную окружения с токеном, а не хранят его:
+	// значение обязано совпасть с remoteMCPTokenEnv.
+	tokenEnvRefKeys = map[string]bool{
+		"bearerTokenEnvVar":    true,
+		"bearer_token_env_var": true,
+		remoteMCPTokenEnv:      true,
+	}
+)
+
+const (
+	remoteMCPName     = "rosstat-staging"
+	remoteMCPURL      = "https://mcp.selfinvesting.ru:8443/mcp"
+	remoteMCPTokenEnv = "ROSSTAT_MCP_TOKEN"
+	remoteMCPBearer   = "Bearer ${" + remoteMCPTokenEnv + "}"
 )
 
 type pluginManifest struct {
@@ -293,6 +310,12 @@ func walkJSON(t *testing.T, path string, v any) {
 	switch value := v.(type) {
 	case map[string]any:
 		for key, child := range value {
+			if tokenEnvRefKeys[key] {
+				if s, ok := child.(string); key != remoteMCPTokenEnv && (!ok || s != remoteMCPTokenEnv) {
+					t.Errorf("%s: %q must name env var %s, got %v", path, key, remoteMCPTokenEnv, child)
+				}
+				continue
+			}
 			if forbiddenKey.MatchString(key) {
 				t.Errorf("%s: forbidden key %q", path, key)
 			}
@@ -302,5 +325,84 @@ func walkJSON(t *testing.T, path string, v any) {
 		for _, child := range value {
 			walkJSON(t, path, child)
 		}
+	case string:
+		if strings.HasPrefix(value, "Bearer ") && value != remoteMCPBearer {
+			t.Errorf("%s: Authorization must be %q, got a literal value", path, remoteMCPBearer)
+		}
 	}
+}
+
+// remoteMCPServer возвращает описание сервера rosstat-staging из манифеста:
+// inline-объект mcpServers или файл, на который ссылается строка mcpServers.
+func remoteMCPServer(t *testing.T, path string) map[string]any {
+	t.Helper()
+	var m struct {
+		MCPServers json.RawMessage `json:"mcpServers"`
+	}
+	readJSON(t, path, &m)
+	if len(m.MCPServers) == 0 {
+		t.Fatalf("%s: mcpServers is missing", path)
+	}
+
+	var servers map[string]map[string]any
+	var ref string
+	if err := json.Unmarshal(m.MCPServers, &ref); err == nil {
+		assertRepoFile(t, path+": mcpServers", ref)
+		var file struct {
+			MCPServers map[string]map[string]any `json:"mcpServers"`
+		}
+		readJSON(t, filepath.Clean(ref), &file)
+		servers = file.MCPServers
+	} else if err := json.Unmarshal(m.MCPServers, &servers); err != nil {
+		t.Fatalf("%s: mcpServers: want object or path, got %s", path, m.MCPServers)
+	}
+
+	if _, ok := servers["clickhouse"]; ok {
+		t.Errorf("%s: server name clickhouse collides with .kimi-code/mcp.json", path)
+	}
+	server, ok := servers[remoteMCPName]
+	if !ok {
+		t.Fatalf("%s: mcpServers.%s is missing", path, remoteMCPName)
+	}
+	return server
+}
+
+func TestLLMPluginRemoteMCP(t *testing.T) {
+	for _, path := range pluginManifestPaths {
+		t.Run(path, func(t *testing.T) {
+			server := remoteMCPServer(t, path)
+
+			url, _ := server["url"].(string)
+			if url == "" {
+				url, _ = server["httpUrl"].(string)
+			}
+			if url != remoteMCPURL {
+				t.Errorf("%s: url = %q, want %q", path, url, remoteMCPURL)
+			}
+
+			headers, _ := server["headers"].(map[string]any)
+			auth := headers["Authorization"] == remoteMCPBearer ||
+				server["bearerTokenEnvVar"] == remoteMCPTokenEnv ||
+				server["bearer_token_env_var"] == remoteMCPTokenEnv
+			if !auth {
+				t.Errorf("%s: token must come from %s (header %q or bearer env var)", path, remoteMCPTokenEnv, remoteMCPBearer)
+			}
+		})
+	}
+
+	t.Run("cursor declares the token variable", func(t *testing.T) {
+		var m struct {
+			Variables struct {
+				Properties map[string]any `json:"properties"`
+				Required   []string       `json:"required"`
+			} `json:"variables"`
+		}
+		readJSON(t, ".cursor-plugin/plugin.json", &m)
+		if _, ok := m.Variables.Properties[remoteMCPTokenEnv]; !ok {
+			t.Errorf("variables.properties.%s is missing", remoteMCPTokenEnv)
+		}
+		if !slices.Contains(m.Variables.Required, remoteMCPTokenEnv) {
+			t.Errorf("variables.required must contain %s", remoteMCPTokenEnv)
+		}
+	})
 }

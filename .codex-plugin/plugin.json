@@ -1,6 +1,6 @@
 {
   "name": "clickhouse-import-rosstat",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Repo-specific skills for the clickhouse-import-rosstat data platform: Rosstat, CBR, MOEX, macro and financial ETL, ML nowcasts, publications and dashboards.",
   "author": {
     "name": "kmlebedev",
@@ -21,6 +21,7 @@
     "agent-skills"
   ],
   "skills": "./.kimi-code/skills/",
+  "mcpServers": "./.codex-plugin/mcp.json",
   "interface": {
     "displayName": "ClickHouse Import Rosstat",
     "shortDescription": "Repo role skills for the Rosstat/CBR data platform",
