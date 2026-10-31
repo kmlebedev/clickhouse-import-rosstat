@@ -85,6 +85,14 @@ MLFLOW_PREFLIGHT := $(if $(filter 1,$(MLFLOW)),python3 scripts/mlflow_preflight.
 STAGING_HOST     ?= palmshell
 STAGING_BIN_DIR  ?= /root/.local/bin
 STAGING_ENV_FILE ?= /etc/clickhouse-import-rosstat.env
+# Публичный MCP (HTTPS прямо в mcp-clickhouse, см. deploy/staging/mcp_clickhouse_tls.py).
+STAGING_MCP_LIB_DIR ?= /usr/local/lib/clickhouse-import-rosstat
+MCP_PUBLIC_HOST  ?= mcp.selfinvesting.ru
+MCP_PUBLIC_PORT  ?= 8443
+MCP_PUBLIC_URL   := https://$(MCP_PUBLIC_HOST):$(MCP_PUBLIC_PORT)
+MCP_CERT_EMAIL   ?=
+# smoke на хосте: публичное имя → loopback, чтобы проверять сертификат и имя без выхода наружу
+MCP_SMOKE_CURL   := --resolve $(MCP_PUBLIC_HOST):$(MCP_PUBLIC_PORT):127.0.0.1
 STAGING_DAGU_BASE ?= deploy/staging/dagu-base.yaml
 DAGU_VERSION     ?= v2.18.2
 
@@ -92,7 +100,7 @@ DAGU_VERSION     ?= v2.18.2
 MKDOCS_VERSION ?= 9.7.7
 MKDOCS := uv run --with mkdocs-material==$(MKDOCS_VERSION) --python 3.12 mkdocs
 
-.PHONY: all lint fmt vet test build run deps clean info ch-up ch-down ch-status ch-sql mlflow-up mlflow-down mlflow-status mlflow-export mlflow-backfill mlflow-backfill-test mlflow-preflight mlflow-register mlflow-promote mlflow-models ml-gate ml-gate-test ml-live-check ml-live-check-test dev-check env-check import mp-llm-eval archive-registry archive-list archive-restore mcp-run mcp-user mcp-check build-ingest run-ingest deploy-staging deploy-staging-binary deploy-staging-dagu deploy-staging-mcp deploy-staging-mlflow deploy-staging-preflight deploy-staging-smoke upgrade-staging mcp-user-staging staging-precheck grafana-build grafana-validate grafana-up grafana-down grafana-deploy-test grafana-deploy-staging grafana-provision-staging grafana-check grafana-test-token grafana-provision-alerting-staging key-rate-model key-rate-cbr-rule key-rate-cbr-rule-test key-rate-scenario-fan key-rate-scenario-fan-test key-rate-scenario-fan-v2 key-rate-scenario-fan-v2-test key-rate-scenario-fan-v3 key-rate-scenario-fan-v3-test key-rate-cpi-v3-experiment key-rate-cpi-v3-experiment-test cpi-live3-horizons cpi-live3-horizons-test shock-classifier shock-classifier-test key-rate-llm-forecast key-rate-forecast-log cpi-nowcast cpi-monthly cpi-monthly-v3 cpi-monthly-v3-test cpi-monthly-v3-public cpi-monthly-v3-public-test cpi-monthly-industry cpi-monthly-industry-test cpi-public-audit cpi-public-audit-test cpi-weekly-panel cpi-weekly-panel-test weekly-core-proxy weekly-core-proxy-test cpi-weekly-aggregate cpi-weekly-aggregate-test cpi-v4-leaderboard cpi-v4-leaderboard-test cpi-v4-grid cpi-v4-grid-test cpi-core-nnls cpi-core-nnls-test cpi-v4-h2 cpi-v4-h2-test cpi-v4-core cpi-v4-core-test cpi-sa-reconciliation cpi-sa-reconciliation-test cpi-asof-test cpi-weekly-sa-asof cpi-weekly-sa-asof-test cpi-two-stage-targets-test cpi-two-stage-folds cpi-two-stage-folds-test cpi-two-stage-s1 cpi-two-stage-s1-test cb-comp-data-reconcile cb-comp-data-reconcile-test cpi-two-stage-cb-comp cpi-two-stage-cb-comp-test cpi-two-stage-w2 cpi-two-stage-w2-test weekly-core-components weekly-core-components-test cpi-pipeline-stage1 cpi-pipeline-stage1-test cpi-pipeline-stage2 cpi-pipeline-stage2-test cpi-pipeline-sa-test publication-calendar-test cb-comp-parity cb-comp-parity-test cb-comp-live-bottomup cb-comp-live-bottomup-test cb-comp-live-en cb-comp-live-en-test cb-comp-h1-bs-combo cb-comp-h1-bs-combo-test cb-comp-h1-weekly cb-comp-h1-weekly-test cb-comp-h1-weekly-ex cb-comp-h1-weekly-ex-test cb-comp-h3-h6-var cb-comp-h3-h6-var-test cb-comp-per-code-review cb-comp-per-code-review-test cb-comp-per-code-review-books cb-comp-per-code-review-x13 cb-comp-groups-panel cb-comp-groups-panel-test cb-comp-live cb-comp-live-test cb-comp-live-compare cb-comp-proxy ppi-sa-weights-panel ppi-sa-weights-panel-test ppi-sa-parity ppi-sa-parity-test ppi-sa-text-anchors ppi-sa-text-anchors-test ppi-sa-industry ppi-sa-industry-test ppi-monthly-forecast ppi-monthly-forecast-test edisclosure-login edisclosure-collect docs-check docs-build docs-serve plugin-manifests-check plugin-manifests-sync cb-comp-per-code-reconstruction cb-comp-per-code-reconstruction-test
+.PHONY: all lint fmt vet test build run deps clean info ch-up ch-down ch-status ch-sql mlflow-up mlflow-down mlflow-status mlflow-export mlflow-backfill mlflow-backfill-test mlflow-preflight mlflow-register mlflow-promote mlflow-models ml-gate ml-gate-test ml-live-check ml-live-check-test dev-check env-check import mp-llm-eval archive-registry archive-list archive-restore mcp-run mcp-user mcp-check build-ingest run-ingest deploy-staging deploy-staging-binary deploy-staging-dagu deploy-staging-mcp deploy-staging-mcp-cert deploy-staging-mlflow deploy-staging-preflight deploy-staging-smoke upgrade-staging mcp-user-staging staging-precheck grafana-build grafana-validate grafana-up grafana-down grafana-deploy-test grafana-deploy-staging grafana-provision-staging grafana-check grafana-test-token grafana-provision-alerting-staging key-rate-model key-rate-cbr-rule key-rate-cbr-rule-test key-rate-scenario-fan key-rate-scenario-fan-test key-rate-scenario-fan-v2 key-rate-scenario-fan-v2-test key-rate-scenario-fan-v3 key-rate-scenario-fan-v3-test key-rate-cpi-v3-experiment key-rate-cpi-v3-experiment-test cpi-live3-horizons cpi-live3-horizons-test shock-classifier shock-classifier-test key-rate-llm-forecast key-rate-forecast-log cpi-nowcast cpi-monthly cpi-monthly-v3 cpi-monthly-v3-test cpi-monthly-v3-public cpi-monthly-v3-public-test cpi-monthly-industry cpi-monthly-industry-test cpi-public-audit cpi-public-audit-test cpi-weekly-panel cpi-weekly-panel-test weekly-core-proxy weekly-core-proxy-test cpi-weekly-aggregate cpi-weekly-aggregate-test cpi-v4-leaderboard cpi-v4-leaderboard-test cpi-v4-grid cpi-v4-grid-test cpi-core-nnls cpi-core-nnls-test cpi-v4-h2 cpi-v4-h2-test cpi-v4-core cpi-v4-core-test cpi-sa-reconciliation cpi-sa-reconciliation-test cpi-asof-test cpi-weekly-sa-asof cpi-weekly-sa-asof-test cpi-two-stage-targets-test cpi-two-stage-folds cpi-two-stage-folds-test cpi-two-stage-s1 cpi-two-stage-s1-test cb-comp-data-reconcile cb-comp-data-reconcile-test cpi-two-stage-cb-comp cpi-two-stage-cb-comp-test cpi-two-stage-w2 cpi-two-stage-w2-test weekly-core-components weekly-core-components-test cpi-pipeline-stage1 cpi-pipeline-stage1-test cpi-pipeline-stage2 cpi-pipeline-stage2-test cpi-pipeline-sa-test publication-calendar-test cb-comp-parity cb-comp-parity-test cb-comp-live-bottomup cb-comp-live-bottomup-test cb-comp-live-en cb-comp-live-en-test cb-comp-h1-bs-combo cb-comp-h1-bs-combo-test cb-comp-h1-weekly cb-comp-h1-weekly-test cb-comp-h1-weekly-ex cb-comp-h1-weekly-ex-test cb-comp-h3-h6-var cb-comp-h3-h6-var-test cb-comp-per-code-review cb-comp-per-code-review-test cb-comp-per-code-review-books cb-comp-per-code-review-x13 cb-comp-groups-panel cb-comp-groups-panel-test cb-comp-live cb-comp-live-test cb-comp-live-compare cb-comp-proxy ppi-sa-weights-panel ppi-sa-weights-panel-test ppi-sa-parity ppi-sa-parity-test ppi-sa-text-anchors ppi-sa-text-anchors-test ppi-sa-industry ppi-sa-industry-test ppi-monthly-forecast ppi-monthly-forecast-test edisclosure-login edisclosure-collect docs-check docs-build docs-serve plugin-manifests-check plugin-manifests-sync cb-comp-per-code-reconstruction cb-comp-per-code-reconstruction-test
 
 all: lint test build build-ingest
 
@@ -1056,7 +1064,11 @@ deploy-staging-dagu: staging-precheck
 # mcp-clickhouse: юнит + прогрев кэша uv (пакет разрешается при старте сервиса).
 # Отдельного «скачивания» нет: uv разрешает пакет по пину MCP_VERSION.
 deploy-staging-mcp: staging-precheck
+	ssh $(STAGING_HOST) 'install -d -m 755 $(STAGING_MCP_LIB_DIR)'
+	scp deploy/staging/mcp_clickhouse_tls.py $(STAGING_HOST):$(STAGING_MCP_LIB_DIR)/mcp_clickhouse_tls.py
 	scp deploy/staging/mcp-clickhouse.service $(STAGING_HOST):/etc/systemd/system/mcp-clickhouse.service
+	@ssh $(STAGING_HOST) 'test -f /etc/letsencrypt/live/$(MCP_PUBLIC_HOST)/fullchain.pem && echo "OK   сертификат $(MCP_PUBLIC_HOST) на месте"' || { echo "FAIL нет сертификата $(MCP_PUBLIC_HOST): make deploy-staging-mcp-cert"; exit 1; }
+	@ssh $(STAGING_HOST) 'grep -q "^CLICKHOUSE_MCP_ALLOWED_HOSTS=.*$(MCP_PUBLIC_HOST):$(MCP_PUBLIC_PORT)" $(STAGING_ENV_FILE) && echo "OK   CLICKHOUSE_MCP_ALLOWED_HOSTS содержит $(MCP_PUBLIC_HOST):$(MCP_PUBLIC_PORT)"' || { echo "FAIL в $(STAGING_ENV_FILE) нет $(MCP_PUBLIC_HOST):$(MCP_PUBLIC_PORT) в CLICKHOUSE_MCP_ALLOWED_HOSTS (см. env.example)"; exit 1; }
 	ssh $(STAGING_HOST) 'systemctl daemon-reload'
 	@echo "прогрев кэша uv (скачивание mcp-clickhouse==$(MCP_VERSION))..."
 	@ssh $(STAGING_HOST) '$(STAGING_BIN_DIR)/uv tool run --from mcp-clickhouse==$(MCP_VERSION) python -c "pass" >/dev/null 2>&1 || true'
@@ -1125,6 +1137,19 @@ deploy-staging-preflight:
 		done; \
 		[ -z "$$missing" ] && echo "OK   SMTP-переменные заданы" || { echo "FAIL не заданы:$$missing — письма dagu не уйдут на шлюз CMC"; exit 1; }'
 
+# Сертификат Let's Encrypt для публичного MCP (HTTP-01, certbot standalone).
+# Требует проброса внешнего :80 на хост — и для выпуска, и для продления (certbot.timer).
+# deploy-hook перезапускает mcp-clickhouse после каждого продления.
+deploy-staging-mcp-cert: staging-precheck
+	@test -n "$(MCP_CERT_EMAIL)" || { echo "задайте MCP_CERT_EMAIL (уведомления Let's Encrypt о сроке)"; exit 1; }
+	# apt-get update не фатален: сторонние репозитории хоста (grafana и др.) бывают недоступны,
+	# а certbot ставится из основного репозитория Ubuntu.
+	ssh $(STAGING_HOST) 'command -v certbot >/dev/null || { apt-get update -qq || true; apt-get install -y -qq certbot; }'
+	ssh $(STAGING_HOST) 'certbot certonly --standalone --non-interactive --agree-tos -m $(MCP_CERT_EMAIL) \
+		-d $(MCP_PUBLIC_HOST) --keep-until-expiring \
+		--deploy-hook "systemctl try-restart mcp-clickhouse"'
+	ssh $(STAGING_HOST) 'systemctl enable --now certbot.timer && certbot certificates -d $(MCP_PUBLIC_HOST) | grep -E "Expiry|Certificate Path"'
+
 # Smoke после включения сервисов. Токен читается на хосте и не выводится.
 deploy-staging-smoke:
 	@echo "--- smoke: dagu ---"
@@ -1136,18 +1161,18 @@ deploy-staging-smoke:
 		grep -q "ENV_OK" /tmp/dagu-env-smoke.log && echo "OK   dagu видит ROSSTAT_IMPORT_BIN и CLICKHOUSE_URL" || { echo "FAIL env-smoke: шаг не увидел окружение"; cat /tmp/dagu-env-smoke.log; rc=1; }; \
 		rm -f /tmp/dagu-env-smoke.yaml /tmp/dagu-env-smoke.log; exit $$rc'
 	@echo "--- smoke: mcp-clickhouse /health ---"
-	@ssh $(STAGING_HOST) 'systemctl is-active --quiet mcp-clickhouse && curl -sf -m 5 -o /dev/null http://127.0.0.1:8000/health && echo "OK   MCP /health = 200"' || { \
+	@ssh $(STAGING_HOST) 'systemctl is-active --quiet mcp-clickhouse && curl -sf -m 5 -o /dev/null $(MCP_SMOKE_CURL) $(MCP_PUBLIC_URL)/health && echo "OK   MCP /health = 200 по HTTPS, сертификат валиден для $(MCP_PUBLIC_HOST)"' || { \
 		echo "FAIL mcp-clickhouse /health — сервис не отвечает или не видит ClickHouse."; \
 		echo "  Частая причина на первом развёртывании: пользователь kimi_reader ещё не создан."; \
 		echo "  Проверьте: systemctl status mcp-clickhouse; journalctl -u mcp-clickhouse -n 50"; \
 		echo "  Создать пользователя: make mcp-user-staging"; exit 1; }
 	@echo "--- smoke: MCP требует токен ---"
 	@ssh $(STAGING_HOST) 'set -a; . $(STAGING_ENV_FILE); set +a; \
-		code=$$(curl -s -o /dev/null -w "%{http_code}" -X POST http://127.0.0.1:8000/mcp -H "Content-Type: application/json" -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\"}"); \
+		code=$$(curl -s -o /dev/null -w "%{http_code}" $(MCP_SMOKE_CURL) -X POST $(MCP_PUBLIC_URL)/mcp -H "Content-Type: application/json" -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\"}"); \
 		[ "$$code" = "401" ] && echo "OK   без токена → 401" || { echo "FAIL без токена получен $$code, ожидался 401"; exit 1; }'
 	@echo "--- smoke: MCP с токеном ---"
 	@ssh $(STAGING_HOST) 'set -a; . $(STAGING_ENV_FILE); set +a; \
-		body=$$(curl -s -m 10 -X POST http://127.0.0.1:8000/mcp -H "Content-Type: application/json" -H "Authorization: Bearer $$CLICKHOUSE_MCP_AUTH_TOKEN" -H "Accept: application/json, text/event-stream" -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}"); \
+		body=$$(curl -s -m 10 $(MCP_SMOKE_CURL) -X POST $(MCP_PUBLIC_URL)/mcp -H "Content-Type: application/json" -H "Authorization: Bearer $$CLICKHOUSE_MCP_AUTH_TOKEN" -H "Accept: application/json, text/event-stream" -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}"); \
 		echo "$$body" | grep -q "Missing session ID" && echo "OK   MCP отвечает с токеном" || { echo "FAIL MCP с токеном ответил: $$body"; exit 1; }'
 	@echo "--- smoke: mlflow /health ---"
 	@ssh $(STAGING_HOST) 'systemctl is-active --quiet mlflow || { \
