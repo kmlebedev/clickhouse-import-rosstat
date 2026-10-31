@@ -925,6 +925,13 @@ cb-comp-h1-shadow-forecast:
 
 cb-comp-h1-shadow-test:
 	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/cb_comp/cb_comp_h1_shadow_test.py -v
+	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/cb_comp/cb_comp_h1_p06_versions_test.py -v
+
+# Task 16 #466: P0.6 по версиям цели @2010/@2009 — матрица 2×2 (прогнозы ×
+# истины), Δ версий и правило смены базы цели. Читает готовые
+# predictions_robustness.csv (`cb-comp-h1-shadow-robustness ARGS="--version …"`).
+cb-comp-h1-p06-versions:
+	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/cb_comp/cb_comp_h1_p06_versions.py $(ARGS)
 
 # Task 12 #440: h3/h6 — агрегатный VAR/BVAR по ИПЦ SA без КУ, ставке, USD/руб
 # и SA ценовым ожиданиям (окно 2016+, BIC-лаг, помесячное переобучение) и
