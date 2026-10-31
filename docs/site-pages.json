@@ -114,6 +114,12 @@
     "section": "Справочники"
   },
   {
+    "source": "docs/guides/cb-comp-live-model-map.md",
+    "page": "cb-comp-live-model-map.md",
+    "title": "Live-модель ИПЦ CB_COMP (combo3)",
+    "section": "Справочники"
+  },
+  {
     "source": "docs/ROADMAP_INDEX.md",
     "page": "roadmap-index.md",
     "title": "Реестр роадмапов",

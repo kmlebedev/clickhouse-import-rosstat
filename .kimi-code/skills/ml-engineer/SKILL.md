@@ -28,7 +28,8 @@ whenToUse: When a task involves an ML experiment, model, feature set, backtest, 
 3. [stat-ml-models.md](../../../docs/guides/stat-ml-models.md) §4 (валидация), §6 (ловушки), §7 (данные).
 4. [ml-experiment-management.md](../../../docs/research/2026-10-18-ml-experiment-management.md) §4 (паспорт run), §7 (цикл и gates).
 5. [KEY_RATE_MODEL.md](../../../docs/KEY_RATE_MODEL.md) §4/§6 — если задача про ставку или CPI-nowcast.
-6. Спека/план своего пункта; для промоушена и live — [2026-10-20-ml-promotion-live-monitoring-design.md](../../../docs/superpowers/specs/2026-10-20-ml-promotion-live-monitoring-design.md); для витрин/грантов — [IMPORTER_PACKAGE_STANDARD.md](../../../docs/IMPORTER_PACKAGE_STANDARD.md).
+6. Для линии live 88 групп / `combo3` — [cb-comp-live-model-map.md](../../../docs/guides/cb-comp-live-model-map.md): model card, данные, канонические числа, реестр исследований, что уже отвергнуто и следующие шаги. Не переоткрывать закрытые вопросы без новых данных.
+7. Спека/план своего пункта; для промоушена и live — [2026-10-20-ml-promotion-live-monitoring-design.md](../../../docs/superpowers/specs/2026-10-20-ml-promotion-live-monitoring-design.md); для витрин/грантов — [IMPORTER_PACKAGE_STANDARD.md](../../../docs/IMPORTER_PACKAGE_STANDARD.md).
 
 ## 3. Границы ролей
 
@@ -265,6 +266,7 @@ Python-тесты — офлайн, через `uv run --with ... python3 script
 
 - Промоушен и live: [2026-10-20-ml-promotion-live-monitoring-design.md](../../../docs/superpowers/specs/2026-10-20-ml-promotion-live-monitoring-design.md), [план](../../../docs/superpowers/plans/2026-10-20-ml-promotion-live-monitoring.md), [GRAFANA.md](../../../docs/GRAFANA.md).
 - CPI-компоненты (#76): [спека](../../../docs/superpowers/specs/2026-10-19-cpi-components-public-data-design.md), [план](../../../docs/superpowers/plans/2026-10-19-cpi-components-public-data.md), [Stage 1 отчёт](../../../docs/research/2026-10-19-cpi-components-public-data.md), [Stage 2 отчёт](../../../docs/research/2026-10-19-cpi-industry-mp-features.md).
+- Live 88 групп / `combo3` (#419): [карта модели и исследований](../../../docs/guides/cb-comp-live-model-map.md), [спека Task 9](../../../docs/superpowers/specs/2026-10-31-cb-comp-h1-bs-combo-design.md), [отчёт Task 9](../../../docs/research/2026-10-31-cb-comp-88-groups-task9.md).
 - Ревью ML-issue: [2026-10-19-ml-issue-review.md](../../../docs/research/2026-10-19-ml-issue-review.md).
 - Методология: [stat-ml-models.md](../../../docs/guides/stat-ml-models.md) §2–§7.
 - MLOps: [2026-10-18-ml-experiment-management.md](../../../docs/research/2026-10-18-ml-experiment-management.md).
