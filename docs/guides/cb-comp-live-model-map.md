@@ -867,7 +867,7 @@ make cb-comp-h1-bs-combo ARGS="--archive <BusinessSurveyCBRCpiForecastingSourceC
 | `scripts/models/cb_comp/cb_comp_h3_h6_var.py` | Task 12: VAR/BVAR, `combo3_var16` | `run` | merged |
 | `scripts/models/cb_comp/cb_comp_per_code_review.py` | Task 8: per-code МП, X-13, панели | `main` | merged |
 | `scripts/models/cb_comp/cb_comp_h1_weekly_ex.py` | Task 4b: `agg_ex`, `wk_agg_ex`/`wk_mix_ex`, G11, контроли ревью | `g11_check`, `run` | merged (Task 4b) |
-| `scripts/models/cb_comp/cb_comp_h1_shadow.py` | P0.6: ретро-robustness и paper shadow `wk_mix_ex@v1` | `robustness`, `shadow_forecast`, `serve`, `t_live_rt` | PR P0.6 (#453) |
+| `scripts/models/cb_comp/cb_comp_h1_shadow.py` | P0.6: ретро-robustness и paper shadow `wk_mix_ex@v1` | `robustness`, `shadow_forecast`, `serve`, `t_live_rt` | PR #455 (P0.6, #453) |
 
 ### 8.2. Make-цели
 
