@@ -2,7 +2,7 @@
 
 > **Пункт:** `key-rate/phase-4-cb-comp-88-groups-live`, зонтик [#419](https://github.com/kmlebedev/clickhouse-import-rosstat/issues/419), Task 5 [#425](https://github.com/kmlebedev/clickhouse-import-rosstat/issues/425), `role:ml`.
 > **Протокол:** [спека §17](../superpowers/specs/2026-10-30-cb-comp-88-groups-live-design.md) (коммит `b7773f6`, до кода и результатов), [план](../superpowers/plans/2026-10-30-cb-comp-88-groups-live.md). Решение владельца Q1 = **A**: база — `live_cb`, `combo3` справочно.
-> **Код:** `scripts/models/cb_comp/cb_comp_refit_modes.py` (+ `_test.py`, 37 офлайн-тестов), аддитивная диагностика в `scripts/models/cpi/cpi_two_stage_cb_comp.py` (`exclude_months`, `hypothesis_check`, 36 тестов), `make cb-comp-refit-modes(-test)`. Прогон — `6365d9a` (код до `--only`-разбиения и до правки P4); повтор — `951e958`; числовой путь не менялся.
+> **Код:** `scripts/models/cb_comp/cb_comp_refit_modes.py` (+ `_test.py`, 37 офлайн-тестов), аддитивная диагностика в `scripts/models/cpi/cpi_two_stage_cb_comp.py` (`exclude_months`, `hypothesis_check`, 36 тестов), `make cb-comp-refit-modes(-test)`. Прогон — `6365d9a` (код до `--only`-разбиения и до правки P4); повтор — `7a7c478` (процессный пул; расхождений нет, §7); числовой путь не менялся.
 > **Артефакты:** `build/cb-comp-refit-modes/{result.json,predictions.csv}` (gitignored), [JSON отчёта](2026-10-31-cb-comp-88-groups-task5.json). Входы: панель `aec91f99…`, публичная панель `47176baa…`, карта листов `0d8a6ab5…`, `TARGET_FULL` `d5278124…`, series2016 `b8c1ec56…`, series2009 `5f918988…`.
 
 ## 1. Короткий вывод
@@ -159,7 +159,15 @@ Canonical `frozen` обучается до 2018-12 для всех h, хотя �
 
 ## 7. Детерминизм
 
-[[DETERMINISM]]
+R16 выполнен в два приёма: полный повтор дважды падал в нативном коде — SIGSEGV в `_catboost.so` (`GreedyTensorSearch`) при параллельных фитах из потоков, через ~50 мин (`Python-2026-10-31-224307.ips`, `Python-2026-10-31-233842.ips`). Повтор считался **процессным пулом** (`--parallel process`, spawn, `jobs=6`); числовой путь тот же — `thread_count=1`, тот же seed, те же строки.
+
+| часть | что сравнивалось | объём | результат |
+|---|---|---:|---|
+| grid | `modes`/`combos` без wf, `mcs`, `pins`, `inputs`; `predictions.csv` без wf | 4 824 строки | **побайтно совпадает** |
+| wf h6 | `wf_shock`/`wf_noshock`, h6 | 134 строки | **побайтно совпадает** |
+| W5b | RMSE `wf`/`wf_noshock`/`frozen`, вердикты, `pin_ok` | 2 модели × 3 h | **совпадает** |
+
+Команды повтора: `--only grid`; `--only wf --wf-horizons 6`; `--only w5b` (чистый кэш, отдельный каталог). Сводка — `build/determinism.json`. Повтор шёл на коде `7a7c478` (процессный пул), прогон — `6365d9a` (потоки, `jobs=10`): ни одного расхождения, то есть переключение параллелизма не изменило чисел. Полный повтор одним процессом не выполнялся — потоковая схема падала; это ограничение метода повтора, а не результата.
 
 ## 8. Что не проверено
 
@@ -170,6 +178,7 @@ Canonical `frozen` обучается до 2018-12 для всех h, хотя �
 - Прямой тест A не объясняет провал h6 у `v3/v5_direct`; второй механизм не искался.
 - `combo3@annual` на h3 +2,5 % — на границе no-harm; перенос решения на `combo3` требует отдельной проверки (Task 7).
 - Мощность: MDE h1 1,9–3,5 %, h3 7,7–8,5 %, h6 17–21 %; на h3/h6 «не хуже» ≠ «лучше».
+- Полный повтор артефакта одним процессом не выполнялся: потоковая схема падала SIGSEGV в CatBoost (§7), повтор разбит на grid/wf/w5b; покрытие повтора — все числа, кроме wf h1 (h1 не перепроверялся отдельно, код и seed те же).
 
 ## 9. Команды
 
