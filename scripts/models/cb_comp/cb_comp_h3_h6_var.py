@@ -50,6 +50,7 @@ from models.cpi import cpi_monthly as cm
 HORIZONS = bu.HORIZONS
 PRIMARY_HORIZONS = (1, 3, 6)
 PANEL_START = date(2015, 12, 1)
+PANEL_END = date(2024, 6, 1)
 VAR_START = date(2016, 1, 1)
 MAX_LAG = 6
 MIN_LAG_OBS = 24
@@ -153,7 +154,7 @@ def build_panel(mm: dict, rate: dict, usd_log: dict, pe: dict, months: list) -> 
 
 def load_var_panel(data: dict) -> tuple:
     """Панель из ClickHouse и `T_LIVE`; `(panel, endo, dummies, audit)`."""
-    months = cp.month_range(PANEL_START, cp.TEST_END)
+    months = cp.month_range(PANEL_START, PANEL_END)
     mm = data["t_live"][1]
     rate = monthly_rate(cm.load_key_rate(), months)
     usd_log = monthly_usd_log(cm.load_usd(), months)
@@ -190,26 +191,29 @@ def training_exog(dummies: pd.DataFrame, index: pd.Index):
 
 
 def select_lag(train: pd.DataFrame, exog) -> tuple:
-    """`(лаг, BIC по лагам)` — 1…6, BIC внутри train, меньший лаг при равенстве."""
+    """`(лаг, BIC по лагам, причины пропуска)` — 1…6, BIC внутри train."""
     n_obs = len(train)
     n_exog = 0 if exog is None else exog.shape[1]
-    best, bics = None, {}
+    best, bics, errors = None, {}, {}
     for lag in range(1, MAX_LAG + 1):
         if not eligible_lag(n_obs, lag, n_exog):
             bics[lag] = None
+            errors[lag] = "not identified: n - p <= 4p + 1 + n_exog or n - p < 24"
             continue
         try:
             result = VAR(train[list(ENDOG_COLUMNS)], exog=exog).fit(lag, trend="c")
             value = float(result.bic)
-        except Exception:
+        except Exception as exc:
             bics[lag] = None
+            errors[lag] = f"{type(exc).__name__}: {exc}"
             continue
         bics[lag] = value
+        errors[lag] = ""
         if best is None or value < best[1] - 1e-12:
             best = (lag, value)
     if best is None:
         raise SystemExit(f"VAR: ни один лаг 1…{MAX_LAG} не идентифицируется (n = {n_obs}, exog = {n_exog})")
-    return best[0], bics
+    return best[0], bics, errors
 
 
 def var_forecast(train: pd.DataFrame, lag: int, steps: int, exog) -> np.ndarray:
@@ -253,8 +257,8 @@ def design_matrix(frame: pd.DataFrame, lag: int, exog=None) -> tuple:
     return np.asarray(rows, dtype=float), values[lag:]
 
 
-def minnesota_prior(frame: pd.DataFrame, lag: int, n_exog: int) -> tuple:
-    """`(b0, omega)`: prior mean и diagonal prior variance для каждой уравнения."""
+def minnesota_prior(frame: pd.DataFrame, lag: int, n_exog: int, scale: float = 1.0) -> tuple:
+    """`(b0, omega)`: prior mean и diagonal prior variance для каждого уравнения."""
     values = frame[list(ENDOG_COLUMNS)].to_numpy(dtype=float)
     sigmas = [ar1_sigma(values[:, column]) for column in range(len(ENDOG_COLUMNS))]
     size = 1 + len(ENDOG_COLUMNS) * lag + n_exog
@@ -273,18 +277,31 @@ def minnesota_prior(frame: pd.DataFrame, lag: int, n_exog: int) -> tuple:
                     omega[index, equation] = (BVAR_LAMBDA * sigmas[equation] / (step * sigmas[column])) ** 2
     if n_exog:
         omega[1 + len(ENDOG_COLUMNS) * lag:, :] = 1e6
-    return b0, omega
+    return b0, omega * scale
 
 
-def bvar_coefficients(train: pd.DataFrame, lag: int, exog) -> np.ndarray:
-    """Posterior mean коэффициентов Minnesota BVAR."""
+def bvar_coefficients(train: pd.DataFrame, lag: int, exog, prior_scale: float = 1.0) -> np.ndarray:
+    """Posterior mean Minnesota BVAR; likelihood масштабирован на σ² остатков.
+
+    `σ_i²` — остаточная дисперсия OLS-уравнения i на том же train и том же
+    дизайне. Без деления на неё `X'X` в масштабе лог м/м (~1e-3) проигрывает
+    prior precision (~25) и prior подавляет данные. `prior_scale` — только для
+    теста диффузного prior: при больших значениях posterior mean = OLS.
+    """
     x_matrix, y_matrix = design_matrix(train, lag, exog)
-    b0, omega = minnesota_prior(train, lag, 0 if exog is None else exog.shape[1])
+    b0, omega = minnesota_prior(train, lag, 0 if exog is None else exog.shape[1], scale=prior_scale)
     coefficients = np.zeros((x_matrix.shape[1], len(ENDOG_COLUMNS)))
     for equation in range(len(ENDOG_COLUMNS)):
+        target = y_matrix[:, equation]
+        ols, *_ = np.linalg.lstsq(x_matrix, target, rcond=None)
+        residual = target - x_matrix @ ols
+        dof = max(1, len(target) - x_matrix.shape[1])
+        sigma2 = float(residual @ residual / dof)
+        if not math.isfinite(sigma2) or sigma2 <= 0:
+            sigma2 = 1.0
         precision = 1.0 / omega[:, equation]
-        lhs = x_matrix.T @ x_matrix + np.diag(precision)
-        rhs = x_matrix.T @ y_matrix[:, equation] + precision * b0[:, equation]
+        lhs = x_matrix.T @ x_matrix / sigma2 + np.diag(precision)
+        rhs = x_matrix.T @ target / sigma2 + precision * b0[:, equation]
         coefficients[:, equation] = np.linalg.solve(lhs, rhs)
     return coefficients
 
@@ -330,10 +347,10 @@ def var_forecasts(endo: pd.DataFrame, dummies: pd.DataFrame, test_months: list) 
         if len(train) < MIN_LAG_OBS + 1:
             raise SystemExit(f"VAR: слишком короткий train на origin {origin}: {len(train)}")
         exog = training_exog(dummies, train.index)
-        lag, bics = select_lag(train, exog)
+        lag, bics, lag_errors = select_lag(train, exog)
         path_var = var_forecast(train, lag, max(HORIZONS), exog)
         path_bvar = bvar_forecast(train, lag, max(HORIZONS), exog)
-        lag_info[origin] = {"lag": lag, "n_train": len(train), "bics": bics}
+        lag_info[origin] = {"lag": lag, "n_train": len(train), "bics": bics, "lag_errors": lag_errors}
         for horizon in HORIZONS:
             month = cp.shift_month(origin, horizon - 1)
             if month in test_set:
@@ -521,10 +538,11 @@ def r12c_check(forecasts: dict, data: dict, lag_info: dict) -> dict:
 
 def config() -> dict:
     return {
-        "panel": [PANEL_START.isoformat(), cp.TEST_END.isoformat()],
+        "panel": [PANEL_START.isoformat(), PANEL_END.isoformat()],
         "var_start": VAR_START.isoformat(), "horizons": list(HORIZONS),
         "endogenous": list(ENDOG_COLUMNS), "max_lag": MAX_LAG, "min_lag_obs": MIN_LAG_OBS,
-        "bvar_lambda": BVAR_LAMBDA, "models": list(CANDIDATES),
+        "bvar_lambda": BVAR_LAMBDA, "bvar_likelihood_scale": "ols_residual_sigma2",
+        "models": list(CANDIDATES),
         "g12_alpha": G12_ALPHA, "noharm_margin": NOHARM_MARGIN,
     }
 
