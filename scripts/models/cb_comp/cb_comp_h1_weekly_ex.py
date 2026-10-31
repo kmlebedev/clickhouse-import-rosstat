@@ -11,9 +11,14 @@
   `log agg_ex = (log agg − w_ЖКУ·log ЖКУ_wk)/(1 − w_ЖКУ)`;
 * **`wk_agg_ex`** — OLS с 11 месячными дамми, цель `T_LIVE[1]`;
 * **`wk_mix_ex`** — `0,5·combo3 + 0,5·wk_agg_ex`;
+* **контроли ревью #451** — `wk_agg_d` (headline-агрегат с ЖКУ + дамми),
+  `wk_agg_d_nodummies`, `wk_mix_d`, `seasonal_dummies_only` (только дамми)
+  и бенчмарк `live_cb_wk` из базы Task 4; DM-пары, тарифный срез
+  (7/12 + 2026-01) и смещение по годам — в `result.json`;
 * **`combo3`/`combo3_wk`** — готовые прогнозы Task 4 (`predictions.csv`
   `0a67483f…`, R12), не пересчитываются;
-* **G11** — критерий G10 на primary 2023+ (45 месяцев), Holm α = 0,025.
+* **G11** — критерий G10 на primary 2023+ (45 месяцев), Holm α = 0,025;
+  гейт считается только на предзарегистрированных 6 моделях.
 
 Только чтение ClickHouse и локальных файлов; в БД не пишет. Запуск —
 `make cb-comp-h1-weekly-ex`, тесты — `make cb-comp-h1-weekly-ex-test`.
@@ -71,9 +76,26 @@ MODEL_AGG_EX = "wk_agg_ex"
 MODEL_MIX_EX = "wk_mix_ex"
 MODEL_AGG_EX_NOD = "wk_agg_ex_nodummies"
 MODEL_MIX_EX_NOD = "wk_mix_ex_nodummies"
+# Контроли ревью #451: headline-агрегат с ЖКУ, тот же OLS, отдельно дамми.
+MODEL_AGG_D = "wk_agg_d"
+MODEL_AGG_D_NOD = "wk_agg_d_nodummies"
+MODEL_MIX_D = "wk_mix_d"
+MODEL_DUMMIES_ONLY = "seasonal_dummies_only"
+MODEL_LIVE_WK = "live_cb_wk"
 CO_PRIMARY = (MODEL_AGG_EX, MODEL_MIX_EX)
-MODELS = (MODEL_COMBO, MODEL_COMBO_WK, MODEL_AGG_EX, MODEL_MIX_EX, MODEL_AGG_EX_NOD, MODEL_MIX_EX_NOD)
+GATE_MODELS = (MODEL_COMBO, MODEL_COMBO_WK, MODEL_AGG_EX, MODEL_MIX_EX, MODEL_AGG_EX_NOD, MODEL_MIX_EX_NOD)
+CONTROL_MODELS = (MODEL_LIVE_WK, MODEL_AGG_D, MODEL_AGG_D_NOD, MODEL_MIX_D, MODEL_DUMMIES_ONLY)
+MODELS = GATE_MODELS + CONTROL_MODELS
 REFERENCE_MODELS = (MODEL_AGG_EX_NOD, MODEL_MIX_EX_NOD)
+FEATURE_EX = "wkagg_ex_mtd"
+FEATURE_AGG = "agg_mtd"
+TARIFF_MONTHS = (7, 12)
+TARIFF_EXTRA = (date(2026, 1, 1),)
+
+
+def is_tariff_month(month: date) -> bool:
+    """Тарифные месяцы: июль/декабрь и январь 2026 (старт новой индексации)."""
+    return month.month in TARIFF_MONTHS or month in TARIFF_EXTRA
 
 REF_START = date(2022, 1, 1)
 PRIMARY_START = date(2023, 1, 1)
@@ -190,47 +212,66 @@ def coverage_by_year(leaf_weights: dict, group_weights: dict, years=range(2016, 
 # ---------------------------------------------------------------------------
 
 
-def design(month: date, features: dict, dummies: bool = True) -> list:
-    """`[1, wkagg_ex_mtd, (11 месячных дамми)]`."""
-    row = [1.0, float(features.get("wkagg_ex_mtd", NAN))]
+def design(month: date, features: dict, dummies: bool = True, feature: str = FEATURE_EX, use_feature: bool = True) -> list:
+    """`[1, feature, (11 месячных дамми)]`; `use_feature=False` — только сезонность."""
+    row = [1.0]
+    if use_feature:
+        row.append(float(features.get(feature, NAN)))
     if dummies:
         row.extend(1.0 if month.month == m else 0.0 for m in range(2, 13))
     return row
 
 
-def ols_ex_predict(features: dict, target: dict, train_months: list, test_months: list, dummies: bool = True) -> dict:
-    """OLS с медианной импутацией `wkagg_ex_mtd`; перефит на каждом M."""
+def ols_ex_predict(
+    features: dict, target: dict, train_months: list, test_months: list,
+    dummies: bool = True, feature: str = FEATURE_EX, use_feature: bool = True,
+) -> dict:
+    """OLS с медианной импутацией признака; перефит на каждом M."""
     train = [
         m for m in train_months
         if m in features and m in target and m not in tw.SHOCK_MONTHS and not math.isnan(float(target[m]))
     ]
     if len(train) < bu.MIN_TRAIN_ROWS:
         return {}
-    matrix = np.asarray([design(m, features[m], dummies) for m in train], dtype=float)
-    median = float(np.nanmedian(matrix[:, 1]))
-    if math.isnan(median):
-        median = 0.0
-    matrix[:, 1] = np.where(np.isnan(matrix[:, 1]), median, matrix[:, 1])
+    matrix = np.asarray([design(m, features[m], dummies, feature, use_feature) for m in train], dtype=float)
+    median = 0.0
+    if use_feature:
+        median = float(np.nanmedian(matrix[:, 1]))
+        if math.isnan(median):
+            median = 0.0
+        matrix[:, 1] = np.where(np.isnan(matrix[:, 1]), median, matrix[:, 1])
     model = LinearRegression().fit(matrix, np.asarray([float(target[m]) for m in train], dtype=float))
     out = {}
     for month in test_months:
         if month not in features:
             continue
-        row = np.asarray([design(month, features[month], dummies)], dtype=float)
-        row[0, 1] = median if math.isnan(row[0, 1]) else row[0, 1]
+        row = np.asarray([design(month, features[month], dummies, feature, use_feature)], dtype=float)
+        if use_feature:
+            row[0, 1] = median if math.isnan(row[0, 1]) else row[0, 1]
         out[month] = float(model.predict(row)[0])
+    return out
+
+
+def feature_wf(
+    features: dict, target: dict, all_train: list, months: list,
+    feature: str = FEATURE_EX, dummies: bool = True, use_feature: bool = True,
+) -> dict:
+    """Ежемесячный expanding-прогноз OLS на выбранном признаке."""
+    out = {}
+    for month in months:
+        prediction = ols_ex_predict(
+            features, target, [t for t in all_train if t < month], [month],
+            dummies, feature, use_feature,
+        )
+        if month not in prediction:
+            raise SystemExit(f"{feature}: нет прогноза на {month}")
+        out[month] = prediction[month]
     return out
 
 
 def agg_ex_wf(features: dict, target: dict, all_train: list, months: list, dummies: bool = True) -> dict:
     """Ежемесячный expanding-прогноз `wk_agg_ex`."""
-    out = {}
-    for month in months:
-        prediction = ols_ex_predict(features, target, [t for t in all_train if t < month], [month], dummies)
-        if month not in prediction:
-            raise SystemExit(f"{MODEL_AGG_EX}: нет прогноза на {month}")
-        out[month] = prediction[month]
-    return out
+    return feature_wf(features, target, all_train, months, FEATURE_EX, dummies)
 
 
 # ---------------------------------------------------------------------------
@@ -246,7 +287,9 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def load_base_predictions(path: Path, months: list) -> dict:
+def load_base_predictions(
+    path: Path, months: list, required: tuple = (MODEL_COMBO, MODEL_COMBO_WK)
+) -> dict:
     """`{model: {месяц: прогноз}}` из `predictions.csv` Task 4; sha256 пинится."""
     if not path.exists():
         raise SystemExit(f"нет базы Task 4: {path}; сначала `make cb-comp-h1-weekly` (Task 4)")
@@ -254,7 +297,7 @@ def load_base_predictions(path: Path, months: list) -> dict:
     if digest != R12_PREDICTIONS_SHA256:
         raise SystemExit(f"R12: sha256 базы {digest} != {R12_PREDICTIONS_SHA256}")
     wanted = set(months)
-    out = {model: {} for model in (MODEL_COMBO, MODEL_COMBO_WK)}
+    out = {model: {} for model in required}
     with path.open(encoding="utf-8") as handle:
         for row in csv.DictReader(handle):
             if row["arena"] != "wf2022" or row["model"] not in out:
@@ -325,6 +368,76 @@ def subperiods(models: dict, truth: dict, months: list) -> dict:
     return out
 
 
+def compare_errors(left: dict, right: dict, truth: dict, months: list) -> dict:
+    """Парное сравнение двух рядов прогнозов на общих месяцах."""
+    from models.cpi import cpi_v4_leaderboard as v4
+
+    common = [m for m in months if m in left and m in right and m in truth]
+    return v4.compare_pair([left[m] - truth[m] for m in common], [right[m] - truth[m] for m in common], HORIZON)
+
+
+def slice_rmse(errors: list, months: list, keep) -> dict:
+    subset = [error for month, error in zip(months, errors) if keep(month)]
+    return {"n": len(subset), "rmse": lb.rmse(subset)}
+
+
+def bias_by_year(models: dict, truth: dict, months: list) -> dict:
+    out = {}
+    for name, values in models.items():
+        per_year = {}
+        for year in sorted({m.year for m in months}):
+            subset = [m for m in months if m.year == year and m in values and m in truth]
+            if subset:
+                err = [values[m] - truth[m] for m in subset]
+                per_year[str(year)] = {"n": len(subset), "bias": float(np.mean(err)), "rmse": lb.rmse(err)}
+        out[name] = per_year
+    return out
+
+
+def large_errors(values: dict, truth: dict, months: list, threshold: float = 0.2) -> list:
+    rows = [
+        {"month": m.isoformat(), "error": values[m] - truth[m]}
+        for m in months if m in values and m in truth and abs(values[m] - truth[m]) >= threshold
+    ]
+    return sorted(rows, key=lambda row: row["month"])
+
+
+def controls_block(models: dict, truth: dict, months: list, control_eval: dict) -> dict:
+    """Абляция ревью #451: вклад дамми и ЖКУ, бенчмарк `live_cb_wk`, срез тарифов, смещение."""
+    pairs = {
+        "agg_ex_vs_agg_d": compare_errors(models[MODEL_AGG_EX], models[MODEL_AGG_D], truth, months),
+        "mix_ex_vs_mix_d": compare_errors(models[MODEL_MIX_EX], models[MODEL_MIX_D], truth, months),
+        "agg_d_vs_dummies_only": compare_errors(models[MODEL_AGG_D], models[MODEL_DUMMIES_ONLY], truth, months),
+        "agg_ex_vs_live_cb_wk": compare_errors(models[MODEL_AGG_EX], models[MODEL_LIVE_WK], truth, months),
+        "mix_ex_vs_live_cb_wk": compare_errors(models[MODEL_MIX_EX], models[MODEL_LIVE_WK], truth, months),
+    }
+    tariff = {}
+    for name in (MODEL_COMBO, MODEL_LIVE_WK, MODEL_AGG_D, MODEL_AGG_EX, MODEL_MIX_EX):
+        err = control_eval["errors"].get(name)
+        if not err:
+            continue
+        tariff[name] = {
+            "in": slice_rmse(err, months, is_tariff_month),
+            "out": slice_rmse(err, months, lambda m: not is_tariff_month(m)),
+        }
+    return {
+        "models": {name: control_eval["per_model"][name] for name in CONTROL_MODELS},
+        "vs_combo3": {name: control_eval["pairs_vs_combo3"].get(name) for name in CONTROL_MODELS},
+        "pairs": pairs,
+        "tariff_slice": {
+            "definition": "month in (7, 12) or month == 2026-01",
+            "models": tariff,
+        },
+        "bias_by_year": bias_by_year(
+            {name: models[name] for name in (MODEL_COMBO, MODEL_AGG_D, MODEL_AGG_EX, MODEL_MIX_EX)}, truth, months
+        ),
+        "large_errors": {
+            name: large_errors(models[name], truth, months)
+            for name in (MODEL_AGG_D, MODEL_AGG_EX, MODEL_MIX_EX)
+        },
+    }
+
+
 # ---------------------------------------------------------------------------
 # Прогон
 # ---------------------------------------------------------------------------
@@ -339,7 +452,7 @@ def run(archive: Path, panel_csv: Path, public_dir: Path, base_predictions: Path
     if len(months) != 57 or len(primary) != 45:
         raise SystemExit(f"окна не совпали: 2022+ {len(months)}, 2023+ {len(primary)}")
 
-    base = load_base_predictions(base_predictions, months)
+    base = load_base_predictions(base_predictions, months, (MODEL_COMBO, MODEL_COMBO_WK, MODEL_LIVE_WK))
     weekly = audit.load_weekly()
     dictionary = wg.load_group_dictionary(archive)
     leaf_weights = wg.load_leaf_weights(archive)
@@ -352,6 +465,9 @@ def run(archive: Path, panel_csv: Path, public_dir: Path, base_predictions: Path
 
     agg_ex = agg_ex_wf(features_ex, t_live, all_train, months, dummies=True)
     agg_ex_nod = agg_ex_wf(features_ex, t_live, all_train, months, dummies=False)
+    agg_d = feature_wf(features_ex, t_live, all_train, months, FEATURE_AGG, dummies=True)
+    agg_d_nod = feature_wf(features_ex, t_live, all_train, months, FEATURE_AGG, dummies=False)
+    dummies_only = feature_wf(features_ex, t_live, all_train, months, FEATURE_EX, dummies=True, use_feature=False)
     models = {
         MODEL_COMBO: base[MODEL_COMBO],
         MODEL_COMBO_WK: base[MODEL_COMBO_WK],
@@ -359,8 +475,14 @@ def run(archive: Path, panel_csv: Path, public_dir: Path, base_predictions: Path
         MODEL_MIX_EX: tw.mix(base[MODEL_COMBO], agg_ex),
         MODEL_AGG_EX_NOD: agg_ex_nod,
         MODEL_MIX_EX_NOD: tw.mix(base[MODEL_COMBO], agg_ex_nod),
+        MODEL_LIVE_WK: base[MODEL_LIVE_WK],
+        MODEL_AGG_D: agg_d,
+        MODEL_AGG_D_NOD: agg_d_nod,
+        MODEL_MIX_D: tw.mix(base[MODEL_COMBO], agg_d),
+        MODEL_DUMMIES_ONLY: dummies_only,
     }
-    ref_eval = tw.evaluate(models, t_live, months, None)
+    gate_models = {name: models[name] for name in GATE_MODELS}
+    ref_eval = tw.evaluate(gate_models, t_live, months, None)
     r12 = r12_check(ref_eval, base_predictions)
     if not r12["ok"]:
         raise SystemExit(f"R12 не пройден: {r12}")
@@ -368,8 +490,12 @@ def run(archive: Path, panel_csv: Path, public_dir: Path, base_predictions: Path
     if not r13["ok"]:
         raise SystemExit(f"R13 не пройден: {r13}")
 
-    primary_eval = tw.evaluate(models, t_live, primary, None)
-    no_eval = tw.evaluate(models, t_live, [m for m in months if m != date(2022, 3, 1)], None)
+    primary_eval = tw.evaluate(gate_models, t_live, primary, None)
+    control_eval = tw.evaluate(
+        {name: models[name] for name in (MODEL_COMBO, MODEL_AGG_EX, MODEL_MIX_EX) + CONTROL_MODELS},
+        t_live, primary, None,
+    )
+    no_eval = tw.evaluate(gate_models, t_live, [m for m in months if m != date(2022, 3, 1)], None)
     result = {
         "spec": "docs/superpowers/specs/2026-10-31-cb-comp-h1-weekly-ex-utilities-design.md",
         "git_sha": lb.git_sha(),
@@ -385,8 +511,9 @@ def run(archive: Path, panel_csv: Path, public_dir: Path, base_predictions: Path
         "primary": {
             "start": str(PRIMARY_START), "n": len(primary), "evaluation": primary_eval,
             "mcs": tw.mcs(primary_eval["errors"]),
-            "subperiods": subperiods(models, t_live, primary),
+            "subperiods": subperiods(gate_models, t_live, primary),
             "g11": g11_check(primary_eval["pairs_vs_combo3"], len(primary)),
+            "controls": controls_block(models, t_live, primary, control_eval),
         },
         "limitations": [
             "недельные ряды — последняя редакция, винтажей нет",
@@ -394,6 +521,7 @@ def run(archive: Path, panel_csv: Path, public_dir: Path, base_predictions: Path
             "agg_ex — реконструкция, не официальный ряд",
             "primary 2023+ короче (45 мес.), MDE выше",
             "маппинг фиксирован словарём 2024; только h1; production не заявляется",
+            "вклад ЖКУ-очистки отдельно от дамми незначим (DM p ≈ 0,08); G11 — на предзарегистрированных кандидатах, Holm только внутри G11",
         ],
     }
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -440,6 +568,17 @@ def main(argv=None) -> int:
         "reference": {name: {"rmse": per["rmse"], "n": per["n"]} for name, per in result["reference"]["evaluation"]["per_model"].items()},
         "primary": {name: {"rmse": per["rmse"], "n": per["n"]} for name, per in result["primary"]["evaluation"]["per_model"].items()},
         "g11": result["primary"]["g11"], "mcs": result["primary"]["mcs"], "subperiods": result["primary"]["subperiods"],
+        "controls": {
+            "models": {
+                name: {"rmse": per["rmse"], "bias": per["bias"], "n": per["n"]}
+                for name, per in result["primary"]["controls"]["models"].items()
+            },
+            "vs_combo3": result["primary"]["controls"]["vs_combo3"],
+            "pairs": result["primary"]["controls"]["pairs"],
+            "tariff_slice": result["primary"]["controls"]["tariff_slice"],
+            "bias_by_year": result["primary"]["controls"]["bias_by_year"],
+            "large_errors": result["primary"]["controls"]["large_errors"],
+        },
     }
     print(json.dumps(lb._jsonable(summary), ensure_ascii=False, indent=2))
     return 0
