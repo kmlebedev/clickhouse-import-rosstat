@@ -23,10 +23,10 @@
     "wk_agg_d": 0.8590447639270203,
     "wk_agg_ex": 0.4350526723881857
   },
-  "counted": false,
-  "created_at": "2026-10-31T17:28:54+00:00",
+  "counted": true,
+  "created_at": "2026-10-31T18:02:19+00:00",
   "cutoff": "2026-11-08",
-  "git_sha": "1a9ac73b759374e442f03f53ef045b8018d741be",
+  "git_sha": "c1060af2d4dde8925ec22f60f2f2d77079c0e166",
   "inputs_sha256": {
     "panel_csv": "7b6d302857b7be82ba0df668e9717b9022dc6b4cb979a73755525bbc99e373a2",
     "public_panel_csv": "47176baa290eb21e1f70ac658e1c2f2ddd5131c489b3fcaed09a5c1f8d08efa8",
@@ -63,6 +63,7 @@
     }
   },
   "protocol": "paper shadow, гайд cb-comp-live-model-map §7.8; пороги утверждены 2026-10-31",
+  "role": "challenger (засчитывается)",
   "run_date": "2026-10-31",
   "s0": {
     "combo3": {
@@ -121,7 +122,7 @@
   },
   "unit": "п.п., м/м SA ИПЦ без КУ (h1-nowcast)",
   "v1_code_sha": "264ce73",
-  "version": "wk_mix_ex@v1",
+  "version": "wk_mix_ex@v2",
   "weekly_features": {
     "agg_cov": 0.8387096774193549,
     "agg_mtd": 0.9266054895529452,
