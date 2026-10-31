@@ -1,6 +1,6 @@
 # Live-модель ИПЦ `combo3` против CB_COMP: model card, карта исследований и векторы развития
 
-> **Статус:** живой справочник, срез **2026-10-31** (обновлён после мержа Task 10 [#447](https://github.com/kmlebedev/clickhouse-import-rosstat/pull/447) и Task 4b [#451](https://github.com/kmlebedev/clickhouse-import-rosstat/pull/451)). Роль — `ml`; пункт — `key-rate/phase-4-cb-comp-88-groups-live` ([#419](https://github.com/kmlebedev/clickhouse-import-rosstat/issues/419)), Task 13 ([#450](https://github.com/kmlebedev/clickhouse-import-rosstat/issues/450)).
+> **Статус:** живой справочник, срез **2026-10-31** (обновлён после мержа Task 10 [#447](https://github.com/kmlebedev/clickhouse-import-rosstat/pull/447) и Task 4b [#451](https://github.com/kmlebedev/clickhouse-import-rosstat/pull/451); дополнен результатами P0.6 [#453](https://github.com/kmlebedev/clickhouse-import-rosstat/issues/453): ретро-robustness и первый shadow-месяц 2026-10). Роль — `ml`; пункт — `key-rate/phase-4-cb-comp-88-groups-live` ([#419](https://github.com/kmlebedev/clickhouse-import-rosstat/issues/419)), Task 13 ([#450](https://github.com/kmlebedev/clickhouse-import-rosstat/issues/450)).
 > **Что это:** единственная точка входа в линию live 88-группового bottom-up. Model card базовой модели `combo3`, реестр всех исследований линии, честный ledger достигнутого, открытые вопросы и приоритетные векторы развития.
 > **Чем это не является:** это не production-паспорт и не публикация. `combo3` — research-база, выбранная владельцем для Task 4/5; в `forecast_log` её нет, расписания и live-мониторинга нет.
 > **Как читать:** §0 — если у вас 10 минут; §1 — если нужно менять модель; §2–§4 — если нужно понять, что уже проверено; §5–§7 — если выбирать следующий шаг; §7.8 и P0.6 — если гейт пройден и встаёт вопрос о смене базы; §8–§9 — если работать с кодом.
@@ -20,7 +20,7 @@
 8. **54 normal-месяца — это низкая мощность.** MDE на h1–h3 ≈ 13 %; «не значимо» не значит «одинаково». Паритет с CB_COMP не доказан ни на одном горизонте; TOST не проходил.
 9. **`ML_LOG`/MLflow в этой линии не использовались.** Паспорт — JSON-артефакт и sha256 входов; gate читает ClickHouse, а run'ов этой линии в `v_ml_error_by_fold` нет. Для промоушена это отдельный follow-up.
 10. **Каждый новый шаг — предрегистрация и свой гейт.** Спека/протокол пишутся до прогона, отрицательный результат публикуется так же, как положительный. Нельзя выбирать окно, веса или модель по тесту.
-11. **G11 Task 4b пройден, но база пока не сменена.** На h1-nowcast арене `T_LIVE` 2023+ (45 мес.) `wk_mix_ex = 0,5·combo3 + 0,5·wk_agg_ex` — 0,1411 против 0,2094 у `combo3` (DM p = 0,0003); основной вклад — месячные дамми (NSA→SA), ЖКУ-очистка вторична. Это другая задача (nowcast по недельному ИПЦ месяца M) и другая арена, чем `TARGET_FULL` normal-54. Пройденный гейт — не промоушен: порядок приёмки и смены h1-базы — §7.8 и P0.6; до решения владельца `combo3` — база всех горизонтов.
+11. **G11 Task 4b пройден, но база пока не сменена.** На h1-nowcast арене `T_LIVE` 2023+ (45 мес.) `wk_mix_ex = 0,5·combo3 + 0,5·wk_agg_ex` — 0,1411 против 0,2094 у `combo3` (DM p = 0,0003); основной вклад — месячные дамми (NSA→SA), ЖКУ-очистка вторична. Это другая задача (nowcast по недельному ИПЦ месяца M) и другая арена, чем `TARGET_FULL` normal-54. Пройденный гейт — не промоушен: порядок приёмки и смены h1-базы — §7.8 и P0.6; до решения владельца `combo3` — база всех горизонтов. P0.6: на real-time SA-истине выигрыш держится (0,1535 против 0,2216, p = 0,0001), на cutoff `publication` — нет (p = 0,19); shadow 2026-10 зафиксирован до cutoff.
 
 ---
 
@@ -256,6 +256,8 @@ G3-справочно на `@2009` проходит на h1/h3/h6 (1,246 / 1,064
 
 Holm по двум co-primary (JSON `primary.g11.holm`): `wk_mix_ex` 0,00068, `wk_agg_ex` 0,00405 (в отчёте Task 4b для `wk_agg_ex` указано 0,0081 — это Бонферрони `2·p`, на вердикт не влияет). `wk_mix_ex` против `wk_mix_d`: Δ −0,0216 [−0,0405; −0,0061], DM p = 0,017 (пост-хок). MCS 90 % — только `wk_agg_ex` и `wk_mix_ex`. Смещение `wk_mix_ex`: +0,131 в 2025, +0,027 в 2026 (у `wk_agg_ex` +0,093 / +0,076; у `combo3` +0,169 / −0,021).
 
+**Ретро-robustness P0.6** ([отчёт](../research/2026-10-31-cb-comp-h1-shadow-p06.md), описание, не гейт): на real-time SA-истине `T_LIVE_rt` (X-13 до M) `wk_mix_ex` 0,1535 против 0,2216 у `combo3` (Δ −0,0681 [−0,0961; −0,0394], p = 0,0001); без 8 тарифных месяцев — 0,1533 против 0,2122 (p = 0,003); |bias| ≤ 0,15 во всех годах (максимум +0,128 в 2025). Недельные срезы: на 7-е число M выигрыша нет (p = 0,29), с 14-го — есть (0,1813, p = 0,007). На cutoff `publication` (покрытие месяца 28 %) — 0,2095 против 0,2322, CI включает 0 (p = 0,19). Fallback на истории не срабатывал (45/45 — уровень 0).
+
 #### Значимость `combo3` против `live_cb`
 
 | h | ΔRMSE [95 % CI] | DM p | Чтение |
@@ -329,7 +331,7 @@ make cb-comp-h1-weekly ARGS="--version 2009 --frozen-only"
 | **Gate не умеет разные имена моделей** | для пар `v3_bottomup` vs `v2_bottomup` нужен `--champion-model`/`--challenger-model` | follow-up к #184 |
 | **`publication`-вариант не считан** | `late` может быть мягче | robustness-прогон |
 | **Нет walk-forward h3/h6 2022+** | задача #419 требует h1 только; h3/h6 — окно статьи | отдельная арена |
-| **h1-кандидат `wk_mix_ex` оценён на «сожжённой» арене** | 2023+ выбрана после Task 4, спека уточнена после кода; дамми учат разрыв NSA → *финальная* SA | подтверждение на новых месяцах 2026-10+ (P0.6, §7.8) |
+| **h1-кандидат `wk_mix_ex` оценён на «сожжённой» арене** | 2023+ выбрана после Task 4, спека уточнена после кода; риск, что дамми учат разрыв NSA → *финальная* SA, на real-time истине не подтвердился (P0.6), но это те же месяцы | подтверждение только на новых месяцах 2026-10+ (paper shadow P0.6, §7.8) |
 
 ### 1.11. Эксплуатационный статус
 
@@ -448,6 +450,7 @@ make cb-comp-h1-weekly ARGS="--version 2009 --frozen-only"
 | [2026-10-31-cb-comp-88-groups-task10.md](../research/2026-10-31-cb-comp-88-groups-task10.md) (Task 10, [#438](https://github.com/kmlebedev/clickhouse-import-rosstat/issues/438)) | Заменяет ли pooled CatBoost `combo3`? | G10 не пройден; после устранения утечки хуже `combo3` на всех h | 1,105 / 1,044 / 1,190 / 1,160 |
 | Task 11 ([#439](https://github.com/kmlebedev/clickhouse-import-rosstat/issues/439), [PR #443](https://github.com/kmlebedev/clickhouse-import-rosstat/pull/443)) | Улучшает ли EN 2016+ h3? | G11 не пройден; точка лучше, p = 0,65; h6 хрупок | `combo4` 1,007 / 0,939 / 0,974 / 0,912 |
 | [2026-10-31-cb-comp-88-groups-task12.md](../research/2026-10-31-cb-comp-88-groups-task12.md) (Task 12) | Помогает ли VAR/BVAR на h3/h6? | G12 не пройден; ошибки коррелированы с `combo3` | `combo3_var16` +0,006 h3, +0,083 h6 |
+| [2026-10-31-cb-comp-h1-shadow-p06.md](../research/2026-10-31-cb-comp-h1-shadow-p06.md) (P0.6, [#453](https://github.com/kmlebedev/clickhouse-import-rosstat/issues/453)) | Держится ли выигрыш `wk_mix_ex` на real-time истине, срезах и `publication`? | real-time и без тарифов — да; `publication` и 7-е число — нет; shadow 2026-10 зафиксирован | `T_LIVE_rt` 0,1535 против 0,2216 |
 
 ### 3.4. Смежные линии, которые дали контекст
 
@@ -614,6 +617,8 @@ make cb-comp-h1-weekly ARGS="--version 2009 --frozen-only"
 **Что сделать.** Пройти протокол §7.8 для h1-nowcast трека: (1) решение-запись `decision=shadow` с причиной; (2) заморозка спецификации `wk_mix_ex@v1`; (3) robustness-проверки на истории (`publication`-cutoff, real-time SA, без тарифных месяцев, недельные «винтажи» внутри месяца); (4) проспективный paper shadow: `combo3` (champion), `wk_mix_ex` (challenger), `wk_mix_d` и `live_cb_wk` (контроли), прогноз фиксируется коммитом до публикации ИПЦ; (5) решение по предрегистрированному правилу; (6) смена базы только для h1-nowcast, `combo3` остаётся базой h2/h3/h6 и fallback.
 
 **Гейт.** Правило решения §7.8 записано до первого shadow-месяца; без этого результат shadow не считается. **Статус:** пороги утверждены владельцем 2026-10-31; первый shadow-месяц — 2026-10 (cutoff 2026-11-08). P0.6 начат до мержа PR #452 — осознанное исключение из WIP=1 из-за cutoff. **Task 14 (`@2009`) truth P0.6 не меняет:** shadow считается на `@2010`; `@2009` — параллельная исследовательская версия до отдельного решения владельца.
+
+**Сделано ([#453](https://github.com/kmlebedev/clickhouse-import-rosstat/issues/453), [отчёт](../research/2026-10-31-cb-comp-h1-shadow-p06.md)):** шаги 0–2 и первый месяц шага 4. Ретро-robustness: `rt_holds`, `ex_tariff_holds` — да, `pub_holds` — нет, bias-флагов нет. Shadow 2026-10 закоммичен 2026-10-31: `combo3` 0,497, **`wk_mix_ex` 0,456** (`served`, уровень 0), `wk_mix_d` 0,670, `live_cb_wk` 0,415. В октябре 2026 недельный ЖКУ_wk +9,8 % — индексация тарифов вне календаря v1: первый месяц сразу проверяет ЖКУ-очистку. Ежемесячно: `make cb-comp-groups-panel` после публикации ИПЦ M−1 → `make cb-comp-h1-shadow-forecast MONTH=<M>` до cutoff `late` → коммит `docs/research/cb-comp-h1-shadow/<M>.json`; факт — после публикации ИПЦ M.
 
 **Оценка:** 2–3 pd на протокол и robustness + ~15 мин/мес на shadow; решение — не раньше 6 месяцев (2027-04), основное — 12 месяцев. **Зависимости:** Task 4b (готово); P0.5 желателен, P1.3 — для перехода из paper shadow в `forecast_log`.
 
@@ -898,6 +903,7 @@ make cb-comp-h1-weekly ARGS="--version 2009 --frozen-only"
 | `scripts/models/cb_comp/cb_comp_h3_h6_var.py` | Task 12: VAR/BVAR, `combo3_var16` | `run` | merged |
 | `scripts/models/cb_comp/cb_comp_per_code_review.py` | Task 8: per-code МП, X-13, панели | `main` | merged |
 | `scripts/models/cb_comp/cb_comp_h1_weekly_ex.py` | Task 4b: `agg_ex`, `wk_agg_ex`/`wk_mix_ex`, G11, контроли ревью | `g11_check`, `run` | merged (Task 4b) |
+| `scripts/models/cb_comp/cb_comp_h1_shadow.py` | P0.6: ретро-robustness и paper shadow `wk_mix_ex@v1` | `robustness`, `shadow_forecast`, `serve`, `t_live_rt` | PR #455 (P0.6, #453) |
 
 ### 8.2. Make-цели
 
@@ -915,6 +921,7 @@ make cb-comp-h1-weekly ARGS="--version 2009 --frozen-only"
 | `make cb-comp-h3-h6-var` / `-test` | Task 12: VAR/BVAR; 32 теста |
 | `make cb-comp-per-code-review` / `-test` | Task 8: per-code разбор; 12 тестов |
 | `make cb-comp-h1-weekly-ex` / `-test` | Task 4b: очищенный недельный агрегат, G11; 22 теста; нужен `predictions.csv` Task 4 |
+| `make cb-comp-h1-shadow-robustness` / `cb-comp-h1-shadow-forecast MONTH=YYYY-MM` / `cb-comp-h1-shadow-test` | P0.6: robustness на входах Task 4b; shadow-JSON месяца в `docs/research/cb-comp-h1-shadow/`; 19 тестов |
 
 ### 8.3. Артефакты
 
