@@ -258,17 +258,28 @@ def hypothesis_check(archive: Optional[str] = None, runner: Optional[Callable] =
     for model in specs:
         per_h = {}
         for horizon in HYPOTHESIS_HORIZONS:
-            def rmse_of(variant: str) -> tuple:
+            errors_by_variant = {}
+            for variant in ("wf", "wf_noshock", "frozen"):
                 months, errors = aligned_errors(predictions[f"{model}_{variant}/h{horizon}"], truth[horizon], NORMAL_MONTHS)
-                return len(errors), math.sqrt(sum(e * e for e in errors) / len(errors)) if errors else float("nan")
-            n, rmse_shock = rmse_of("wf")
-            _, rmse_noshock = rmse_of("wf_noshock")
-            _, rmse_frozen = rmse_of("frozen")
+                errors_by_variant[variant] = {month: error for month, error in zip(months, errors)}
+            common = sorted(set.intersection(*(set(values) for values in errors_by_variant.values())))
+
+            def rmse_of(variant: str) -> float:
+                values = [errors_by_variant[variant][month] for month in common]
+                return math.sqrt(sum(e * e for e in values) / len(values)) if values else float("nan")
+
+            rmse_shock = rmse_of("wf")
+            rmse_noshock = rmse_of("wf_noshock")
+            rmse_frozen = rmse_of("frozen")
             verdict = hypothesis_verdict(rmse_shock, rmse_noshock, rmse_frozen)
             pinned = W5B_WF_PINNED[model][horizon]
+            complete = len(common) == len(NORMAL_MONTHS)
             per_h[str(horizon)] = {
-                "n": n, "rmse_shock": rmse_shock, "rmse_noshock": rmse_noshock, "rmse_frozen": rmse_frozen,
-                "pin": {"value": pinned, "diff": rmse_shock - pinned, "ok": abs(rmse_shock - pinned) <= W5B_PIN_TOL},
+                "n": len(common), "normal_complete": complete,
+                "n_by_variant": {variant: len(values) for variant, values in errors_by_variant.items()},
+                "rmse_shock": rmse_shock, "rmse_noshock": rmse_noshock, "rmse_frozen": rmse_frozen,
+                "pin": {"value": pinned, "diff": rmse_shock - pinned,
+                        "ok": complete and abs(rmse_shock - pinned) <= W5B_PIN_TOL},
                 **verdict,
             }
         h6 = per_h["6"]["verdict"]
