@@ -111,6 +111,9 @@ class OlsTest(unittest.TestCase):
         self.assertEqual(len(ex.design(date(2024, 7, 1), {"wkagg_ex_mtd": 1.0}, True)), 13)
         self.assertEqual(len(ex.design(date(2024, 7, 1), {"wkagg_ex_mtd": 1.0}, False)), 2)
 
+    def test_design_dummies_only(self):
+        self.assertEqual(len(ex.design(date(2024, 7, 1), {}, True, ex.FEATURE_EX, False)), 12)
+
     def test_recovers_seasonal_model(self):
         months = grid(date(2010, 3, 1), date(2013, 12, 1))
         features = {m: {"wkagg_ex_mtd": float(i) / 10.0} for i, m in enumerate(months)}
@@ -158,6 +161,55 @@ class WindowTest(unittest.TestCase):
         self.assertEqual(len([m for m in months if m >= ex.PRIMARY_START]), 45)
 
 
+class LeakTest(unittest.TestCase):
+    def test_train_months_strictly_before_test(self):
+        captured = []
+        original = ex.ols_ex_predict
+
+        def spy(features, target, train_months, test_months, dummies=True, feature=ex.FEATURE_EX, use_feature=True):
+            captured.append((test_months[0], list(train_months)))
+            return original(features, target, train_months, test_months, dummies, feature, use_feature)
+
+        months = grid(date(2010, 3, 1), date(2014, 12, 1))
+        features = {m: {"wkagg_ex_mtd": float(i) / 100.0, "agg_mtd": 1.0} for i, m in enumerate(months)}
+        target = {m: 1.0 + features[m]["wkagg_ex_mtd"] for m in months}
+        test = months[-6:]
+        ex.ols_ex_predict = spy
+        try:
+            ex.agg_ex_wf(features, target, months, test)
+            ex.feature_wf(features, target, months, test, ex.FEATURE_AGG, True)
+        finally:
+            ex.ols_ex_predict = original
+        self.assertEqual(len(captured), 2 * len(test))
+        for test_month, train in captured:
+            self.assertTrue(train)
+            self.assertTrue(all(t < test_month for t in train))
+
+
+class ControlsTest(unittest.TestCase):
+    def test_slice_bias_and_large_errors(self):
+        months = grid(date(2023, 7, 1), date(2023, 9, 1))
+        truth = {m: 0.0 for m in months}
+        errors = {months[0]: 0.2, months[1]: -0.1, months[2]: 0.05}
+        ordered = [errors[m] for m in months]
+        tariff = ex.slice_rmse(ordered, months, ex.is_tariff_month)
+        self.assertEqual(tariff["n"], 1)
+        self.assertAlmostEqual(tariff["rmse"], 0.2, places=10)
+        outside = ex.slice_rmse(ordered, months, lambda m: not ex.is_tariff_month(m))
+        self.assertEqual(outside["n"], 2)
+        bias = ex.bias_by_year({"m": errors}, truth, months)
+        self.assertAlmostEqual(bias["m"]["2023"]["bias"], 0.05, places=10)
+        big = ex.large_errors(errors, truth, months)
+        self.assertEqual([row["month"] for row in big], ["2023-07-01"])
+
+    def test_tariff_months(self):
+        self.assertTrue(ex.is_tariff_month(date(2023, 7, 1)))
+        self.assertTrue(ex.is_tariff_month(date(2025, 12, 1)))
+        self.assertTrue(ex.is_tariff_month(date(2026, 1, 1)))
+        self.assertFalse(ex.is_tariff_month(date(2023, 1, 1)))
+        self.assertTrue(ex.is_tariff_month(date(2026, 7, 1)))
+
+
 class BasePredictionsTest(unittest.TestCase):
     def test_parse_and_hash(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -165,7 +217,8 @@ class BasePredictionsTest(unittest.TestCase):
             path.write_text(
                 "arena,model,month,y_pred,t_live,target_full,normal\n"
                 "wf2022,combo3,2022-01-01,1.0,0.5,,\n"
-                "wf2022,combo3_wk,2022-01-01,1.1,0.5,,\n",
+                "wf2022,combo3_wk,2022-01-01,1.1,0.5,,\n"
+                "wf2022,live_cb_wk,2022-01-01,1.2,0.5,,\n",
                 encoding="utf-8",
             )
             old = ex.R12_PREDICTIONS_SHA256
@@ -174,6 +227,10 @@ class BasePredictionsTest(unittest.TestCase):
                 out = ex.load_base_predictions(path, [date(2022, 1, 1)])
                 self.assertEqual(out[ex.MODEL_COMBO][date(2022, 1, 1)], 1.0)
                 self.assertEqual(out[ex.MODEL_COMBO_WK][date(2022, 1, 1)], 1.1)
+                with_live = ex.load_base_predictions(
+                    path, [date(2022, 1, 1)], (ex.MODEL_COMBO, ex.MODEL_LIVE_WK)
+                )
+                self.assertEqual(with_live[ex.MODEL_LIVE_WK][date(2022, 1, 1)], 1.2)
                 with self.assertRaises(SystemExit):
                     ex.load_base_predictions(path, [date(2022, 2, 1)])
             finally:
