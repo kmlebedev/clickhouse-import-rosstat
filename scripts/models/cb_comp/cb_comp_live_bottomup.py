@@ -377,9 +377,11 @@ def write_predictions(path: Path, aggregated: dict, live: dict, truth_full: dict
 
 
 def _jsonable(value):
+    if isinstance(value, date):
+        return value.isoformat()
     if isinstance(value, dict):
         return {str(k.isoformat() if isinstance(k, date) else k): _jsonable(v) for k, v in value.items()}
-    if isinstance(value, (list, tuple)):
+    if isinstance(value, (list, tuple, set, frozenset)):
         return [_jsonable(v) for v in value]
     if isinstance(value, (np.floating,)):
         value = float(value)

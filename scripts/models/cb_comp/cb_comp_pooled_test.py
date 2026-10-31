@@ -13,6 +13,7 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from models.cb_comp import cb_comp_bottomup as bu
+from models.cb_comp import cb_comp_live_bottomup as lb
 from models.cb_comp import cb_comp_pooled as pooled
 
 
@@ -107,7 +108,7 @@ class WeightShareTest(unittest.TestCase):
         month = date(2017, 1, 1)
         weights = {2016: {"a": 1.0, "b": 3.0, bu.UTILITIES_CODE: 1000.0}}
         sa = {"a": {month: 0.1}, "b": {month: 0.1}, bu.UTILITIES_CODE: {month: 0.1}}
-        shares = pooled.weight_shares(weights, sa, [month])
+        shares = pooled.weight_shares(weights, sa, [month], 1)
         self.assertAlmostEqual(shares[month]["a"], 0.25)
         self.assertAlmostEqual(shares[month]["b"], 0.75)
         self.assertTrue(math.isnan(shares[month][bu.UTILITIES_CODE]))
@@ -116,15 +117,34 @@ class WeightShareTest(unittest.TestCase):
         month = date(2016, 1, 1)
         weights = {2016: {"a": 1.0}}
         sa = {"a": {month: 0.1}}
-        shares = pooled.weight_shares(weights, sa, [month])
+        shares = pooled.weight_shares(weights, sa, [month], 1)
         self.assertEqual(shares[month], {})  # 2015 весов нет — никакого fallback
 
     def test_group_without_sa_is_not_in_denominator(self):
         month = date(2019, 1, 1)
         weights = {2018: {"a": 1.0, "b": 1.0}}
         sa = {"a": {month: 0.1}, "b": {}}
-        shares = pooled.weight_shares(weights, sa, [month])
+        shares = pooled.weight_shares(weights, sa, [month], 1)
         self.assertAlmostEqual(shares[month]["a"], 1.0)
+
+    def test_share_uses_origin_not_target_composition(self):
+        target = date(2019, 6, 1)
+        origin = date(2019, 1, 1)
+        weights = {2018: {"a": 1.0, "b": 1.0}}
+        at_origin = {"a": {origin: 0.1}, "b": {origin: 0.1}}
+        target_only = {"a": {origin: 0.1}, "b": {target: 0.1}}  # b появился только в цели
+        first = pooled.weight_shares(weights, at_origin, [target], 6)
+        second = pooled.weight_shares(weights, target_only, [target], 6)
+        self.assertAlmostEqual(first[target]["a"], 0.5)
+        self.assertAlmostEqual(second[target]["a"], 1.0)  # состав на target не влияет
+
+    def test_share_uses_weight_year_of_origin(self):
+        target = date(2020, 1, 1)
+        origin = date(2019, 8, 1)  # target − (h−1), h=6
+        weights = {2018: {"a": 1.0, "b": 3.0}, 2019: {"a": 1.0, "b": 1.0}}
+        sa = {"a": {origin: 0.1}, "b": {origin: 0.1}}
+        shares = pooled.weight_shares(weights, sa, [target], 6)
+        self.assertAlmostEqual(shares[target]["a"], 0.25)  # 2018, не 2019 (0,5)
 
 
 class WindowsTest(unittest.TestCase):
@@ -137,16 +157,23 @@ class WindowsTest(unittest.TestCase):
         for horizon in pooled.HORIZONS:
             windows = pooled.annual_windows(date(2016, 1, 1), horizon, (2019, 2020))
             for year, info in windows.items():
-                months = pooled.train_months(date(2016, 1, 1), horizon, year)
+                months = pooled.train_months(date(2016, 1, 1), horizon, info["cutoff"])
                 self.assertLessEqual(max(months), info["cutoff"])
                 self.assertNotIn(date(year, 1, 1), months)
                 self.assertEqual(info["origin_min"], bu.shift_month(date(year, 1, 1), -(horizon - 1)))
 
     def test_article_outliers_are_excluded(self):
-        months = pooled.train_months(date(2016, 1, 1), 1, 2023)
+        months = pooled.train_months(date(2016, 1, 1), 1, date(2021, 12, 1))
         for month in (date(2020, 4, 1), date(2022, 1, 1), date(2022, 12, 1)):
             self.assertNotIn(month, months)
         self.assertIn(date(2021, 12, 1), months)
+
+    def test_h6_target_windows_with_shocks_are_excluded(self):
+        months = pooled.train_months(date(2016, 1, 1), 6, date(2023, 7, 1))
+        for month in (date(2023, 1, 1), date(2023, 5, 1)):
+            self.assertNotIn(month, months)  # окно включает 2022-08…12
+        self.assertIn(date(2023, 6, 1), months)
+        self.assertIn(date(2023, 7, 1), months)
 
     def test_control_window_starts_2010_03(self):
         windows = pooled.annual_windows(date(2010, 3, 1), 1, (2019,))
@@ -162,22 +189,24 @@ class RowsTest(unittest.TestCase):
         self.targets = targets_for(self.specs, self.months)
         self.sa = sa_for(self.specs, self.months)
         self.weights = {2016: {"a": 1.0, "b": 1.0}, 2017: {"a": 1.0, "b": 1.0}, 2018: {"a": 1.0, "b": 1.0}}
-        self.shares = pooled.weight_shares(self.weights, self.sa, self.months)
+
+    def shares(self, horizon: int) -> dict:
+        return pooled.weight_shares(self.weights, self.sa, self.months, horizon)
 
     def test_training_rows_use_origin_h_minus_one(self):
-        rows = pooled.training_rows(self.specs, self.features, self.targets, self.shares, 6, [date(2018, 6, 1)])
+        rows = pooled.training_rows(self.specs, self.features, self.targets, self.shares(6), 6, [date(2018, 6, 1)])
         self.assertEqual(len(rows), 2)
         self.assertEqual(rows[0].origin, date(2018, 1, 1))
 
     def test_nan_target_and_missing_origin_are_skipped(self):
         self.targets[1].loc[date(2018, 6, 1), "a"] = np.nan
-        rows = pooled.training_rows(self.specs, self.features, self.targets, self.shares, 1, [date(2018, 6, 1)])
+        rows = pooled.training_rows(self.specs, self.features, self.targets, self.shares(1), 1, [date(2018, 6, 1)])
         self.assertEqual([row.code for row in rows], ["b"])
-        rows = pooled.training_rows(self.specs, self.features, self.targets, self.shares, 6, [date(2015, 1, 1)])
+        rows = pooled.training_rows(self.specs, self.features, self.targets, self.shares(6), 6, [date(2015, 1, 1)])
         self.assertEqual(rows, [])  # origin 2014-08 вне признаков
 
     def test_prediction_rows_have_nan_target(self):
-        rows = pooled.prediction_rows(self.specs, self.features, self.shares, 3, [date(2019, 5, 1)])
+        rows = pooled.prediction_rows(self.specs, self.features, self.shares(3), 3, [date(2019, 5, 1)])
         self.assertEqual(len(rows), 2)
         self.assertTrue(all(math.isnan(row.target) for row in rows))
         self.assertEqual(rows[0].origin, date(2019, 3, 1))
@@ -216,7 +245,7 @@ class AggregateTest(unittest.TestCase):
         weights = {2018: {"a": 1.0, "b": 1.0, "c": 1.0}}
         aggregated, coverage = pooled.aggregate_pooled(predictions, weights, [month])
         self.assertAlmostEqual(aggregated[1][month], 3.0)
-        self.assertEqual(coverage[1][month], 2)
+        self.assertEqual(coverage[1][month], {"predicted": 2, "weighted": 2})
 
     def test_missing_month_is_not_aggregated(self):
         month = date(2019, 1, 1)
@@ -286,10 +315,10 @@ class GateTest(unittest.TestCase):
 
 class LeakAndR10Test(unittest.TestCase):
     @staticmethod
-    def report(train_months: list, test_months: list, cutoff: date, max_target: date) -> dict:
-        return {"main": {"1": {"2019": {"origin_min": date(2019, 1, 1), "cutoff": cutoff,
-                                        "train_months": train_months, "test_months": test_months,
-                                        "max_target": max_target, "n_rows": 1, "n_groups": 1}}}}
+    def report(train_months: list, test_months: list, cutoff: date, max_target: date, horizon="1") -> dict:
+        return {"main": {horizon: {"2019": {"origin_min": date(2019, 1, 1), "cutoff": cutoff,
+                                            "train_months": train_months, "test_months": test_months,
+                                            "max_target": max_target, "n_rows": 1, "n_groups": 1}}}}
 
     def test_leak_check_detects_test_month_in_train(self):
         good = self.report([date(2018, 12, 1)], [date(2019, 1, 1)], date(2018, 12, 1), date(2018, 12, 1))
@@ -297,24 +326,45 @@ class LeakAndR10Test(unittest.TestCase):
         bad = self.report([date(2019, 1, 1)], [date(2019, 1, 1)], date(2018, 12, 1), date(2019, 1, 1))
         self.assertFalse(pooled.leak_check(bad)["ok"])
 
-    def test_r10_pins(self):
+    def test_leak_check_is_independent_of_cutoff(self):
+        # max_target == cutoff, но для h6 цель 2018-08 не опубликована к origin 2018-08.
+        report = self.report([date(2018, 8, 1)], [date(2019, 1, 1)], date(2018, 8, 1), date(2018, 8, 1), horizon="6")
+        result = pooled.leak_check(report)
+        self.assertFalse(result["ok"])
+        self.assertGreater(result["windows"]["main:h6:2019"]["n_violations"], 0)
+
+    def test_r10_pins_and_coverage(self):
         ratios = {
             "live_cb": dict(pooled.TASK3_LIVE_CB_RATIOS),
             "combo3": dict(pooled.TASK9_COMBO_RATIOS),
         }
         reports = self.report([date(2018, 12, 1)], [date(2019, 1, 1)], date(2018, 12, 1), date(2018, 12, 1))
         inputs = dict(pooled.EXPECTED_INPUTS)
-        result = pooled.r10_check(ratios, reports, inputs, ["9218"], 87)
+        coverage = {horizon: {date(2019, 1, 1): {"predicted": 87, "weighted": 85}} for horizon in pooled.HORIZONS}
+        expected = {date(2019, 1, 1): 85}
+        result = pooled.r10_check(ratios, reports, inputs, ["9218"], coverage, expected)
         self.assertTrue(result["ok"])
         ratios["combo3"][1] += 0.01
-        self.assertFalse(pooled.r10_check(ratios, reports, inputs, ["9218"], 87)["ok"])
-        self.assertFalse(pooled.r10_check(ratios, reports, inputs, ["9218"], 86)["ok"])
+        self.assertFalse(pooled.r10_check(ratios, reports, inputs, ["9218"], coverage, expected)["ok"])
+
+    def test_r10d_detects_predicted_and_weighted_gaps(self):
+        ratios = {
+            "live_cb": dict(pooled.TASK3_LIVE_CB_RATIOS),
+            "combo3": dict(pooled.TASK9_COMBO_RATIOS),
+        }
+        reports = self.report([date(2018, 12, 1)], [date(2019, 1, 1)], date(2018, 12, 1), date(2018, 12, 1))
+        inputs = dict(pooled.EXPECTED_INPUTS)
+        expected = {date(2019, 1, 1): 85}
+        short = {horizon: {date(2019, 1, 1): {"predicted": 86, "weighted": 85}} for horizon in pooled.HORIZONS}
+        self.assertFalse(pooled.r10_check(ratios, reports, inputs, ["9218"], short, expected)["ok"])
+        mismatch = {horizon: {date(2019, 1, 1): {"predicted": 87, "weighted": 84}} for horizon in pooled.HORIZONS}
+        self.assertFalse(pooled.r10_check(ratios, reports, inputs, ["9218"], mismatch, expected)["ok"])
 
 
 class PassportTest(unittest.TestCase):
     def test_jsonable_converts_dates_and_nan(self):
-        value = pooled._jsonable({"date": date(2019, 1, 1), "nan": float("nan"), "np": np.float64(1.5),
-                                  "items": (date(2020, 1, 1), np.int64(2))})
+        value = lb._jsonable({"date": date(2019, 1, 1), "nan": float("nan"), "np": np.float64(1.5),
+                              "items": (date(2020, 1, 1), np.int64(2))})
         self.assertEqual(value["date"], "2019-01-01")
         self.assertIsNone(value["nan"])
         self.assertEqual(value["np"], 1.5)
