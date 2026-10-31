@@ -1,7 +1,7 @@
 {
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
   "name": "clickhouse-import-rosstat",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Repo role skills for the Rosstat/CBR data platform",
   "owner": {
     "name": "kmlebedev",
@@ -11,7 +11,7 @@
     {
       "name": "clickhouse-import-rosstat",
       "description": "Repo-specific skills for the clickhouse-import-rosstat data platform: Rosstat, CBR, MOEX, macro and financial ETL, ML nowcasts, publications and dashboards.",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "author": {
         "name": "kmlebedev"
       },
