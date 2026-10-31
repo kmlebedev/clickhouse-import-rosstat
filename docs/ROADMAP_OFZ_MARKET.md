@@ -189,6 +189,34 @@
 
 Research — [2026-10-30-transaq-net-flows-source.md](research/2026-10-30-transaq-net-flows-source.md); спека — [2026-10-30-transaq-net-flows-design.md](superpowers/specs/2026-10-30-transaq-net-flows-design.md); план — [2026-10-30-transaq-net-flows.md](superpowers/plans/2026-10-30-transaq-net-flows.md).
 
+### `ofz-market/1.6` — Дашборд ленты сделок Transaq (Trades) как код
+
+| Поле | Значение |
+|---|---|
+| Приоритет | P1 |
+| Зависит от | `ofz-market/1.5` (витрины `v_transaq_net_flows*`, merged PR [#418](https://github.com/kmlebedev/clickhouse-import-rosstat/pull/418)) |
+| Статус | 🔶 In Review |
+
+**Цель.** Перенести UI-экспорт `Trades` из sibling-проекта `transaq-clickhouse-exporter` в дашборд-как-код: нетто покупок/продаж по инструментам IMOEX и объёмы по интервалам для IMOEX и ОФЗ — на существующих витринах `v_transaq_net_flows`/`v_transaq_net_flows_daily`.
+
+**Состав:**
+
+- дашборд `transaq-trades` в `grafana/` (5 панелей в 2 рядах) → артефакт `dashboard/transaq-trades.json`;
+- панели 1–2 (top-10 нетто покупок/продаж IMOEX) — дневная витрина + `$__dateFilter(date)`; панели 3–5 (поток по интервалам, IMOEX и ОФЗ) — минутная витрина + `$__timeFilter(minute)` + `$__timeInterval(minute)`;
+- переменные экспорта не переносятся: `$interval` → `$__timeInterval`, `$sec_code_etf` → `board`; ETF-панель заменена на ОФЗ (подписка стенда — IMOEX + ОФЗ);
+- TS-практики ClickHouse зафиксированы в скиле `dashboard-migration`.
+
+**Критерий приёмки:**
+
+- каждый запрос — только `v_*`, ни одного сырого `transaq_*`; `$__dateFilter`/`$__timeFilter` в каждом таргете; `LIMIT` — только на top-10;
+- `make all`, `make grafana-validate`, `make docs-check` зелёные; `make grafana-build` детерминирован; `gcx dev lint run` — no violations; CI `dashboards` зелёный;
+- живой SQL всех таргетов через MCP под `kimi_reader`; staging deploy + smoke — первые панели отдают точки (owner-assisted);
+- протокол — комментарием в PR; README/ARCHITECTURE/GRAFANA/ROADMAP синхронны.
+
+**Не делать:** не читать сырые `transaq_*`; не вводить переменные темплейтинга; не добавлять стратегию и рекомендации; не переносить ETF-панель при отсутствии подписки `TQTF`.
+
+Спека — [2026-10-31-grafana-transaq-trades-design.md](superpowers/specs/2026-10-31-grafana-transaq-trades-design.md); план — [2026-10-31-grafana-transaq-trades.md](superpowers/plans/2026-10-31-grafana-transaq-trades.md).
+
 ---
 
 ## 5. Данные и витрины
@@ -214,7 +242,7 @@ cbr_zcyc ────────────────────┼→ 1.1 
 transaq_securities_info ─────┘       ├→ внешний контур: аналитика выпусков, денежный поток
                                      │
 transaq_quotes/trades ───────────────┼→ 1.3
-                                     │     └→ 1.5
+                                     │     └→ 1.5 ─→ 1.6
 источники эмитентов ─────────────────┴→ 1.2
 ```
 
@@ -222,6 +250,7 @@ transaq_quotes/trades ───────────────┼→ 1.3
 - `1.2` — P1, research-heavy; может идти параллельно.
 - `1.3` — P1, после `1.1`, использует те же сырые данные.
 - `1.5` — P1, после `1.1`; читает ту же ленту `transaq_trades` и ждёт рыночную подписку аккаунта.
+- `1.6` — P1, после `1.5`; дашборд-как-код на его витринах `v_transaq_net_flows*` (данных не добавляет).
 - `key-rate/phase-2-cbr-zcyc` (✅) и `key-rate/phase-2-ofz-debt-stress` (⏳) не дублируются: это входы, не пункты этого роадмапа.
 
 ---
@@ -259,5 +288,6 @@ transaq_quotes/trades ───────────────┼→ 1.3
 | `ofz-market/1.3` | ❌ |
 | `ofz-market/1.4` | ❌ |
 | `ofz-market/1.5` | 🔶 In Review: живая приёмка 2026-10-30 — `transaq_trades` 7 362 строки (TQBR 44 кода IMOEX + TQOB 39 ОФЗ), `transaq_net_flows` 263 бакета 10:53–10:56 МСК, контроль по лотам сходится (605 206 B / 518 637 S / 9 463 сделки), повтор заменяет бакеты (`loaded_at` растёт, дублей ключа нет), `mcp-check` — 4 проверки transaq зелёные |
+| `ofz-market/1.6` | 🔶 In Review: дашборд `transaq-trades` собран кодом (5 панелей в 2 рядах), артефакт `dashboard/transaq-trades.json`; приёмка — этим PR |
 
 Статус обновляется тем же PR, что и реализация. `✅` до мержа — `In Review`, не `Done`.
