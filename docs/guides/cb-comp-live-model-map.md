@@ -1,4 +1,4 @@
-# Live-модель ИПЦ CB_COMP (`combo3`): model card, карта исследований и векторы развития
+# Live-модель ИПЦ `combo3` против CB_COMP: model card, карта исследований и векторы развития
 
 > **Статус:** живой справочник, срез **2026-10-31**. Роль — `ml`; пункт — `key-rate/phase-4-cb-comp-88-groups-live` ([#419](https://github.com/kmlebedev/clickhouse-import-rosstat/issues/419)), Task 13 ([#450](https://github.com/kmlebedev/clickhouse-import-rosstat/issues/450)).
 > **Что это:** единственная точка входа в линию live 88-группового bottom-up. Model card базовой модели `combo3`, реестр всех исследований линии, честный ledger достигнутого, открытые вопросы и приоритетные векторы развития.
