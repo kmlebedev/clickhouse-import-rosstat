@@ -64,6 +64,9 @@ MCP_CHECK_PORT ?= $(CH_HTTP_PORT)
 MLFLOW_VERSION      ?= 3.17.1
 MLFLOW_HOME         ?= $(BUILD_DIR)/mlflow
 MLFLOW_PORT         ?= 5000
+# URI, заданный пользователем (env/командная строка/env-файл) до дефолта:
+# shadow-зеркало P0.6a не подставляет локальный build/mlflow молча.
+MLFLOW_TRACKING_URI_EXPLICIT := $(if $(strip $(MLFLOW_TRACKING_URI)),1,)
 MLFLOW_TRACKING_URI ?= http://127.0.0.1:$(MLFLOW_PORT)
 MLFLOW_DB           := $(abspath $(MLFLOW_HOME)/mlflow.db)
 MLFLOW_ARTIFACTS    := $(abspath $(MLFLOW_HOME)/artifacts)
@@ -927,11 +930,22 @@ cb-comp-h1-shadow-test:
 	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/cb_comp/cb_comp_h1_shadow_test.py -v
 
 # P0.6a #462: MLflow-зеркало shadow-JSON месяца (experiment cb_comp_h1_shadow,
-# run на month+json_sha256). Читает docs/research/cb-comp-h1-shadow/*.json,
-# в ClickHouse не пишет; backfill — ARGS="--backfill", проверка — ARGS="--dry-run".
+# run на month+json_sha256). Канонический backend — staging MLflow, не локальный
+# build/mlflow: URI обязателен (MLFLOW_TRACKING_URI или ARGS="--tracking-uri ...");
+# --dry-run работает без URI. Читает docs/research/cb-comp-h1-shadow/*.json,
+# в ClickHouse не пишет; backfill — ARGS="--backfill".
 cb-comp-h1-shadow-mlflow:
-	MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) $(MLFLOW_HTTP_ENV) uv run --with "mlflow==$(MLFLOW_VERSION)" --python 3.12 \
-		python3 scripts/models/cb_comp/cb_comp_h1_shadow_mlflow.py --tracking-uri $(MLFLOW_TRACKING_URI) $(ARGS)
+	@if [ -z "$(MLFLOW_TRACKING_URI_EXPLICIT)" ] && ! printf '%s' "$(ARGS)" | grep -Eq -- '--tracking-uri|--dry-run'; then \
+		echo "MLflow tracking URI не задан: канонический backend — staging, не локальный build/mlflow."; \
+		echo "  ssh -N -L 15001:127.0.0.1:5000 palmshell"; \
+		echo "  MLFLOW_TRACKING_URI=http://127.0.0.1:15001 make cb-comp-h1-shadow-mlflow ARGS=\"--backfill\""; \
+		echo "  или ARGS=\"--tracking-uri http://127.0.0.1:15001\""; \
+		echo "  локальный 127.0.0.1:5000 — только dev/офлайн-тесты"; \
+		exit 1; \
+	fi
+	$(MLFLOW_HTTP_ENV) uv run --with "mlflow==$(MLFLOW_VERSION)" --python 3.12 \
+		python3 scripts/models/cb_comp/cb_comp_h1_shadow_mlflow.py \
+		$(if $(MLFLOW_TRACKING_URI_EXPLICIT),--tracking-uri $(MLFLOW_TRACKING_URI),) $(ARGS)
 
 cb-comp-h1-shadow-mlflow-test:
 	uv run --with "mlflow==$(MLFLOW_VERSION)" --python 3.12 python3 scripts/models/cb_comp/cb_comp_h1_shadow_mlflow_test.py -v
