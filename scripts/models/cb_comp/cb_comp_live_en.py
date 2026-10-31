@@ -195,7 +195,8 @@ def prepare(archive: Path, panel_csv: Path, public_dir: Path) -> dict:
     weights = bu.load_weights(archive, lb.WEIGHT_YEARS, specs)
     sa_full, _sa_asof = lb.load_group_panel(panel_csv)
     last = max(m for values in sa_full.values() for m in values)
-    months = cp.month_range(date(2010, 1, 1), last)
+    first = lb.first_sa_month(sa_full)
+    months = cp.month_range(first, last)
     diff_full = lb.log_diff_frame(sa_full, codes, months)
     train_months = [row.month for row in train_rows]
     test_months = [row.month for row in test_rows]
@@ -282,12 +283,17 @@ def run(archive: Path, panel_csv: Path, public_dir: Path, out_dir: Path) -> dict
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--archive", default=None)
-    parser.add_argument("--panel", default=str(lb.PANEL_CSV))
+    parser.add_argument("--panel", default=None, help="по умолчанию — панель версии")
     parser.add_argument("--public-dir", default=str(lb.PUBLIC_DIR))
-    parser.add_argument("--out", default=str(OUT_DIR))
+    parser.add_argument("--out", default=None, help="по умолчанию build/cb-comp-live-en[-<версия>]")
+    parser.add_argument("--version", choices=lb.VERSIONS, default=lb.DEFAULT_VERSION,
+                        help="версия цели: 2010 — канон, 2009 — T_LIVE с 2009-01")
     args = parser.parse_args(argv)
+    panel = Path(args.panel) if args.panel else lb.default_panel(args.version)
+    lb.check_panel_version(lb.load_group_panel(panel)[0], args.version)
+    out_dir = Path(args.out) if args.out else lb.versioned_dir(OUT_DIR, args.version)
     archive = cp.resolve_archive(args.archive)
-    result = run(archive, Path(args.panel), Path(args.public_dir), Path(args.out))
+    result = run(archive, panel, Path(args.public_dir), out_dir)
     summary = {
         "chosen": result["chosen"], "reason": result["choice_reason"], "g3": result["g3"],
         "classes": {m: {h: (round(v["vs_cb_target_full"]["ratio"], 3), v["vs_cb_target_full"]["class"]) for h, v in per.items()}
