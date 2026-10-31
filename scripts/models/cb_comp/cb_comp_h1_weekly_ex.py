@@ -103,6 +103,14 @@ HOLM_ALPHA = 0.025
 R12_TOL = 1e-6
 R12_PINNED = {MODEL_COMBO: 0.9698445785532128, MODEL_COMBO_WK: 0.9630314456250352}
 R12_PREDICTIONS_SHA256 = "0a67483f0e64917436e60645e5dad2d1ab8421ce3cdb3171dae8e85fce1aea5f"
+# Task 16 #466: пины R12 версий, кроме канона @2010; @2009 — база Task 4 walk-forward @2009.
+R12_PINS = {
+    "2009": {"rmse": {}, "sha256": None},
+}
+VERSIONS = lb.VERSIONS
+DEFAULT_VERSION = lb.DEFAULT_VERSION
+# v1: expanding-окно OLS с 2010-03; раньше — только сенситивность Task 16 на @2009.
+TRAIN_START = date(2010, 3, 1)
 R13_PINNED = {"covered_weight": 0.04942, "group_weight": 0.05944, "coverage": 0.8314}
 
 PANEL_CSV = ROOT / "build" / "cb-comp-groups" / "panel.csv"
@@ -287,15 +295,23 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def r12_pins(version: str) -> dict:
+    """Пины R12 версии; канон @2010 читается из модульных констант (их подменяют тесты)."""
+    if version == DEFAULT_VERSION:
+        return {"rmse": R12_PINNED, "sha256": R12_PREDICTIONS_SHA256}
+    return R12_PINS[version]
+
+
 def load_base_predictions(
-    path: Path, months: list, required: tuple = (MODEL_COMBO, MODEL_COMBO_WK)
+    path: Path, months: list, required: tuple = (MODEL_COMBO, MODEL_COMBO_WK), version: str = DEFAULT_VERSION,
 ) -> dict:
-    """`{model: {месяц: прогноз}}` из `predictions.csv` Task 4; sha256 пинится."""
+    """`{model: {месяц: прогноз}}` из `predictions.csv` Task 4; sha256 пинится по версии."""
     if not path.exists():
         raise SystemExit(f"нет базы Task 4: {path}; сначала `make cb-comp-h1-weekly` (Task 4)")
     digest = sha256(path)
-    if digest != R12_PREDICTIONS_SHA256:
-        raise SystemExit(f"R12: sha256 базы {digest} != {R12_PREDICTIONS_SHA256}")
+    expected = r12_pins(version)["sha256"]
+    if expected and digest != expected:
+        raise SystemExit(f"R12: sha256 базы {digest} != {expected}")
     wanted = set(months)
     out = {model: {} for model in required}
     with path.open(encoding="utf-8") as handle:
@@ -329,15 +345,41 @@ def g11_check(pairs: dict, n_required: int) -> dict:
     }
 
 
-def r12_check(evaluation: dict, predictions_path: Path) -> dict:
+def r12_check(evaluation: dict, predictions_path: Path, version: str = DEFAULT_VERSION) -> dict:
+    """R12: база Task 4 воспроизводится; у версии без пинов — только запись (первый прогон)."""
+    pins = r12_pins(version)
     out = {}
-    for name, expected in R12_PINNED.items():
+    for name in (MODEL_COMBO, MODEL_COMBO_WK):
         got = evaluation["per_model"][name]["rmse"]
-        out[name] = {"rmse": got, "expected": expected, "abs_diff": abs(got - expected), "ok": abs(got - expected) <= R12_TOL}
+        expected = pins["rmse"].get(name)
+        ok = expected is not None and abs(got - expected) <= R12_TOL
+        out[name] = {"rmse": got, "expected": expected,
+                     "abs_diff": abs(got - expected) if expected is not None else None, "ok": ok}
     out["predictions_sha256"] = sha256(predictions_path)
-    out["ok"] = all(item["ok"] for item in out.values() if isinstance(item, dict) and "ok" in item)
-    out["ok"] = out["ok"] and out["predictions_sha256"] == R12_PREDICTIONS_SHA256
+    out["pinned"] = bool(pins["rmse"]) and pins["sha256"] is not None
+    if out["pinned"]:
+        out["ok"] = all(out[name]["ok"] for name in (MODEL_COMBO, MODEL_COMBO_WK))
+        out["ok"] = out["ok"] and out["predictions_sha256"] == pins["sha256"]
+    else:
+        out["ok"] = True
     return out
+
+
+def check_train_start(train_start: date, version: str, first_sa: date) -> None:
+    """Окно OLS: v1 — 2010-03; раньше — только на @2009 и не раньше первого SA + 2 мес."""
+    if train_start == TRAIN_START:
+        return
+    if version == DEFAULT_VERSION:
+        raise SystemExit(f"--train-start {train_start} только для @2009; v1 @2010 учится с {TRAIN_START}")
+    if train_start < cp.shift_month(first_sa, 2):
+        raise SystemExit(f"--train-start {train_start} раньше первого SA {first_sa} + 2 мес.")
+
+
+def train_months(feature_months: list, first_sa: date, train_start: date) -> list:
+    """Месяцы обучения OLS с `train_start` до конца таблицы признаков."""
+    if train_start >= TRAIN_START:
+        return [m for m in feature_months if m >= train_start]
+    return cp.month_range(max(train_start, cp.shift_month(first_sa, 2)), feature_months[-1])
 
 
 def r13_check(utilities: dict) -> dict:
@@ -443,16 +485,20 @@ def controls_block(models: dict, truth: dict, months: list, control_eval: dict) 
 # ---------------------------------------------------------------------------
 
 
-def run(archive: Path, panel_csv: Path, public_dir: Path, base_predictions: Path, out_dir: Path) -> dict:
+def run(archive: Path, panel_csv: Path, public_dir: Path, base_predictions: Path, out_dir: Path,
+        version: str = DEFAULT_VERSION, train_start: date = TRAIN_START) -> dict:
     data = tw.prepare(archive, panel_csv, public_dir)
+    lb.check_panel_version(lb.load_group_panel(panel_csv)[0], version)
+    first_sa = data["months"][0]
+    check_train_start(train_start, version, first_sa)
     t_live = data["t_live"][HORIZON]
     months = [m for m in data["feature_months"] if m >= REF_START and m in t_live]
     primary = [m for m in months if m >= PRIMARY_START]
-    all_train = [m for m in data["feature_months"] if m >= date(2010, 3, 1)]
+    all_train = train_months(data["feature_months"], first_sa, train_start)
     if len(months) != 57 or len(primary) != 45:
         raise SystemExit(f"окна не совпали: 2022+ {len(months)}, 2023+ {len(primary)}")
 
-    base = load_base_predictions(base_predictions, months, (MODEL_COMBO, MODEL_COMBO_WK, MODEL_LIVE_WK))
+    base = load_base_predictions(base_predictions, months, (MODEL_COMBO, MODEL_COMBO_WK, MODEL_LIVE_WK), version)
     weekly = audit.load_weekly()
     dictionary = wg.load_group_dictionary(archive)
     leaf_weights = wg.load_leaf_weights(archive)
@@ -460,8 +506,9 @@ def run(archive: Path, panel_csv: Path, public_dir: Path, base_predictions: Path
     leaf_2024 = wg.year_table(leaf_weights, 2024)
     group_2024 = group_weights.get(2024, {}).get(UTILITIES_CODE, 0.0)
     utilities = utilities_summary(weekly, dictionary, leaf_2024, group_2024)
-    util_features = utilities_features(weekly, leaf_weights, group_weights, data["feature_months"])
-    features_ex = agg_ex_features(weekly, data["feature_months"], util_features, group_weights)
+    feature_months = sorted(set(all_train) | set(data["feature_months"]))
+    util_features = utilities_features(weekly, leaf_weights, group_weights, feature_months)
+    features_ex = agg_ex_features(weekly, feature_months, util_features, group_weights)
 
     agg_ex = agg_ex_wf(features_ex, t_live, all_train, months, dummies=True)
     agg_ex_nod = agg_ex_wf(features_ex, t_live, all_train, months, dummies=False)
@@ -483,7 +530,7 @@ def run(archive: Path, panel_csv: Path, public_dir: Path, base_predictions: Path
     }
     gate_models = {name: models[name] for name in GATE_MODELS}
     ref_eval = tw.evaluate(gate_models, t_live, months, None)
-    r12 = r12_check(ref_eval, base_predictions)
+    r12 = r12_check(ref_eval, base_predictions, version)
     if not r12["ok"]:
         raise SystemExit(f"R12 не пройден: {r12}")
     r13 = r13_check(utilities)
@@ -499,6 +546,9 @@ def run(archive: Path, panel_csv: Path, public_dir: Path, base_predictions: Path
     result = {
         "spec": "docs/superpowers/specs/2026-10-31-cb-comp-h1-weekly-ex-utilities-design.md",
         "git_sha": lb.git_sha(),
+        "version": version,
+        "train_start": all_train[0].isoformat(),
+        "train_weekly_coverage": train_weekly_coverage(features_ex, all_train),
         "inputs": {
             "panel_csv": sha256(panel_csv), "public_panel_csv": sha256(public_dir / "public_panel.csv"),
             "sheet_map_csv": sha256(public_dir / "sheet_map.csv"), "target_xlsx": sha256(archive / cp.TARGET_XLSX),
@@ -531,6 +581,13 @@ def run(archive: Path, panel_csv: Path, public_dir: Path, base_predictions: Path
     return result
 
 
+def train_weekly_coverage(features: dict, months: list) -> dict:
+    """Сколько месяцев окна обучения имеют недельный признак (иначе — медиана, правило v1)."""
+    def present(key):
+        return sum(1 for m in months if not math.isnan(float(features.get(m, {}).get(key, NAN))))
+    return {"n_train": len(months), "agg_mtd": present(FEATURE_AGG), "wkagg_ex_mtd": present(FEATURE_EX)}
+
+
 def write_predictions(path: Path, models: dict, t_live: dict, months: list, primary: list) -> None:
     with path.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.writer(handle)
@@ -552,16 +609,31 @@ def write_utilities(path: Path, utilities: dict) -> None:
         writer.writerow(utilities["excluded"])
 
 
+def default_base_predictions(version: str) -> Path:
+    """База Task 4: @2010 — пин `0a67483f…`, иначе `predictions.csv` walk-forward Task 4 версии."""
+    if version == DEFAULT_VERSION:
+        return BASE_PREDICTIONS
+    return lb.versioned_dir(ROOT / "build" / "cb-comp-h1-weekly", version) / "predictions.csv"
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--archive", default=None)
-    parser.add_argument("--panel", default=str(PANEL_CSV))
+    parser.add_argument("--panel", default=None, help="по умолчанию — панель версии")
     parser.add_argument("--public-dir", default=str(PUBLIC_DIR))
-    parser.add_argument("--base-predictions", default=str(BASE_PREDICTIONS))
-    parser.add_argument("--out", default=str(OUT_DIR))
+    parser.add_argument("--base-predictions", default=None,
+                        help="по умолчанию: @2010 — build/cb-comp-h1-weekly-ex/base_predictions.csv, @2009 — predictions.csv Task 4 @2009")
+    parser.add_argument("--out", default=None, help="по умолчанию build/cb-comp-h1-weekly-ex[-<версия>]")
+    parser.add_argument("--version", choices=VERSIONS, default=DEFAULT_VERSION,
+                        help="версия цели: 2010 — канон v1, 2009 — T_LIVE с 2009-01 (Task 16)")
+    parser.add_argument("--train-start", default=None, help="YYYY-MM начала окна OLS; по умолчанию 2010-03 (v1)")
     args = parser.parse_args(argv)
     archive = cp.resolve_archive(args.archive)
-    result = run(archive, Path(args.panel), Path(args.public_dir), Path(args.base_predictions), Path(args.out))
+    train_start = date.fromisoformat(args.train_start + "-01") if args.train_start else TRAIN_START
+    panel = Path(args.panel) if args.panel else lb.default_panel(args.version)
+    base_predictions = Path(args.base_predictions) if args.base_predictions else default_base_predictions(args.version)
+    out_dir = Path(args.out) if args.out else lb.versioned_dir(OUT_DIR, args.version)
+    result = run(archive, panel, Path(args.public_dir), base_predictions, out_dir, args.version, train_start)
     summary = {
         "r12": result["r12"]["ok"], "r13": result["r13"]["ok"],
         "utilities": {key: result["utilities"][key] for key in ("n_series", "n_codes", "covered_weight", "group_weight", "coverage")},
