@@ -416,8 +416,8 @@ make cb-comp-h1-bs-combo ARGS="--archive <BusinessSurveyCBRCpiForecastingSourceC
 | h2 к CB_COMP | 1,013 | **0,957** | −5,5 % | p = 0,36 | Task 9 |
 | h3 к CB_COMP | 1,076 | **1,010** | −6,1 % | p = 0,47 | Task 9 |
 | h6 к CB_COMP | 1,062 | **0,894** | −15,8 % | p = 0,069 | Task 9 |
-| MCS h1 | `live_cb` выпадал (p = 0,096) | `combo3` входит (p = 0,89) | — | — | Task 9 |
-| G9 | не проходил | **пройден** | — | — | Task 9 |
+| MCS h1 | `live_cb` выпадал (p = 0,07) | `combo3` входит (p = 0,89) | — | — | Task 9 |
+| G9 | — (гейт введён в Task 9) | **пройден** | — | — | Task 9 |
 | Не-вред h3/h6 | — | **пройден** | — | — | Task 9 |
 | G3 справочно | `live_cb` h6 1,062 > 1,050 | **пройден** на всех h | — | — | Task 9 |
 | Live-панель 88 групп | не было | 88/88 из 31074; NSA точная | — | — | Task 1/1b |
