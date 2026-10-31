@@ -129,4 +129,4 @@
 - [x] **7.4 Прогон ×2** — `make cb-comp-88-live-gate`; sha256 `gate.json` и `predictions*.csv` совпадают; пины 1e-6.
 - [x] **7.5 Отчёт** — `docs/research/2026-10-31-cb-comp-88-groups-task7.{md,json}`: таблица классов, MCS, режимные строки, shadow (по горизонтам и годам, обе истины + SA ЦБ), решение и причина, вердикт #76, «что не проверено», воспроизводимость.
 - [x] **7.6 Документы** — гайд `cb-comp-live-model-map.md` §6.2 P0.1 и §1.8 (live-период), README, `docs/site-pages.json`, роадмап; `make all`, `make docs-check`.
-- [ ] **7.7 Приёмка** — протокол комментарием в PR; PR `Closes #427`; Project V2 — `In Review`.
+- [x] **7.7 Приёмка** — протокол комментарием в PR; PR `Closes #427`; Project V2 — `In Review`.
