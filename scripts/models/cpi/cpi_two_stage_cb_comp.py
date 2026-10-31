@@ -121,8 +121,19 @@ def catboost_fit(train: list, test_rows: list, target: str, names: list) -> list
     return [float(v) for v in model.predict(v3.feature_matrix(test_rows, names))]
 
 
-def wf_predict(rows: dict, data: tf.TargetData, horizon: int, test_months: list, fit: Callable, names: list, release_dates, min_train: int = MIN_TRAIN) -> dict:
-    """Walk-forward: для каждого `M` одна подгонка на `O = M−h+1`; цели обучения — винтаж тестового origin'а, purge по W3."""
+def window_touches(month: date, horizon: int, excluded) -> bool:
+    """Окно накопленной цели `t−h+1…t` пересекает исключённый месяц (#425)."""
+    return any(_shift(month, -offset) in excluded for offset in range(horizon))
+
+
+def wf_predict(rows: dict, data: tf.TargetData, horizon: int, test_months: list, fit: Callable, names: list, release_dates,
+               min_train: int = MIN_TRAIN, exclude_months=frozenset()) -> dict:
+    """Walk-forward: для каждого `M` одна подгонка на `O = M−h+1`; цели обучения — винтаж тестового origin'а, purge по W3.
+
+    `exclude_months` (по умолчанию пусто — поведение прежнее) убирает из train
+    строки, чьё окно `t−h+1…t` пересекает исключённый месяц; используется
+    диагностикой гипотезы W5b (#425).
+    """
     out = {}
     candidates = sorted(rows)
     for month in test_months:
@@ -132,7 +143,8 @@ def wf_predict(rows: dict, data: tf.TargetData, horizon: int, test_months: list,
         folds = tf.make_folds(TARGET, horizon, [origin], candidates, candidates[0], min_train, release_dates)
         if not folds:
             continue
-        values = {o: data.train_value(TARGET, origin, o, horizon) for o in folds[0].train}
+        keep = [o for o in folds[0].train if not window_touches(o, horizon, exclude_months)]
+        values = {o: data.train_value(TARGET, origin, o, horizon) for o in keep}
         train = s1.v3_fold_rows(rows, values, origin, TARGET)
         if len(train) < min_train:
             continue
@@ -151,6 +163,128 @@ def frozen_predict(rows: dict, data: tf.TargetData, horizon: int, test_months: l
         return {}
     preds = fit(train, [row for _, row in pairs], TARGET, names)
     return {m: float(p) for (m, _), p in zip(pairs, preds)}
+
+
+# ---------------------------------------------------------------------------
+# Диагностика гипотезы W5b (#425): шок 2022 в train
+# ---------------------------------------------------------------------------
+
+SHOCK_MONTHS = TRAIN_OUTLIER_MONTHS | OUTLIER_TEST_MONTHS
+HYPOTHESIS_HORIZONS = (1, 3, 6)
+REPRODUCE_RATIO = 1.20
+MECHANISM_SHARE = 0.50
+W5B_WF_PINNED = {
+    "v3_direct": {1: 0.208974, 3: 1.018481, 6: 2.504270},
+    "v5_direct": {1: 0.199228, 3: 0.875457, 6: 2.061249},
+}
+W5B_PIN_TOL = 1e-3
+
+
+def hypothesis_verdict(rmse_shock: float, rmse_noshock: float, rmse_frozen: float) -> dict:
+    """Правило H-W5b (спека #419 §17.5): `reproduce` и `mechanism` → support/partial/reject."""
+    ratio = rmse_shock / rmse_frozen if rmse_frozen else float("nan")
+    gap_shock = rmse_shock - rmse_frozen
+    gap_noshock = rmse_noshock - rmse_frozen
+    reduction = (gap_shock - gap_noshock) / gap_shock if gap_shock > 0 else None
+    reproduce = ratio >= REPRODUCE_RATIO - 1e-12
+    mechanism = None if reduction is None else reduction >= MECHANISM_SHARE - 1e-12
+    verdict = "support" if reproduce and mechanism else ("partial" if reproduce or mechanism else "reject")
+    return {
+        "ratio": ratio, "gap_shock": gap_shock, "gap_noshock": gap_noshock, "reduction": reduction,
+        "reproduce": reproduce, "mechanism": mechanism, "verdict": verdict,
+    }
+
+
+def hypothesis_check(archive: Optional[str] = None, runner: Optional[Callable] = None,
+                     wa_runner: Optional[Callable] = None, cache_dir: Optional[Path] = None) -> dict:
+    """W5b wf с шоками и без: воспроизведение провала и проверка механизма.
+
+    Подготовка данных — те же шаги, что `run()` (винтажи `T_SAX` на origin'ах
+    теста, строки v3/v5, срезы недельного SA). Поведение `run()` не меняется:
+    это отдельная диагностика.
+    """
+    import cpi_release_dates as rd
+    import cpi_sa_reconciliation as rec
+    import cpi_two_stage_targets as tt
+    import weekly_sa_asof as wa
+    from models.cb_comp import cb_comp_parity as cbp
+
+    root = cbp.resolve_archive(archive)
+    base = cbp.check_archive(root)
+    target_full = base["target"]
+    runner = runner or rec.make_r_runner(tt.FIRST_MONTH)
+    wa_runner = wa_runner or wa.make_r_runner()
+    release_dates = rd.load_release_dates()
+    nsa, util = rec.load_nsa(), rec.load_utilities()
+    origins = sorted({origin_for(m, h) for m in TEST_MONTHS for h in HYPOTHESIS_HORIZONS} | {FROZEN_VINTAGE_ORIGIN})
+    data = tf.build_target_data(nsa, util, {}, WEIGHT, origins, runner)
+    rows_v3 = s1.build_v3_rows(release_dates, first=ROW_FIRST)
+    points = wa.load_points()
+    snaps = {}
+    for origin in sorted(rows_v3):
+        if SA4W_FIRST <= origin <= TEST_LAST:
+            snap, _ = wa.try_snapshot(points, tf.cutoff(origin, release_dates), wa_runner)
+            if snap is not None:
+                snaps[origin] = s1.snapshot_features(snap)
+    rows_v5 = {o: v5_row(r, snaps.get(o)) for o, r in rows_v3.items()}
+    specs = {"v3_direct": (rows_v3, v3_names()), "v5_direct": (rows_v5, v5_names())}
+
+    cache_dir = Path(cache_dir) if cache_dir else None
+    predictions = {}
+    for horizon in HYPOTHESIS_HORIZONS:
+        for model, (rows, names) in specs.items():
+            for variant, excluded in (("wf", frozenset()), ("wf_noshock", SHOCK_MONTHS)):
+                key = f"{model}_{variant}/h{horizon}"
+                path = cache_dir / (key.replace("/", "_") + ".json") if cache_dir else None
+                if path is not None and path.exists():
+                    predictions[key] = {date.fromisoformat(k): v for k, v in json.loads(path.read_text(encoding="utf-8")).items()}
+                    continue
+                preds = wf_predict(rows, data, horizon, TEST_MONTHS, catboost_fit, names, release_dates,
+                                   exclude_months=excluded)
+                predictions[key] = preds
+                print(f"{key}: {len(preds)} прогнозов", flush=True)
+                if path is not None:
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_text(json.dumps({m.isoformat(): v for m, v in preds.items()}), encoding="utf-8")
+            key = f"{model}_frozen/h{horizon}"
+            predictions[key] = frozen_predict(rows, data, horizon, TEST_MONTHS, catboost_fit, names)
+
+    truth = {
+        h: {m: float(target_full.at[m, h]) for m in TEST_MONTHS
+            if m in target_full.index and not math.isnan(float(target_full.at[m, h]))}
+        for h in HYPOTHESIS_HORIZONS
+    }
+    models = {}
+    for model in specs:
+        per_h = {}
+        for horizon in HYPOTHESIS_HORIZONS:
+            def rmse_of(variant: str) -> tuple:
+                months, errors = aligned_errors(predictions[f"{model}_{variant}/h{horizon}"], truth[horizon], NORMAL_MONTHS)
+                return len(errors), math.sqrt(sum(e * e for e in errors) / len(errors)) if errors else float("nan")
+            n, rmse_shock = rmse_of("wf")
+            _, rmse_noshock = rmse_of("wf_noshock")
+            _, rmse_frozen = rmse_of("frozen")
+            verdict = hypothesis_verdict(rmse_shock, rmse_noshock, rmse_frozen)
+            pinned = W5B_WF_PINNED[model][horizon]
+            per_h[str(horizon)] = {
+                "n": n, "rmse_shock": rmse_shock, "rmse_noshock": rmse_noshock, "rmse_frozen": rmse_frozen,
+                "pin": {"value": pinned, "diff": rmse_shock - pinned, "ok": abs(rmse_shock - pinned) <= W5B_PIN_TOL},
+                **verdict,
+            }
+        h6 = per_h["6"]["verdict"]
+        models[model] = {
+            "horizons": per_h,
+            "verdict_h6": h6,
+            "pin_ok": all(per_h[str(h)]["pin"]["ok"] for h in HYPOTHESIS_HORIZONS),
+        }
+    verdicts = [models[model]["verdict_h6"] for model in models]
+    overall = "support" if all(v == "support" for v in verdicts) else ("partial" if any(v != "reject" for v in verdicts) else "reject")
+    return {
+        "shocks": [m.isoformat() for m in sorted(SHOCK_MONTHS)],
+        "horizons": list(HYPOTHESIS_HORIZONS),
+        "models": models,
+        "verdict": overall,
+    }
 
 
 def weekly_naive(snaps: dict, months: list) -> dict:
@@ -314,7 +448,19 @@ def main(argv=None) -> int:
     parser.add_argument("--archive", default=None)
     parser.add_argument("--out-dir", type=Path, default=ROOT / "build" / "cpi-two-stage")
     parser.add_argument("--cache-dir", type=Path, default=ROOT / "build" / "cpi-two-stage" / "w5b-cache")
+    parser.add_argument("--hypothesis-check", action="store_true",
+                        help="только диагностика гипотезы W5b (#425): wf с шоками и без; сравнение с run() не пишется")
     args = parser.parse_args(argv)
+    if args.hypothesis_check:
+        result = hypothesis_check(args.archive, cache_dir=args.cache_dir)
+        args.out_dir.mkdir(parents=True, exist_ok=True)
+        path = args.out_dir / "w5b_hypothesis.json"
+        path.write_text(json.dumps(_jsonable(result), ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        print(json.dumps(_jsonable({"verdict": result["verdict"],
+                                    "models": {m: {h: v["verdict"] for h, v in body["horizons"].items()}
+                                               for m, body in result["models"].items()}}),
+                         ensure_ascii=False, indent=2))
+        return 0
     result = run(args.archive, cache_dir=args.cache_dir)
     args.out_dir.mkdir(parents=True, exist_ok=True)
     predictions = result.pop("predictions")

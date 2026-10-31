@@ -890,6 +890,17 @@ cb-comp-pooled:
 cb-comp-pooled-test:
 	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/cb_comp/cb_comp_pooled_test.py -v
 
+# Task 5 #425: режим переобучения live_cb — frozen / annual / annual_shock /
+# annual_dummy / rolling96 / rolling120, шоки (2014-12…2015-03, 2020-04, 2022)
+# в train и гипотеза W5b (месячный wf на live_cb + прямой тест v3/v5_direct).
+# Входы — как у cb-comp-h1-bs-combo; W5b-диагностике нужны R seasonal и ClickHouse.
+# Только чтение ClickHouse и локального архива CB_COMP; в БД не пишет.
+cb-comp-refit-modes:
+	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --with arch --with "holidays>=0.60" --python 3.12 python3 scripts/models/cb_comp/cb_comp_refit_modes.py $(ARGS)
+
+cb-comp-refit-modes-test:
+	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --with arch --python 3.12 python3 scripts/models/cb_comp/cb_comp_refit_modes_test.py -v
+
 # Task 4 #424: h1 — недельный ИПЦ поверх combo3: маппинг 148 недельных позиций
 # на 88 групп, wk_g_* в live_cb, смешивание с недельным агрегатом, walk-forward
 # 2022+ (ежемесячный expanding) и G10/Holm. Только чтение ClickHouse и архива.
