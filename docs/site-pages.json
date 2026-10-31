@@ -408,6 +408,12 @@
     "section": "Статьи"
   },
   {
+    "source": "docs/Золото_обновление_2026-10-31.md",
+    "page": "article-gold-update-2026-10-31.md",
+    "title": "Золото: пробой $4 000",
+    "section": "Статьи"
+  },
+  {
     "source": "docs/ROADMAP_REAL_ESTATE.md",
     "page": "roadmap-real-estate.md",
     "title": "Недвижимость как канал трансмиссии кредита",
@@ -491,6 +497,18 @@
     "page": "research-2026-10-31-cb-comp-88-groups-task12.md",
     "title": "CB_COMP: h3/h6 — агрегатный VAR/BVAR в комбинации (Task 12)",
 
+    "section": "Исследования"
+  },
+  {
+    "source": "docs/research/2026-10-31-gold-stage-marts-audit.md",
+    "page": "research-2026-10-31-gold-stage-marts-audit.md",
+    "title": "Аудит gold-витрин на stage (31.10.2026)",
+    "section": "Исследования"
+  },
+  {
+    "source": "docs/research/2026-10-31-gold-selloff-channel-models.md",
+    "page": "research-2026-10-31-gold-selloff-channel-models.md",
+    "title": "Канал распродаж в прогнозе золота: модели",
     "section": "Исследования"
   }
 ]
