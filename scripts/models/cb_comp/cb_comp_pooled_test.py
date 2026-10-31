@@ -211,9 +211,7 @@ class AggregateTest(unittest.TestCase):
     def test_weights_lag_and_missing_group(self):
         month = date(2019, 1, 1)
         predictions = {
-            "a": {1: {month: 2.0}},
-            "b": {1: {month: 4.0}},
-            "c": {1: {}},
+            1: {"a": {month: 2.0}, "b": {month: 4.0}, "c": {}},
         }
         weights = {2018: {"a": 1.0, "b": 1.0, "c": 1.0}}
         aggregated, coverage = pooled.aggregate_pooled(predictions, weights, [month])
@@ -222,7 +220,7 @@ class AggregateTest(unittest.TestCase):
 
     def test_missing_month_is_not_aggregated(self):
         month = date(2019, 1, 1)
-        predictions = {"a": {1: {month: 2.0}}, "b": {1: {}}}
+        predictions = {1: {"a": {month: 2.0}, "b": {}}}
         weights = {2018: {"a": 1.0, "b": 1.0}}
         aggregated, _coverage = pooled.aggregate_pooled(predictions, weights, [month])
         self.assertAlmostEqual(aggregated[1][month], 2.0)
