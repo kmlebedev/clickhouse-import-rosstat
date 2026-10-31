@@ -134,7 +134,23 @@ class GateTest(unittest.TestCase):
         self.assertFalse(hw.g10_check(pairs, 57)["ok"])
 
     def test_holm(self):
-        self.assertEqual(hw.holm({"a": 0.01, "b": 0.04}), {"a": 0.02, "b": 0.08})
+        self.assertEqual(hw.holm({"a": 0.01, "b": 0.04}), {"a": 0.02, "b": 0.04})
+
+    def test_holm_matches_review(self):
+        got = hw.holm({hw.MODEL_COMBO_WK: 0.1410959295, hw.MODEL_WK_MIX: 0.2956956541})
+        self.assertAlmostEqual(got[hw.MODEL_COMBO_WK], 0.2821918590)
+        self.assertAlmostEqual(got[hw.MODEL_WK_MIX], 0.2956956541)
+
+
+class SensitivityTest(unittest.TestCase):
+    def test_slices(self):
+        months = [date(2022, 3, 1), date(2022, 4, 1), date(2022, 12, 1), date(2023, 7, 1), date(2023, 8, 1), date(2024, 7, 1)]
+        out = hw.sensitivity_slices(months)
+        self.assertNotIn(date(2022, 3, 1), out["no_2022_03"])
+        self.assertIn(date(2022, 12, 1), out["util_months"])
+        self.assertIn(date(2024, 7, 1), out["util_months"])
+        self.assertIn(date(2023, 8, 1), out["aug_sep_2023"])
+        self.assertNotIn(date(2023, 7, 1), out["aug_sep_2023"])
 
 
 class R10Test(unittest.TestCase):
