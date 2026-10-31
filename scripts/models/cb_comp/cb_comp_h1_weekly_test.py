@@ -31,6 +31,13 @@ class ConstantsTest(unittest.TestCase):
         self.assertEqual(hw.HOLM_ALPHA, 0.025)
         self.assertEqual(hw.R11_EXPECTED["n_groups"], 52)
         self.assertEqual(hw.R10_PINNED[hw.MODEL_COMBO], 0.16432658972448905)
+        self.assertEqual(hw.VERSIONS, ("2010", "2009"))
+        self.assertEqual(hw.R10_PINS["2010"], hw.R10_PINNED)
+
+    def test_r10_accepts_version_pin(self):
+        per_model = {name: {"rmse": value} for name, value in hw.R10_PINNED.items()}
+        out = hw.r10_check(per_model, hw.R10_PINNED)
+        self.assertTrue(out["ok"])
 
 
 class NamesTest(unittest.TestCase):

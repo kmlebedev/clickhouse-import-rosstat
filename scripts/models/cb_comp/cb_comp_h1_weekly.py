@@ -76,6 +76,18 @@ R10_PINNED = {
     MODEL_ECON: 0.16670577961045163,
     MODEL_ROZN: 0.16892971554783076,
 }
+# Task 14: пины R10 по версии цели; @2009 заполняется после прогона Task 9 @2009.
+VERSIONS = lb.VERSIONS
+DEFAULT_VERSION = lb.DEFAULT_VERSION
+R10_PINS = {
+    "2010": R10_PINNED,
+    "2009": {
+        MODEL_LIVE_CB: 0.19789285710086799,
+        MODEL_COMBO: 0.16523960261042756,
+        MODEL_ECON: 0.1665537602380189,
+        MODEL_ROZN: 0.167724527009985,
+    },
+}
 R11_EXPECTED = {
     "n_matched": 118, "n_in_group": 112, "n_groups": 52,
     "n_groups_without_weekly": 36, "n_outside_groups": 6,
@@ -107,7 +119,8 @@ def prepare(archive: Path, panel_csv: Path, public_dir: Path) -> dict:
     weights = bu.load_weights(archive, lb.WEIGHT_YEARS, specs)
     sa_full, _sa_asof = lb.load_group_panel(panel_csv)
     last = max(m for values in sa_full.values() for m in values)
-    months = cp.month_range(date(2010, 1, 1), last)
+    first = lb.first_sa_month(sa_full)
+    months = cp.month_range(first, last)
     diff_full = lb.log_diff_frame(sa_full, codes, months)
     feature_months = cp.month_range(date(2010, 3, 1), last)
     features = bu.feature_table(
@@ -449,9 +462,10 @@ def g10_check(pairs: dict, n_required: int) -> dict:
     }
 
 
-def r10_check(per_model: dict) -> dict:
+def r10_check(per_model: dict, pins: dict = None) -> dict:
+    pins = pins or R10_PINNED
     out = {}
-    for name, expected in R10_PINNED.items():
+    for name, expected in pins.items():
         got = per_model[name]["rmse"]
         out[name] = {"rmse": got, "expected": expected, "abs_diff": abs(got - expected), "ok": abs(got - expected) <= R10_TOL}
     return {"models": out, "ok": all(item["ok"] for item in out.values())}
@@ -521,7 +535,8 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def run(archive: Path, panel_csv: Path, public_dir: Path, out_dir: Path, jobs: int = 4, frozen_only: bool = False) -> dict:
+def run(archive: Path, panel_csv: Path, public_dir: Path, out_dir: Path, jobs: int = 4,
+        frozen_only: bool = False, version: str = DEFAULT_VERSION) -> dict:
     data = prepare(archive, panel_csv, public_dir)
     regressors = bs9.load_regressors(public_dir)
     weekly = weekly_inputs(archive, data["specs"])
@@ -562,12 +577,13 @@ def run(archive: Path, panel_csv: Path, public_dir: Path, out_dir: Path, jobs: i
         MODEL_WK_MIX: mix(frozen[MODEL_COMBO], wk_agg_frozen),
     }
     frozen_eval = evaluate(frozen_all, truth_full[HORIZON], data["normal"], cb_errors)
-    r10 = r10_check(frozen_eval["per_model"])
+    r10 = r10_check(frozen_eval["per_model"], R10_PINS[version])
     if not r10["ok"]:
         raise SystemExit(f"R10 не пройден: {r10}")
 
     result = {
         "spec": "docs/superpowers/specs/2026-10-31-cb-comp-h1-weekly-design.md",
+        "version": version,
         "git_sha": lb.git_sha(),
         "inputs": {
             "panel_csv": sha256(panel_csv), "public_panel_csv": sha256(public_dir / "public_panel.csv"),
@@ -675,14 +691,19 @@ def write_mapping(path: Path, rows: list) -> None:
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--archive", default=None)
-    parser.add_argument("--panel", default=str(PANEL_CSV))
+    parser.add_argument("--panel", default=None, help="по умолчанию — панель версии")
     parser.add_argument("--public-dir", default=str(PUBLIC_DIR))
-    parser.add_argument("--out", default=str(OUT_DIR))
+    parser.add_argument("--out", default=None, help="по умолчанию build/cb-comp-h1-weekly[-<версия>]")
     parser.add_argument("--jobs", type=int, default=4)
+    parser.add_argument("--version", choices=VERSIONS, default=DEFAULT_VERSION,
+                        help="версия цели: 2010 — канон, 2009 — T_LIVE с 2009-01")
     parser.add_argument("--frozen-only", action="store_true", help="только R10 и окно CB_COMP; проверка перед long-run")
     args = parser.parse_args(argv)
+    panel = Path(args.panel) if args.panel else lb.default_panel(args.version)
+    lb.check_panel_version(lb.load_group_panel(panel)[0], args.version)
+    out_dir = Path(args.out) if args.out else lb.versioned_dir(OUT_DIR, args.version)
     archive = cp.resolve_archive(args.archive)
-    result = run(archive, Path(args.panel), Path(args.public_dir), Path(args.out), args.jobs, args.frozen_only)
+    result = run(archive, panel, Path(args.public_dir), out_dir, args.jobs, args.frozen_only, args.version)
     summary = {
         "r10": result["r10"]["ok"], "r11": result["r11"]["counts_ok"] and result["r11"]["availability_ok"],
         "frozen": {

@@ -52,6 +52,25 @@ class PanelTest(unittest.TestCase):
         self.assertEqual(full["10"], {date(2019, 1, 1): 0.4, date(2019, 2, 1): 0.45})
         self.assertEqual(asof["10"], {date(2019, 1, 1): 0.3})
 
+    def test_first_sa_month_follows_panel(self):
+        self.assertEqual(lb.first_sa_month({"a": {date(2010, 2, 1): 1.0}, "b": {date(2010, 3, 1): 1.0}}),
+                         date(2010, 2, 1))
+        self.assertEqual(lb.first_sa_month({"a": {date(2009, 1, 1): 1.0}}), date(2009, 1, 1))
+
+    def test_panel_version_must_match(self):
+        lb.check_panel_version({"a": {date(2010, 2, 1): 1.0}}, "2010")
+        lb.check_panel_version({"a": {date(2009, 1, 1): 1.0}}, "2009")
+        with self.assertRaises(SystemExit):
+            lb.check_panel_version({"a": {date(2010, 2, 1): 1.0}}, "2009")
+        with self.assertRaises(SystemExit):
+            lb.check_panel_version({"a": {date(2009, 1, 1): 1.0}}, "2010")
+
+    def test_versioned_defaults_keep_2010_canon(self):
+        self.assertEqual(lb.default_panel("2010"), lb.PANEL_CSV)
+        self.assertEqual(lb.default_panel("2009"), lb.ROOT / "build" / "cb-comp-groups-2009" / "panel.csv")
+        self.assertEqual(lb.versioned_dir(lb.OUT_DIR, "2010"), lb.OUT_DIR)
+        self.assertEqual(lb.versioned_dir(lb.OUT_DIR, "2009").name, "cb-comp-live-bottomup-2009")
+
     def test_asof_series_switches_at_2019_and_keeps_gaps(self):
         full = {"10": {date(2018, 12, 1): 1.0, date(2019, 1, 1): 2.0, date(2019, 2, 1): 3.0}}
         asof = {"10": {date(2018, 12, 1): 9.0, date(2019, 1, 1): 2.5}}
@@ -93,6 +112,14 @@ class TargetTest(unittest.TestCase):
         out = lb.t_live(sa, self.weights, months)
         self.assertEqual(set(out), {1, 2, 3, 6})
         self.assertAlmostEqual(out[6][date(2019, 12, 1)], (1.005 ** 6 - 1) * 100)
+
+    def test_t_live_starts_at_first_sa_month(self):
+        months = grid(date(2009, 1, 1), date(2009, 12, 1))
+        sa = {"a": {m: 0.5 for m in months}}
+        out = lb.t_live(sa, self.weights, months)
+        self.assertEqual(min(out[1]), date(2009, 1, 1))
+        self.assertEqual(min(out[2]), date(2009, 2, 1))
+        self.assertEqual(min(out[6]), date(2009, 6, 1))
 
 
 class ModelTest(unittest.TestCase):

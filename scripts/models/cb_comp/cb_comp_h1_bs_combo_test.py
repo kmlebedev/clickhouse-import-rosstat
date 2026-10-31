@@ -47,6 +47,13 @@ class ConstantsTest(unittest.TestCase):
         self.assertEqual(bs.NOHARM_MARGIN, 0.02)
         self.assertEqual(bs.R9A_EXPECTED, {"bs_econ16": 0.167225, "bs_rozn16": 0.169438})
         self.assertEqual(bs.TASK3_LIVE_CB_RATIOS, {1: 1.193, 2: 1.013, 3: 1.076, 6: 1.062})
+        self.assertEqual(bs.VERSIONS, ("2010", "2009"))
+        self.assertEqual(bs.TASK3_PINS["2010"], bs.TASK3_LIVE_CB_RATIOS)
+
+    def test_r9c_accepts_version_pin(self):
+        ratios = {1: 1.25, 2: 1.05, 3: 1.10, 6: 1.09}
+        out = bs.r9c_check(ratios, {h: ratios[h] for h in ratios})
+        self.assertTrue(out["ok"])
 
     def test_outliers_are_article_set(self):
         self.assertIn(date(2015, 1, 1), bs.ARTICLE_OUTLIERS)
