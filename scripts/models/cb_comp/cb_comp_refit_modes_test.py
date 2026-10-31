@@ -11,6 +11,7 @@ import math
 import sys
 import unittest
 from datetime import date
+from unittest import mock
 from pathlib import Path
 
 import pandas as pd
@@ -118,6 +119,51 @@ class AnnualWindowsTest(unittest.TestCase):
                 for year, window in rm.annual_windows(horizon, list(range(2019, 2025)), mode).items():
                     rm.assert_no_leakage(window["train"], window["cutoff"], horizon)
                     self.assertLessEqual(max(window["train"]), window["cutoff"])
+
+
+class AnnualFitLeakTest(unittest.TestCase):
+    """R14c: годовой фит видит только train-месяцы до cutoff (подмена будущего не влияет)."""
+
+    def _data(self, future_shift: float = 0.0) -> dict:
+        months = months_range(date(2016, 1, 1), date(2021, 12, 1))
+        features = {"g": {month: {"y_lag1": 0.1, "y_lag2": 0.1, "usd_mm": 0.0, "key_rate": 0.0,
+                                  "fao_mm": 0.0, "month": "01"} for month in months}}
+        values = {month: 1.0 for month in months}
+        for month in months:
+            if month >= date(2021, 1, 1):
+                values[month] += future_shift
+        targets = {horizon: pd.DataFrame({"g": [values[month] for month in months]}, index=months)
+                   for horizon in rm.HORIZONS}
+        return {
+            "specs": [rm.bu.GroupSpec("g", (), 1)], "features": features, "targets": targets,
+            "test_months": months_range(date(2021, 1, 1), date(2021, 12, 1)),
+        }
+
+    def _run(self, data: dict) -> list:
+        recorded = []
+
+        def fake_fit(rows, names, horizon, **kwargs):
+            recorded.append((horizon, [month for month, _, _ in rows], [value[horizon] for _, _, value in rows]))
+            return object()
+
+        with mock.patch.object(rm.bu, "fit_component", side_effect=fake_fit), \
+                mock.patch.object(rm.bu, "predict_component", side_effect=lambda model, rows, names: [0.0] * len(rows)):
+            rm.fit_predict_annual(data, data["test_months"], rm.MODE_ANNUAL, pool=1)
+        return recorded
+
+    def test_train_rows_stop_at_cutoff(self):
+        data = self._data()
+        for horizon, months, _values in self._run(data):
+            cutoff = rm.annual_windows(horizon, [2021], rm.MODE_ANNUAL)[2021]["cutoff"]
+            self.assertTrue(months)
+            self.assertLessEqual(max(months), cutoff)
+            self.assertNotIn(date(2021, 1, 1), months)
+
+    def test_future_values_do_not_change_train_rows(self):
+        base = self._run(self._data(0.0))
+        shifted = self._run(self._data(5.0))
+        self.assertEqual([(h, months) for h, months, _ in base], [(h, months) for h, months, _ in shifted])
+        self.assertEqual([values for _, _, values in base], [values for _, _, values in shifted])
 
 
 class LeakageTest(unittest.TestCase):
