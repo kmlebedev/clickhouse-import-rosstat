@@ -296,9 +296,13 @@ make cb-comp-h1-bs-combo-test
 # прогон; архив авторов обязателен
 make cb-comp-h1-bs-combo ARGS="--archive <BusinessSurveyCBRCpiForecastingSourceCode>"
 
-# версия @2009 (Task 14): панель и модель
-make cb-comp-groups-panel ARGS="--version 2009 --asof"
-make cb-comp-h1-bs-combo ARGS="--version 2009 --panel build/cb-comp-groups-2009/panel.csv --out build/cb-comp-h1-bs-combo-2009"
+# версия @2009 (Task 14): панель без as-of (sha256 ca373830…) и модели;
+# --version выбирает панель build/cb-comp-groups-2009, пины и каталог *-2009
+make cb-comp-groups-panel ARGS="--version 2009"
+make cb-comp-live-bottomup ARGS="--version 2009 --skip-asof"
+make cb-comp-live-en ARGS="--version 2009"
+make cb-comp-h1-bs-combo ARGS="--version 2009"
+make cb-comp-h1-weekly ARGS="--version 2009 --frozen-only"
 ```
 
 **Входы (sha256 в JSON):** `build/cb-comp-groups/panel.csv` `aec91f99…` (C0), `build/cb-comp-parity/public_panel.csv` `47176baa…`, `sheet_map.csv` `0d8a6ab5…`, `TARGET_FULL` `d5278124…`, `series2016.xlsx` `b8c1ec56…`, `series2009.xlsx` `5f918988…`; ClickHouse — `macro_series` `cbr_survey/price_expectations_sa` (2002-01…2026-09).

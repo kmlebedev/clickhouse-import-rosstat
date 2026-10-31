@@ -65,6 +65,20 @@ MODELS = (MODEL_LIVE, MODEL_NOMP, MODEL_ASOF)
 PANEL_CSV = ROOT / "build" / "cb-comp-groups" / "panel.csv"
 PUBLIC_DIR = ROOT / "build" / "cb-comp-parity"
 OUT_DIR = ROOT / "build" / "cb-comp-live-bottomup"
+# Task 14: версии цели T_LIVE. Версию панели фиксирует первый SA-месяц;
+# каталоги по умолчанию у @2009 — с суффиксом, чтобы не затирать канон @2010.
+VERSIONS = ("2010", "2009")
+DEFAULT_VERSION = "2010"
+VERSION_FIRST_SA = {"2010": date(2010, 2, 1), "2009": date(2009, 1, 1)}
+
+
+def versioned_dir(path: Path, version: str) -> Path:
+    """Каталог по умолчанию для версии: `@2010` — как есть, иначе `<каталог>-<версия>`."""
+    return path if version == DEFAULT_VERSION else path.with_name(f"{path.name}-{version}")
+
+
+def default_panel(version: str) -> Path:
+    return versioned_dir(PANEL_CSV.parent, version) / PANEL_CSV.name
 
 
 def g2_threshold(horizon: int) -> float:
@@ -91,6 +105,13 @@ def load_group_panel(path: Path) -> tuple:
 def first_sa_month(series: dict) -> date:
     """Первый SA-месяц панели: @2010 → 2010-02, @2009 → 2009-01."""
     return min(m for values in series.values() for m in values)
+
+
+def check_panel_version(sa_full: dict, version: str) -> None:
+    """Панель другой версии — ошибка: пины R9c/R10 и каталоги привязаны к версии."""
+    first = first_sa_month(sa_full)
+    if first != VERSION_FIRST_SA[version]:
+        raise SystemExit(f"панель начинается с {first}, а версия @{version} ждёт {VERSION_FIRST_SA[version]}")
 
 
 def asof_series(sa_full: dict, sa_asof: dict) -> dict:
@@ -291,6 +312,10 @@ def run(archive: Path, panel_csv: Path, public_dir: Path, out_dir: Path, skip_r0
     groups_without_sa = sorted(c for c in codes if not sa_full.get(c))
     if len(groups_without_sa) > 2:
         raise SystemExit(f"в панели групп нет SA у {groups_without_sa}: панель не та, что в Task 1")
+    # Без as-of колонки `live_per_sheet_asof` молча совпал бы с full-SA до 2019
+    # и обучился бы на NaN после: такой прогон — только с `--skip-asof`.
+    if not skip_asof and not sa_asof:
+        raise SystemExit("в панели нет sa_asof_mm: пересоберите панель с --asof или запустите с --skip-asof")
     last = max(m for values in sa_full.values() for m in values)
     # Старт T_LIVE — первый SA-месяц панели (Task 14): @2010 → 2010-02,
     # @2009 → 2009-01. Хардкод 2010-01 занижал старт @2010 и не видел 2009.
@@ -411,15 +436,21 @@ def _jsonable(value):
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--archive", default=None)
-    parser.add_argument("--panel", default=str(PANEL_CSV), help="panel.csv (C0, спека §13.1) из make cb-comp-groups-panel ARGS=--asof")
+    parser.add_argument("--panel", default=None,
+                        help="panel.csv (C0, спека §13.1) из make cb-comp-groups-panel ARGS=--asof; по умолчанию — панель версии")
     parser.add_argument("--public-dir", default=str(PUBLIC_DIR), help="каталог public_panel.csv и sheet_map.csv (make cb-comp-public-export)")
-    parser.add_argument("--out", default=str(OUT_DIR))
+    parser.add_argument("--out", default=None, help="по умолчанию build/cb-comp-live-bottomup[-<версия>]")
+    parser.add_argument("--version", choices=VERSIONS, default=DEFAULT_VERSION,
+                        help="версия цели: 2010 — канон, 2009 — T_LIVE с 2009-01")
     parser.add_argument("--skip-r0", action="store_true", help="только для отладки; итоговый прогон — с R0")
     parser.add_argument("--skip-asof", action="store_true",
                         help="без модели live_per_sheet_asof (для версии без as-of панели; primary live_cb остаётся)")
     args = parser.parse_args(argv)
+    panel = Path(args.panel) if args.panel else default_panel(args.version)
+    check_panel_version(load_group_panel(panel)[0], args.version)
+    out_dir = Path(args.out) if args.out else versioned_dir(OUT_DIR, args.version)
     archive = cp.resolve_archive(args.archive)
-    result = run(archive, Path(args.panel), Path(args.public_dir), Path(args.out), args.skip_r0, args.skip_asof)
+    result = run(archive, panel, Path(args.public_dir), out_dir, args.skip_r0, args.skip_asof)
     summary = {
         "r0": result["r0"], "g2_pass": result["g2_pass"],
         "models": {m: {h: {k: result["comparisons"][m][h][k] for k in ("rmse_t_live", "rmse_target_full", "rmse_cb")}

@@ -57,6 +57,20 @@ class PanelTest(unittest.TestCase):
                          date(2010, 2, 1))
         self.assertEqual(lb.first_sa_month({"a": {date(2009, 1, 1): 1.0}}), date(2009, 1, 1))
 
+    def test_panel_version_must_match(self):
+        lb.check_panel_version({"a": {date(2010, 2, 1): 1.0}}, "2010")
+        lb.check_panel_version({"a": {date(2009, 1, 1): 1.0}}, "2009")
+        with self.assertRaises(SystemExit):
+            lb.check_panel_version({"a": {date(2010, 2, 1): 1.0}}, "2009")
+        with self.assertRaises(SystemExit):
+            lb.check_panel_version({"a": {date(2009, 1, 1): 1.0}}, "2010")
+
+    def test_versioned_defaults_keep_2010_canon(self):
+        self.assertEqual(lb.default_panel("2010"), lb.PANEL_CSV)
+        self.assertEqual(lb.default_panel("2009"), lb.ROOT / "build" / "cb-comp-groups-2009" / "panel.csv")
+        self.assertEqual(lb.versioned_dir(lb.OUT_DIR, "2010"), lb.OUT_DIR)
+        self.assertEqual(lb.versioned_dir(lb.OUT_DIR, "2009").name, "cb-comp-live-bottomup-2009")
+
     def test_asof_series_switches_at_2019_and_keeps_gaps(self):
         full = {"10": {date(2018, 12, 1): 1.0, date(2019, 1, 1): 2.0, date(2019, 2, 1): 3.0}}
         asof = {"10": {date(2018, 12, 1): 9.0, date(2019, 1, 1): 2.5}}
