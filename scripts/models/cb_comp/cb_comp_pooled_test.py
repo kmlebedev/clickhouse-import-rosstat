@@ -347,6 +347,12 @@ class LeakAndR10Test(unittest.TestCase):
         ratios["combo3"][1] += 0.01
         self.assertFalse(pooled.r10_check(ratios, reports, inputs, ["9218"], coverage, expected)["ok"])
 
+    def test_expected_weighted_coverage_counts_only_sa_with_weight(self):
+        month = date(2019, 1, 1)
+        weights = {2018: {"a": 1.0}}
+        sa = {"a": {month: 0.1}, "b": {month: 0.1}, bu.UTILITIES_CODE: {month: 0.1}}
+        self.assertEqual(pooled.expected_weighted_coverage(weights, sa, [month]), {month: 1})
+
     def test_r10d_detects_predicted_and_weighted_gaps(self):
         ratios = {
             "live_cb": dict(pooled.TASK3_LIVE_CB_RATIOS),
