@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "rosstat-staging": {
+      "url": "https://mcp.selfinvesting.ru:8443/mcp",
+      "bearer_token_env_var": "ROSSTAT_MCP_TOKEN"
+    }
+  }
+}

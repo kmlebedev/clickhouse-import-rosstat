@@ -1,7 +1,7 @@
 {
   "name": "clickhouse-import-rosstat",
   "displayName": "ClickHouse Import Rosstat",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Repo-specific skills for the clickhouse-import-rosstat data platform: Rosstat, CBR, MOEX, macro and financial ETL, ML nowcasts, publications and dashboards.",
   "author": {
     "name": "kmlebedev"
@@ -28,5 +28,19 @@
     "macro",
     "finance"
   ],
-  "skills": "./.kimi-code/skills/"
+  "skills": "./.kimi-code/skills/",
+  "mcpServers": "./.cursor-plugin/mcp.json",
+  "variables": {
+    "type": "object",
+    "properties": {
+      "ROSSTAT_MCP_TOKEN": {
+        "type": "string",
+        "title": "Rosstat MCP access token",
+        "description": "Bearer token for the read-only staging MCP (v_* views). Issued by the repository owner."
+      }
+    },
+    "required": [
+      "ROSSTAT_MCP_TOKEN"
+    ]
+  }
 }
