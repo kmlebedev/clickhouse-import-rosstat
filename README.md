@@ -211,21 +211,17 @@ make mlflow-down
 
 ### Подключение как плагин LLM-клиента
 
-Репозиторий устанавливается как плагин в Kimi Code, Claude Code, Codex, Cursor и Qwen Code. Единственный источник скилов — [`.kimi-code/skills/`](.kimi-code/skills/); манифесты в корне только ссылаются на него, поэтому состав плагина совпадает с составом ролевых скилов.
+LLM-плагин [`rosstat-mcp`](https://github.com/kmlebedev/rosstat-mcp) живёт в отдельном репозитории и даёт только read-only MCP: сервер `rosstat-staging` — `https://mcp.selfinvesting.ru:8443/mcp` (витрины `v_*` staging, включая point-in-time слой). Ролевые скилы [`.kimi-code/skills/`](.kimi-code/skills/) — для сессий, работающих в этом репозитории, и плагином не публикуются.
 
 | Клиент | Установка |
 |---|---|
-| Kimi Code | `/plugins install https://github.com/kmlebedev/clickhouse-import-rosstat/tree/main` |
-| Claude Code | `claude plugin marketplace add kmlebedev/clickhouse-import-rosstat`<br>`claude plugin install clickhouse-import-rosstat@clickhouse-import-rosstat` |
-| Codex | `codex plugin marketplace add kmlebedev/clickhouse-import-rosstat`<br>`codex plugin add clickhouse-import-rosstat@clickhouse-import-rosstat` |
-| Cursor | `/add-plugin https://github.com/kmlebedev/clickhouse-import-rosstat` |
-| Qwen Code | `qwen extensions install kmlebedev/clickhouse-import-rosstat` |
+| Claude Code | `claude plugin marketplace add kmlebedev/rosstat-mcp`<br>`claude plugin install rosstat-mcp@rosstat-mcp` |
+| Codex | `codex plugin marketplace add kmlebedev/rosstat-mcp`<br>`codex plugin add rosstat-mcp@rosstat-mcp` |
+| Kimi Code | `/plugins install https://github.com/kmlebedev/rosstat-mcp` |
+| Qwen Code | `qwen extensions install kmlebedev/rosstat-mcp` |
+| Cursor | `/add-plugin https://github.com/kmlebedev/rosstat-mcp` |
 
-После установки — `/reload` или новая сессия. Скилы вызываются с namespace: `/skill:clickhouse-import-rosstat:go-engineer`; Kimi дополнительно получает агента `coder`.
-
-Ограничения: установка копирует снапшот репозитория (~86 МБ), и относительные ссылки в скилах ведут в этот снапшот, а не в рабочее дерево — после изменения docs/скилов плагин нужно переустановить. Короткий GitHub-URL Kimi (`/plugins install https://github.com/...`) ставит последний релиз; пока в нём нет манифеста, используйте `/tree/main`. MCP: плагин подключает read-only сервер `rosstat-staging` — `https://mcp.selfinvesting.ru:8443/mcp` (витрины `v_*` staging, включая point-in-time слой). Токен выдаёт владелец; положите его в переменную окружения `ROSSTAT_MCP_TOKEN` до запуска клиента (в Cursor — в переменную плагина `ROSSTAT_MCP_TOKEN`). В манифестах токена нет. Локальный dev-доступ к ClickHouse по-прежнему даёт [`.kimi-code/mcp.json`](.kimi-code/mcp.json) (сервер `clickhouse`, stdio).
-
-Метаданные манифестов (`name`, `version`, длинное и короткое описание) синхронизируются из `.claude-plugin/plugin.json` и `.claude-plugin/marketplace.json`: на PR [`.github/workflows/sync-manifests.yml`](.github/workflows/sync-manifests.yml) проверяет дрейф, на push в `main` — дописывает и коммитит. Локально — `make plugin-manifests-check` и `make plugin-manifests-sync`.
+Токен выдаёт владелец; положите его в переменную окружения `ROSSTAT_MCP_TOKEN` до запуска клиента (в Cursor — в переменную плагина `ROSSTAT_MCP_TOKEN`). Старый плагин `clickhouse-import-rosstat` (скилы + MCP, установка всего репозитория) больше не публикуется — удаление и миграция описаны в README плагина. Локальный dev-доступ к ClickHouse по-прежнему даёт [`.kimi-code/mcp.json`](.kimi-code/mcp.json) (сервер `clickhouse`, stdio).
 
 Полный набор целей, Python-тесты, зависимости и CI — [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
