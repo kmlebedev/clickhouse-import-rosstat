@@ -232,7 +232,7 @@ make mlflow-down
 
 ## Grafana
 
-Три дашборда как код — `gold-thesis`, `key-rate-publications`, `finance-polyus`. Установка, переменные стендов, цикл деплоя и приёмка — [docs/GRAFANA.md](docs/GRAFANA.md).
+Четыре дашборда как код — `gold-thesis`, `key-rate-publications`, `finance-polyus`, `transaq-trades`. Установка, переменные стендов, цикл деплоя и приёмка — [docs/GRAFANA.md](docs/GRAFANA.md).
 
 ## CI и релизы
 

@@ -1240,10 +1240,11 @@ grafana-build:
 # Без конфига/кредов команда падает: «context references no stack with grafana config» (exit 1),
 # с неверными кредами — 401 (exit 3); basic auth поддержан (GRAFANA_USER/GRAFANA_PASSWORD).
 # Офлайновая альтернатива в CI (тоже gcx, без секретов) — линтер по файлам артефактов:
-# `gcx dev lint run PATH...` принимает несколько путей и линтит их одним прогоном (проверено на gcx 1.5.0:
-# «3 files linted. No violations found.», exit 0):
+# `gcx dev lint run PATH...` принимает несколько путей и линтит их одним прогоном (на gcx 1.5.0 —
+# «4 files linted. No violations found.», exit 0):
 #   gcx dev lint run --disable uneditable-dashboard --disable panel-title-description \
-#     dashboard/gold-thesis.json dashboard/key-rate-publications.json dashboard/finance-polyus.json
+#     dashboard/gold-thesis.json dashboard/key-rate-publications.json dashboard/finance-polyus.json \
+#     dashboard/transaq-trades.json
 grafana-validate:
 	cd grafana && go vet ./... && go test ./...
 	@go test ./views -run TestMLLiveAlertProvisioning
