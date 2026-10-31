@@ -133,6 +133,76 @@ Python-тесты — офлайн, через `uv run --with ... python3 script
 - Сырые `ml_runs`/`ml_predictions` агенту не выданы; для анализа — витрины `v_ml_runs`, `v_ml_leaderboard`, `v_ml_error_by_fold`, `v_ml_live_accuracy`.
 - Артефакты не должны существовать только в gitignored-каталоге: паспорт и sha256 — обязательны.
 
+### 7.1 MLflow: что логировать
+
+| Поле | Что кладём | Правило |
+|---|---|---|
+| `experiment` | контур/семейство: `cpi_nowcast`, `cpi_monthly_v3`, `key_rate_model`, `cb_comp_h1_shadow` | Версия контура — новый эксперимент, а не суффикс `run_name`; иначе фильтры и ретеншн смешиваются. |
+| `run_name` | `<model>__<window>__start<...>__embargo<...>__<spec-версия>` | Читается без открытия паспорта; без даты «сегодня» и случайных суффиксов. |
+| `params` | immutable config: seed, гиперпараметры, флаги; `config_hash`, `sample_hash`, `git_sha`, `git_dirty`, `spec_path`, `data_asof`, `model_version`, `month`, `cutoff` | Params нельзя изменить после старта; длинные JSON, списки и секреты — в `run.json`/артефакт, не в params. |
+| `tags` | searchable-метки: `decision` (`promote/reject/iterate/shadow/canary`), `gate` (`dm/mcs/dm+mcs`), `primary_metric`, `model_version`, `stage` (`backtest/paper_shadow/shadow/canary/production`; не путать с `forecast_log.metric`-суффиксом), `clickhouse_run_id`, `champion`, `challenger`, `source` (путь/имя источника без URL с секретом) | Короткие значения из закрытого словаря; по ним ищут gate, registry и аудит. |
+| `metrics` | RMSE/MAE/bias, DM p, границы 95 % CI, forecast/actual/error по фолдам и агрегату | Только конечные числа; `primary_metric` — имя метрики (тег), а не число. |
+| `artifacts` | `run.json`, `predictions.jsonl`, config/sample JSON, report.md, model card, gate JSON; у каждого — sha256 и размер в паспорте | Артефакт без sha256 не воспроизводим; MLflow — не единственное хранилище. |
+
+`run_id` (канонический UUID) — в отчёте, gate-артефакте и `ml_runs`, не только в MLflow UI. В `scripts/lib/ml_experiment.py` lineage (`config_hash`, `sample_hash`, `git_sha`, `git_dirty`, `spec_path`, `data_asof`) пишется тегами, а `params` — скалярный конфиг: оба варианта immutable, дублировать в оба namespace не нужно.
+
+### 7.2 MLflow vs ClickHouse
+
+| Вопрос | Правило |
+|---|---|
+| Источник истины для gate | ClickHouse `v_ml_error_by_fold`, не MLflow API. Run только в MLflow для gate не существует. |
+| Связь контуров | `clickhouse_run_id` = канонический UUID run'а; один и тот же id в MLflow, `ml_runs` и отчёте. |
+| Прогон без ClickHouse | `make mlflow-export ARGS="--experiment <name> --since <date>"` проигрывает `run.json`/`predictions.jsonl` в `ml_runs`/`ml_predictions`; повтор идемпотентен. |
+| Прогон без MLflow | `make mlflow-backfill ARGS="--run-id <uuid>"` создаёт run с тегом `clickhouse_run_id`; повторный — `skip`, `--force` — осознанный дубль. |
+| `MLFLOW=0` | Только осознанно (отладка, недоступный сервер); причина — в отчёте/PR. Gate-вход всё равно обязан быть в ClickHouse. |
+| Preflight | `make mlflow-preflight` (или автоматически перед `make`-целью). Недоступный API в не-TTY — стоп; `MLFLOW_ALLOW_NO_LOG=1` — явное решение, не обход. |
+| Локальный сервер | SQLite `build/mlflow/mlflow.db`, артефакты `build/mlflow/artifacts`; `/build/` gitignored. `make mlflow-up/down/status`. |
+| Хранение артефактов | Не только в MLflow и не только в `build/`: паспорт/отчёт/JSON с sha256 — в git или research-артефакте. |
+
+### 7.3 Реестр и aliases
+
+| Объект | Как правильно | Почему |
+|---|---|---|
+| Сохраняемая модель | `log_model` только для реального model object (CPI CatBoost direct); при логировании — `signature`, `input_example`, `pip_requirements` | Без них версия не проверяется на входе и не воспроизводится; `mlflow.catboost.log_model(model, name=...)` без signature — дефект паспорта. |
+| CPI registry | `make mlflow-register ARGS="--run-id <id> --name cpi_nowcast_catboost_direct"` ставит `challenger`; `make mlflow-promote ARGS="--name ... --version N"` двигает `champion` | Явные команды после gate; alias — registry, не deployment. |
+| Key-rate `taylor`/`ordered_logit` | Теги run (`champion`, `challenger`, `decision`), registry и aliases не использовать | Нет сохраняемого model object — регистрировать нечего; промоушен — gate + `--stage`. |
+| Research-линии `combo3`/`wk_mix_ex` | Теги run: `champion=combo3`, `challenger=wk_mix_ex@v1`; aliases не создавать | Registry — для загружаемых и деплоимых объектов, не для research-артефактов. |
+| Alias | Не называть deployment и не двигать вручную без gate | Production-переключение — shadow/canary и решение владельца; `make mlflow-models` — только чтение. |
+
+### 7.4 Shadow mirror P0.6
+
+**Паттерн.** Закоммиченный `docs/research/cb-comp-h1-shadow/<YYYY-MM>.json` — паспорт paper shadow (P0.6); MLflow-run — зеркало для поиска и сравнения. JSON остаётся источником истины, MLflow его не заменяет.
+
+| Поле | Значение |
+|---|---|
+| `experiment` | `cb_comp_h1_shadow` |
+| `run_name` | `shadow__<YYYY-MM>__<json_sha256:12>` |
+| `params` | `month`, `cutoff`, `git_sha`, `v1_code_sha`, `inputs_sha256`, `json_sha256` |
+| `tags` | `decision=shadow`, `stage=paper_shadow`, `champion=combo3`, `challenger=wk_mix_ex@v1`, `source=docs/research/cb-comp-h1-shadow/<YYYY-MM>.json`, `json_sha256` |
+| `metrics` | Прогнозы `combo3`, `wk_mix_ex`, `wk_mix_d`, `live_cb_wk`; после публикации факта — `error`/`abs_error`; `actual` до факта не писать |
+| `artifacts` | JSON месяца как закоммичен; после факта — обновлённый JSON (новый sha256), sha256 — в паспорте |
+
+- Идемпотентность: ключ `month`+`json_sha256`; повторный backfill того же файла — `skip`, не новый run.
+- Новый или перегенерированный JSON — новый run; старый не переписывать (append-only, §7.8 гайда).
+- `docs/research/cb-comp-h1-shadow/*.json` зеркалируются по одному run на файл; `make mlflow-backfill` принимает только `--run-id` из `ml_runs` и для JSON shadow не подходит — не выдавать его за готовый backfill.
+- JSON без MLflow — валидный артефакт: тень можно сдать и без сервера; MLflow-зеркало best-effort, но `run_id`/sha256 обязательны в отчёте.
+
+### 7.5 Анти-паттерны
+
+| Ошибка | Почему плохо | Как правильно |
+|---|---|---|
+| Секреты, токены, сырые данные в params/artifacts | Утечка и раздувание run | Только env; агрегаты и хеши; сырые данные — в ClickHouse. |
+| `champion` alias как deployment | Registry не равен проду | Gate + shadow/canary + rollback; key-rate и research — aliases не применять. |
+| Артефакты только в MLflow | Сервер недоступен/run удалён — evidence нет | `run.json`/отчёт/JSON с sha256 в git или research-артефакте. |
+| Нет `git_dirty`/`config_hash`/`sample_hash` | Не отличить коммит от грязного дерева, не проверить повтор | `ML_LOG=1` паспорт; повтор сверять по hash. |
+| Логировать каждый epoch вместо конфигурации | Шум, тысячи metrics, нет паспорта | Один run = один конфиг; эпохи — только при реальном early stopping. |
+| `log_model` без signature/input_example | Версия не воспроизводится и не проверяется | `signature`, `input_example`, `pip_requirements`. |
+| `mlflow` в зависимостях репозитория | Версия MLflow меняет окружение экспериментов | Только `uv run --with "mlflow==3.17.1"` через `make`. |
+| Запуск без preflight | Run молча без лога, gate его не видит | `make mlflow-preflight`; `MLFLOW_ALLOW_NO_LOG=1` — только осознанно. |
+| Ручной alias без gate | Промоушен без DM/CI | `make ml-gate` → `make mlflow-promote` (CPI). |
+
+**Ссылки.** [ml-experiment-management.md](../../../docs/research/2026-10-18-ml-experiment-management.md) §4 (паспорт) и §7 (цикл/gates); [promotion spec](../../../docs/superpowers/specs/2026-10-20-ml-promotion-live-monitoring-design.md); P0.6 — [отчёт](../../../docs/research/2026-10-31-cb-comp-h1-shadow-p06.md), [2026-10.json](../../../docs/research/cb-comp-h1-shadow/2026-10.json); скрипты — `scripts/mlflow_preflight.py`, `mlflow_export.py`, `mlflow_backfill.py`, `mlflow_registry.py`; цели — `make mlflow-*`, `make ml-gate`.
+
 ## 8. Промоушен и live: рабочий контур
 
 ### 8.1 Кто что делает
