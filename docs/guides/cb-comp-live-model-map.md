@@ -225,6 +225,8 @@ TARGET_FULL (архив) ──► оценка normal-54, DM/CI/MCS, G9
 
 Модели `@2009` — Task 2: `live_cb` 0,198 / 0,311 / 0,472 / 1,000 (G2 h1 1,266 — не проходит); Task 3: EN не выбран, `live_en` 1,246 / 1,190 / 1,253 / 1,816; Task 9: `combo3` 0,165 / 0,289 / 0,449 / 0,869, G9 ✅; Task 4 frozen: `combo3_wk` 0,160, `wk_mix` 0,160, `live_cb_wk` 0,177, `wk_agg` 0,210. As-of панель, walk-forward G10 и Task 10/11/12 на `@2009` не перепрогонялись. `@2010` остаётся каноном P0.6 и текущих отчётов до решения владельца.
 
+**Не-ухудшение и состав (отчёт §9).** 84 группы у `@2009` — только 2009-01…2010-01 (нет `1710`/`1730`/`8310`/`9218`, 3,3 % веса); с 2010-02 состав версий одинаков (86, с 2012-02 — 87), поэтому тест и train-строки состав не затрагивает, а разницу на тесте даёт SA-окно (сдвиг агрегата 0,016 п.п. RMS в 2019–2024). `combo3` `@2009` против `@2010` на normal-54: отношение 1,006 / 1,001 / 1,001 (h1/h3/h6), односторонняя верхняя 95 % граница 1,019 / 1,019 / 1,016 — не хуже с запасом 2 % (порог не предрегистрирован); `live_cb` h1 — 1,045, граница 1,082. Для смены базы не хватает того же для обслуживаемой `wk_mix_ex@v1` и as-of панели `@2009`.
+
 | Модель `@2009` | h1 | h2 (справочно) | h3 | h6 | Статус |
 |---|---:|---:|---:|---:|---|
 | `live_cb` | 0,198 (1,246) | 0,311 (1,047) | 0,472 (1,064) | 1,000 (1,030) | Task 3 @2009 |
@@ -307,6 +309,8 @@ make cb-comp-live-bottomup ARGS="--version 2009 --skip-asof"
 make cb-comp-live-en ARGS="--version 2009"
 make cb-comp-h1-bs-combo ARGS="--version 2009"
 make cb-comp-h1-weekly ARGS="--version 2009 --frozen-only"
+# состав по месяцам и не-ухудшение @2009 против @2010 (Task 9 predictions обеих версий)
+make cb-comp-tlive-versions ARGS="--ref-predictions <predictions.csv Task 9 @2010>"
 ```
 
 **Входы (sha256 в JSON):** `build/cb-comp-groups/panel.csv` `aec91f99…` (C0), `build/cb-comp-parity/public_panel.csv` `47176baa…`, `sheet_map.csv` `0d8a6ab5…`, `TARGET_FULL` `d5278124…`, `series2016.xlsx` `b8c1ec56…`, `series2009.xlsx` `5f918988…`; ClickHouse — `macro_series` `cbr_survey/price_expectations_sa` (2002-01…2026-09).
