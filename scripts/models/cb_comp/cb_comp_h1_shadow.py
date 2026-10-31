@@ -49,6 +49,12 @@ from models.cpi import cpi_release_dates as releases
 # ---------------------------------------------------------------------------
 
 VERSION = "wk_mix_ex@v1"
+# Решение владельца 2026-10-31 (#419, Task 16 #466): засчитываемый shadow —
+# `wk_mix_ex@v2` = логика v1 на цели `T_LIVE@2009`, отсчёт с 2026-10;
+# v1 (`@2010`) остаётся параллельным контролем и fallback ≥ 6 месяцев.
+MODEL_VERSIONS = {"2010": VERSION, "2009": "wk_mix_ex@v2"}
+COUNTED_TARGET = "2009"
+COUNTED_FROM = date(2026, 10, 1)
 V1_CODE_SHA = "264ce73"
 HORIZON = 1
 NAN = float("nan")
@@ -71,12 +77,16 @@ FALLBACK_CHAIN = (MODEL_MIX_EX, MODEL_MIX_D, MODEL_COMBO)
 
 PRIMARY_START = ex.PRIMARY_START
 REF_START = ex.REF_START
-TRAIN_START = date(2010, 3, 1)
+TRAIN_START = ex.TRAIN_START
 VINTAGE_DAYS = (7, 14, 21, 28)
 BIAS_FLAG = 0.15
 S0_TOL = 1e-6
 R_P0_PINNED = {MODEL_COMBO: 0.2094492206438153, MODEL_MIX_EX: 0.14105296079204452}
 R_P0_TOL = 1e-9
+# Task 16 #466: R-P0 по версии цели; @2009 — пины Task 4b @2009 (окно v1).
+R_P0_PINS = {"2010": R_P0_PINNED, "2009": {MODEL_COMBO: 0.21028386569682153, MODEL_MIX_EX: 0.14221234507095187}}
+VERSIONS = ex.VERSIONS
+DEFAULT_VERSION = ex.DEFAULT_VERSION
 TRUTH = {
     "primary": "T_LIVE_rt[1]: SA ИПЦ без КУ из 88 групп, X-13 подогнан до M (sa_asof_mm) — SA на дату публикации M",
     "secondary": "T_LIVE[1]: финальная SA (sa_full_mm), пересчёт раз в год",
@@ -89,6 +99,37 @@ EX_PREDICTIONS = ROOT / "build" / "cb-comp-h1-weekly-ex" / "predictions.csv"
 OUT_DIR = ROOT / "build" / "cb-comp-h1-shadow"
 SHADOW_DIR = ROOT / "docs" / "research" / "cb-comp-h1-shadow"
 SPEC = "docs/superpowers/specs/2026-10-31-cb-comp-h1-shadow-p06-design.md"
+SPEC_2009 = "docs/superpowers/specs/2026-10-31-cb-comp-p06-tlive-2009-design.md"
+
+
+def is_counted(version: str, month: date) -> bool:
+    """Засчитывается v2 (`@2009`) с 2026-10; v1 (`@2010`) с 2026-10 — контроль."""
+    return version == COUNTED_TARGET and month >= COUNTED_FROM
+
+
+def version_paths(version: str) -> dict:
+    """Каталоги по умолчанию версии: @2010 — как P0.6, иначе с суффиксом `-<версия>`."""
+    return {
+        "panel": lb.default_panel(version),
+        "base_predictions": ex.default_base_predictions(version),
+        "ex_predictions": lb.versioned_dir(EX_PREDICTIONS.parent, version) / EX_PREDICTIONS.name,
+        "out": lb.versioned_dir(OUT_DIR, version),
+        "shadow_dir": lb.versioned_dir(SHADOW_DIR, version),
+    }
+
+
+def r_p0_check(models: dict, truth: dict, months: list, version: str) -> dict:
+    """R-P0: воспроизведение Task 4b версии; без пинов (первый прогон @2009) — только запись."""
+    pins = R_P0_PINS[version]
+    out = {}
+    for name in (MODEL_COMBO, MODEL_MIX_EX):
+        got = lb.rmse([models[name][m] - truth[m] for m in months])
+        expected = pins.get(name)
+        out[name] = {"rmse": got, "expected": expected,
+                     "ok": expected is None or abs(got - expected) <= R_P0_TOL}
+    out["pinned"] = bool(pins)
+    out["ok"] = all(out[name]["ok"] for name in (MODEL_COMBO, MODEL_MIX_EX))
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -290,25 +331,26 @@ def weekly_context(archive: Path, data: dict) -> dict:
 
 
 def robustness(archive: Path, panel_csv: Path, public_dir: Path, base_predictions: Path, out_dir: Path,
-               jobs: int = 4, skip_publication: bool = False) -> dict:
+               jobs: int = 4, skip_publication: bool = False, version: str = DEFAULT_VERSION,
+               train_start: date = TRAIN_START) -> dict:
     data = tw.prepare(archive, panel_csv, public_dir)
+    lb.check_panel_version(lb.load_group_panel(panel_csv)[0], version)
+    first_sa = data["months"][0]
+    ex.check_train_start(train_start, version, first_sa)
     t_live = data["t_live"][HORIZON]
     months = [m for m in data["feature_months"] if m >= REF_START and m in t_live]
     primary = [m for m in months if m >= PRIMARY_START]
-    all_train = [m for m in data["feature_months"] if m >= TRAIN_START]
+    all_train = ex.train_months(data["feature_months"], first_sa, train_start)
+    wk_months = sorted(set(all_train) | set(data["feature_months"]))
     if len(months) != 57 or len(primary) != 45:
         raise SystemExit(f"окна не совпали с Task 4b: 2022+ {len(months)}, 2023+ {len(primary)}")
-    base = ex.load_base_predictions(base_predictions, months, (MODEL_COMBO, MODEL_LIVE_WK))
+    base = ex.load_base_predictions(base_predictions, months, (MODEL_COMBO, MODEL_LIVE_WK), version)
     context = weekly_context(archive, data)
-    features_late = weekly_ex_features(context["weekly"], context["leaf_weights"], context["group_weights"], data["feature_months"])
+    features_late = weekly_ex_features(context["weekly"], context["leaf_weights"], context["group_weights"], wk_months)
     models = {MODEL_COMBO: base[MODEL_COMBO], MODEL_LIVE_WK: base[MODEL_LIVE_WK],
               **weekly_models(features_late, t_live, all_train, primary, base[MODEL_COMBO])}
 
-    r_p0 = {}
-    for name, expected in R_P0_PINNED.items():
-        got = lb.rmse([models[name][m] - t_live[m] for m in primary])
-        r_p0[name] = {"rmse": got, "expected": expected, "ok": abs(got - expected) <= R_P0_TOL}
-    r_p0["ok"] = all(item["ok"] for item in r_p0.values())
+    r_p0 = r_p0_check(models, t_live, primary, version) if train_start == TRAIN_START else {"ok": True, "skipped": "окно OLS ≠ v1"}
     if not r_p0["ok"]:
         raise SystemExit(f"R-P0 не пройден: {r_p0}")
 
@@ -335,7 +377,7 @@ def robustness(archive: Path, panel_csv: Path, public_dir: Path, base_prediction
             features = features_late
         else:
             with cutoff_override(vintage_cutoff(day)):
-                features = weekly_ex_features(context["weekly"], context["leaf_weights"], context["group_weights"], data["feature_months"])
+                features = weekly_ex_features(context["weekly"], context["leaf_weights"], context["group_weights"], wk_months)
         wk = weekly_models(features, t_live, all_train, primary, base[MODEL_COMBO])
         wk_models = {MODEL_COMBO: base[MODEL_COMBO], **wk}
         vintages[str(day)] = {
@@ -352,7 +394,7 @@ def robustness(archive: Path, panel_csv: Path, public_dir: Path, base_prediction
         with cm.asof_convention(cm.ASOF_PUBLICATION, release_dates):
             features_mp = feature_table_asof(data, panel_csv, public_dir, data["feature_months"][-1])
             combo_pub = wf_combo(data, features_mp, regressors, primary, jobs)
-            features_pub = weekly_ex_features(context["weekly"], context["leaf_weights"], context["group_weights"], data["feature_months"])
+            features_pub = weekly_ex_features(context["weekly"], context["leaf_weights"], context["group_weights"], wk_months)
             cutoffs = {m.isoformat(): cm.cutoff_for(m).isoformat() for m in primary}
         wk_pub = weekly_models(features_pub, t_live, all_train, primary, combo_pub[MODEL_COMBO])
         pub_models = {MODEL_COMBO: combo_pub[MODEL_COMBO], **wk_pub}
@@ -365,7 +407,9 @@ def robustness(archive: Path, panel_csv: Path, public_dir: Path, base_prediction
 
     blocks = {"truths": truth_block(robust, truths, primary), "publication": publication}
     result = {
-        "spec": SPEC, "version": VERSION, "v1_code_sha": V1_CODE_SHA, "git_sha": lb.git_sha(),
+        "spec": SPEC if version == DEFAULT_VERSION else SPEC_2009, "version": MODEL_VERSIONS[version],
+        "v1_code_sha": V1_CODE_SHA, "git_sha": lb.git_sha(),
+        "target_version": version, "train_start": all_train[0].isoformat(),
         "decision": "shadow",
         "inputs": {
             "panel_csv": ex.sha256(panel_csv), "public_panel_csv": ex.sha256(public_dir / "public_panel.csv"),
@@ -473,8 +517,9 @@ def validate_shadow(payload: dict) -> None:
 
 def shadow_forecast(archive: Path, panel_csv: Path, public_dir: Path, month: date, out_path: Path,
                     base_predictions: Path, ex_predictions: Path, check_months: int = 3, jobs: int = 4,
-                    run_date: date = None) -> dict:
+                    run_date: date = None, version: str = DEFAULT_VERSION) -> dict:
     run_date = run_date or date.today()
+    lb.check_panel_version(lb.load_group_panel(panel_csv)[0], version)
     data = prepare_through(archive, panel_csv, public_dir, month)
     panel_last = max(data["t_live"][HORIZON])
     cutoff = check_shadow_timing(month, run_date, panel_last)
@@ -509,7 +554,11 @@ def shadow_forecast(archive: Path, panel_csv: Path, public_dir: Path, month: dat
     public_dates = sorted(str(d) for d in bu.load_public_panel(public_dir / "public_panel.csv")["date"])
     payload = {
         "protocol": "paper shadow, гайд cb-comp-live-model-map §7.8; пороги утверждены 2026-10-31",
-        "spec": SPEC, "version": VERSION, "v1_code_sha": V1_CODE_SHA, "git_sha": lb.git_sha(),
+        "spec": SPEC if version == DEFAULT_VERSION else SPEC_2009, "version": MODEL_VERSIONS[version],
+        "v1_code_sha": V1_CODE_SHA, "git_sha": lb.git_sha(),
+        "target_version": version,
+        "counted": is_counted(version, month),
+        "role": "challenger (засчитывается)" if is_counted(version, month) else "контроль v1 и fallback",
         "month": month.strftime("%Y-%m"), "cutoff": cutoff.isoformat(), "run_date": run_date.isoformat(),
         "created_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
         "unit": "п.п., м/м SA ИПЦ без КУ (h1-nowcast)",
@@ -549,28 +598,38 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("mode", choices=("robustness", "forecast"))
     parser.add_argument("--archive", default=None)
-    parser.add_argument("--panel", default=str(PANEL_CSV))
+    parser.add_argument("--panel", default=None, help="по умолчанию — панель версии")
     parser.add_argument("--public-dir", default=str(PUBLIC_DIR))
-    parser.add_argument("--base-predictions", default=str(BASE_PREDICTIONS))
-    parser.add_argument("--ex-predictions", default=str(EX_PREDICTIONS))
+    parser.add_argument("--base-predictions", default=None, help="по умолчанию — база Task 4 версии")
+    parser.add_argument("--ex-predictions", default=None, help="по умолчанию — predictions.csv Task 4b версии")
     parser.add_argument("--out", default=None)
     parser.add_argument("--month", default=None, help="месяц shadow-прогноза YYYY-MM")
     parser.add_argument("--jobs", type=int, default=4)
     parser.add_argument("--skip-publication", action="store_true")
+    parser.add_argument("--version", choices=VERSIONS, default=DEFAULT_VERSION,
+                        help="версия цели: 2010 — канон P0.6, 2009 — T_LIVE с 2009-01 (Task 16, не засчитывается)")
+    parser.add_argument("--train-start", default=None, help="YYYY-MM окна OLS; по умолчанию 2010-03 (v1), только robustness")
     args = parser.parse_args(argv)
     archive = cp.resolve_archive(args.archive)
+    paths = version_paths(args.version)
+    panel = Path(args.panel) if args.panel else paths["panel"]
+    base_predictions = Path(args.base_predictions) if args.base_predictions else paths["base_predictions"]
+    ex_predictions = Path(args.ex_predictions) if args.ex_predictions else paths["ex_predictions"]
     if args.mode == "robustness":
-        result = robustness(archive, Path(args.panel), Path(args.public_dir), Path(args.base_predictions),
-                            Path(args.out or OUT_DIR), args.jobs, args.skip_publication)
+        train_start = date.fromisoformat(args.train_start + "-01") if args.train_start else TRAIN_START
+        result = robustness(archive, panel, Path(args.public_dir), base_predictions,
+                            Path(args.out or paths["out"]), args.jobs, args.skip_publication, args.version, train_start)
         summary = {"r_p0": result["r_p0"], "truth_gap": result["truth_gap"], "flags": result["flags"],
                    "fallback": result["fallback"]["levels"]}
     else:
         if not args.month:
             raise SystemExit("--month YYYY-MM обязателен для forecast")
         month = date.fromisoformat(args.month + "-01")
-        out = Path(args.out) if args.out else SHADOW_DIR / f"{args.month}.json"
-        payload = shadow_forecast(archive, Path(args.panel), Path(args.public_dir), month, out,
-                                  Path(args.base_predictions), Path(args.ex_predictions), jobs=args.jobs)
+        if args.train_start:
+            raise SystemExit("--train-start не применяется к forecast: shadow считается окном v1")
+        out = Path(args.out) if args.out else paths["shadow_dir"] / f"{args.month}.json"
+        payload = shadow_forecast(archive, panel, Path(args.public_dir), month, out,
+                                  base_predictions, ex_predictions, jobs=args.jobs, version=args.version)
         summary = {key: payload[key] for key in ("month", "cutoff", "models", "served", "asof")}
         summary["s0_identical"] = payload["s0"]["identical"]
     print(json.dumps(lb._jsonable(summary), ensure_ascii=False, indent=2))
