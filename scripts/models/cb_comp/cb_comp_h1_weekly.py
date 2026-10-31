@@ -383,10 +383,53 @@ def subperiods(models: dict, truth: dict, months: list) -> dict:
     return out
 
 
+UTIL_MONTHS = frozenset({date(2022, 12, 1), date(2024, 7, 1), date(2025, 7, 1), date(2026, 1, 1)})
+
+
+def sensitivity_slices(months: list) -> dict:
+    """Пост-хок срезы ревью 2026-10-31; в G10 не участвуют."""
+    return {
+        "all": list(months),
+        "no_2022_03": [m for m in months if m != date(2022, 3, 1)],
+        "util_months": [m for m in months if m in UTIL_MONTHS],
+        "aug_sep_2023": [m for m in months if m.year >= 2023 and m.month in (8, 9)],
+    }
+
+
+def sensitivity(models: dict, truth: dict, months: list) -> dict:
+    """RMSE по срезам (2022-03, месяцы ЖКУ, август–сентябрь) и 56-месячная пара."""
+    subsets = sensitivity_slices(months)
+    out = {"note": "пост-хок диагностика по ревью 2026-10-31; в G10 не участвует"}
+    for label, subset in subsets.items():
+        if not subset:
+            continue
+        out[label] = {
+            "n": len(subset),
+            "rmse": {
+                name: lb.rmse([values[m] - truth[m] for m in subset if m in values and m in truth])
+                for name, values in models.items() if values
+            },
+        }
+    month = date(2022, 3, 1)
+    if month in months:
+        out["errors_2022_03"] = {
+            name: values[month] - truth[month] for name, values in models.items() if month in values and month in truth
+        }
+    if subsets["no_2022_03"]:
+        out["no_2022_03"]["pairs_vs_combo3"] = evaluate(models, truth, subsets["no_2022_03"], None)["pairs_vs_combo3"]
+    return out
+
+
 def holm(pvalues: dict) -> dict:
-    """Holm по двум co-primary: победитель должен пройти порог α/2."""
+    """Holm: p_(1)·m, далее max(предыдущий, p_(i)·(m−i+1)); не Бонферрони."""
     ordered = sorted(pvalues.items(), key=lambda item: item[1])
-    return {name: min(1.0, 2.0 * value) for name, value in ordered}
+    total = len(ordered)
+    adjusted, running = {}, 0.0
+    for index, (name, value) in enumerate(ordered):
+        candidate = min(1.0, (total - index) * value)
+        running = max(running, candidate)
+        adjusted[name] = min(1.0, running)
+    return adjusted
 
 
 def g10_check(pairs: dict, n_required: int) -> dict:
@@ -585,6 +628,7 @@ def run(archive: Path, panel_csv: Path, public_dir: Path, out_dir: Path, jobs: i
             "evaluation": wf_eval,
             "mcs": mcs(wf_eval["errors"]),
             "subperiods": subperiods(wf_models, t_live, wf_months),
+            "sensitivity": sensitivity(wf_models, t_live, wf_months),
             "g10": g10_check(wf_eval["pairs_vs_combo3"], len(wf_months)),
             "frozen_reference": {
                 "n_months": len(ref_months),
