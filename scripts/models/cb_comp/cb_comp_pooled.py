@@ -676,7 +676,17 @@ def check_data(archive: Path, panel_csv: Path, public_dir: Path) -> dict:
     """Только входы и окна: без моделей и без записи (диагностика перед прогоном)."""
     data = en.prepare(archive, panel_csv, public_dir)
     sa_full, _sa_asof = lb.load_group_panel(panel_csv)
-    output = {"groups_without_sa": data["groups_without_sa"], "windows": {}}
+    output = {"groups_without_sa": data["groups_without_sa"], "windows": {},
+              "predicted_groups": {
+                  str(horizon): {
+                      str(month): sum(
+                          1 for spec in data["specs"]
+                          if data["features"].get(spec.code, {}).get(cp.shift_month(month, -(horizon - 1))) is not None
+                      )
+                      for month in data["test_months"]
+                  }
+                  for horizon in HORIZONS
+              }}
     for window in (WINDOW_MAIN, WINDOW_CONTROL):
         output["windows"][window] = {}
         for horizon in HORIZONS:
