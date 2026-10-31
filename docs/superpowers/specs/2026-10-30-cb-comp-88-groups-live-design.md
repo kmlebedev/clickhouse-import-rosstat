@@ -350,7 +350,7 @@ Primary — h1/h3/h6, h2 справочно. RMSE/MAE/bias; отношение �
 
 Для теста и горизонта: `reproduce` — `RMSE_wf_shock/RMSE_frozen ≥ 1,20`; `mechanism` — сокращение разрыва `(gap_shock − gap_noshock)/gap_shock ≥ 0,50`, где `gap = RMSE_wf − RMSE_frozen`; `support` — оба; `partial` — одно; `reject` — ни одного.
 
-- **Тест A (прямой, W5b-модели).** `v3_direct`/`v5_direct`, wf W5b (`wf_predict`, purge/vintage как в W5b), h6 primary (h3 secondary, h1 описательно), normal-54; вариант с исключением `SHOCK`-окон из train. **R15:** вариант без исключения воспроизводит опубликованные RMSE W5b — h6 2,50427 / 2,06125, h3 1,018481 / 0,875457, h1 0,208974 / 0,199228 (допуск 1e-3; при наличии `cb_comp_compare_predictions.csv` — сверка по месяцам 1e-9).
+- **Тест A (прямой, W5b-модели).** `v3_direct`/`v5_direct`, wf W5b (`wf_predict`, purge/vintage как в W5b), h6 primary (h3 secondary, h1 описательно), normal-54; вариант с исключением `SHOCK`-окон из train. **R15:** вариант без исключения воспроизводит опубликованные RMSE W5b — h6 2,50427 / 2,06125, h3 1,018481 / 0,875457, h1 0,208974 / 0,199228 (допуск 1e-3; при наличии `cb_comp_compare_predictions.csv` — сверка по месяцам 1e-9). Уточнение до прогона: `wf`, `wf_noshock` и `frozen` считаются на **общем пересечении** normal-месяцев; `n` и `normal_complete` пишутся в JSON, R15 требует полный normal-54 — иначе сравнение вариантов было бы на разных выборках.
 - **Тест B (перенос, `live_cb`).** Месячный expanding wf: train — все доступные на origin месяцы; `wf_noshock` дополнительно без `SHOCK`-окон; h1/h6, normal-54.
 - Итог: `support`, если support в A и B; `partial`, если в одном; `reject` — иначе. `reject` у A формулируется как «провал W5b не воспроизводится / шоком не объясняется», без подгонки объяснения.
 
