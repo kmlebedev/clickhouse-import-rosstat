@@ -8,7 +8,8 @@
   группы за h месяцев (`cb_comp_bottomup.component_targets`), признаки —
   база `live_cb` + id/вес группы + собственный листовой блок МП;
 * **окна** — main 2016-01+, control 2010-03+; годовая переподготовка на
-  расширяющемся окне в первом origin года (no-leakage);
+  расширяющемся окне в первом origin года (no-leakage); строки, чьё окно
+  цели пересекает шоки статьи, исключаются;
 * **кандидаты** — `pooled_main` (гейт), `pooled_control`, `combo3` (Task 9,
   пересчитывается тем же кодом), `combo3_pooled`, `live_cb`, `cb_comp`;
 * **оценка** — `TARGET_FULL` normal-54: W5b против CB_COMP, попарно DM-HLN +
@@ -24,7 +25,6 @@ import csv
 import hashlib
 import json
 import math
-import subprocess
 import sys
 from dataclasses import dataclass
 from datetime import date
@@ -125,22 +125,25 @@ def own_mp_names(spec) -> frozenset:
     return frozenset(bu.mp_feature_names(spec, mode="per_sheet"))
 
 
-def weight_shares(weights: dict, sa_full: dict, months: list) -> dict:
-    """`{месяц: {код: доля веса}}` строго за год `M.year−1`; иначе NaN.
+def weight_shares(weights: dict, sa_full: dict, months: list, horizon: int) -> dict:
+    """`{целевой месяц: {код: доля веса}}` — as-of origin, без заглядывания вперёд.
 
-    Fallback на другой год не используется: для 2016 и control-окна весов
-    года `M−1` в архиве нет, и подстановка будущего года была бы утечкой.
+    Доля считается на origin `M−(h−1)`: веса года `origin.year−1` и знаменатель
+    по группам с SA в origin. Иначе для h ≥ 2 состав панели и веса брались бы
+    из будущего относительно момента прогноза. Fallback на другой год не
+    используется: подстановка будущего года была бы утечкой.
     """
     out = {}
     for month in months:
-        weight = weights.get(month.year - 1)
+        origin = cp.shift_month(month, -(horizon - 1))
+        weight = weights.get(origin.year - 1)
         if weight is None:
             out[month] = {}
             continue
         denominator = sum(
             weight.get(code, 0.0)
             for code, values in sa_full.items()
-            if month in values and code != bu.UTILITIES_CODE
+            if origin in values and code != bu.UTILITIES_CODE
         )
         out[month] = {
             code: (float("nan") if code == bu.UTILITIES_CODE or not denominator or code not in weight
@@ -212,12 +215,16 @@ def annual_windows(window_start: date, horizon: int, years=TEST_YEARS) -> dict:
     return out
 
 
-def train_months(window_start: date, horizon: int, year: int) -> list:
-    """Целевые месяцы обучения года `Y`: от начала окна до cutoff, без шоков."""
-    cutoff = annual_windows(window_start, horizon, (year,))[year]["cutoff"]
+def window_overlaps_outliers(month: date, horizon: int) -> bool:
+    """Окно накопленной цели `t−h+1…t` пересекает шоковый месяц статьи."""
+    return any(cp.shift_month(month, -offset) in ARTICLE_OUTLIERS for offset in range(horizon))
+
+
+def train_months(window_start: date, horizon: int, cutoff: date) -> list:
+    """Целевые месяцы обучения: от начала окна до cutoff, без окон с шоками."""
     if cutoff is None:
         return []
-    return [month for month in cp.month_range(window_start, cutoff) if month not in ARTICLE_OUTLIERS]
+    return [month for month in cp.month_range(window_start, cutoff) if not window_overlaps_outliers(month, horizon)]
 
 
 def training_rows(specs: list, features: dict, targets: dict, shares: dict, horizon: int, months: list) -> list:
@@ -316,21 +323,23 @@ def fit_predict_pooled(specs: list, features: dict, targets: dict, weights: dict
     """`({h: {код: {M: прогноз}}}, отчёт по фитам, имена, листы)`."""
     all_sheets = sorted({slug for spec in specs for slug in spec.sheet_slugs})
     names = pooled_feature_names(all_sheets)
-    shares = weight_shares(weights, sa_full, cp.month_range(window_start, max(test_months)))
+    all_months = cp.month_range(window_start, max(test_months))
     out = {}
     report = {}
     for horizon in HORIZONS:
         out[horizon] = {}
         report[str(horizon)] = {}
+        shares = weight_shares(weights, sa_full, all_months, horizon)
         windows = annual_windows(window_start, horizon, sorted({month.year for month in test_months}))
         for year in sorted(windows):
             window = windows[year]
-            months = train_months(window_start, horizon, year)
+            months = train_months(window_start, horizon, window["cutoff"])
             rows = training_rows(specs, features, targets, shares, horizon, months)
             if len(rows) < bu.MIN_TRAIN_ROWS:
                 raise SystemExit(f"pooled {window_start} h{horizon} {year}: всего {len(rows)} строк обучения")
             model = fit_pooled(rows, names, overrides)
             year_months = [month for month in test_months if month.year == year]
+            bu.assert_no_leakage_bottomup(year_months, horizon)
             predictions = predict_pooled(model, prediction_rows(specs, features, shares, horizon, year_months), names)
             for code, series in predictions.items():
                 out[horizon].setdefault(code, {}).update(series)
@@ -352,7 +361,11 @@ def fit_predict_pooled(specs: list, features: dict, targets: dict, weights: dict
 
 
 def aggregate_pooled(predictions: dict, weights: dict, months: list) -> tuple:
-    """`({h: {M: агрегат}}, {h: {M: число групп}})`, веса СПР с лагом год."""
+    """`({h: {M: агрегат}}, {h: {M: {predicted, weighted}}})`.
+
+    `predicted` — группы с прогнозом, `weighted` — из них с весом СПР; вторая
+    величина и есть фактическое покрытие агрегата.
+    """
     aggregated, coverage = {}, {}
     for horizon in HORIZONS:
         by_group = predictions.get(horizon, {})
@@ -361,9 +374,23 @@ def aggregate_pooled(predictions: dict, weights: dict, months: list) -> tuple:
         per_month = {}
         for month in months:
             weight = bu.weight_for_month(weights, month)
-            per_month[month] = sum(1 for code, series in by_group.items() if month in series and weight.get(code))
+            predicted = sum(1 for code, series in by_group.items() if month in series)
+            weighted = sum(1 for code, series in by_group.items() if month in series and weight.get(code))
+            per_month[month] = {"predicted": predicted, "weighted": weighted}
         coverage[horizon] = per_month
     return aggregated, coverage
+
+
+def expected_weighted_coverage(weights: dict, sa_full: dict, months: list) -> dict:
+    """`{M: число групп с SA и весом}` — независимая проверка покрытия R10d."""
+    out = {}
+    for month in months:
+        weight = bu.weight_for_month(weights, month)
+        out[month] = sum(
+            1 for code, values in sa_full.items()
+            if month in values and code != bu.UTILITIES_CODE and weight.get(code)
+        )
+    return out
 
 
 def combo_with_pooled(pooled_main: dict, bs: dict) -> dict:
@@ -466,24 +493,41 @@ def g10_check(pairs: dict) -> dict:
 
 
 def leak_check(reports: dict) -> dict:
-    """R10c: ни один тестовый месяц года не входит в обучение; max(t) ≤ cutoff."""
+    """R10c: независимая проверка доступности каждого train-таргета на тесте.
+
+    Для каждой строки обучения `t` и каждого тестового месяца года `M`
+    проверяется `available_from_mes(month_end(t)) < cutoff_for(origin)`,
+    где `origin = M−(h−1)`. Это не использует `training_cutoff` и поэтому
+    ловит ошибку в построении окна, а не повторяет её.
+    """
     windows = {}
     for window, by_horizon in reports.items():
-        for horizon, by_year in by_horizon.items():
+        for horizon_key, by_year in by_horizon.items():
+            horizon = int(horizon_key)
             for year, info in by_year.items():
-                train = set(info["train_months"])
-                test = set(info["test_months"])
-                overlap = sorted(train & test)
-                max_target = info["max_target"]
-                cutoff = info["cutoff"]
-                ok = not overlap and max_target is not None and cutoff is not None and max_target <= cutoff
+                train = info["train_months"]
+                test = info["test_months"]
+                overlap = sorted(set(train) & set(test))
+                violations = []
+                for target in train:
+                    available = cm.available_from_mes(cm.month_end(target))
+                    for test_month in test:
+                        origin = cp.shift_month(test_month, -(horizon - 1))
+                        if not available < cm.cutoff_for(origin):
+                            violations.append({
+                                "target": target, "test_month": test_month, "origin": origin,
+                            })
+                            break
                 windows[f"{window}:h{horizon}:{year}"] = {
-                    "max_target": max_target, "cutoff": cutoff, "overlap": overlap, "ok": ok,
+                    "n_train": len(train), "n_test": len(test), "overlap": overlap,
+                    "n_violations": len(violations), "violations": violations[:5],
+                    "ok": not overlap and not violations,
                 }
     return {"windows": windows, "ok": all(value["ok"] for value in windows.values())}
 
 
-def r10_check(ratios: dict, reports: dict, inputs: dict, groups_without_sa: list, min_coverage: int) -> dict:
+def r10_check(ratios: dict, reports: dict, inputs: dict, groups_without_sa: list,
+              coverage: dict, expected_weighted: dict) -> dict:
     r10a = {
         "horizons": {horizon: {"ratio": ratios[MODEL_CB][horizon], "task3": TASK3_LIVE_CB_RATIOS[horizon],
                                "ok": abs(ratios[MODEL_CB][horizon] - TASK3_LIVE_CB_RATIOS[horizon]) <= R10_TOLERANCE}
@@ -499,14 +543,26 @@ def r10_check(ratios: dict, reports: dict, inputs: dict, groups_without_sa: list
     r10c = leak_check(reports)
     inputs_ok = {name: {"sha256": inputs.get(name, ""), "expected": expected, "ok": inputs.get(name) == expected}
                  for name, expected in EXPECTED_INPUTS.items()}
+    predicted_min = min(
+        value["predicted"] for by_horizon in coverage.values() for value in by_horizon.values()
+    )
+    mismatches = [
+        {"horizon": horizon, "month": month, "weighted": value["weighted"], "expected": expected_weighted[month]}
+        for horizon, by_month in coverage.items()
+        for month, value in by_month.items()
+        if value["weighted"] != expected_weighted[month]
+    ]
     r10d = {
         "inputs": inputs_ok,
         "groups_without_sa": groups_without_sa,
         "groups_without_sa_ok": list(groups_without_sa) == list(GROUPS_WITHOUT_SA),
-        "min_coverage": min_coverage,
-        "coverage_ok": min_coverage == GROUPS_EXPECTED,
+        "predicted_min": predicted_min,
+        "predicted_ok": predicted_min == GROUPS_EXPECTED,
+        "weighted_mismatches": mismatches,
+        "weighted_ok": not mismatches,
     }
-    r10d["ok"] = all(value["ok"] for value in inputs_ok.values()) and r10d["groups_without_sa_ok"] and r10d["coverage_ok"]
+    r10d["ok"] = (all(value["ok"] for value in inputs_ok.values()) and r10d["groups_without_sa_ok"]
+                  and r10d["predicted_ok"] and r10d["weighted_ok"])
     return {"r10a": r10a, "r10b": r10b, "r10c": r10c, "r10d": r10d,
             "ok": r10a["ok"] and r10b["ok"] and r10c["ok"] and r10d["ok"]}
 
@@ -514,21 +570,6 @@ def r10_check(ratios: dict, reports: dict, inputs: dict, groups_without_sa: list
 # ---------------------------------------------------------------------------
 # Паспорт и прогон
 # ---------------------------------------------------------------------------
-
-
-def sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for block in iter(lambda: handle.read(1 << 20), b""):
-            digest.update(block)
-    return digest.hexdigest()
-
-
-def git_sha() -> str:
-    try:
-        return subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT, capture_output=True, text=True, check=True).stdout.strip()
-    except (OSError, subprocess.CalledProcessError):
-        return ""
 
 
 def sample_hash(reports: dict) -> str:
@@ -540,24 +581,6 @@ def sample_hash(reports: dict) -> str:
                 for month in info["train_months"]:
                     digest.update(f"{window}|h{horizon}|{year}|{month.isoformat()}\n".encode())
     return digest.hexdigest()
-
-
-def _jsonable(value):
-    if isinstance(value, date):
-        return value.isoformat()
-    if isinstance(value, dict):
-        return {str(key.isoformat() if isinstance(key, date) else key): _jsonable(item) for key, item in value.items()}
-    if isinstance(value, (list, tuple, set, frozenset)):
-        return [_jsonable(item) for item in value]
-    if isinstance(value, np.floating):
-        value = float(value)
-    if isinstance(value, np.integer):
-        return int(value)
-    if isinstance(value, np.bool_):
-        return bool(value)
-    if isinstance(value, float) and (math.isnan(value) or math.isinf(value)):
-        return None
-    return value
 
 
 def write_predictions(path: Path, forecasts: dict, data: dict, normal: list) -> None:
@@ -605,18 +628,15 @@ def run(archive: Path, panel_csv: Path, public_dir: Path, out_dir: Path, iterati
     }
 
     evaluation = evaluate(forecasts, data)
-    coverage = {MODEL_POOLED_MAIN: coverage_main, MODEL_POOLED_CONTROL: coverage_control}
-    min_coverage = min(
-        coverage[MODEL_POOLED_MAIN][horizon][month]
-        for horizon in HORIZONS for month in normal
-    )
+    expected_weighted = expected_weighted_coverage(data["weights"], sa_full, normal)
     inputs = {
-        "panel_csv": sha256(panel_csv),
-        "public_panel_csv": sha256(public_dir / "public_panel.csv"),
-        "sheet_map_csv": sha256(public_dir / "sheet_map.csv"),
-        "target_xlsx": sha256(archive / cp.TARGET_XLSX),
+        "panel_csv": lb.sha256(panel_csv),
+        "public_panel_csv": lb.sha256(public_dir / "public_panel.csv"),
+        "sheet_map_csv": lb.sha256(public_dir / "sheet_map.csv"),
+        "target_xlsx": lb.sha256(archive / cp.TARGET_XLSX),
     }
-    r10 = r10_check(evaluation["ratios"], reports, inputs, data["groups_without_sa"], min_coverage)
+    r10 = r10_check(evaluation["ratios"], reports, inputs, data["groups_without_sa"],
+                    coverage_main, expected_weighted)
     gate = g10_check(evaluation["pairs"])
     config = {
         "seed": bu.SEED,
@@ -630,29 +650,26 @@ def run(archive: Path, panel_csv: Path, public_dir: Path, out_dir: Path, iterati
             "base_numeric": list(BASE_NUMERIC),
             "block_columns": len(mp_block_names(sheets or [])),
             "cat_features": list(CAT_FEATURES),
-            "weight": "share_strict_lag_no_fallback",
+            "weight": "share_at_origin_strict_lag",
         },
         "catboost": {**bu.CATBOOST_DEFAULTS, "cat_features": list(CAT_FEATURES)},
-        "annual_refit": "first origin of year; train t: available_from_mes(t) < cutoff(origin_min)",
+        "annual_refit": "first origin of year; train t: available_from(t) < cutoff(origin_min); no target window overlapping shocks",
         "g10_alpha": G10_ALPHA,
     }
     result = {
         "spec": "docs/superpowers/specs/2026-10-31-cb-comp-pooled-88-groups-design.md",
-        "git_sha": git_sha(),
+        "git_sha": lb.git_sha(),
         "config": config,
-        "config_hash": hashlib.sha256(json.dumps(_jsonable(config), sort_keys=True).encode()).hexdigest(),
+        "config_hash": hashlib.sha256(json.dumps(lb._jsonable(config), sort_keys=True).encode()).hexdigest(),
         "inputs": inputs,
         "groups_without_sa": data["groups_without_sa"],
         "features": {"names": names, "sheets": sheets, "n_features": len(names or [])},
         "sample": reports,
         "sample_hash": sample_hash(reports),
         "coverage": {
-            "pooled_main_min_groups": min_coverage,
-            "pooled_main": {horizon: coverage[MODEL_POOLED_MAIN][horizon] for horizon in HORIZONS},
-            "pooled_control_min_groups": min(
-                coverage[MODEL_POOLED_CONTROL][horizon][month]
-                for horizon in HORIZONS for month in normal
-            ),
+            "pooled_main": coverage_main,
+            "pooled_control": coverage_control,
+            "expected_weighted": expected_weighted,
         },
         "r10": r10,
         "ratios": evaluation["ratios"],
@@ -665,10 +682,10 @@ def run(archive: Path, panel_csv: Path, public_dir: Path, out_dir: Path, iterati
     out_dir.mkdir(parents=True, exist_ok=True)
     write_predictions(out_dir / "predictions.csv", forecasts, data, normal)
     (out_dir / "result.json").write_text(
-        json.dumps(_jsonable(result), ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        json.dumps(lb._jsonable(result), ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
     if not r10["ok"]:
-        raise SystemExit(f"R10 не пройдена: {json.dumps(_jsonable(r10), ensure_ascii=False)}")
+        raise SystemExit(f"R10 не пройдена: {json.dumps(lb._jsonable(r10), ensure_ascii=False)}")
     return result
 
 
@@ -687,17 +704,20 @@ def check_data(archive: Path, panel_csv: Path, public_dir: Path) -> dict:
                   }
                   for horizon in HORIZONS
               }}
+    all_months = cp.month_range(WINDOW_START[WINDOW_MAIN], max(data["test_months"]))
     for window in (WINDOW_MAIN, WINDOW_CONTROL):
         output["windows"][window] = {}
+        months = cp.month_range(WINDOW_START[window], max(data["test_months"]))
         for horizon in HORIZONS:
             output["windows"][window][str(horizon)] = {}
-            shares = weight_shares(data["weights"], sa_full, cp.month_range(WINDOW_START[window], max(data["test_months"])))
-            for year in sorted({month.year for month in data["test_months"]}):
-                months = train_months(WINDOW_START[window], horizon, year)
-                rows = training_rows(data["specs"], data["features"], data["targets"], shares, horizon, months)
+            shares = weight_shares(data["weights"], sa_full, months, horizon)
+            windows = annual_windows(WINDOW_START[window], horizon, sorted({month.year for month in data["test_months"]}))
+            for year in sorted(windows):
+                train = train_months(WINDOW_START[window], horizon, windows[year]["cutoff"])
+                rows = training_rows(data["specs"], data["features"], data["targets"], shares, horizon, train)
                 output["windows"][window][str(horizon)][str(year)] = {
-                    "cutoff": annual_windows(WINDOW_START[window], horizon, (year,))[year]["cutoff"],
-                    "n_months": len(months), "n_rows": len(rows), "n_groups": len({row.code for row in rows}),
+                    "cutoff": windows[year]["cutoff"],
+                    "n_months": len(train), "n_rows": len(rows), "n_groups": len({row.code for row in rows}),
                 }
     return output
 
@@ -714,7 +734,7 @@ def main(argv=None) -> int:
     args = parser.parse_args(argv)
     archive = cp.resolve_archive(args.archive)
     if args.check_data:
-        print(json.dumps(_jsonable(check_data(archive, Path(args.panel), Path(args.public_dir))),
+        print(json.dumps(lb._jsonable(check_data(archive, Path(args.panel), Path(args.public_dir))),
                          ensure_ascii=False, indent=2))
         return 0
     result = run(archive, Path(args.panel), Path(args.public_dir), Path(args.out), args.iterations)
@@ -725,9 +745,9 @@ def main(argv=None) -> int:
                    for model, per in result["ratios"].items()},
         "gate": result["gate"],
         "mcs": result["mcs"],
-        "coverage": result["coverage"]["pooled_main_min_groups"],
+        "coverage": result["r10"]["r10d"]["predicted_min"],
     }
-    print(json.dumps(_jsonable(summary), ensure_ascii=False, indent=2))
+    print(json.dumps(lb._jsonable(summary), ensure_ascii=False, indent=2))
     return 0
 
 
