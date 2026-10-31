@@ -239,13 +239,16 @@ def ar1_sigma(values: np.ndarray) -> float:
 def design_matrix(frame: pd.DataFrame, lag: int, exog=None) -> tuple:
     """`X` = `[const, y(t−1)…y(t−p), exog]`, `Y` = `y(t)`."""
     values = frame[list(ENDOG_COLUMNS)].to_numpy(dtype=float)
+    exog_values = None
+    if exog is not None:
+        exog_values = exog.to_numpy(dtype=float) if isinstance(exog, pd.DataFrame) else np.asarray(exog, dtype=float)
     rows = []
     for t in range(lag, len(values)):
         row = [1.0]
         for step in range(1, lag + 1):
             row.extend(values[t - step])
-        if exog is not None:
-            row.extend(np.asarray(exog[t], dtype=float))
+        if exog_values is not None:
+            row.extend(exog_values[t])
         rows.append(row)
     return np.asarray(rows, dtype=float), values[lag:]
 
@@ -415,8 +418,17 @@ def compute_metrics(forecasts: dict, data: dict) -> dict:
         mcs[horizon] = {"included": sorted(included), "pvalues": pvalues}
     ratios = {model: {horizon: per_model[model][horizon]["vs_cb_target_full"]["ratio"] for horizon in HORIZONS}
               for model in CANDIDATES}
+    error_correlation = {
+        horizon: {
+            "var16_combo3": float(np.corrcoef(errors[MODEL_VAR][horizon], errors[MODEL_COMBO3][horizon])[0, 1]),
+            "var16_live_cb": float(np.corrcoef(errors[MODEL_VAR][horizon], errors[MODEL_CB][horizon])[0, 1]),
+            "combo3_live_cb": float(np.corrcoef(errors[MODEL_COMBO3][horizon], errors[MODEL_CB][horizon])[0, 1]),
+            "combo4_combo3": float(np.corrcoef(errors[MODEL_COMBO4][horizon], errors[MODEL_COMBO3][horizon])[0, 1]),
+        }
+        for horizon in PRIMARY_HORIZONS
+    }
     return {"per_model": per_model, "pairs_vs_combo3": pairs_combo3, "pairs_vs_live_cb": pairs_live_cb,
-            "mcs": mcs, "ratios": ratios}
+            "mcs": mcs, "ratios": ratios, "error_correlation": error_correlation}
 
 
 def better_than(pair: dict) -> bool:
@@ -572,6 +584,7 @@ def run(archive: Path, panel_csv: Path, public_dir: Path, out_dir: Path) -> dict
         "pairs_vs_live_cb": metrics["pairs_vs_live_cb"],
         "mcs": metrics["mcs"],
         "ratios": metrics["ratios"],
+        "error_correlation": metrics["error_correlation"],
         "g12": gate,
     }
     out_dir.mkdir(parents=True, exist_ok=True)
