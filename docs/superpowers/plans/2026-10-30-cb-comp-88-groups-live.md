@@ -120,13 +120,13 @@
 
 Ветка `exp/cb-comp-88-groups-task7`, worktree `.worktrees/cb-comp-88-task7` (от `main` после #477). Протокол — спека §18; числа уже известны (Task 9), поэтому записано не «что предсказываем», а «что воспроизводим и чем проверяем».
 
-- [ ] **7.1 Протокол** — спека §18 и этот раздел; роадмап; issue #427 `In Progress`.
-- [ ] **7.2 Код до прогона** — `scripts/models/cb_comp/cb_comp_88_live_gate.py` (+ `_test.py`), `make cb-comp-88-live-gate(-test)`:
+- [x] **7.1 Протокол** — спека §18 и этот раздел; роадмап; issue #427 `In Progress`.
+- [x] **7.2 Код до прогона** — `scripts/models/cb_comp/cb_comp_88_live_gate.py` (+ `_test.py`), `make cb-comp-88-live-gate(-test)`:
   - `gate` — `cb_comp_h1_bs_combo.run()` в собственный каталог, пины R (combo3/live_cb/CB), таблица классов §6.3 на normal-54 и 67, MCS, справочные строки `annual`/`rolling120` из `--refit-predictions`; решение по §18.2;
   - `shadow` — `combo3@frozen` на 2024-08…2026-09: as-of лаги `sa_asof_mm`, МП/макро as-of, `T_LIVE_rt`/`T_LIVE`/SA ЦБ, B1, RMSE/MAE/bias по годам;
   - артефакт `build/ml-gate/cb_comp_88_live.{json,md}` + предсказания.
-- [ ] **7.3 Тесты до прогона** — правило классов (4 ветки), пины и их допуски, `T_LIVE_rt` и накопление h, разрыв целей, окно/origin, анти-утечка, решение, схема и детерминизм артефакта; существующие тесты линии остаются зелёными.
-- [ ] **7.4 Прогон ×2** — `make cb-comp-88-live-gate`; sha256 `gate.json` и `predictions*.csv` совпадают; пины 1e-6.
-- [ ] **7.5 Отчёт** — `docs/research/2026-10-31-cb-comp-88-groups-task7.{md,json}`: таблица классов, MCS, режимные строки, shadow (по горизонтам и годам, обе истины + SA ЦБ), решение и причина, вердикт #76, «что не проверено», воспроизводимость.
-- [ ] **7.6 Документы** — гайд `cb-comp-live-model-map.md` §6.2 P0.1 и §1.8 (live-период), README, `docs/site-pages.json`, роадмап; `make all`, `make docs-check`.
+- [x] **7.3 Тесты до прогона** — правило классов (4 ветки), пины и их допуски, `T_LIVE_rt` и накопление h, разрыв целей, окно/origin, анти-утечка, решение, схема и детерминизм артефакта; существующие тесты линии остаются зелёными.
+- [x] **7.4 Прогон ×2** — `make cb-comp-88-live-gate`; sha256 `gate.json` и `predictions*.csv` совпадают; пины 1e-6.
+- [x] **7.5 Отчёт** — `docs/research/2026-10-31-cb-comp-88-groups-task7.{md,json}`: таблица классов, MCS, режимные строки, shadow (по горизонтам и годам, обе истины + SA ЦБ), решение и причина, вердикт #76, «что не проверено», воспроизводимость.
+- [x] **7.6 Документы** — гайд `cb-comp-live-model-map.md` §6.2 P0.1 и §1.8 (live-период), README, `docs/site-pages.json`, роадмап; `make all`, `make docs-check`.
 - [ ] **7.7 Приёмка** — протокол комментарием в PR; PR `Closes #427`; Project V2 — `In Review`.
