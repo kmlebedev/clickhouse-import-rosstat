@@ -70,10 +70,14 @@ PANEL_START = date(2010, 1, 1)
 MAPPING_START = date(2010, 1, 1)
 LEAF_FALLBACK_START = date(2010, 1, 1)
 VERSION_PRESETS = {
-    "2010": {"panel_start": PANEL_START, "fit_start": PANEL_START},
-    "2009": {"panel_start": date(2009, 1, 1), "fit_start": date(2008, 12, 1)},
+    "2010": {"panel_start": PANEL_START, "fit_start": PANEL_START,
+             "leaf_fallback_start": LEAF_FALLBACK_START},
+    "2009": {"panel_start": date(2009, 1, 1), "fit_start": date(2008, 12, 1),
+             "leaf_fallback_start": date(2008, 12, 1)},
 }
 DEFAULT_VERSION = "2010"
+# Task 15: публичные веса 2008/2009 для листьев 1710/1730 (snapshot с URL/sha256).
+EARLY_WEIGHTS = ROOT / "docs" / "research" / "2026-10-31-cb-comp-tlive-2009-early-weights.json"
 # Окна эталонов (спека §14): сверка идёт на той выборке, на которой посчитан
 # эталон; live-режим Task 2 по-прежнему берёт ряд до последнего месяца панели.
 REFERENCE_WINDOWS = {
@@ -205,6 +209,13 @@ def load_leaf_weights(archive: Path) -> dict:
     return {year: leaf_weights_from_frame(pd.read_excel(book, str(year))) for year in WEIGHT_YEARS}
 
 
+def load_early_leaf_weights(path: Path = EARLY_WEIGHTS) -> dict:
+    """`{2008: {код: вес}, 2009: ...}` из snapshot публичных весов Росстата."""
+    data = json.loads(path.read_text(encoding="utf-8"))
+    return {int(year): {code: float(item["weight"]) for code, item in table.items()}
+            for year, table in data["leaf_weights"].items()}
+
+
 def year_key(table: dict, year: int) -> int:
     """Год таблицы для месяца: сам год, иначе ближайший более ранний, иначе самый ранний."""
     if year in table:
@@ -283,19 +294,24 @@ def composition_changes(group: GroupMap) -> int:
 # ---------------------------------------------------------------------------
 
 
-def aggregated_mm(group: GroupMap, product_mm: dict, leaf_weights: dict, months: list) -> dict:
+def aggregated_mm(group: GroupMap, product_mm: dict, leaf_weights: dict, months: list,
+                  early_weights: dict = None) -> dict:
     """М/м группы: Ласпейрес от декабря прошлого года по листьям с полными данными.
 
     Для месяца M года Y набор S — листья словаря года Y (иначе ближайшего
     раннего) с весом и с данными за все месяцы январь…M. `L_i(M)` — накопленный
     рост с декабря Y−1; `mm(M) = Σ_S w·L(M) / Σ_S w·L(M−1) − 1` (`L(дек) = 1`).
+    `early_weights` (2008/2009) — публичные веса Росстата для Task 15; для
+    2010+ веса берутся из архива, чтобы `@2010` не менялся.
     Пустой S — месяц без значения (NaN не заменяется).
     """
     out = {}
     for month in months:
         year = month.year
         leaves = group.leaves_by_year.get(year_key(group.leaves_by_year, year), {})
-        weights = leaf_weights[year_key(leaf_weights, year)]
+        weights = (early_weights or {}).get(year)
+        if weights is None:
+            weights = leaf_weights[year_key(leaf_weights, year)]
         year_months = [date(year, m, 1) for m in range(1, month.month + 1)]
         numerator = denominator = 0.0
         for leaf, series in leaves.items():
@@ -315,18 +331,18 @@ def aggregated_mm(group: GroupMap, product_mm: dict, leaf_weights: dict, months:
 
 
 def group_nsa(group: GroupMap, product_mm: dict, leaf_weights: dict, months: list,
-              fallback_first: date = LEAF_FALLBACK_START) -> tuple:
+              fallback_first: date = LEAF_FALLBACK_START, early_weights: dict = None) -> tuple:
     """`(mm, sources)`: м/м группы и источник каждого месяца (`chain:i` | `leaves`).
 
-    `fallback_first` — с какого месяца разрешён резерв по листьям. До
-    `LEAF_FALLBACK_START` (2010-01) веса СПР в архиве не публикуются, поэтому
-    агрегат взял бы веса ближайшего доступного года (2016) и подмешал чужую
-    структуру в историю окна `fst`/2009 (ревью #431).
+    `fallback_first` — с какого месяца разрешён резерв по листьям. Для `@2010`
+    это 2010-01 (архивные веса 2016+), для `@2009` — 2008-12 (публичные веса
+    2008/2009 из snapshot Task 15); `early_weights` действует только на 2008/2009,
+    для 2010+ веса берутся из архива.
     """
     out, sources = {}, {}
     aggregated_months = [m for m in months if m >= fallback_first]
     fallback = (
-        aggregated_mm(group, product_mm, leaf_weights, aggregated_months)
+        aggregated_mm(group, product_mm, leaf_weights, aggregated_months, early_weights)
         if group.method != "missing" and aggregated_months else {}
     )
     for month in months:
@@ -402,11 +418,13 @@ def fit_window_start(code: str, fit_first: date, selection_first: dict) -> date:
 def fit_series_map(codes: list, groups: dict, nsa: dict, fit_mm: dict, leaf_weights: dict,
                    fit_first: date, last: date, selection_first: dict,
                    panel_start: date = PANEL_START,
-                   fallback_first: date = LEAF_FALLBACK_START) -> dict:
+                   fallback_first: date = LEAF_FALLBACK_START,
+                   early_weights: dict = None) -> dict:
     """`{код: ряд}` для X-13: история до `panel_start` достраивается только по цепочке.
 
-    До `fallback_first` (2010-01) веса СПР в архиве не публикуются, поэтому
-    резерв по листьям там запрещён; после — берётся готовый `nsa`.
+    Для `@2010` `fallback_first=2010-01` (архивные веса 2016+); для `@2009` —
+    2008-12 с публичными весами 2008/2009 (`early_weights`), чтобы `1710`/`1730`
+    имели 2009-01. После `panel_start` берётся готовый `nsa`.
     """
     head_last = month_from_index(month_index(panel_start) - 1)
     out = {}
@@ -414,7 +432,8 @@ def fit_series_map(codes: list, groups: dict, nsa: dict, fit_mm: dict, leaf_weig
         start = fit_window_start(code, fit_first, selection_first)
         if start < panel_start and groups[code].method == "direct":
             head = group_nsa(groups[code], fit_mm, leaf_weights,
-                             month_grid(start, head_last), fallback_first=fallback_first)[0]
+                             month_grid(start, head_last), fallback_first=fallback_first,
+                             early_weights=early_weights)[0]
             out[code] = {**head, **nsa[code]}
         else:
             out[code] = nsa[code]
@@ -711,6 +730,8 @@ def run(archive: Path, out_dir: Path, runner_factory, asof: bool, jobs: int,
     codes = [spec.code for spec in specs]
     dictionaries = load_dictionaries(archive)
     leaf_weights = load_leaf_weights(archive)
+    early_weights = load_early_leaf_weights()
+    leaf_fallback_start = preset["leaf_fallback_start"]
     group_weights = bu.load_weights(archive, WEIGHT_YEARS, specs)
     weights_2024 = {code: group_weights[COVERAGE_YEAR].get(code, 0.0) for code in codes}
     # Маппинг, Q1/Q2 и отчёт строятся по данным с `MAPPING_START`: загрузка 2009
@@ -728,6 +749,10 @@ def run(archive: Path, out_dir: Path, runner_factory, asof: bool, jobs: int,
     else:
         fit_first, fit_last = REFERENCE_WINDOWS[fit_window]
     fit_start = min([fit_first] + list(SELECTION_FIRST.values()))
+    # @2009: для листового резерва 1710/1730 в 2008-12 нужны все месяцы 2008
+    # (Ласпейрес от декабря 2007); @2010 не грузит 2008.
+    if version == "2009":
+        fit_start = min(fit_start, date(2008, 1, 1))
     fit_mm = load_products(fit_start)[0] if fit_start < panel_start else product_mm
 
     # Q1/Q6 — маппинг, покрытие, смены состава.
@@ -740,7 +765,8 @@ def run(archive: Path, out_dir: Path, runner_factory, asof: bool, jobs: int,
     nsa, sources = {}, {}
     for code in codes:
         nsa[code], sources[code] = group_nsa(groups[code], product_mm, leaf_weights, months,
-                                             fallback_first=LEAF_FALLBACK_START)
+                                             fallback_first=leaf_fallback_start,
+                                             early_weights=early_weights)
     mom, mom_sa = load_archive_reference(archive)
     nsa_metrics = {c: compare(nsa[c], mom.get(c, {}), *NSA_WINDOW) for c in codes}
     nsa_pre = {c: compare(nsa[c], mom.get(c, {}), NSA_WINDOW[0], date(2022, 12, 1)) for c in codes}
@@ -748,12 +774,11 @@ def run(archive: Path, out_dir: Path, runner_factory, asof: bool, jobs: int,
     nsa_rmse, _ = weighted_rmse(nsa_metrics, weights_2024)
 
     # Q3 — X-13 по группам на окне сверки (спека §14): live — до последнего
-    # месяца панели, csv/fst — на выборке эталона.
-    # Окно fst начинается с 2009-01, а NSA для @2009 считается с panel_start:
-    # история до 2010 достраивается только по цепочке (веса СПР до 2016 не
-    # публикуются).
+    # месяца панели, csv/fst — на выборке эталона. @2009 разрешает листовой
+    # резерв с 2008-12 (публичные веса 2008/2009); @2010 — с 2010-01.
     fit_inputs = fit_series_map(codes, groups, nsa, fit_mm, leaf_weights, fit_first, last, SELECTION_FIRST,
-                                panel_start=panel_start, fallback_first=LEAF_FALLBACK_START)
+                                panel_start=panel_start, fallback_first=leaf_fallback_start,
+                                early_weights=early_weights)
     with ThreadPoolExecutor(max_workers=max(1, jobs)) as pool:
         futures = {c: pool.submit(group_sa, fit_inputs[c], fit_last, runner_factory, asof, fit_first) for c in codes}
         sa = {c: futures[c].result() for c in codes}
@@ -822,19 +847,23 @@ def run(archive: Path, out_dir: Path, runner_factory, asof: bool, jobs: int,
     first_total = sum(first_weights.get(c, 0.0) for c in codes)
     result = {
         "spec": "docs/superpowers/specs/2026-10-30-cb-comp-88-groups-live-design.md",
-        "version_spec": "docs/superpowers/specs/2026-10-31-cb-comp-tlive-2009-design.md",
+        "version_spec": ("docs/superpowers/specs/2026-10-31-cb-comp-tlive-2009-86-groups-design.md"
+                         if version == "2009" else
+                         "docs/superpowers/specs/2026-10-31-cb-comp-tlive-2009-design.md"),
         "version": version,
         "fit_window": fit_window,
         "fit_span": [fit_first.isoformat(), fit_last.isoformat()],
         "panel": {
             "start": panel_start.isoformat(),
             "mapping_start": MAPPING_START.isoformat(),
-            "leaf_fallback_start": LEAF_FALLBACK_START.isoformat(),
+            "leaf_fallback_start": leaf_fallback_start.isoformat(),
             "live_fit_start": live_fit_start.isoformat(),
             "first_sa_month": first_sa_month.isoformat() if first_sa_month else None,
             "groups_with_sa_first_month": sum(1 for c in codes if first_sa_month in sa_full.get(c, {})),
             "weight_coverage_first_month": first_covered / first_total if first_total else float("nan"),
             "missing_first_month": sorted(c for c in codes if first_sa_month not in sa_full.get(c, {})),
+            "early_weights": str(EARLY_WEIGHTS.relative_to(ROOT)),
+            "early_weights_sha256": sha256(EARLY_WEIGHTS),
         },
         "thresholds": {
             "coverage_min": COVERAGE_MIN, "nsa_rmse_max": NSA_RMSE_MAX, "nsa_group_flag": NSA_GROUP_FLAG,
