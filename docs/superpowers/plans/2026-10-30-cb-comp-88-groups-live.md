@@ -94,3 +94,22 @@
 - Обратная задача недоопределена: 11 уравнений на 87 неизвестных (76 степеней свободы на месяц). Даже при стабильном W восстановление опирается на prior; при провале G-R2 отрицательный результат публикуется и закрывает вопрос.
 - Публичная книга могла сменить методику/веса после 2022 — тогда OOS-провал 2023–2024 структурный, а не шумовой; это фиксируется как причина no-go.
 - Архив — производная от данных «по запросу»: восстановленные ряды не публикуются и не идут в прод без решения владельца.
+
+## Задачи Task 5 (#425)
+
+Ветка `exp/cb-comp-88-groups-task5`, worktree `.worktrees/cb-comp-88-task5`. Протокол — спека §17 (записан до кода и результатов); решение владельца Q1 = **A** (`live_cb`, `combo3` справочно).
+
+- [x] **5.1 Протокол** — спека §17 и этот раздел; роадмап; issue #425: комментарий с решением Q1 = A, `needs-answer` снят, Project `In Progress`.
+- [ ] **5.2 Код до прогона** — `scripts/models/cb_comp/cb_comp_refit_modes.py` (+ `_test.py`): `year_windows`, `train_months(exclude_shocks)`, `rolling_start`, `fit_predict_mode`, `fit_predict_wf`, `evaluate`, `gate`, `hypothesis_*`, паспорт; `cpi_two_stage_cb_comp.py`: `exclude_months` (default `()`), `hypothesis_check()`, `--hypothesis-check`, вариант в ключе кэша; тесты фильтра в `cpi_two_stage_cb_comp_test.py`; `make cb-comp-refit-modes(-test)`; README. **Коммит до прогона.**
+- [ ] **5.3 Данные** — `make ch-status`; `make cb-comp-public-export`; `build/cb-comp-groups/panel.csv` (sha `aec91f99…`) и архив `resolve_archive()`.
+- [ ] **5.4 Прогон ×2** — `make cb-comp-refit-modes ARGS="--jobs 8"`; повтор в отдельный `--out`; sha256 `result.json`/`predictions.csv` совпадают (R16). W5b-диагностика — в том же прогоне; кэш `build/cpi-two-stage/w5b-cache-task5`.
+- [ ] **5.5 Отчёт** — `docs/research/2026-10-31-cb-comp-88-groups-task5.{md,json}`: вердикт гейта, таблица режимов, подпериоды, MCS, H-W5b (A и B), R14–R16, «что не проверено», детерминизм; гайд `cb-comp-live-model-map.md` §P0.2 и реестр исследований; `docs/site-pages.json`; README; роадмап — итог Task 5.
+- [ ] **5.6 Приёмка** — `make cb-comp-refit-modes-test`, `make cpi-two-stage-cb-comp-test`, `make cb-comp-live-bottomup-test`, `make all`, `make docs-check`; протокол — комментарием в PR; PR `Closes #425`.
+
+## Риски Task 5
+
+- Подготовка данных W5b требует R `seasonal` и ClickHouse; недоступность — тест A не выполняется, в отчёте «не проверено»; тест B его не подменяет.
+- Годовые режимы на границе 2019 обучаются на 1 (h1) … 5 (h6) месяцах меньше `frozen`; `frozen_honest` отделяет это от эффекта режима, но не устраняет из гейта.
+- Мощность: 54 месяца и перекрывающиеся окна h6 дают большой MDE; `adopt` не означает «значимо лучше».
+- Месячный wf (23,6 тыс. фитов) может выйти за бюджет; сокращать горизонты после результата нельзя — при превышении фиксируется `partial` с указанием посчитанных горизонтов.
+- Правка `wf_predict` (чужой модуль): поведение по умолчанию обязано остаться прежним (R15 + тест на no-op), иначе откат.
