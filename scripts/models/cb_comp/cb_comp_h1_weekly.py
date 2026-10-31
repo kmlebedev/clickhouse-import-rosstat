@@ -77,8 +77,8 @@ R10_PINNED = {
     MODEL_ROZN: 0.16892971554783076,
 }
 # Task 14: пины R10 по версии цели; @2009 заполняется после прогона Task 9 @2009.
-VERSIONS = ("2010", "2009")
-DEFAULT_VERSION = "2010"
+VERSIONS = lb.VERSIONS
+DEFAULT_VERSION = lb.DEFAULT_VERSION
 R10_PINS = {
     "2010": R10_PINNED,
     "2009": {
@@ -691,16 +691,19 @@ def write_mapping(path: Path, rows: list) -> None:
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--archive", default=None)
-    parser.add_argument("--panel", default=str(PANEL_CSV))
+    parser.add_argument("--panel", default=None, help="по умолчанию — панель версии")
     parser.add_argument("--public-dir", default=str(PUBLIC_DIR))
-    parser.add_argument("--out", default=str(OUT_DIR))
+    parser.add_argument("--out", default=None, help="по умолчанию build/cb-comp-h1-weekly[-<версия>]")
     parser.add_argument("--jobs", type=int, default=4)
     parser.add_argument("--version", choices=VERSIONS, default=DEFAULT_VERSION,
                         help="версия цели: 2010 — канон, 2009 — T_LIVE с 2009-01")
     parser.add_argument("--frozen-only", action="store_true", help="только R10 и окно CB_COMP; проверка перед long-run")
     args = parser.parse_args(argv)
+    panel = Path(args.panel) if args.panel else lb.default_panel(args.version)
+    lb.check_panel_version(lb.load_group_panel(panel)[0], args.version)
+    out_dir = Path(args.out) if args.out else lb.versioned_dir(OUT_DIR, args.version)
     archive = cp.resolve_archive(args.archive)
-    result = run(archive, Path(args.panel), Path(args.public_dir), Path(args.out), args.jobs, args.frozen_only, args.version)
+    result = run(archive, panel, Path(args.public_dir), out_dir, args.jobs, args.frozen_only, args.version)
     summary = {
         "r10": result["r10"]["ok"], "r11": result["r11"]["counts_ok"] and result["r11"]["availability_ok"],
         "frozen": {

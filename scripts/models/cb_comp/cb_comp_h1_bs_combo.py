@@ -62,8 +62,8 @@ R9B_MIN_CORR = 0.99
 TASK3_LIVE_CB_RATIOS = {1: 1.193, 2: 1.013, 3: 1.076, 6: 1.062}
 R9C_TOL = 0.001
 # Task 14: пины R9c по версии цели; @2009 заполняется после прогона Task 3 @2009.
-VERSIONS = ("2010", "2009")
-DEFAULT_VERSION = "2010"
+VERSIONS = lb.VERSIONS
+DEFAULT_VERSION = lb.DEFAULT_VERSION
 TASK3_PINS = {
     "2010": TASK3_LIVE_CB_RATIOS,
     "2009": {1: 1.2461360170004323, 2: 1.0472712693002966, 3: 1.063756111772496, 6: 1.0295619483425622},
@@ -339,14 +339,17 @@ def run(archive: Path, panel_csv: Path, public_dir: Path, out_dir: Path, version
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--archive", default=None)
-    parser.add_argument("--panel", default=str(lb.PANEL_CSV))
+    parser.add_argument("--panel", default=None, help="по умолчанию — панель версии")
     parser.add_argument("--public-dir", default=str(lb.PUBLIC_DIR))
     parser.add_argument("--version", choices=VERSIONS, default=DEFAULT_VERSION,
                         help="версия цели: 2010 — канон, 2009 — T_LIVE с 2009-01")
-    parser.add_argument("--out", default=str(OUT_DIR))
+    parser.add_argument("--out", default=None, help="по умолчанию build/cb-comp-h1-bs-combo[-<версия>]")
     args = parser.parse_args(argv)
+    panel = Path(args.panel) if args.panel else lb.default_panel(args.version)
+    lb.check_panel_version(lb.load_group_panel(panel)[0], args.version)
+    out_dir = Path(args.out) if args.out else lb.versioned_dir(OUT_DIR, args.version)
     archive = cp.resolve_archive(args.archive)
-    result = run(archive, Path(args.panel), Path(args.public_dir), Path(args.out), args.version)
+    result = run(archive, panel, Path(args.public_dir), out_dir, args.version)
     summary = {
         "g9": result["g9"], "noharm": result["noharm"], "g3_reference": result["g3_reference"],
         "r9": {"r9a": result["checks"]["r9a"]["ok"], "r9b": result["checks"]["r9b"]["ok"], "r9c": result["r9c"]["ok"]},
