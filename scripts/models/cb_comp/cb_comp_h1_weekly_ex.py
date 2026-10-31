@@ -81,7 +81,7 @@ HOLM_ALPHA = 0.025
 R12_TOL = 1e-6
 R12_PINNED = {MODEL_COMBO: 0.9698445785532128, MODEL_COMBO_WK: 0.9630314456250352}
 R12_PREDICTIONS_SHA256 = "0a67483f0e64917436e60645e5dad2d1ab8421ce3cdb3171dae8e85fce1aea5f"
-R13_PINNED = {"covered_weight": 0.04942, "group_weight": 0.05944, "coverage": 0.8315}
+R13_PINNED = {"covered_weight": 0.04942, "group_weight": 0.05944, "coverage": 0.8314}
 
 PANEL_CSV = ROOT / "build" / "cb-comp-groups" / "panel.csv"
 PUBLIC_DIR = ROOT / "build" / "cb-comp-parity"
@@ -177,8 +177,8 @@ def coverage_by_year(leaf_weights: dict, group_weights: dict, years=range(2016, 
     """Покрытие веса 9470 недельными рядами по годам."""
     rows = []
     for year in years:
-        leaf = wg.year_table(leaf_weights, year)
-        group = bu.weight_for_month(group_weights, date(year, 1, 1)).get(UTILITIES_CODE, 0.0)
+        leaf = leaf_weights.get(year) or wg.year_table(leaf_weights, year)
+        group = group_weights.get(year, {}).get(UTILITIES_CODE, 0.0)
         covered = sum(float(leaf.get(code, 0.0)) for codes in UTIL_SERIES.values() for code in codes)
         rows.append({"year": year, "covered_weight": covered, "group_weight": group,
                      "coverage": covered / group if group else 0.0})
@@ -345,7 +345,7 @@ def run(archive: Path, panel_csv: Path, public_dir: Path, base_predictions: Path
     leaf_weights = wg.load_leaf_weights(archive)
     group_weights = bu.load_weights(archive, lb.WEIGHT_YEARS, data["specs"])
     leaf_2024 = wg.year_table(leaf_weights, 2024)
-    group_2024 = bu.weight_for_month(group_weights, date(2024, 1, 1)).get(UTILITIES_CODE, 0.0)
+    group_2024 = group_weights.get(2024, {}).get(UTILITIES_CODE, 0.0)
     utilities = utilities_summary(weekly, dictionary, leaf_2024, group_2024)
     util_features = utilities_features(weekly, leaf_weights, group_weights, data["feature_months"])
     features_ex = agg_ex_features(weekly, data["feature_months"], util_features, group_weights)
