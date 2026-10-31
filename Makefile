@@ -1142,7 +1142,9 @@ deploy-staging-preflight:
 # deploy-hook перезапускает mcp-clickhouse после каждого продления.
 deploy-staging-mcp-cert: staging-precheck
 	@test -n "$(MCP_CERT_EMAIL)" || { echo "задайте MCP_CERT_EMAIL (уведомления Let's Encrypt о сроке)"; exit 1; }
-	ssh $(STAGING_HOST) 'command -v certbot >/dev/null || { apt-get update -qq && apt-get install -y -qq certbot; }'
+	# apt-get update не фатален: сторонние репозитории хоста (grafana и др.) бывают недоступны,
+	# а certbot ставится из основного репозитория Ubuntu.
+	ssh $(STAGING_HOST) 'command -v certbot >/dev/null || { apt-get update -qq || true; apt-get install -y -qq certbot; }'
 	ssh $(STAGING_HOST) 'certbot certonly --standalone --non-interactive --agree-tos -m $(MCP_CERT_EMAIL) \
 		-d $(MCP_PUBLIC_HOST) --keep-until-expiring \
 		--deploy-hook "systemctl try-restart mcp-clickhouse"'
