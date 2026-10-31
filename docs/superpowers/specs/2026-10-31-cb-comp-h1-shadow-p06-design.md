@@ -1,6 +1,8 @@
 # P0.6: ретро-robustness и проспективный paper shadow `wk_mix_ex@v1` — спека
 
-Пункт `key-rate/phase-4-cb-comp-88-groups-live`, зонтик #419, sub-issue #453. Роль `ml`. Протокол — гайд `docs/guides/cb-comp-live-model-map.md` §7.8 и P0.6 (PR #452); решение владельца `decision=shadow` и утверждённые пороги — комментарий в #419 от 2026-10-31.
+Пункт `key-rate/phase-4-cb-comp-88-groups-live`, зонтик #419, sub-issue #453. Роль `ml`. Протокол — гайд `docs/guides/cb-comp-live-model-map.md` §7.8 и P0.6 (PR #452); решение владельца `decision=shadow` и утверждённые пороги — комментарий в #419 от 2026-10-31 (issuecomment-6541464716).
+
+**Исключение из WIP=1 (решение владельца 2026-10-31):** P0.6 начат от main до мержа PR #452 из-за жёсткого cutoff shadow-прогноза 2026-10 (2026-11-08); гайд и роадмап обновляются только после мержа #452 (merge main в ветку).
 
 ## 1. Зачем
 
