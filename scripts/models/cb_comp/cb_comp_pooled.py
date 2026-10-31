@@ -628,7 +628,7 @@ def run(archive: Path, panel_csv: Path, public_dir: Path, out_dir: Path, iterati
     }
 
     evaluation = evaluate(forecasts, data)
-    expected_weighted = expected_weighted_coverage(data["weights"], sa_full, normal)
+    expected_weighted = expected_weighted_coverage(data["weights"], sa_full, test_months)
     inputs = {
         "panel_csv": lb.sha256(panel_csv),
         "public_panel_csv": lb.sha256(public_dir / "public_panel.csv"),
@@ -704,7 +704,6 @@ def check_data(archive: Path, panel_csv: Path, public_dir: Path) -> dict:
                   }
                   for horizon in HORIZONS
               }}
-    all_months = cp.month_range(WINDOW_START[WINDOW_MAIN], max(data["test_months"]))
     for window in (WINDOW_MAIN, WINDOW_CONTROL):
         output["windows"][window] = {}
         months = cp.month_range(WINDOW_START[window], max(data["test_months"]))
