@@ -89,9 +89,15 @@ class LagTest(unittest.TestCase):
 
     def test_bic_selects_one_lag_for_var1(self):
         train = synthetic_endo(120)
-        lag, bics = v.select_lag(train, None)
+        lag, bics, errors = v.select_lag(train, None)
         self.assertEqual(lag, 1)
         self.assertIsNotNone(bics[1])
+        self.assertEqual(errors[1], "")
+
+    def test_select_lag_records_ineligible_reason(self):
+        train = synthetic_endo(30)
+        _, _, errors = v.select_lag(train, None)
+        self.assertIn("not identified", errors[6])
 
     def test_select_lag_stops_when_nothing_identified(self):
         with self.assertRaises(SystemExit):
@@ -166,6 +172,29 @@ class ForecastTest(unittest.TestCase):
         np.testing.assert_allclose(first, second)
         self.assertEqual(first.shape, (6, 4))
         self.assertTrue(np.isfinite(first).all())
+
+    def test_bvar_with_diffuse_prior_matches_ols(self):
+        train = synthetic_endo(80)
+        lag = 2
+        x_matrix, y_matrix = v.design_matrix(train, lag, None)
+        ols = np.linalg.lstsq(x_matrix, y_matrix, rcond=None)[0]
+        bvar = v.bvar_coefficients(train, lag, None, prior_scale=1e12)
+        np.testing.assert_allclose(bvar, ols, rtol=1e-5, atol=1e-7)
+
+    def test_bvar_own_lag_is_not_prior_dominated(self):
+        rng = np.random.default_rng(11)
+        values = np.zeros((160, 4))
+        for index in range(1, len(values)):
+            values[index] = 0.3 * values[index - 1] + rng.normal(0.0, 0.005, size=4)
+        train = pd.DataFrame(
+            values,
+            index=pd.date_range("2016-01-01", periods=len(values), freq="MS"),
+            columns=list(v.ENDOG_COLUMNS),
+        )
+        coefficients = v.bvar_coefficients(train, 1, None)
+        own = float(coefficients[1, 0])
+        self.assertGreater(own, 0.0)
+        self.assertLess(own, 0.8)
 
 
 class CombinationTest(unittest.TestCase):
