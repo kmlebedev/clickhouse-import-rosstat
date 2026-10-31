@@ -61,6 +61,13 @@ R9A_TOL = 1e-4
 R9B_MIN_CORR = 0.99
 TASK3_LIVE_CB_RATIOS = {1: 1.193, 2: 1.013, 3: 1.076, 6: 1.062}
 R9C_TOL = 0.001
+# Task 14: пины R9c по версии цели; @2009 заполняется после прогона Task 3 @2009.
+VERSIONS = lb.VERSIONS
+DEFAULT_VERSION = lb.DEFAULT_VERSION
+TASK3_PINS = {
+    "2010": TASK3_LIVE_CB_RATIOS,
+    "2009": {1: 1.2461360170004323, 2: 1.0472712693002966, 3: 1.063756111772496, 6: 1.0295619483425622},
+}
 X_ECON_SERIES = "price_expectations_sa"
 X_ROZN_SLUG = "trade_retail"
 X_ROZN_INDICATOR = "price_exp"
@@ -166,9 +173,10 @@ def noharm_check(combo: dict, live_cb: dict) -> dict:
     return {"horizons": per_h, "ok": all(v["ok"] for v in per_h.values())}
 
 
-def r9c_check(ratios: dict) -> dict:
-    per_h = {h: {"ratio": ratios[h], "task3": TASK3_LIVE_CB_RATIOS[h],
-                 "ok": abs(ratios[h] - TASK3_LIVE_CB_RATIOS[h]) <= R9C_TOL} for h in HORIZONS}
+def r9c_check(ratios: dict, expected: dict = None) -> dict:
+    expected = expected or TASK3_LIVE_CB_RATIOS
+    per_h = {h: {"ratio": ratios[h], "task3": expected[h],
+                 "ok": abs(ratios[h] - expected[h]) <= R9C_TOL} for h in HORIZONS}
     return {"horizons": per_h, "ok": all(v["ok"] for v in per_h.values())}
 
 
@@ -228,7 +236,7 @@ def r9b(archive: Path, regressors: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def evaluate(forecasts: dict, data: dict) -> dict:
+def evaluate(forecasts: dict, data: dict, version: str = DEFAULT_VERSION) -> dict:
     import cpi_two_stage_cb_comp as w5b
     import cpi_v4_leaderboard as v4
 
@@ -267,7 +275,7 @@ def evaluate(forecasts: dict, data: dict) -> dict:
     ratios = {m: {h: per_model[m][h]["vs_cb_target_full"]["ratio"] for h in HORIZONS} for m in forecasts}
     return {
         "per_model": per_model, "pairs_vs_live_cb": pairs, "mcs": mcs, "ratios": ratios,
-        "r9c": r9c_check(ratios[MODEL_CB]),
+        "r9c": r9c_check(ratios[MODEL_CB], TASK3_PINS[version]),
         "g9": g9_check(ratios[MODEL_COMBO][1], pairs[MODEL_COMBO][1]),
         "noharm": noharm_check(ratios[MODEL_COMBO], ratios[MODEL_CB]),
         "g3_reference": en.g3_check({h: ratios[MODEL_COMBO][h] for h in PRIMARY_HORIZONS}),
@@ -279,7 +287,7 @@ def evaluate(forecasts: dict, data: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def run(archive: Path, panel_csv: Path, public_dir: Path, out_dir: Path) -> dict:
+def run(archive: Path, panel_csv: Path, public_dir: Path, out_dir: Path, version: str = DEFAULT_VERSION) -> dict:
     data = en.prepare(archive, panel_csv, public_dir)
     normal, test_months = data["normal"], data["test_months"]
     checks = {"r9a": r9a(archive, normal)}
@@ -302,11 +310,12 @@ def run(archive: Path, panel_csv: Path, public_dir: Path, out_dir: Path) -> dict
         }
     forecasts["bs_mean"] = {h: combine_mean([forecasts[MODEL_ECON][h], forecasts[MODEL_ROZN][h]]) for h in HORIZONS}
 
-    result = evaluate(forecasts, data)
+    result = evaluate(forecasts, data, version)
     if not result["r9c"]["ok"]:
         raise SystemExit(f"r9c не пройден: {result['r9c']}")
     result.update({
         "checks": checks,
+        "version": version,
         "spec": "docs/superpowers/specs/2026-10-31-cb-comp-h1-bs-combo-design.md",
         "git_sha": lb.git_sha(),
         "inputs": {"panel_csv": lb.sha256(panel_csv), "public_panel_csv": lb.sha256(public_dir / "public_panel.csv"),
@@ -330,12 +339,17 @@ def run(archive: Path, panel_csv: Path, public_dir: Path, out_dir: Path) -> dict
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--archive", default=None)
-    parser.add_argument("--panel", default=str(lb.PANEL_CSV))
+    parser.add_argument("--panel", default=None, help="по умолчанию — панель версии")
     parser.add_argument("--public-dir", default=str(lb.PUBLIC_DIR))
-    parser.add_argument("--out", default=str(OUT_DIR))
+    parser.add_argument("--version", choices=VERSIONS, default=DEFAULT_VERSION,
+                        help="версия цели: 2010 — канон, 2009 — T_LIVE с 2009-01")
+    parser.add_argument("--out", default=None, help="по умолчанию build/cb-comp-h1-bs-combo[-<версия>]")
     args = parser.parse_args(argv)
+    panel = Path(args.panel) if args.panel else lb.default_panel(args.version)
+    lb.check_panel_version(lb.load_group_panel(panel)[0], args.version)
+    out_dir = Path(args.out) if args.out else lb.versioned_dir(OUT_DIR, args.version)
     archive = cp.resolve_archive(args.archive)
-    result = run(archive, Path(args.panel), Path(args.public_dir), Path(args.out))
+    result = run(archive, panel, Path(args.public_dir), out_dir, args.version)
     summary = {
         "g9": result["g9"], "noharm": result["noharm"], "g3_reference": result["g3_reference"],
         "r9": {"r9a": result["checks"]["r9a"]["ok"], "r9b": result["checks"]["r9b"]["ok"], "r9c": result["r9c"]["ok"]},
