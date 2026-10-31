@@ -49,6 +49,12 @@ from models.cpi import cpi_release_dates as releases
 # ---------------------------------------------------------------------------
 
 VERSION = "wk_mix_ex@v1"
+# Решение владельца 2026-10-31 (#419, Task 16 #466): засчитываемый shadow —
+# `wk_mix_ex@v2` = логика v1 на цели `T_LIVE@2009`, отсчёт с 2026-10;
+# v1 (`@2010`) остаётся параллельным контролем и fallback ≥ 6 месяцев.
+MODEL_VERSIONS = {"2010": VERSION, "2009": "wk_mix_ex@v2"}
+COUNTED_TARGET = "2009"
+COUNTED_FROM = date(2026, 10, 1)
 V1_CODE_SHA = "264ce73"
 HORIZON = 1
 NAN = float("nan")
@@ -94,6 +100,11 @@ OUT_DIR = ROOT / "build" / "cb-comp-h1-shadow"
 SHADOW_DIR = ROOT / "docs" / "research" / "cb-comp-h1-shadow"
 SPEC = "docs/superpowers/specs/2026-10-31-cb-comp-h1-shadow-p06-design.md"
 SPEC_2009 = "docs/superpowers/specs/2026-10-31-cb-comp-p06-tlive-2009-design.md"
+
+
+def is_counted(version: str, month: date) -> bool:
+    """Засчитывается v2 (`@2009`) с 2026-10; v1 (`@2010`) с 2026-10 — контроль."""
+    return version == COUNTED_TARGET and month >= COUNTED_FROM
 
 
 def version_paths(version: str) -> dict:
@@ -396,7 +407,7 @@ def robustness(archive: Path, panel_csv: Path, public_dir: Path, base_prediction
 
     blocks = {"truths": truth_block(robust, truths, primary), "publication": publication}
     result = {
-        "spec": SPEC if version == DEFAULT_VERSION else SPEC_2009, "version": VERSION,
+        "spec": SPEC if version == DEFAULT_VERSION else SPEC_2009, "version": MODEL_VERSIONS[version],
         "v1_code_sha": V1_CODE_SHA, "git_sha": lb.git_sha(),
         "target_version": version, "train_start": all_train[0].isoformat(),
         "decision": "shadow",
@@ -543,11 +554,11 @@ def shadow_forecast(archive: Path, panel_csv: Path, public_dir: Path, month: dat
     public_dates = sorted(str(d) for d in bu.load_public_panel(public_dir / "public_panel.csv")["date"])
     payload = {
         "protocol": "paper shadow, гайд cb-comp-live-model-map §7.8; пороги утверждены 2026-10-31",
-        "spec": SPEC if version == DEFAULT_VERSION else SPEC_2009, "version": VERSION,
+        "spec": SPEC if version == DEFAULT_VERSION else SPEC_2009, "version": MODEL_VERSIONS[version],
         "v1_code_sha": V1_CODE_SHA, "git_sha": lb.git_sha(),
         "target_version": version,
-        # Засчитывается только канон @2010 (решение владельца 2026-10-31); @2009 — параллельный артефакт Task 16.
-        "counted": version == DEFAULT_VERSION,
+        "counted": is_counted(version, month),
+        "role": "challenger (засчитывается)" if is_counted(version, month) else "контроль v1 и fallback",
         "month": month.strftime("%Y-%m"), "cutoff": cutoff.isoformat(), "run_date": run_date.isoformat(),
         "created_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
         "unit": "п.п., м/м SA ИПЦ без КУ (h1-nowcast)",

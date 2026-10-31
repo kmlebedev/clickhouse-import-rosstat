@@ -198,6 +198,14 @@ class VersionTest(unittest.TestCase):
         self.assertEqual(alt["ex_predictions"].parent.name, "cb-comp-h1-weekly-ex-2009")
         self.assertEqual(canon["base_predictions"], ex.BASE_PREDICTIONS)
 
+    def test_counted_version(self):
+        self.assertEqual(sh.MODEL_VERSIONS["2009"], "wk_mix_ex@v2")
+        self.assertEqual(sh.MODEL_VERSIONS["2010"], sh.VERSION)
+        self.assertTrue(sh.is_counted("2009", date(2026, 10, 1)))
+        self.assertTrue(sh.is_counted("2009", date(2027, 3, 1)))
+        self.assertFalse(sh.is_counted("2009", date(2026, 9, 1)))
+        self.assertFalse(sh.is_counted("2010", date(2026, 11, 1)))
+
     def test_r_p0_pins(self):
         months = [date(2023, 1, 1), date(2023, 2, 1)]
         truth = {m: 0.0 for m in months}
