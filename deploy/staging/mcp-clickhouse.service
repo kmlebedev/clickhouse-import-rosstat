@@ -1,11 +1,13 @@
 [Unit]
-Description=mcp-clickhouse (HTTP, Bearer) — read-only MCP для агентов
+Description=mcp-clickhouse (HTTPS, Bearer) — read-only MCP для агентов
 After=network-online.target clickhouse-server.service
 Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/root/.local/bin/uv run --with mcp-clickhouse==0.7.0 --python 3.12 mcp-clickhouse
+# TLS — в самом сервере: запускальщик передаёт uvicorn ssl_certfile/ssl_keyfile
+# (в mcp-clickhouse 0.7.0 нет переменной окружения для серверного TLS).
+ExecStart=/root/.local/bin/uv run --with mcp-clickhouse==0.7.0 --python 3.12 python /usr/local/lib/clickhouse-import-rosstat/mcp_clickhouse_tls.py
 EnvironmentFile=/etc/clickhouse-import-rosstat.env
 Environment="CLICKHOUSE_HOST=localhost"
 Environment="CLICKHOUSE_PORT=8123"
@@ -14,7 +16,12 @@ Environment="CLICKHOUSE_DATABASE=default"
 Environment="CLICKHOUSE_SECURE=false"
 Environment="CLICKHOUSE_MCP_SERVER_TRANSPORT=http"
 Environment="CLICKHOUSE_MCP_BIND_HOST=0.0.0.0"
-Environment="CLICKHOUSE_MCP_BIND_PORT=8000"
+Environment="CLICKHOUSE_MCP_BIND_PORT=8443"
+# Сертификат Let's Encrypt (make deploy-staging-mcp-cert); продление — certbot.timer,
+# deploy-hook перезапускает сервис. Публичное имя для Host-проверки —
+# CLICKHOUSE_MCP_ALLOWED_HOSTS в env-файле (он перекрывает Environment= юнита).
+Environment="MCP_TLS_CERTFILE=/etc/letsencrypt/live/mcp.selfinvesting.ru/fullchain.pem"
+Environment="MCP_TLS_KEYFILE=/etc/letsencrypt/live/mcp.selfinvesting.ru/privkey.pem"
 Restart=always
 RestartSec=10
 StandardOutput=journal
