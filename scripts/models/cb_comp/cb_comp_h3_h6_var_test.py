@@ -141,6 +141,14 @@ class ForecastTest(unittest.TestCase):
         self.assertIsNotNone(exog)
         self.assertEqual(list(exog.columns), ["outlier_2018-01-01"])
 
+    def test_design_matrix_accepts_dataframe_exog(self):
+        train = synthetic_endo(12)
+        exog = pd.DataFrame({"dummy": [0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]}, index=train.index)
+        x_matrix, y_matrix = v.design_matrix(train, 2, exog)
+        self.assertEqual(x_matrix.shape, (10, 1 + 8 + 1))
+        self.assertEqual(y_matrix.shape, (10, 4))
+        self.assertEqual(x_matrix[0, -1], 1.0)
+
     def test_bvar_prior_own_first_lag_is_random_walk(self):
         train = synthetic_endo(60)
         b0, omega = v.minnesota_prior(train, 2, 0)
