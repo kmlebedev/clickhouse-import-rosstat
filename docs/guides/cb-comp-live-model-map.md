@@ -292,7 +292,7 @@ make cb-comp-h1-bs-combo ARGS="--archive <BusinessSurveyCBRCpiForecastingSourceC
 | **Покрытие весов 0,927 / 85–87 групп** | не весь ИПЦ; пропуски 9218/9260/803/930.АГ | импортёр весов 2025–26; политика пропусков |
 | **Нет интервалов** | только точка; нет CRPS/coverage | quantile/conformal слой |
 | **Нет проверки шоков** | 2022 исключён из normal-54; live-поведение в шоке не измерено | Task 5, shock-aware протокол |
-| **Нет MLflow/`ML_LOG`** | run'ы не в `v_ml_error_by_fold`; gate/promotion не готовы | MLflow-паспорт, экспорт |
+| **Нет MLflow/`ML_LOG`** | run'ы не в `v_ml_error_by_fold`; gate/promotion не готовы. P0.6a зеркалит shadow-JSON в `cb_comp_h1_shadow`, но не в `ml_runs` — gate по-прежнему не видит | MLflow-паспорт, экспорт; shadow-зеркало — P0.6a (#462) |
 | **Gate не умеет разные имена моделей** | для пар `v3_bottomup` vs `v2_bottomup` нужен `--champion-model`/`--challenger-model` | follow-up к #184 |
 | **`publication`-вариант не считан** | `late` может быть мягче | robustness-прогон |
 | **Нет walk-forward h3/h6 2022+** | задача #419 требует h1 только; h3/h6 — окно статьи | отдельная арена |
@@ -868,6 +868,7 @@ make cb-comp-h1-bs-combo ARGS="--archive <BusinessSurveyCBRCpiForecastingSourceC
 | `scripts/models/cb_comp/cb_comp_per_code_review.py` | Task 8: per-code МП, X-13, панели | `main` | merged |
 | `scripts/models/cb_comp/cb_comp_h1_weekly_ex.py` | Task 4b: `agg_ex`, `wk_agg_ex`/`wk_mix_ex`, G11, контроли ревью | `g11_check`, `run` | merged (Task 4b) |
 | `scripts/models/cb_comp/cb_comp_h1_shadow.py` | P0.6: ретро-robustness и paper shadow `wk_mix_ex@v1` | `robustness`, `shadow_forecast`, `serve`, `t_live_rt` | PR #455 (P0.6, #453) |
+| `scripts/models/cb_comp/cb_comp_h1_shadow_mlflow.py` | P0.6a: MLflow-зеркало shadow-JSON месяца (только чтение JSON) | `load_payload`, `build_plan`, `log_path`, `collect_paths` | PR (P0.6a, #462) |
 
 ### 8.2. Make-цели
 
@@ -886,6 +887,7 @@ make cb-comp-h1-bs-combo ARGS="--archive <BusinessSurveyCBRCpiForecastingSourceC
 | `make cb-comp-per-code-review` / `-test` | Task 8: per-code разбор; 12 тестов |
 | `make cb-comp-h1-weekly-ex` / `-test` | Task 4b: очищенный недельный агрегат, G11; 22 теста; нужен `predictions.csv` Task 4 |
 | `make cb-comp-h1-shadow-robustness` / `cb-comp-h1-shadow-forecast MONTH=YYYY-MM` / `cb-comp-h1-shadow-test` | P0.6: robustness на входах Task 4b; shadow-JSON месяца в `docs/research/cb-comp-h1-shadow/`; 19 тестов |
+| `make cb-comp-h1-shadow-mlflow` / `cb-comp-h1-shadow-mlflow-test` | P0.6a: зеркало shadow-JSON в MLflow (`cb_comp_h1_shadow`, run на `month`+`json_sha256`); `ARGS="--backfill"` / `ARGS="--month 2026-10 --dry-run"`; 21 офлайн-тест на временном SQLite |
 
 ### 8.3. Артефакты
 
@@ -903,6 +905,8 @@ make cb-comp-h1-bs-combo ARGS="--archive <BusinessSurveyCBRCpiForecastingSourceC
 | `build/cb-comp-groups/panel.csv` | SA 88 групп | нет |
 | `build/cb-comp-parity/{public_panel.csv,sheet_map.csv}` | публичная панель/карта | нет |
 | `build/cb-comp-h1-weekly/`, `build/cb-comp-h1-weekly-ex/`, `build/cb-comp-pooled/`, `build/cb-comp-live-en16/`, `build/cb-comp-h3-h6-var/` | артефакты экспериментов | нет |
+| `docs/research/cb-comp-h1-shadow/<YYYY-MM>.json` | P0.6: paper shadow месяца — источник истины для MLflow-зеркала | да |
+| MLflow `cb_comp_h1_shadow` / run `shadow__<YYYY-MM>__wk_mix_ex@v1` | P0.6a: зеркало shadow-JSON (теги, метрики, `shadow.json`, `run_summary.json`) | нет: `build/mlflow/` gitignored |
 
 ### 8.4. Витрины и таблицы
 

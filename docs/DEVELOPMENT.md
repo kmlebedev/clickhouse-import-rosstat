@@ -72,7 +72,7 @@
 
 Модельные скрипты лежат в `scripts/models/<family>/` (`cpi`, `cb_comp`, `key_rate`, `polyus`), общий код — в `scripts/lib/`; команды ниже уже используют эти пути.
 
-Тесты Python-скриптов пока идут вручную (в CI только Go-проверки; долг — `infra/5.2`, issue #212). Наборы модели ключевой ставки, классификатора шоков и ML-треков (nowcast ИПЦ v1 и v2) — офлайн: транспорт ClickHouse и HTTP-вызов провайдера мокаются, поэтому живая БД и env-переменные не нужны; набор v2 (`scripts/models/cpi/cpi_monthly_test.py`) — **176 тестов**; `--python 3.12` — тот же пин, что в целях `make key-rate-model`, `make shock-classifier`, `make cpi-nowcast`, `make cpi-monthly` и `make key-rate-llm-forecast`. Офлайн-наборы MLflow (`infra/4.2`) — stdlib-only: fake `mlflow` подменяется через `sys.modules`, сеть не используется. Офлайн-набор добычи недельных ИПЦ до 2022 (`scripts/harvest_test.py`) сети не касается вовсе и идёт системным python3:
+Тесты Python-скриптов пока идут вручную (в CI только Go-проверки; долг — `infra/5.2`, issue #212). Наборы модели ключевой ставки, классификатора шоков и ML-треков (nowcast ИПЦ v1 и v2) — офлайн: транспорт ClickHouse и HTTP-вызов провайдера мокаются, поэтому живая БД и env-переменные не нужны; набор v2 (`scripts/models/cpi/cpi_monthly_test.py`) — **176 тестов**; `--python 3.12` — тот же пин, что в целях `make key-rate-model`, `make shock-classifier`, `make cpi-nowcast`, `make cpi-monthly` и `make key-rate-llm-forecast`. Офлайн-наборы MLflow (`infra/4.2`) — stdlib-only: fake `mlflow` подменяется через `sys.modules`, сеть не используется; P0.6a-зеркало shadow-JSON (`cb_comp_h1_shadow_mlflow_test.py`) — реальный `mlflow` на временном SQLite, без сети. Офлайн-набор добычи недельных ИПЦ до 2022 (`scripts/harvest_test.py`) сети не касается вовсе и идёт системным python3:
 
 ```bash
 uv run --with "statsmodels>=0.15" --with pandas --with scikit-learn --with scipy --python 3.12 python3 scripts/models/key_rate/key_rate_model_test.py
@@ -83,6 +83,7 @@ python3 scripts/models/key_rate/key_rate_llm_forecast_test.py
 python3 scripts/lib/ml_experiment_test.py -v
 python3 scripts/mlflow_export_test.py -v
 python3 scripts/mlflow_registry_test.py -v
+uv run --with "mlflow==3.17.1" --python 3.12 python3 scripts/models/cb_comp/cb_comp_h1_shadow_mlflow_test.py -v
 python3 scripts/harvest_test.py
 uv run --with openpyxl --python 3.12 python3 scripts/ppi_sa_weights_panel_test.py -v
 python3 scripts/ppi_sa_parity_test.py -v
