@@ -944,7 +944,8 @@ cb-comp-h1-shadow-mlflow:
 		exit 1; \
 	fi
 	$(MLFLOW_HTTP_ENV) uv run --with "mlflow==$(MLFLOW_VERSION)" --python 3.12 \
-		python3 scripts/models/cb_comp/cb_comp_h1_shadow_mlflow.py $(ARGS)
+		python3 scripts/models/cb_comp/cb_comp_h1_shadow_mlflow.py \
+		$(if $(MLFLOW_TRACKING_URI_EXPLICIT),--tracking-uri $(MLFLOW_TRACKING_URI),) $(ARGS)
 
 cb-comp-h1-shadow-mlflow-test:
 	uv run --with "mlflow==$(MLFLOW_VERSION)" --python 3.12 python3 scripts/models/cb_comp/cb_comp_h1_shadow_mlflow_test.py -v
