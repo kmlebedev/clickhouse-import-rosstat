@@ -1168,8 +1168,9 @@ deploy-staging-mlflow: staging-precheck
 
 # Данные-артефакты DCF/датапаков: без них падают databook_polyus и databook_ugk
 # (импортёры читают относительный путь polyus/data/... и financial/data/...).
-# Копируются в оба возможных рабочих каталога: CLI-прогон из /root и сервисный
-# WorkingDirectory=/root/dagu.
+# Копируются в оба возможных рабочих каталога: CLI-прогон из /root и DAG-и dagu,
+# которым /root/dagu задан полем working_dir (dagu/financial.yaml): без него dagu
+# запускает шаги в каталоге прогона dag-run-work/<dag>/<id>, а не в WorkingDirectory сервиса.
 deploy-staging-data: staging-precheck
 	@ssh $(STAGING_HOST) 'install -d -m 755 /root/polyus/data /root/financial/data /root/dagu/polyus/data /root/dagu/financial/data'
 	@scp -q polyus/data/polyus_datapack_fy2025_new.xlsx $(STAGING_HOST):/root/polyus/data/
