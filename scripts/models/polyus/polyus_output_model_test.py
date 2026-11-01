@@ -41,7 +41,8 @@ class TestReadRefined(unittest.TestCase):
         self.assertIn("'O''HARA'", om.output_sql("O'HARA", 2025))
 
     def test_metric_is_refined_not_dore(self):
-        # 2025: refined 242.2 против dore 230.8. Метрика обязана быть refined.
+        # FY2024: refined 242.2 против dore 230.8; FY2025: 271.7 против 277.2.
+        # Метрика обязана быть refined; значение в моке произвольное.
         with unittest.mock.patch.object(om, "ch_query", return_value=[{"v": 242.2}]):
             self.assertEqual(om.read_refined_output("VERNINSKOYE2", 2025), 242.2)
         # ЛИТЕРАЛ, а не `om.REFINED_METRIC`: подстановка константы в проверку её
