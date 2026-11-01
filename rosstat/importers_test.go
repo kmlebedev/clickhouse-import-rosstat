@@ -38,9 +38,10 @@ const (
 // нет и быть не должно. У rosstat_ipc_weeks Nedel_ipc.xlsx перезаписывается по тому же
 // URL в недельном темпе, равном темпу шага расписания (спека §3.7); у
 // rosstat_bi_cpi_weekly export-URL — новый tmp/exp<uuid> на каждый POST, поэтому HEAD-
-// отпечаток и строка версии недостижимы (спека §6). У остальных девяти файл обновляется
+// отпечаток и строка версии недостижимы (спека §6). У остальных десяти файл обновляется
 // реже прогонов.
 var expectedPublicationCountPoints = map[string]string{
+	"rosstat_cpi_weights":         "SELECT count() FROM rosstat_cpi_weights FINAL",
 	"rosstat_ipc_mes":             "SELECT count() FROM rosstat_ipc_mes FINAL",
 	"rosstat_ipc_weeks_bulletins": "SELECT count() FROM rosstat_ipc_weeks_bulletins FINAL",
 	"rosstat_labour_force_mes":    "SELECT count() FROM rosstat_labour_force_mes FINAL",
@@ -54,8 +55,8 @@ var expectedPublicationCountPoints = map[string]string{
 
 // publicationDeclarer — то, как тест достаёт объявление импортёра из реестра: метод
 // Publication() промотируется из встроенного util.ClickHouseImport, поэтому приведение
-// работает для всех одиннадцати импортёров пакета. У девяти (rosstat_ipc_mes,
-// rosstat_salaries_mes, rosstat_vvp_kvartal, rosstat_labour_force_mes,
+// работает для всех двенадцати импортёров пакета. У десяти (rosstat_cpi_weights,
+// rosstat_ipc_mes, rosstat_salaries_mes, rosstat_vvp_kvartal, rosstat_labour_force_mes,
 // rosstat_ipc_weeks_bulletins, rosstat_okved2, rosstat_ppi_ved, rosstat_ppi_product,
 // rosstat_ppi_weights) объявление непустое,
 // у rosstat_ipc_weeks и rosstat_bi_cpi_weekly — нулевое: точке контроля публикации у

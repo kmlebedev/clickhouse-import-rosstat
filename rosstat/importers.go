@@ -5,15 +5,17 @@ import "github.com/kmlebedev/clickhouse-import-rosstat/chimport"
 // rosstatImporter — запись реестра импортёров пакета: сам импортёр, таблица, в которую
 // он пишет, и запрос количественного чека версии (префлайта). Регистрируется сам
 // импортёр пакета — значение или указатель на его структуру, — а не отдельный
-// безымянный тип-обёртка: все одиннадцать импортёров объявлены структурами со встроенным
+// безымянный тип-обёртка: все двенадцать импортёров объявлены структурами со встроенным
 // util.ClickHouseImport, поэтому Name() и Import() (цикл «DDL → префлайт → точки →
 // производные → версия») промотированы из шаблона, а публикация производных (каталог
 // рядов и витрина v_rosstat_macro — поле AfterImport; у rosstat_okved2 — отдельная
 // витрина v_rosstat_okved2) идёт через шаблон; свой Import()
 // оставляет тот, кому адрес артефакта нужно взять со страницы (rosstat_ipc_weeks,
 // rosstat_ppi_ved, rosstat_ppi_product, rosstat_ppi_weights), у кого артефакт — не один
-// файл, а набор выпусков (rosstat_ipc_weeks_bulletins), кому нужен явный отказ от restore
-// при вычисляемом URL (rosstat_okved2, rosstat_ppi_product, rosstat_ppi_weights), либо
+// файл, а набор выпусков (rosstat_ipc_weeks_bulletins) или две книги (rosstat_cpi_weights:
+// товары и группы), кому нужен явный отказ от restore
+// при вычисляемом URL (rosstat_okved2, rosstat_ppi_product, rosstat_ppi_weights,
+// rosstat_cpi_weights), либо
 // кому export-URL выдаёт RPC и меняется на каждый прогон (rosstat_bi_cpi_weekly). Полей
 // table и countPoints не видит никто, кроме теста
 // TestRosstatImportersPrefixedAndRegistered: по ним проверяется, что импортёр не занял
@@ -68,6 +70,7 @@ var rosstatImporters = []rosstatImporter{
 	{biCpiWeeklyImporter, "rosstat_bi_cpi_weekly", ""},
 	{ppiProductImporter, "rosstat_ppi_product", "SELECT count() FROM rosstat_ppi_product FINAL"},
 	{ppiWeightsImporter, "rosstat_ppi_weights", "SELECT count() FROM rosstat_ppi_weights FINAL"},
+	{cpiWeightsImporter, "rosstat_cpi_weights", "SELECT count() FROM rosstat_cpi_weights FINAL"},
 }
 
 // init — единственная регистрация импортёров Росстата в chimport.Stats. Порядок
