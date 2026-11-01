@@ -10,6 +10,8 @@ import unittest
 from datetime import date
 from pathlib import Path
 
+import pandas as pd
+
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "scripts"))
 sys.path.insert(0, str(ROOT / "scripts" / "models" / "cpi"))
@@ -24,46 +26,40 @@ class Spec:
 
 
 class LiveWeightsTest(unittest.TestCase):
-    def test_reads_view_and_converts_percent(self):
-        sql_seen = []
+    def test_live_items_converts_percent(self):
+        rows = [
+            {"year": 2024, "code": "10", "weight": 9.072},
+            {"year": 2024, "code": "803", "weight": 0.335},
+            {"year": 2026, "code": "10", "weight": 8.821},
+        ]
+        items = bu._live_items(rows)
+        self.assertEqual(items[2024], {"10": 0.09072, "803": 0.00335})
+        self.assertEqual(items[2026], {"10": 0.08821})
 
-        def query(sql):
-            sql_seen.append(sql)
-            return [
-                {"year": 2024, "code": "10", "source_file": "CPR_Gr-Tov-RF", "weight": 9.072},
-                {"year": 2024, "code": "803", "source_file": "CPR_tov_RF", "weight": 0.335},
-                {"year": 2026, "code": "10", "source_file": "CPR_Gr-Tov-RF", "weight": 8.821},
-                {"year": 2026, "code": "10", "source_file": "CPR_tov_RF", "weight": 8.821},
-            ]
-
-        weights = bu.load_live_weights([2024, 2026], [Spec("10"), Spec("803")], query=query)
-        self.assertEqual(weights[2024], {"10": 0.09072, "803": 0.00335})
-        self.assertEqual(weights[2026], {"10": 0.08821})
-        self.assertEqual(len(sql_seen), 1)
-        self.assertIn("v_rosstat_cpi_weights", sql_seen[0])
-        self.assertIn("IN (2024, 2026)", sql_seen[0])
-        self.assertIn("FORMAT JSON", sql_seen[0])
-
-    def test_group_and_item_conflict_is_error(self):
-        def query(_sql):
-            return [
-                {"year": 2024, "code": "803", "source_file": "CPR_Gr-Tov-RF", "weight": 0.5},
-                {"year": 2024, "code": "803", "source_file": "CPR_tov_RF", "weight": 0.335},
-            ]
-
-        with self.assertRaises(ValueError):
-            bu.load_live_weights([2024], [Spec("803")], query=query)
+    def test_live_query_reads_item_file_only(self):
+        sql = bu.live_weights_query([2024, 2026])
+        self.assertIn("v_rosstat_cpi_weights", sql)
+        self.assertIn("source_file = 'CPR_tov_RF'", sql)
+        self.assertIn("IN (2024, 2026)", sql)
+        self.assertIn("NOT startsWith(code, 'name:')", sql)
+        self.assertIn("FORMAT JSON", sql)
 
     def test_missing_code_is_absent_not_zero(self):
-        def query(_sql):
-            return [{"year": 2024, "code": "10", "source_file": "CPR_Gr-Tov-RF", "weight": 9.072}]
+        items = bu._live_items([{"year": 2024, "code": "10", "weight": 9.072}])
+        self.assertNotIn("9260", items[2024])
 
-        weights = bu.load_live_weights([2024], [Spec("10"), Spec("9260")], query=query)
-        self.assertNotIn("9260", weights[2024])
-
-    def test_empty_years_or_codes(self):
-        self.assertEqual(bu.load_live_weights([], [Spec("10")], query=lambda _s: []), {})
-        self.assertEqual(bu.load_live_weights([2024], [], query=lambda _s: []), {})
+    def test_aggregate_year_weights_matches_archive_formula(self):
+        dictionary = pd.DataFrame(
+            [
+                {"code": "1", "уровень": 1, "уровень_1": "1", "уровень_2": "", "уровень_3": "", "уровень_4": "", "уровень_5": "", "уровень_6": ""},
+                {"code": "10", "уровень": 3, "уровень_1": "1", "уровень_2": "1", "уровень_3": "10", "уровень_4": "", "уровень_5": "", "уровень_6": ""},
+                {"code": "100", "уровень": 7, "уровень_1": "1", "уровень_2": "1", "уровень_3": "10", "уровень_4": "100", "уровень_5": "", "уровень_6": ""},
+                {"code": "110", "уровень": 7, "уровень_1": "1", "уровень_2": "1", "уровень_3": "10", "уровень_4": "100", "уровень_5": "", "уровень_6": ""},
+            ]
+        )
+        weights = pd.DataFrame({"code": ["100", "110"], "weight": [0.03, 0.02]})
+        result = bu._aggregate_year_weights(weights, dictionary, [Spec("10")])
+        self.assertAlmostEqual(result["10"], 0.05)
 
     def test_load_weights_dispatch(self):
         calls = {}
@@ -72,8 +68,8 @@ class LiveWeightsTest(unittest.TestCase):
             calls["archive"] = (archive, tuple(years), len(specs))
             return {2024: {"10": 0.1}}
 
-        def fake_live(years, specs, query=None):
-            calls["live"] = (tuple(years), len(specs))
+        def fake_live(archive, years, specs, query=None):
+            calls["live"] = (archive, tuple(years), len(specs))
             return {2024: {"10": 0.1}}
 
         original_archive, original_live = bu.load_archive_weights, bu.load_live_weights

@@ -131,6 +131,11 @@ def build_report(archive: Path, panel_csv: Path, years=LIVE_YEARS) -> dict:
     codes = [spec.code for spec in specs]
     archive_weights = bu.load_weights(archive, ARCHIVE_YEARS, specs, source="archive")
     live_weights = bu.load_weights(archive, years, specs, source="live")
+    if not live_weights:
+        raise SystemExit(
+            "v_rosstat_cpi_weights пуста: сначала `make import STAT=rosstat_cpi_weights` "
+            "(P0.4; источник rosstat.gov.ru на 2026-11-01 недоступен)"
+        )
     comparison = compare_weights(live_weights, archive_weights)
     gate_ok, problems = compare_gate(comparison)
 

@@ -25,6 +25,7 @@ const (
 	// Сумма товарного листа (без итоговой строки «Все товары и услуги») — 100 %.
 	cpiWeightsSumTarget    = 100.0
 	cpiWeightsSumTolerance = 0.5
+	cpiWeightsSumMin       = 90.0
 
 	// Варианты листа 2022: публикация разбита на «до 01.04» и «с 01.04».
 	cpiWeightsVariantBefore = "before-2022-04-01"
@@ -64,11 +65,12 @@ type cpiWeightKey struct {
 // cpiWeightColumns — найденные колонки шапки. code и name совпадают, когда
 // код и название лежат в одной ячейке.
 type cpiWeightColumns struct {
-	header int
-	code   int
-	name   int
-	weight int
-	level  int
+	header   int
+	code     int
+	name     int
+	weight   int
+	level    int
+	combined bool
 }
 
 // cpiWeightSheetMeta разбирает имя листа: год и остаток подписи.
@@ -132,8 +134,11 @@ func cpiWeightColumnsFor(rows [][]string) (cpiWeightColumns, bool) {
 				if columns.code < 0 {
 					columns.code = j
 				}
-				if strings.Contains(label, "наимен") && columns.name < 0 {
-					columns.name = j
+				if strings.Contains(label, "наимен") {
+					columns.combined = true
+					if columns.name < 0 {
+						columns.name = j
+					}
 				}
 			}
 			if columns.name < 0 && strings.Contains(label, "наимен") {
@@ -143,16 +148,19 @@ func cpiWeightColumnsFor(rows [][]string) (cpiWeightColumns, bool) {
 		if columns.weight < 0 {
 			continue
 		}
-		if columns.code < 0 && columns.name >= 0 {
-			columns.code = columns.name
+		if columns.code < 0 && columns.name < 0 && columns.weight > 0 {
+			// Макет «код  название | СПР»: одна колонка до веса.
+			columns.code, columns.name, columns.combined = 0, 0, true
 		}
-		if columns.name < 0 && columns.code >= 0 {
-			columns.name = columns.code
+		if columns.weight < 0 && columns.name >= 0 {
+			// Макет 2024-винтажа: «N п/п | Код товара | Наименование | вес» —
+			// у колонки веса нет подписи «СПР», она сразу после названия.
+			columns.weight = columns.name + 1
 		}
-		if columns.code < 0 && columns.weight > 0 {
-			columns.code, columns.name = 0, 0
-		}
-		if columns.code >= 0 {
+		// Лист без кода (групповой файл 2016–2024) — это не ошибка: у него есть
+		// название и вес, а код в источнике не публикуется. Такие строки получают
+		// синтетический ключ в parseCPIWeightsSheet.
+		if columns.name >= 0 || columns.code >= 0 {
 			return columns, true
 		}
 	}
@@ -227,6 +235,14 @@ func cpiWeightIsTotal(point cpiWeightPoint) bool {
 	return strings.HasPrefix(name, "все товары")
 }
 
+// cpiWeightsNameCode — синтетический ключ строки без кода: нормализованное
+// название с префиксом name:. Префикс отделяет такие строки от кодов Росстата
+// и позволяет каталогу их пропускать.
+func cpiWeightsNameCode(name string) string {
+	text := strings.ToLower(strings.Join(strings.Fields(strings.ReplaceAll(name, "\n", " ")), " "))
+	return "name:" + text
+}
+
 // cpiWeightLevel разбирает колонку уровня, если она есть.
 func cpiWeightLevel(cell string, rowNumber int) (uint8, error) {
 	text := strings.TrimSpace(cell)
@@ -264,9 +280,16 @@ func parseCPIWeightsSheet(rows, formattedRows [][]string, sheet, file string, ye
 			continue
 		}
 		var code, name string
-		if columns.code == columns.name {
-			code, name = cpiWeightSplitCodeName(cpiWeightCell(formatted, columns.code))
-		} else {
+		switch {
+		case columns.combined:
+			code, name = cpiWeightSplitCodeName(cpiWeightCell(formatted, columns.name))
+		case columns.code < 0:
+			// Групповой файл 2016–2024: кода в источнике нет. Синтетический ключ
+			// `name:<нормализованное название>` держит строку в ключе таблицы и явно
+			// говорит, что это не код Росстата; модель читает только товарный файл.
+			name = cpiWeightCell(formatted, columns.name)
+			code = cpiWeightsNameCode(name)
+		default:
 			code = cpiWeightCell(formatted, columns.code)
 			name = cpiWeightCell(formatted, columns.name)
 			if code == "" && name != "" {
@@ -302,6 +325,9 @@ func parseCPIWeightsSheet(rows, formattedRows [][]string, sheet, file string, ye
 	if skipped > len(points)/10 {
 		return nil, fmt.Errorf("%s: лист %s: пропущено %d строк из %d — макет изменился", file, sheet, skipped, len(points)+skipped)
 	}
+	if err := cpiWeightsNormalizeScale(file, sheet, points); err != nil {
+		return nil, err
+	}
 	if err := cpiWeightsValidateSheetSum(file, sheet, points); err != nil {
 		return nil, err
 	}
@@ -315,11 +341,38 @@ func cpiWeightsMinRowsFor(file string) int {
 	return cpiWeightsItemsMinRows
 }
 
+// cpiWeightsNormalizeScale приводит лист к процентам. Винтажи источника
+// публикуют вес и в долях (сумма ≈ 1), и в процентах (сумма ≈ 100): 2024-винтаж
+// — доли, 2025/2026 — проценты. Определение по сумме без итоговой строки;
+// масштаб применяется ко всем точкам листа, включая итоговую.
+func cpiWeightsNormalizeScale(file, sheet string, points []cpiWeightPoint) error {
+	sum := 0.0
+	for _, point := range points {
+		if !cpiWeightIsTotal(point) {
+			sum += point.weight
+		}
+	}
+	switch {
+	case sum > 0 && sum <= 2:
+		for i := range points {
+			points[i].weight *= 100
+		}
+	case file == cpiWeightsFileItems && (sum < cpiWeightsSumMin || sum > cpiWeightsSumTarget+cpiWeightsSumTolerance):
+		return fmt.Errorf("%s: лист %s: сумма весов %.6f не похожа ни на доли, ни на проценты", file, sheet, sum)
+	}
+	return nil
+}
+
 // cpiWeightsValidateSheetSum проверяет сумму листа без итоговой строки. Для
 // товарного файла сумма обязана быть 100 ± 0,5 в каждом году. Для группового
 // файла: если он содержит только верхний уровень, сумма тоже 100; файл со всеми
 // уровнями даёт сумму больше 100 — тогда проверка не применяется (уровни
 // пересекаются, нормировать нечем).
+//
+// 2025-винтаж товарного файла не дотягивает до 100 на вес объединённой группы
+// «Воздушный и железнодорожный транспорт» (0,859 %): в нём нет отдельных строк
+// 9260/9290. Это свойство публикации, а не ошибка разбора, поэтому нижняя
+// граница — 90 %, а гэп называется в отчёте cb-comp-weights-check.
 func cpiWeightsValidateSheetSum(file, sheet string, points []cpiWeightPoint) error {
 	sum := 0.0
 	for _, point := range points {
@@ -327,10 +380,14 @@ func cpiWeightsValidateSheetSum(file, sheet string, points []cpiWeightPoint) err
 			sum += point.weight
 		}
 	}
-	if file == cpiWeightsFileItems || sum <= cpiWeightsSumTarget+cpiWeightsSumTolerance {
-		if diff := sum - cpiWeightsSumTarget; diff > cpiWeightsSumTolerance || diff < -cpiWeightsSumTolerance {
-			return fmt.Errorf("%s: лист %s: сумма весов %.6f, ожидалось %.1f ± %.1f", file, sheet, sum, cpiWeightsSumTarget, cpiWeightsSumTolerance)
+	if file == cpiWeightsFileItems {
+		if sum < cpiWeightsSumMin || sum > cpiWeightsSumTarget+cpiWeightsSumTolerance {
+			return fmt.Errorf("%s: лист %s: сумма весов %.6f, ожидалось %.1f…%.1f", file, sheet, sum, cpiWeightsSumMin, cpiWeightsSumTarget+cpiWeightsSumTolerance)
 		}
+		return nil
+	}
+	if sum < cpiWeightsSumMin {
+		return fmt.Errorf("%s: лист %s: сумма весов %.6f, ожидалось не меньше %.1f", file, sheet, sum, cpiWeightsSumMin)
 	}
 	return nil
 }

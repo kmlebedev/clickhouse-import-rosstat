@@ -273,3 +273,82 @@ func TestCPIWeightsImporterDeclared(t *testing.T) {
 		t.Errorf("Publication() = %+v", pub)
 	}
 }
+
+// TestCPIWeightsGroupFileFixture — реальный групповой файл Росстата (Wayback-снимок
+// 2026 года, 28 листов): 2016–2024 без кодов (синтетический name:), 2025–2026 с
+// локальными кодами, 2022 — два варианта. Фикстура — публичный XLSX, не архив CB_COMP.
+func TestCPIWeightsGroupFileFixture(t *testing.T) {
+	f, err := excelize.OpenFile("testdata/cpi_weights_groups.xlsx")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = f.Close() })
+	points, err := parseCPIWeights(f, cpiWeightsFileGroups)
+	if err != nil {
+		t.Fatalf("parseCPIWeights: %v", err)
+	}
+	if len(points) < 15000 {
+		t.Fatalf("точек %d, ожидалось больше 15 000", len(points))
+	}
+	byKey := make(map[cpiWeightKey]cpiWeightPoint, len(points))
+	variants := map[string]bool{}
+	for _, point := range points {
+		key := cpiWeightKey{year: point.year, variant: point.variant, file: point.file, code: point.code}
+		byKey[key] = point
+		if point.year == 2022 {
+			variants[point.variant] = true
+		}
+	}
+	if !variants[cpiWeightsVariantBefore] || !variants[cpiWeightsVariantFrom] {
+		t.Errorf("варианты 2022: %v, ожидались before и from", variants)
+	}
+	nameOnly := byKey[cpiWeightKey{year: 2024, file: cpiWeightsFileGroups, code: "name:мясопродукты"}]
+	if nameOnly.weight != 9.072 {
+		t.Errorf("2024 «Мясопродукты» = %v, ожидалось 9.072", nameOnly.weight)
+	}
+	coded := byKey[cpiWeightKey{year: 2026, file: cpiWeightsFileGroups, code: "10"}]
+	if coded.weight != 8.821 {
+		t.Errorf("2026 код 10 = %v, ожидалось 8.821", coded.weight)
+	}
+	total := byKey[cpiWeightKey{year: 2024, file: cpiWeightsFileGroups, code: "name:все товары и услуги"}]
+	if total.weight != 100 {
+		t.Errorf("2024 итоговая строка = %v, ожидалось 100", total.weight)
+	}
+}
+
+// TestCPIWeightsItemsFileFixture — реальный товарный файл Росстата (Wayback-снимок
+// 2025 года, 22 листа-года): код, название и СПР; 2022 — один лист (в групповом
+// файле он разбит на два). Проверяет макет, сумму и крайние годы.
+func TestCPIWeightsItemsFileFixture(t *testing.T) {
+	f, err := excelize.OpenFile("testdata/cpi_weights_items.xlsx")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = f.Close() })
+	points, err := parseCPIWeights(f, cpiWeightsFileItems)
+	if err != nil {
+		t.Fatalf("parseCPIWeights: %v", err)
+	}
+	if len(points) < 10000 {
+		t.Fatalf("точек %d, ожидалось больше 10 000", len(points))
+	}
+	byKey := make(map[cpiWeightKey]cpiWeightPoint, len(points))
+	for _, point := range points {
+		key := cpiWeightKey{year: point.year, variant: point.variant, file: point.file, code: point.code}
+		byKey[key] = point
+	}
+	if got := byKey[cpiWeightKey{year: 2024, file: cpiWeightsFileItems, code: "111"}].weight; got < 0.647 || got > 0.648 {
+		t.Errorf("2024 код 111 = %v, ожидалось 0.648", got)
+	}
+	if got := byKey[cpiWeightKey{year: 2025, file: cpiWeightsFileItems, code: "111"}].weight; got != 0.627 {
+		t.Errorf("2025 код 111 = %v, ожидалось 0.627", got)
+	}
+	if got := byKey[cpiWeightKey{year: 2024, file: cpiWeightsFileItems, code: "1"}].weight; got != 100 {
+		t.Errorf("2024 итоговая строка = %v, ожидалось 100", got)
+	}
+	for year := uint16(2004); year <= 2025; year++ {
+		if _, ok := byKey[cpiWeightKey{year: year, file: cpiWeightsFileItems, code: "1"}]; !ok {
+			t.Errorf("нет листа за %d", year)
+		}
+	}
+}
