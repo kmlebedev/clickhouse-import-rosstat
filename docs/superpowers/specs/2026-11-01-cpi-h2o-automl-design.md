@@ -130,7 +130,17 @@
 - Паспорт: `ML_LOG=1`, эксперимент `cpi_v4_h2o`, `window=S_L09`, `unit="pp"`; `config_hash` включает seed, `max_models`, cut-off селектора, frozen-config sha256, `quick`; MLflow — по умолчанию.
 - Отчёт: `docs/research/2026-11-01-cpi-h2o-automl.md` — числа, DM/CI/MDE, robustness, «что не проверено».
 
-## 9. Definition of Done
+## 10. Поправка 2026-11-01: факты окружения и селектора (gate не меняется)
+
+Внесена после прогона селектора и до refit; фиксирует только факты, условия §5 не изменяются.
+
+- **Java:** OpenJDK 17.0.21 (brew `openjdk@17`); H2O 3.46.0.12 поднялся, кластер `cpi_v4_h2o`, 1 поток.
+- **Алгоритмы:** H2O OSS 3.46 в этом окружении не содержит XGBoost (`AutoML: XGBoost is not available; skipping it`), поэтому пространство challenger'ов — GBM, DRF, GLM (DeepLearning и StackedEnsemble исключены спекой §3).
+- **Кадр селектора:** 78 origin'ов, 2009-06…2015-11, sha256 `b0e3403a02fc…`; 3 временных блока.
+- **Стабильность:** seed `20261018` → лидер `GBM` (CV RMSE 0,5110), seed `20261019` → лидер `DRF` (CV RMSE 0,5090). Семейства разошлись, `selection_stable=false`; по правилу §3 заморожен `DRF` (меньший средний CV-RMSE), модель `DRF_1`, `min_rows=1`, `ntrees=23`.
+- **Следствие для интерпретации:** challenger — это DRF с параметрами, выбранными AutoML на до-тестовых данных; вывод формулируется как «AutoML-селектор выбрал DRF», а не «H2O лучше CatBoost» вне этого выбора.
+
+## 11. Definition of Done
 
 - [ ] Issue и пункт роадмапа созданы; `In Progress` до первого коммита.
 - [ ] Спека и план — первые коммиты ветки `exp/cpi-h2o-automl`.
