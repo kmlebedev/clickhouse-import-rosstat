@@ -118,6 +118,13 @@ func (s *CPIWeightsStat) Import(ctx context.Context, conn driver.Conn) (count in
 		return 0, fmt.Errorf("%s: режим восстановления (%s=%s) не поддержан: DataUrl вычисляется со страницы, версия архива привязана к файлу с горизонтом",
 			rosstatCPIWeightsTable, util.EnvArchiveAction, util.ArchiveActionRestore)
 	}
+	// DDL — до сети, как в шаблоне: если страница источника недоступна, таблица всё
+	// равно создана и следующий прогон не начинает с нуля.
+	for _, sql := range s.CreateTable {
+		if err = conn.Exec(ctx, fmt.Sprintf(sql, s.TableName)); err != nil {
+			return 0, err
+		}
+	}
 	itemsURL, groupsURL, err := cpiWeightsLinks()
 	if err != nil {
 		return 0, err

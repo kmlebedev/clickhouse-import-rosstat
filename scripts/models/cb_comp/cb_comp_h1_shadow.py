@@ -321,7 +321,7 @@ def weekly_context(archive: Path, data: dict) -> dict:
     return {
         "weekly": weekly,
         "leaf_weights": wg.load_leaf_weights(archive),
-        "group_weights": bu.load_weights(archive, lb.WEIGHT_YEARS, data["specs"]),
+        "group_weights": bu.load_weights(archive, lb.WEIGHT_YEARS, data["specs"], source="archive"),
     }
 
 

@@ -267,9 +267,18 @@ def _level_map(dictionary: pd.DataFrame) -> dict:
     return level_map
 
 
-def _year_weights(archive: Path, year: int, specs: list) -> dict:
-    """Веса групп за год: листья (уровень 7) агрегируются по уровню группы."""
-    weights = pd.read_excel(weights_path(archive), sheet_name=str(year))
+def _year_weights(archive: Path, year: int, specs: list, book=None) -> dict:
+    """Веса групп за год: листья (уровень 7) агрегируются по уровню группы.
+
+    Отсутствующий лист года — не ошибка: архив кончается 2024, а live-набор
+    годов может тянуться до 2026. `book` передаётся, когда читается несколько
+    лет подряд: файл открывается один раз.
+    """
+    if book is None:
+        book = pd.ExcelFile(weights_path(archive))
+    if str(year) not in book.sheet_names:
+        return None
+    weights = pd.read_excel(book, sheet_name=str(year))
     weights["code"] = weights["код_товара_услуги"].map(normalize_code)
     weights["okato"] = weights["окато_код"].map(normalize_code)
     weights = weights[weights["okato"] == "643"]
@@ -302,9 +311,83 @@ def _year_weights(archive: Path, year: int, specs: list) -> dict:
     return result
 
 
-def load_weights(archive: Path, years, specs: list) -> dict:
-    """`{год: {код: вес}}` для компонент и ЖКУ; годы — веса тестовых месяцев."""
-    return {year: _year_weights(archive, year, specs) for year in years}
+def load_archive_weights(archive: Path, years, specs: list) -> dict:
+    """`{год: {код: доля}}` из архива CB_COMP; годы без листа пропускаются."""
+    book = pd.ExcelFile(weights_path(archive))
+    result = {}
+    for year in years:
+        table = _year_weights(archive, year, specs, book)
+        if table is not None:
+            result[int(year)] = table
+    return result
+
+
+LIVE_WEIGHTS_VIEW = "v_rosstat_cpi_weights"
+LIVE_WEIGHTS_GROUP_FILE = "CPR_Gr-Tov-RF"
+LIVE_WEIGHTS_ITEM_FILE = "CPR_tov_RF"
+# Live-набор годов: архив кончается 2024, а для месяцев 2026 нужен вес 2025.
+LIVE_WEIGHT_YEARS = tuple(range(2016, 2027))
+
+
+def load_live_weights(years, specs: list, query=None) -> dict:
+    """`{год: {код: доля}}` из витрины `v_rosstat_cpi_weights`.
+
+    Витрина хранит проценты как в публикации, API модели — доли архива:
+    поэтому `/100`. Групповой файл — приоритет (в нём опубликован вес группы),
+    товарный — фолбэк; если оба дали разные значения для одного кода, это
+    ошибка данных, а не молчаливый выбор. Отсутствующий код — отсутствие веса,
+    а не ноль.
+    """
+    if query is None:
+        from lib.clickhouse import ch_query as query
+
+    years = sorted({int(year) for year in years})
+    codes = sorted({spec.code for spec in specs} | {UTILITIES_CODE})
+    if not years or not codes:
+        return {}
+    codes_sql = ", ".join("'" + code.replace("'", "''") + "'" for code in codes)
+    rows = query(
+        "SELECT year, code, source_file, weight FROM " + LIVE_WEIGHTS_VIEW + " "
+        f"WHERE year IN ({', '.join(str(year) for year in years)}) "
+        f"AND code IN ({codes_sql}) "
+        "ORDER BY year, code, source_file FORMAT JSON"
+    )
+    by_year = {}
+    for row in rows:
+        year = int(row["year"])
+        code = str(row["code"])
+        source = str(row["source_file"])
+        weight = float(row["weight"])
+        by_year.setdefault(year, {}).setdefault(code, {})[source] = weight
+    result = {}
+    for year, table in by_year.items():
+        result[year] = {}
+        for code, files in table.items():
+            group = files.get(LIVE_WEIGHTS_GROUP_FILE)
+            item = files.get(LIVE_WEIGHTS_ITEM_FILE)
+            if group is not None and item is not None and abs(group - item) > 1e-6:
+                raise ValueError(
+                    f"live weights: {year} {code}: группа {group} и товар {item} расходятся"
+                )
+            value = group if group is not None else item
+            result[year][code] = value / 100.0
+    return result
+
+
+def load_weights(archive: Path, years, specs: list, source: str = "archive", query=None) -> dict:
+    """`{год: {код: вес}}` для компонент и ЖКУ.
+
+    `source="archive"` — прежний путь (архив CB_COMP 2016–2024), по умолчанию:
+    исторические прогоны и пины воспроизводятся без ClickHouse.
+    `source="live"` — витрина `v_rosstat_cpi_weights` (2016–2026). Переключение
+    базовой модели на live — явным аргументом в вызывающем скрипте (Task 9,
+    live bottom-up, gate); замороженные P0.6/Task 4/4b остаются на архиве.
+    """
+    if source == "live":
+        return load_live_weights(years, specs, query=query)
+    if source == "archive":
+        return load_archive_weights(archive, years, specs)
+    raise ValueError(f"неизвестный источник весов: {source!r} (ожидалось live|archive)")
 
 
 def ensure_panel_csv(archive: Path, out_dir: Path, require_full: bool = False) -> tuple:

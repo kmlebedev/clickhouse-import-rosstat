@@ -505,7 +505,7 @@ def run(archive: Path, panel_csv: Path, public_dir: Path, base_predictions: Path
     weekly = audit.load_weekly()
     dictionary = wg.load_group_dictionary(archive)
     leaf_weights = wg.load_leaf_weights(archive)
-    group_weights = bu.load_weights(archive, lb.WEIGHT_YEARS, data["specs"])
+    group_weights = bu.load_weights(archive, lb.WEIGHT_YEARS, data["specs"], source="archive")
     leaf_2024 = wg.year_table(leaf_weights, 2024)
     group_2024 = group_weights.get(2024, {}).get(UTILITIES_CODE, 0.0)
     utilities = utilities_summary(weekly, dictionary, leaf_2024, group_2024)
