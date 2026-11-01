@@ -274,3 +274,31 @@ func TestParseDatapackUnknownBlock(t *testing.T) {
 		}
 	}
 }
+
+// TestParseDatapackCrossBlockDuplicate — межблочный guard ловит неизвестный
+// блок со смешанным регистром, который all-caps guard по брифу пропускает.
+//
+// `UnknownAsset` в B84 не all-caps, поэтому разбор не падает сразу, а пишет
+// warn и оставляет строки в предыдущем активе (`TITIMUKHTA`), зато фиксирует
+// границу блока. Ключи `(Table, Name, Data, Date)` нового блока сталкиваются с
+// собственными ключами `TITIMUKHTA` — это ровно дефект 1H25 (`VERNINSKOYE**`
+// уехал в TITIMUKHTA и дал 208 stale-строк), только без all-caps. Ошибка должна
+// быть про дубль ключа: all-caps путь покрыт `TestParseDatapackUnknownBlock`.
+func TestParseDatapackCrossBlockDuplicate(t *testing.T) {
+	path := datapackFixtureWithLabel(t, "UnknownAsset")
+
+	_, _, err := parseDatapack(path)
+	if err == nil {
+		t.Fatal("parseDatapack must fail on a key repeated across blocks")
+	}
+
+	for _, want := range []string{"duplicate key", "TITIMUKHTA"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not contain %q", err, want)
+		}
+	}
+
+	if strings.Contains(err.Error(), "unknown asset block label") {
+		t.Errorf("mixed-case label must go through the duplicate guard, not the all-caps one: %v", err)
+	}
+}
