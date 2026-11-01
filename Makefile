@@ -901,6 +901,17 @@ cb-comp-h1-bs-combo-test:
 	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/cb_comp/cb_comp_h1_bs_combo_test.py -v
 	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --python 3.12 python3 scripts/models/cb_comp/cb_comp_mlog_test.py -v
 
+# Task 17 #501: CatBoost vs LightGBM/XGBoost на том же конвейере Task 9 —
+# плечи defaults/matched, точность (RMSE/ratio/DM/CI/MCS) и время fit;
+# ML_LOG=1 — паспорта в эксперименте cb_comp_88_groups (MLflow + ml_runs).
+# Входы — как у cb-comp-h1-bs-combo; в ClickHouse не пишет.
+cb-comp-backend-compare:
+	@$(MLFLOW_PREFLIGHT)
+	$(MLFLOW_ENV) $(MLFLOW_HTTP_ENV) uv run $(MLFLOW_PKG) --with "catboost==1.2.10" --with "lightgbm==4.7.0" --with "xgboost==3.4.1" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --with arch --with "holidays>=0.60" --python 3.12 python3 scripts/models/cb_comp/cb_comp_backend_compare.py $(ARGS)
+
+cb-comp-backend-compare-test:
+	uv run --with "catboost==1.2.10" --with "lightgbm==4.7.0" --with "xgboost==3.4.1" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/cb_comp/cb_comp_backend_compare_test.py -v
+
 # Task 10 #438: pooled CatBoost на 87 группах (окно 2016+ / control 2010-03+),
 # годовая переподготовка без утечки; G10 против combo3, MCS 90 %.
 # Входы — как у cb-comp-h1-bs-combo.
