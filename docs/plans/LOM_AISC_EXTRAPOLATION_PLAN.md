@@ -101,6 +101,8 @@ databook_polyus (CH)  ──факт добычи 2021–2025──┐
 
 ### 3.2 Модули
 
+> **Историческая редакция (2026-10-11).** Таблица ниже описывает исполненный шаг AISC-сида: предикат `read_actuals` (`Total Dore gold output` + `toYear(date)`) — исторический, см. оговорку 2026-11-01 ниже. Текущий Go-сид читает `Total refined gold output` по точной дате `makeDate(year + 1, 1, 1)`; числа и формулировки таблицы не переписаны.
+
 | Модуль | Ответственность |
 |---|---|
 | `config` | env-конфигурация; константы: `ASSETS` (5 канонических имён), `CALIBRATION_YEARS = 2018..2021`, `VALIDATION_YEARS = 2022..2024`, `PLAN_BASE_YEAR = 2025`, `MINE_LIFE_YEARS` (10/13/24/15/15 — **те же**, что в `dcf/mine_plans_seed.go`), `ESCALATION` (ИПЦ по годам — пока константы, см. §3.6). |
@@ -113,6 +115,8 @@ databook_polyus (CH)  ──факт добычи 2021–2025──┐
 | `emit_sql` | DML-батчи для `mine_plans`: `INSERT INTO mine_plans (...) VALUES ...`, батчи по 500 строк, все 10 колонок, `NULL` в `grade_gpt`. |
 | `emit_csv` | `polyus_lom_reconciled_long.csv` — колонки long-формата для ручного контроля (включая рублёвую справку). |
 | `validate` | Guard'ы: невязка < 1 %, `aisc ≥ tcc`, `r̄_i > 0`, добыча ≥ 0, годы плана ⊆ `[2000, 2100)`, все 5 активов на месте. |
+
+> **Оговорка 2026-11-01 (#484).** Предикат `read_actuals` — исторический: `dcf/mine_plans_import.go` теперь читает `Total refined gold output` по точной дате `date = makeDate(year + 1, 1, 1)`, а не `Total Dore gold output` через `toYear(date)`. `scripts/models/polyus/aisc.py` и сгенерированный им сид `sql/dcf_mine_plans_seed.sql` оставлены на прежнем предикате (`dore`, `toYear`) — план описывает исполненный шаг AISC-сида, а не текущий Go-сид.
 
 ### 3.3 Единицы (сверены с DDL)
 

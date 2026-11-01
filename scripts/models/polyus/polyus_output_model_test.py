@@ -41,7 +41,8 @@ class TestReadRefined(unittest.TestCase):
         self.assertIn("'O''HARA'", om.output_sql("O'HARA", 2025))
 
     def test_metric_is_refined_not_dore(self):
-        # 2025: refined 242.2 против dore 230.8. Метрика обязана быть refined.
+        # FY2024: refined 242.2 против dore 230.8; FY2025: 271.7 против 277.2.
+        # Метрика обязана быть refined; значение в моке произвольное.
         with unittest.mock.patch.object(om, "ch_query", return_value=[{"v": 242.2}]):
             self.assertEqual(om.read_refined_output("VERNINSKOYE2", 2025), 242.2)
         # ЛИТЕРАЛ, а не `om.REFINED_METRIC`: подстановка константы в проверку её
@@ -57,6 +58,17 @@ class TestReadRefined(unittest.TestCase):
         with unittest.mock.patch.object(om, "ch_query", return_value=[]):
             with self.assertRaises(om.OutputDataError):
                 om.read_refined_output("VERNINSKOYE2", 2100)
+
+    def test_year_is_exact_date_not_to_year(self):
+        # Годовое наблюдение датировано 1 января СЛЕДУЮЩЕГО года (FY2025 →
+        # 2026-01-01). `toYear(date) = 2025` вернул бы FY2024 — ровно тот
+        # сдвиг на год, который #484 исправляет в Go-сиде; здесь тот же
+        # предикат, поэтому запрос обязан адресовать год ТОЧНОЙ датой.
+        sql = om.output_sql("VERNINSKOYE2", 2025)
+        self.assertIn("date = makeDate(2025 + 1, 1, 1)", sql)
+        self.assertNotIn("toYear(date)", sql)
+        # И для другого года — та же форма: FY2024 читается 2025-01-01.
+        self.assertIn("date = makeDate(2024 + 1, 1, 1)", om.output_sql("VERNINSKOYE2", 2024))
 
     def test_implausible_year_raises(self):
         with self.assertRaises(om.OutputDataError):

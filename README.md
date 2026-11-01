@@ -224,7 +224,7 @@ make mlflow-down
 
 ### Подключение как плагин LLM-клиента
 
-LLM-плагин [`rosstat-mcp`](https://github.com/kmlebedev/rosstat-mcp) живёт в отдельном репозитории и даёт только read-only MCP: сервер `rosstat-staging` — `https://mcp.selfinvesting.ru:8443/mcp` (витрины `v_*` staging, включая point-in-time слой). Ролевые скилы [`.kimi-code/skills/`](.kimi-code/skills/) — для сессий, работающих в этом репозитории, и плагином не публикуются.
+LLM-плагин [`rosstat-mcp`](https://github.com/kmlebedev/rosstat-mcp) живёт в отдельном репозитории и даёт read-only MCP: сервер `rosstat-staging` — `https://mcp.selfinvesting.ru:8443/mcp` (витрины `v_*` staging, включая point-in-time слой) — и один скил `rosstat-sql`: как найти ряд и писать оптимальные запросы ClickHouse к этим витринам (с версии 0.4.0, `infra/5.11`). Ролевые скилы [`.kimi-code/skills/`](.kimi-code/skills/) — для сессий, работающих в этом репозитории, и плагином не публикуются.
 
 | Клиент | Установка |
 |---|---|
