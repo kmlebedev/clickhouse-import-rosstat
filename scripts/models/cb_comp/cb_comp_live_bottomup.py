@@ -38,6 +38,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 sys.path.insert(0, str(ROOT / "scripts" / "models" / "cpi"))
 
 from models.cb_comp import cb_comp_bottomup as bu
+from models.cb_comp import cb_comp_mlog as mlog
 from models.cb_comp import cb_comp_parity as cp
 
 # ---------------------------------------------------------------------------
@@ -264,7 +265,7 @@ def git_sha() -> str:
 
 
 def run(archive: Path, panel_csv: Path, public_dir: Path, out_dir: Path, skip_r0: bool = False,
-        skip_asof: bool = False) -> dict:
+        skip_asof: bool = False, version: str = DEFAULT_VERSION) -> dict:
     import cpi_two_stage_cb_comp as w5b
 
     archive_data = cp.check_archive(archive)
@@ -396,7 +397,45 @@ def run(archive: Path, panel_csv: Path, public_dir: Path, out_dir: Path, skip_r0
     out_dir.mkdir(parents=True, exist_ok=True)
     write_predictions(out_dir / "predictions.csv", aggregated, live, truth_full, test_months, set(normal), models)
     (out_dir / "result.json").write_text(json.dumps(_jsonable(result), ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+    mlog_status = mlog.log_run(**mlog_kwargs(aggregated, truth_full, live, normal, test_months, config, inputs,
+                                             comparisons, gaps, g2_pass, models, version, skip_asof, out_dir))
+    if mlog_status != "disabled":
+        print(f"Паспорт прогона: {mlog_status}", flush=True)
     return result
+
+
+def mlog_kwargs(aggregated: dict, truth_full: dict, live: dict, normal: list, test_months: list,
+                config: dict, inputs: dict, comparisons: dict, gaps: dict, g2_pass: bool,
+                models, version: str, skip_asof: bool, out_dir: Path) -> dict:
+    """Аргументы `cb_comp_mlog.log_run`; `TARGET_FULL` — `actual`, `T_LIVE` — в meta."""
+    return {
+        "run_name": f"live_cb__h1-h6__normal54__target_full__{version}",
+        "config": {**config, "version": version, "truth": mlog.TRUTH, "unit": mlog.UNIT,
+                   "spec_path": "docs/superpowers/specs/2026-10-30-cb-comp-88-groups-live-design.md §13",
+                   "inputs": inputs},
+        "data_asof": cp.TEST_END,
+        "sample_meta": {"rows": len(normal) * len(HORIZONS), "normal": len(normal),
+                        "first": normal[0].isoformat(), "last": normal[-1].isoformat(),
+                        "models": list(models), "horizons": list(HORIZONS)},
+        "sample": [
+            {"horizon": h, "month": m.isoformat(), "target_full": float(truth_full[h][m]),
+             "t_live": float(live[h][m]) if m in live[h] else None}
+            for h in HORIZONS for m in normal
+        ],
+        "spec_path": "docs/superpowers/specs/2026-10-30-cb-comp-88-groups-live-design.md §13",
+        "aggregated": aggregated,
+        "truth": truth_full,
+        "months": normal,
+        "models": models,
+        "horizons": HORIZONS,
+        "t_live": live,
+        "version": version,
+        "metrics": {"primary_metric": "rmse_pp", "comparisons": comparisons,
+                    "target_gap": gaps, "g2_pass": g2_pass},
+        "artifacts": [out_dir / "predictions.csv", out_dir / "result.json"],
+        "notes": f"version={version}; normal={len(normal)}; skip_asof={skip_asof}",
+    }
 
 
 def write_predictions(path: Path, aggregated: dict, live: dict, truth_full: dict, months: list, normal: set,
@@ -450,7 +489,7 @@ def main(argv=None) -> int:
     check_panel_version(load_group_panel(panel)[0], args.version)
     out_dir = Path(args.out) if args.out else versioned_dir(OUT_DIR, args.version)
     archive = cp.resolve_archive(args.archive)
-    result = run(archive, panel, Path(args.public_dir), out_dir, args.skip_r0, args.skip_asof)
+    result = run(archive, panel, Path(args.public_dir), out_dir, args.skip_r0, args.skip_asof, args.version)
     summary = {
         "r0": result["r0"], "g2_pass": result["g2_pass"],
         "models": {m: {h: {k: result["comparisons"][m][h][k] for k in ("rmse_t_live", "rmse_target_full", "rmse_cb")}
