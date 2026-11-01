@@ -23,7 +23,7 @@
     "ddl_order": "DDL before network",
     "preflight": "HEAD per file + source_publications (file name)",
     "restore": "rejected (computed URL)",
-    "go_tests": 12
+    "go_tests": 10
   },
   "ml": {
     "loader": "scripts/models/cb_comp/cb_comp_bottomup.py:load_weights(source=archive|live)",
