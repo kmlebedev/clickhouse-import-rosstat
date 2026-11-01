@@ -27,11 +27,13 @@ Makefile-цель через `uv run --with mlflow==...`).
 Локальный `http://127.0.0.1:5000` (`build/mlflow`) — только dev/офлайн.
 `--dry-run` работает без URI.
 
-Запуск (staging через SSH-туннель):
+Запуск (staging):
 
-    ssh -N -L 15001:127.0.0.1:5000 palmshell
-    MLFLOW_TRACKING_URI=http://127.0.0.1:15001 make cb-comp-h1-shadow-mlflow ARGS="--backfill"
+    MLFLOW_TRACKING_URI=http://192.168.3.9:5000 make cb-comp-h1-shadow-mlflow ARGS="--backfill"
     make cb-comp-h1-shadow-mlflow ARGS="--month 2026-10 --dry-run"
+
+Fallback — SSH-туннель: `ssh -N -L 15001:127.0.0.1:5000 palmshell`, затем
+`MLFLOW_TRACKING_URI=http://127.0.0.1:15001`.
 
 Тесты — офлайн (`sqlite:///<tmp>/mlflow.db`, без сети и ClickHouse):
 
@@ -54,8 +56,9 @@ TRACKING_URI_ENV = "MLFLOW_TRACKING_URI"
 MISSING_URI_MESSAGE = (
     "MLflow tracking URI не задан: укажите --tracking-uri или "
     f"{TRACKING_URI_ENV}. Канонический backend — staging, не локальный "
-    "build/mlflow: ssh -N -L 15001:127.0.0.1:5000 palmshell, затем "
-    "MLFLOW_TRACKING_URI=http://127.0.0.1:15001. "
+    "build/mlflow: MLFLOW_TRACKING_URI=http://192.168.3.9:5000 "
+    "(fallback — ssh -N -L 15001:127.0.0.1:5000 palmshell, затем "
+    "MLFLOW_TRACKING_URI=http://127.0.0.1:15001). "
     "Локальный http://127.0.0.1:5000 — только dev/офлайн-тесты."
 )
 
@@ -505,8 +508,9 @@ def _parse_args(argv=None) -> argparse.Namespace:
                         help="создать новый run, даже если (month, json_sha256) уже есть")
     parser.add_argument("--tracking-uri", default=None,
                         help="MLflow tracking URI; канонический backend — staging "
-                             "(SSH-туннель 15001). Если не задан, берётся "
-                             f"{TRACKING_URI_ENV}; локальный build/mlflow не подставляется")
+                             "(http://192.168.3.9:5000; fallback — SSH-туннель 15001). "
+                             f"Если не задан, берётся {TRACKING_URI_ENV}; "
+                             "локальный build/mlflow не подставляется")
     args = parser.parse_args(argv)
     if args.month is not None and not _valid_month(args.month):
         parser.error(f"--month: ожидается YYYY-MM, получено {args.month!r}")
