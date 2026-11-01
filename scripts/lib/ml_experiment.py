@@ -397,7 +397,8 @@ class ExperimentRun:
     """
 
     def __init__(self, experiment: str, run_name: str, config, data_asof: date,
-                 sample_meta, sample, spec_path: str = "", enabled: bool = False):
+                 sample_meta, sample, spec_path: str = "", enabled: bool = False,
+                 tags: dict = None):
         self.run_id = str(uuid.uuid4())
         self.experiment = experiment
         self.run_name = run_name
@@ -407,6 +408,7 @@ class ExperimentRun:
         self.sample = sample
         self.spec_path = spec_path
         self.enabled = enabled
+        self.extra_tags = dict(tags or {})
         self.started_at = datetime.now()
         self.git = capture_git()
         self.packages = package_versions()
@@ -446,12 +448,29 @@ class ExperimentRun:
         """Запоминает модель для `mlflow.catboost.log_model` в `finish`."""
         self._models.append((name, model))
 
+    def set_tags(self, tags: dict) -> None:
+        """Добавляет searchable-теги решения; доступно и после старта run.
+
+        Базовые теги паспорта (`experiment`, `git_sha`, хеши) не перетираются:
+        они уже отправлены в `start_run` и описывают прогон, а не решение.
+        Сбой приёмника — только warning, как и у остальных MLflow-шагов.
+        """
+        clean = {str(k): str(v) for k, v in (tags or {}).items()}
+        self.extra_tags.update(clean)
+        if self._mlflow is None or not clean:
+            return
+        try:
+            self._mlflow.set_tags(clean)
+        except Exception as exc:
+            log.warning("mlflow: теги не записаны: %s", exc)
+
     def _mlflow_tags(self) -> dict:
         """Теги MLflow: хеши и git-снимок, без содержимого конфига/выборки."""
         data_asof = self.data_asof
         if isinstance(data_asof, (date, datetime)):
             data_asof = data_asof.isoformat()
         return {
+            **self.extra_tags,
             "experiment": str(self.experiment),
             "author": str(self.git.get("author", "")),
             "git_sha": str(self.git.get("git_sha", "")),
@@ -783,11 +802,14 @@ class ExperimentRun:
 
 
 def start_run(experiment: str, run_name: str, config, data_asof: date,
-              sample_meta, sample, spec_path: str = "", enabled=None) -> ExperimentRun:
+              sample_meta, sample, spec_path: str = "", enabled=None,
+              tags: dict = None) -> ExperimentRun:
     """Создаёт прогон; `ML_LOG=1` включает запись, `ML_RUN_NAME` меняет имя.
 
     Явный `enabled=` переопределяет переменную окружения: тесты и вызывающий
-    код могут включить/выключить журнал, не трогая процесс.
+    код могут включить/выключить журнал, не трогая процесс. `tags` — короткие
+    searchable-метки (`stage`, `champion`, `challenger`), базовые теги паспорта
+    они не перетирают.
     """
     if enabled is None:
         enabled = os.environ.get("ML_LOG") == "1"
@@ -801,6 +823,7 @@ def start_run(experiment: str, run_name: str, config, data_asof: date,
         sample=sample,
         spec_path=spec_path,
         enabled=enabled,
+        tags=tags,
     )
 
 

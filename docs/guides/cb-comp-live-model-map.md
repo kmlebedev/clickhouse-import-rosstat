@@ -472,6 +472,7 @@ make cb-comp-h1-weekly ARGS="--version 2009 --frozen-only"
 | [2026-10-31-cb-comp-88-groups-task12.md](../research/2026-10-31-cb-comp-88-groups-task12.md) (Task 12) | Помогает ли VAR/BVAR на h3/h6? | G12 не пройден; ошибки коррелированы с `combo3` | `combo3_var16` +0,006 h3, +0,083 h6 |
 | [2026-10-31-cb-comp-h1-shadow-p06.md](../research/2026-10-31-cb-comp-h1-shadow-p06.md) (P0.6, [#453](https://github.com/kmlebedev/clickhouse-import-rosstat/issues/453)) | Держится ли выигрыш `wk_mix_ex` на real-time истине, срезах и `publication`? | real-time и без тарифов — да; `publication` и 7-е число — нет; shadow 2026-10 зафиксирован | `T_LIVE_rt` 0,1535 против 0,2216 |
 | [2026-10-31-cb-comp-p06-tlive-2009.md](../research/2026-10-31-cb-comp-p06-tlive-2009.md) (Task 16, [#466](https://github.com/kmlebedev/clickhouse-import-rosstat/issues/466)) | Менять ли базу цели `wk_mix_ex` на `@2009`? | нет: Δ версий в шуме на всех 4 истинах; G11 и флаги P0.6 на `@2009` те же; окно 2009-03 хуже | Δ −0,0005…−0,0014, p ≥ 0,39 |
+| [2026-11-01-cb-comp-backend-compare.md](../research/2026-11-01-cb-comp-backend-compare.md) (Task 17, [#501](https://github.com/kmlebedev/clickhouse-import-rosstat/issues/501)) | Можно ли отдать `live_cb` LightGBM/XGBoost без потери точности? | Нет: дефолты в 3,7–6,4× быстрее по медиане fit, но h1 значимо хуже; equal-budget не быстрее и тоже хуже; `keep_catboost` | `live_cb` h1 1,457/1,563/1,571/1,466 против 1,193; `combo3` h1 1,069–1,104 |
 
 ### 3.4. Смежные линии, которые дали контекст
 
@@ -504,6 +505,7 @@ make cb-comp-h1-weekly ARGS="--version 2009 --frozen-only"
 | Веса 2025–26 | не было источника | публичные файлы совпадают с архивом | — | — | Task 1 Q5 |
 | Per-code МП | гипотеза о разрыве | **no-go** с измеренным VOI | — | — | Task 8 |
 | h1-nowcast на `T_LIVE` 2023+ | 0,2094 (`combo3`) / 0,1864 (`live_cb_wk`) | **0,1411** (`wk_mix_ex`) | −32,6 % / −24,3 % | DM p = 0,0003 / 0,066 | Task 4b; G11 формально, база не сменена |
+| Скорость learner'а | CatBoost 677 мс/фит (1000 деревьев) | LightGBM 105 мс, XGBoost 182 мс (100 деревьев) | ×6,4 / ×3,7 быстрее | — точность хуже | Task 17 |
 
 ### 4.2. Что не является победой
 
@@ -522,6 +524,7 @@ make cb-comp-h1-weekly ARGS="--version 2009 --frozen-only"
 - **Гармонизация SA**: не приближает публичный лист к архиву; downstream не значим.
 - **3-компонентная линия**: 1,30–1,48 к CB_COMP; хуже 88 групп.
 - **EN/pooled/VAR как замена `combo3`**: проверены предрегистрированными гейтами, не прошли. Недельный канал на h1 не закрыт: Task 4 (групповые признаки, 2022+) не прошёл, Task 4b (агрегат + дамми, 2023+) прошёл формально — открыт как h1-nowcast кандидат.
+- **Смена learner'а на LightGBM/XGBoost**: не бесплатна. Дефолты в 3,7–6,4× быстрее по медиане fit, но h1 `live_cb` хуже на 22–32 % (DM p ≤ 0,019), `combo3` — на 3,3–6,7 %; при равном бюджете выигрыша по скорости нет. `keep_catboost` (Task 17).
 - **`full`-признаки**: переобучение.
 
 ---

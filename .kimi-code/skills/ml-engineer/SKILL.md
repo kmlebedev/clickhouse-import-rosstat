@@ -106,6 +106,7 @@ whenToUse: When a task involves an ML experiment, model, feature set, backtest, 
 | `make shock-classifier` | классификатор шоков и причинные веса; `ML_LOG=1` |
 | `make cb-comp-parity` | паритет с CB_COMP (direct + bottom-up, DM/TOST); `ML_LOG=1` |
 | `make cb-comp-h1-bs-combo` | Task 9: `combo3` = `live_cb` + BS статьи; `ML_LOG=1` — паспорт в `ml_runs`/`ml_predictions` и MLflow (`experiment=cb_comp_88_groups`, gate читает run) |
+| `make cb-comp-backend-compare` | Task 17: CatBoost vs LightGBM/XGBoost на конвейере Task 9 — `defaults`/`matched`, точность (DM/CI/MCS) и время `fit`; `ML_LOG=1` — 5 паспортов в `cb_comp_88_groups` |
 | `make key-rate-llm-forecast` | LLM-трек: as-of, 3 повтора, медиана; `ARGS="--log"` — payload |
 | `make key-rate-forecast-log` | запись прогноза в `forecast_log` через ingest; `ARGS="--dry-run"`, `ARGS="--stage shadow|canary"` — staged-трек |
 | `make ml-gate` | gate промоушена: DM-HLN, 95% бутстрап, robustness, MCS; артефакт `build/ml-gate/<run>.json`; `ARGS="--live --live-track cbr_rate:<track>"` — live-оценка shadow/canary |
