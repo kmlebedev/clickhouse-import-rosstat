@@ -305,7 +305,7 @@ def run(archive: Path, panel_csv: Path, public_dir: Path, out_dir: Path, skip_r0
     # Наша панель и цели.
     specs = bu.load_specs(archive, sheet_map)
     codes = [spec.code for spec in specs]
-    weights = bu.load_weights(archive, WEIGHT_YEARS, specs)
+    weights = bu.load_weights(archive, bu.LIVE_WEIGHT_YEARS, specs, source="live")
     sa_full, sa_asof = load_group_panel(panel_csv)
     # Группа без SA (9218 — X-13 не сходится, спека §11–§12) не стоп: у неё нет
     # цели и прогноза, агрегаты нормируются на группы с данными.

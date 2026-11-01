@@ -287,8 +287,9 @@ def evaluate(forecasts: dict, data: dict, version: str = DEFAULT_VERSION) -> dic
 # ---------------------------------------------------------------------------
 
 
-def run(archive: Path, panel_csv: Path, public_dir: Path, out_dir: Path, version: str = DEFAULT_VERSION) -> dict:
-    data = en.prepare(archive, panel_csv, public_dir)
+def run(archive: Path, panel_csv: Path, public_dir: Path, out_dir: Path, version: str = DEFAULT_VERSION,
+        weights: str = "live") -> dict:
+    data = en.prepare(archive, panel_csv, public_dir, weights_source=weights)
     normal, test_months = data["normal"], data["test_months"]
     checks = {"r9a": r9a(archive, normal)}
     regressors = load_regressors(public_dir)
@@ -323,6 +324,7 @@ def run(archive: Path, panel_csv: Path, public_dir: Path, out_dir: Path, version
                    "series2016_xlsx": lb.sha256(archive / SERIES2016), "series2009_xlsx": lb.sha256(archive / SERIES2009)},
         "regressors": {m: {"first": min(v).isoformat(), "last": max(v).isoformat(), "n": len(v)} for m, v in regressors.items()},
         "groups_without_sa": data["groups_without_sa"],
+        "weights_source": weights,
     })
     out_dir.mkdir(parents=True, exist_ok=True)
     with (out_dir / "predictions.csv").open("w", encoding="utf-8", newline="") as handle:
@@ -344,12 +346,14 @@ def main(argv=None) -> int:
     parser.add_argument("--version", choices=VERSIONS, default=DEFAULT_VERSION,
                         help="версия цели: 2010 — канон, 2009 — T_LIVE с 2009-01")
     parser.add_argument("--out", default=None, help="по умолчанию build/cb-comp-h1-bs-combo[-<версия>]")
+    parser.add_argument("--weights", choices=("live", "archive"), default="live",
+                        help="live — витрина v_rosstat_cpi_weights (P0.4), archive — архив CB_COMP (регрессия)")
     args = parser.parse_args(argv)
     panel = Path(args.panel) if args.panel else lb.default_panel(args.version)
     lb.check_panel_version(lb.load_group_panel(panel)[0], args.version)
     out_dir = Path(args.out) if args.out else lb.versioned_dir(OUT_DIR, args.version)
     archive = cp.resolve_archive(args.archive)
-    result = run(archive, panel, Path(args.public_dir), out_dir, args.version)
+    result = run(archive, panel, Path(args.public_dir), out_dir, args.version, args.weights)
     summary = {
         "g9": result["g9"], "noharm": result["noharm"], "g3_reference": result["g3_reference"],
         "r9": {"r9a": result["checks"]["r9a"]["ok"], "r9b": result["checks"]["r9b"]["ok"], "r9c": result["r9c"]["ok"]},

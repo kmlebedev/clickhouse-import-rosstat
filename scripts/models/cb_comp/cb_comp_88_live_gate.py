@@ -314,7 +314,7 @@ def prepare_live(archive: Path, panel_csv: Path, public_dir: Path, through: date
     public_panel = bu.load_public_panel(public_dir / "public_panel.csv")
     specs = bu.load_specs(archive, sheet_map)
     codes = [spec.code for spec in specs]
-    weights = bu.load_weights(archive, lb.WEIGHT_YEARS, specs)
+    weights = bu.load_weights(archive, bu.LIVE_WEIGHT_YEARS, specs, source="live")
     sa_full, sa_asof = lb.load_group_panel(panel_csv)
     first = lb.first_sa_month(sa_full)
     last = max(m for values in sa_full.values() for m in values)

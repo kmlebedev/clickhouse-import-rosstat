@@ -711,7 +711,7 @@ def run(archive: Path, out_dir: Path, runner_factory, asof: bool, jobs: int,
     codes = [spec.code for spec in specs]
     dictionaries = load_dictionaries(archive)
     leaf_weights = load_leaf_weights(archive)
-    group_weights = bu.load_weights(archive, WEIGHT_YEARS, specs)
+    group_weights = bu.load_weights(archive, WEIGHT_YEARS, specs, source="archive")
     weights_2024 = {code: group_weights[COVERAGE_YEAR].get(code, 0.0) for code in codes}
     # Маппинг, Q1/Q2 и отчёт строятся по данным с `MAPPING_START`: загрузка 2009
     # не должна менять входы маппинга (коллизии имён, direct-ряд без данных

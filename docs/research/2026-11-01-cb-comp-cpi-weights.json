@@ -1,0 +1,156 @@
+{
+  "spec": "docs/superpowers/specs/2026-11-01-cb-comp-cpi-weights-design.md",
+  "plan": "docs/superpowers/plans/2026-11-01-cb-comp-cpi-weights.md",
+  "issue": 479,
+  "date": "2026-11-01",
+  "status": "in_progress_live_pending_source",
+  "source": {
+    "page": "https://rosstat.gov.ru/statistics/price",
+    "files": [
+      "CPR_tov_RF_2004-2026.xlsx",
+      "CPR_Gr-Tov-RF_2001-2026.xlsx"
+    ],
+    "live_probe": "failed",
+    "live_probe_reason": "rosstat.gov.ru: 502/timeout on the page and both files from this host on 2026-11-01; general internet reachable",
+    "wayback_snapshots": {
+      "groups": {
+        "file": "CPR_Gr-Tov-RF_2001-2026.xlsx",
+        "snapshot": "2026",
+        "bytes": 559485,
+        "sheets": "Содержание + 2001–2026 + 2022 (до 01.04) + 2022 (с 01.04)",
+        "layout": "2016–2024: Наименование | СПР (без кодов); 2025–2026: Локальный код | Наименование | СПР",
+        "sample": {"2024_Мясопродукты": 9.072, "2026_code_10": 8.821},
+        "combined_group": "Воздушный и железнодорожный транспорт 0.859 % (2024); отдельные 9260/9290 не публикуются",
+        "vs_archive_2024": {"compared": 86, "max_abs_diff": 1e-09, "exact_zero": 64}
+      },
+      "items": {
+        "file": "CPR_Tov_RF_2004-2025.xlsx",
+        "snapshot": "2025",
+        "bytes": 487356,
+        "sheets": "Содержание + 2004–2025; 2022 — один лист",
+        "layout": "2024–2025: Код | Наименование | СПР (проценты, 3 колонки); 2016: составная ячейка «код  название»; часть лет — N п/п | Код | Наименование | СПР",
+        "sum_2024": 99.141,
+        "sum_2025": 99.157,
+        "items_2024": 559,
+        "items_2025": 549,
+        "note": "не дотягивает до 100 на объединённую группу транспорта 0.859/0.843 %"
+      },
+      "items_2024_vintage": {
+        "file": "CPR_tov_rf_2004-2024.xlsx",
+        "layout": "N п/п | Код | Наименование | СПР (доли, 4 колонки)",
+        "sample_weight_2024_code_111": 0.00648
+      }
+    },
+    "fixtures": [
+      "rosstat/testdata/cpi_weights_items.xlsx",
+      "rosstat/testdata/cpi_weights_groups.xlsx"
+    ]
+  },
+  "importer": {
+    "name": "rosstat_cpi_weights",
+    "table": "rosstat_cpi_weights",
+    "view": "v_rosstat_cpi_weights",
+    "catalog_prefix": "cpi-weight:",
+    "dagu_step": 12,
+    "ddl_order": "DDL before network",
+    "preflight": "HEAD per file + source_publications (file name)",
+    "restore": "rejected (computed URL)",
+    "name_only_rows": "group file 2016–2024 has no codes: code='name:<name>'; catalog skips them",
+    "scale": "shares (sum ≈ 1) → ×100; percent (sum ≈ 100) left as is",
+    "item_sum_range": [90, 100.5],
+    "go_tests": 13
+  },
+  "ml": {
+    "loader": "scripts/models/cb_comp/cb_comp_bottomup.py:load_weights(source=archive|live)",
+    "live_source": "item rows of v_rosstat_cpi_weights + archive dictionary (2024 for 2025–2026)",
+    "live_years": [2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025, 2026],
+    "percent_to_fraction": true,
+    "archive_fallback_codes": ["9260", "9290"],
+    "archive_fallback_reason": "public file publishes the combined air/rail group; split not published",
+    "switched_to_live": [
+      "cb_comp_h1_bs_combo.py (Task 9, default live, --weights archive for regression)",
+      "cb_comp_live_bottomup.py",
+      "cb_comp_88_live_gate.py"
+    ],
+    "frozen_archive": [
+      "cb_comp_h1_shadow.py",
+      "cb_comp_groups_panel.py",
+      "cb_comp_h1_weekly.py",
+      "cb_comp_h1_weekly_ex.py"
+    ]
+  },
+  "archive_check": {
+    "years": [2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024],
+    "codes_2024": 89,
+    "sum_2024": 0.9862699999999999,
+    "pinned_2024_max_abs_diff": 0.0,
+    "pinned_2024_worst_code": "10",
+    "codes_2016": 87,
+    "absent_2016": ["803", "930.АГ"]
+  },
+  "live_arithmetic_on_real_item_file": {
+    "source": "CPR_Tov_RF_2004-2025.xlsx (Wayback 2025) + archive dictionary + 9260/9290 fallback",
+    "max_abs_diff_by_year": {
+      "2016": 3.469446951953614e-18,
+      "2017": 6.938893903907228e-18,
+      "2018": 6.938893903907228e-18,
+      "2019": 6.938893903907228e-18,
+      "2020": 3.469446951953614e-18,
+      "2021": 1.734723475976807e-18,
+      "2022": 0.0043,
+      "2023": 1.734723475976807e-18,
+      "2024": 3.469446951953614e-18
+    },
+    "2022_exception": {"code": "9540", "name": "Услуги в сфере зарубежного туризма", "live": 0.01448, "archive": 0.01018, "note": "single 2022 sheet in the item file; two variants in the group file"},
+    "2025": {"items": 549, "sum": 99.157, "groups": 87, "expected_coverage": 0.918}
+  },
+  "task9_archive": {
+    "command": "make cb-comp-h1-bs-combo ARGS=\"--archive <CB_COMP_ARCHIVE> --weights archive --out build/cb-comp-weights/archive\"",
+    "weights_source": "archive",
+    "ratios": {
+      "combo3": {"1": 1.0347684348311972, "2": 0.957109, "3": 1.0101981596603171, "6": 0.8940353315189836},
+      "live_cb": {"1": 1.1928505290859988, "2": 1.0127041023069754, "3": 1.0758201741459672, "6": 1.0616906586271116}
+    },
+    "g9": {"ok": true, "ratio_h1": 1.0347684348311972, "dm_p": 0.008457853428920572, "delta_ci": [-0.04491254399791228, -0.004772644555730371]},
+    "noharm_ok": true,
+    "r9c_ok": true,
+    "r9a": {"bs_econ16": 0.16722476137297057, "bs_rozn16": 0.16943786247987572},
+    "r9b_corr": {"bs_econ16": 0.9958707241060775, "bs_rozn16": 0.9991590277415947},
+    "inputs": {
+      "panel_csv": "aec91f993f85489b1f951cd4d23abea0e1d67639fbbed932974099f8d7826112",
+      "public_panel_csv": "47176baa290eb21e1f70ac658e1c2f2ddd5131c489b3fcaed09a5c1f8d08efa8",
+      "sheet_map_csv": "0d8a6ab5b932e57a312adac1d430089bca8dd5ba6c2b7b22c8591f21a6156116",
+      "target_xlsx": "d5278124c736410e08aefacf35f8113facaa220d88d7dba19c4a44bb3b8f685c",
+      "series2016_xlsx": "b8c1ec5698fb40b68744cb43be5cd6f21999451aaaa0e71e43099cce9b540ac6",
+      "series2009_xlsx": "5f9189881390fba30a8a90c902de95658d42e2e6bd620092c8878df0a6ab093e"
+    },
+    "pins_match": true
+  },
+  "task9_live_sim": {
+    "status": "not_completed_timeout",
+    "note": "bs.run (352 CatBoost models) was stopped by the 10-minute tool timeout on a loaded host; no artifact. The live path is covered by offline tests and the live arithmetic on the real item file (8 of 9 years); full repeat is due after the live import."
+  },
+  "task9_live": {
+    "status": "not_run",
+    "reason": "v_rosstat_cpi_weights is empty: live import blocked by source 502/timeout"
+  },
+  "gate": {
+    "weights_2016_2024": {"status": "pass_8_of_9_years", "max_abs_diff": "<= 7e-18 for 2016-2021, 2023, 2024", "exception_2022": "9540 0.0043"},
+    "sums_2025_2026": {"status": "pair_ok_2024_2025", "2024": 100.0, "2025": 100.0, "2026": "not_probed", "method": "item list + combined air/rail group"},
+    "task9_repeat": {"status": "archive_passed", "live": "pending"},
+    "coverage": {"status": "pending_live", "expected_2025": 0.918, "threshold": 0.85}
+  },
+  "policy": {
+    "803": "weight from 2023; no backcast; present in 2025-26",
+    "930.АГ": "weight from 2022; no backcast; present in 2025-26",
+    "9260": "combined with 9290 in the public file; archive fallback 2016-2024; no weight 2025-26; series ends 2024-10",
+    "9290": "same combined group; archive fallback 2016-2024; no weight 2025-26",
+    "9218": "SA failed; excluded from the assembly; weight -0.0025"
+  },
+  "not_verified": [
+    "live import of the current 2026 vintage (page and files return 502)",
+    "live Task 9 through v_rosstat_cpi_weights and live coverage 2025-26",
+    "2022 variant: which of the two group-file sheets matches the archive and the current publication",
+    "make mcp-check for v_rosstat_cpi_weights (view not populated yet)"
+  ]
+}
