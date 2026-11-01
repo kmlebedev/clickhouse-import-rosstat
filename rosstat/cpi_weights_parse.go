@@ -145,17 +145,17 @@ func cpiWeightColumnsFor(rows [][]string) (cpiWeightColumns, bool) {
 				columns.name = j
 			}
 		}
+		if columns.weight < 0 && columns.name >= 0 {
+			// Макет 2024-винтажа: «N п/п | Код товара | Наименование | вес» —
+			// у колонки веса нет подписи «СПР», она сразу после названия.
+			columns.weight = columns.name + 1
+		}
 		if columns.weight < 0 {
 			continue
 		}
 		if columns.code < 0 && columns.name < 0 && columns.weight > 0 {
 			// Макет «код  название | СПР»: одна колонка до веса.
 			columns.code, columns.name, columns.combined = 0, 0, true
-		}
-		if columns.weight < 0 && columns.name >= 0 {
-			// Макет 2024-винтажа: «N п/п | Код товара | Наименование | вес» —
-			// у колонки веса нет подписи «СПР», она сразу после названия.
-			columns.weight = columns.name + 1
 		}
 		// Лист без кода (групповой файл 2016–2024) — это не ошибка: у него есть
 		// название и вес, а код в источнике не публикуется. Такие строки получают

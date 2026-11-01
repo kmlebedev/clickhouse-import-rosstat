@@ -352,3 +352,31 @@ func TestCPIWeightsItemsFileFixture(t *testing.T) {
 		}
 	}
 }
+
+// TestCPIWeightsSharesLayout — макет 2024-винтажа: «N п/п | Код | Наименование |
+// вес» без подписи «СПР» и в долях. Парсер берёт колонку после названия и
+// приводит доли к процентам по сумме листа.
+func TestCPIWeightsSharesLayout(t *testing.T) {
+	rows := [][]string{{"N п/п", "Код товара", "Наименование товаров (услуг)-представителей", ""}}
+	rows = append(rows, []string{"", "1", "Все товары и услуги", "1"})
+	for i := 0; i < 400; i++ {
+		rows = append(rows, []string{fmt.Sprintf("%d", i+1), fmt.Sprintf("%d", 1000+i), fmt.Sprintf("Товар %d", i), "0.0025"})
+	}
+	book := cpiWeightsTestBook(t, map[string][][]string{
+		"2024": rows, "2025": rows, "2026": rows,
+	})
+	points, err := parseCPIWeights(book, cpiWeightsFileItems)
+	if err != nil {
+		t.Fatalf("parseCPIWeights: %v", err)
+	}
+	byKey := make(map[cpiWeightKey]cpiWeightPoint, len(points))
+	for _, point := range points {
+		byKey[cpiWeightKey{year: point.year, file: point.file, code: point.code}] = point
+	}
+	if got := byKey[cpiWeightKey{year: 2024, file: cpiWeightsFileItems, code: "1000"}].weight; got != 0.25 {
+		t.Errorf("2024 код 1000 = %v, ожидалось 0.25 после приведения долей к процентам", got)
+	}
+	if got := byKey[cpiWeightKey{year: 2024, file: cpiWeightsFileItems, code: "1"}].weight; got != 100 {
+		t.Errorf("2024 итоговая строка = %v, ожидалось 100", got)
+	}
+}
