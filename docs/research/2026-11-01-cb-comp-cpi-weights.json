@@ -58,7 +58,7 @@
     "name_only_rows": "group file 2016–2024 has no codes: code='name:<name>'; catalog skips them",
     "scale": "shares (sum ≈ 1) → ×100; percent (sum ≈ 100) left as is",
     "item_sum_range": [90, 100.5],
-    "go_tests": 12
+    "go_tests": 13
   },
   "ml": {
     "loader": "scripts/models/cb_comp/cb_comp_bottomup.py:load_weights(source=archive|live)",
