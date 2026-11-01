@@ -179,8 +179,12 @@ def g3_check(ratios: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def prepare(archive: Path, panel_csv: Path, public_dir: Path) -> dict:
-    """Данные, цели и признаки — те же шаги, что `cb_comp_live_bottomup.run` (без R0)."""
+def prepare(archive: Path, panel_csv: Path, public_dir: Path, weights_source: str = "archive") -> dict:
+    """Данные, цели и признаки — те же шаги, что `cb_comp_live_bottomup.run` (без R0).
+
+    `weights_source` пробрасывается в `bu.load_weights`: Task 9 передаёт `live`,
+    замороженные P0.6/Task 4/4b оставляют архив (default).
+    """
     archive_data = cp.check_archive(archive)
     target_full = archive_data["target"]
     feature_rows, _ = cp.load_feature_rows()
@@ -192,7 +196,7 @@ def prepare(archive: Path, panel_csv: Path, public_dir: Path) -> dict:
     sheet_map = bu.load_sheet_map(public_dir / "sheet_map.csv")
     specs = bu.load_specs(archive, sheet_map)
     codes = [spec.code for spec in specs]
-    weights = bu.load_weights(archive, lb.WEIGHT_YEARS, specs)
+    weights = bu.load_weights(archive, bu.LIVE_WEIGHT_YEARS, specs, source=weights_source)
     sa_full, _sa_asof = lb.load_group_panel(panel_csv)
     last = max(m for values in sa_full.values() for m in values)
     first = lb.first_sa_month(sa_full)

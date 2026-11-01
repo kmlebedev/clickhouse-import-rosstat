@@ -116,7 +116,7 @@ def prepare(archive: Path, panel_csv: Path, public_dir: Path) -> dict:
     sheet_map = bu.load_sheet_map(public_dir / "sheet_map.csv")
     specs = bu.load_specs(archive, sheet_map)
     codes = [spec.code for spec in specs]
-    weights = bu.load_weights(archive, lb.WEIGHT_YEARS, specs)
+    weights = bu.load_weights(archive, lb.WEIGHT_YEARS, specs, source="archive")
     sa_full, _sa_asof = lb.load_group_panel(panel_csv)
     last = max(m for values in sa_full.values() for m in values)
     first = lb.first_sa_month(sa_full)
@@ -160,7 +160,7 @@ def weekly_inputs(archive: Path, specs: list) -> dict:
         "by_group": wg.mapping_by_group(rows),
         "periods": wg.periods_by_series({s: weekly[s] for s in products}),
         "leaf_weights": wg.load_leaf_weights(archive),
-        "group_weights": bu.load_weights(archive, lb.WEIGHT_YEARS, specs),
+        "group_weights": bu.load_weights(archive, lb.WEIGHT_YEARS, specs, source="archive"),
         "first": min(day for points in weekly.values() for day, _ in points),
         "last": max(day for points in weekly.values() for day, _ in points),
         "n_points": sum(len(points) for points in weekly.values()),

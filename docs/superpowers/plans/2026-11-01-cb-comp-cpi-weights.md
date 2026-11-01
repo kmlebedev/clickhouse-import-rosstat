@@ -19,7 +19,7 @@
 
 ## 2. ML
 
-- [ ] `scripts/models/cb_comp/cb_comp_weights.py`: `load_archive_weights`, `load_live_weights`, `compare_weights`, `coverage_report`.
+- [x] `cb_comp_bottomup.py`: `load_archive_weights`, `load_live_weights`, `load_weights(source=...)`; `cb_comp_weights_check.py`: `compare_weights`, `coverage_report`.
 - [ ] `cb_comp_bottomup.load_weights(..., source="live", query=None)`; `_year_weights` терпит отсутствующие листы; `WEIGHT_YEARS` до 2026 в live-путях.
 - [ ] `cb_comp_h1_bs_combo.py`: `--weights {live,archive}` (default live), `inputs.weights_source`; `cb_comp_live_en.prepare(..., weights_source)`.
 - [ ] `cb_comp_h1_shadow.py`, `cb_comp_groups_panel.py`, `cb_comp_h1_weekly*.py` — явно `archive` (P0.6/Task 4/4b заморожены).
