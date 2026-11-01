@@ -80,7 +80,8 @@ def build_fold_rows(aggregated: dict, truth: dict, months: list, models, horizon
     return rows
 
 
-def start(run_name: str, config, data_asof, sample_meta, sample, spec_path: str):
+def start(run_name: str, config, data_asof, sample_meta, sample, spec_path: str,
+          tags: dict = None):
     """`ExperimentRun` или `None`; `ML_LOG` читается здесь же, как в `ml_experiment`."""
     if os.environ.get("ML_LOG") != "1":
         return None
@@ -94,17 +95,21 @@ def start(run_name: str, config, data_asof, sample_meta, sample, spec_path: str)
             sample=sample,
             spec_path=spec_path,
             enabled=True,
+            tags=tags,
         )
     except Exception as exc:  # приёмник не должен ронять эксперимент
         print(f"Журнал эксперимента не создан: {type(exc).__name__}: {exc}", flush=True)
         return None
 
 
-def record(logger, folds: list, metrics: dict, artifacts, notes: str) -> str:
+def record(logger, folds: list, metrics: dict, artifacts, notes: str,
+           tags: dict = None) -> str:
     """Best-effort запись прогона; возвращает `clickhouse`/`local`/`failed`."""
     if logger is None:
         return "disabled"
     try:
+        if tags:
+            logger.set_tags(tags)
         if folds:
             logger.log_predictions(folds)
         logger.log_metrics(metrics)
@@ -122,7 +127,7 @@ def record(logger, folds: list, metrics: dict, artifacts, notes: str) -> str:
 def log_run(run_name: str, config, data_asof, sample_meta, sample, spec_path: str,
             aggregated: dict, truth: dict, months: list, models, horizons,
             t_live: dict = None, version: str = "", metrics: dict = None,
-            artifacts=(), notes: str = "") -> str:
+            artifacts=(), notes: str = "", tags: dict = None) -> str:
     """Собирает и пишет паспорт прогона; без `ML_LOG=1` ничего не делает."""
     if os.environ.get("ML_LOG") != "1":
         return "disabled"
@@ -132,7 +137,7 @@ def log_run(run_name: str, config, data_asof, sample_meta, sample, spec_path: st
     except Exception as exc:
         print(f"Fold-предсказания не собраны: {type(exc).__name__}: {exc}", flush=True)
         return "failed"
-    logger = start(run_name, config, data_asof, sample_meta, sample, spec_path)
+    logger = start(run_name, config, data_asof, sample_meta, sample, spec_path, tags=tags)
     if logger is None:
         return "failed"
-    return record(logger, folds, metrics or {}, artifacts, notes)
+    return record(logger, folds, metrics or {}, artifacts, notes, tags=tags)
