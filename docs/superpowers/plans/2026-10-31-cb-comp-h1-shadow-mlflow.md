@@ -2,7 +2,7 @@
 
 Пункт `key-rate/phase-4-cb-comp-88-groups-live`, issue [#462](https://github.com/kmlebedev/clickhouse-import-rosstat/issues/462), зависит от #455. Спека — [2026-10-31-cb-comp-h1-shadow-mlflow-design.md](../specs/2026-10-31-cb-comp-h1-shadow-mlflow-design.md). Ветка `feat/cb-comp-h1-shadow-mlflow`, worktree `.worktrees/cb-comp-h1-shadow-mlflow`.
 
-**Инварианты:** JSON — источник истины; MLflow — зеркало; **канонический backend — staging** (`ps-palmshell`/`mlflow.service`, туннель `15001`), локальный `build/mlflow` — dev/офлайн; в ClickHouse не пишем; модель/пороги/JSON/`cb_comp_h1_shadow.py` не меняем; alias не создаём; `mlflow` — через `uv run --with`, не в pyproject.
+**Инварианты:** JSON — источник истины; MLflow — зеркало; **канонический backend — staging** (`ps-palmshell`/`mlflow.service`, `http://192.168.3.9:5000`; fallback — туннель `15001`), локальный `build/mlflow` — dev/офлайн; в ClickHouse не пишем; модель/пороги/JSON/`cb_comp_h1_shadow.py` не меняем; alias не создаём; `mlflow` — через `uv run --with`, не в pyproject.
 
 ## Task 1. Спека и план (первые коммиты)
 
@@ -44,9 +44,9 @@
 
 ## Task 5. Живой прогон в staging
 
-- [x] Проверить туннель: `curl http://127.0.0.1:15001/health` → 200.
+- [x] Проверить staging: `curl http://192.168.3.9:5000/health` → 200 (первичная проверка шла через туннель `15001`; после #486 — напрямую).
 - [x] Read-only сверка staging: experiment 1, run `9c53630947894b2682bae2d0d1908762`, tags/metrics/artifacts, `shadow.json` sha `f98b1e28…`, побайтно равен локальному JSON.
-- [x] `MLFLOW_TRACKING_URI=http://127.0.0.1:15001 make cb-comp-h1-shadow-mlflow ARGS="--backfill"` → `skipped 9c536…`; новых run'ов нет, staging run не перезаписан.
+- [x] `MLFLOW_TRACKING_URI=http://192.168.3.9:5000 make cb-comp-h1-shadow-mlflow ARGS="--backfill"` → `skipped 9c536…`; новых run'ов нет, staging run не перезаписан.
 - [x] Не применять `--force` на staging.
 - [x] Локальный dev-run `b034a74d…` (`build/mlflow`, experiment 3) — dev-артефакт, не live-приёмка.
 

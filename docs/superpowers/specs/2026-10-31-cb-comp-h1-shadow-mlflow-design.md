@@ -32,9 +32,12 @@ P0.6 дал ежемесячный paper shadow: JSON месяца — исто�
 | `build/mlflow/` (локальный `127.0.0.1:5000`) | dev/офлайн backend; **не канонический** | нет; gitignored, не коммитится |
 | ClickHouse `v_ml_error_by_fold` | gate-вход для `ml-gate` | нет; требует `ML_LOG=1`/экспорт, не этот пункт |
 
-**Staging MLflow.** Host `ps-palmshell` (ssh `palmshell`), служба `mlflow.service`, backend `sqlite:////var/lib/mlflow/mlflow.db`, артефакты `/var/lib/mlflow/artifacts`, API `127.0.0.1:5000` хоста. Доступ с рабочей машины — SSH-туннель:
+**Staging MLflow.** Host `ps-palmshell` (ssh `palmshell`), служба `mlflow.service`, backend `sqlite:////var/lib/mlflow/mlflow.db`, артефакты `/var/lib/mlflow/artifacts`, API `0.0.0.0:5000` (служба слушает внешний интерфейс). Доступ с рабочей машины — `http://192.168.3.9:5000`; fallback — SSH-туннель:
 
 ```bash
+MLFLOW_TRACKING_URI=http://192.168.3.9:5000 make cb-comp-h1-shadow-mlflow ARGS="--backfill"
+
+# fallback
 ssh -N -L 15001:127.0.0.1:5000 palmshell
 MLFLOW_TRACKING_URI=http://127.0.0.1:15001 make cb-comp-h1-shadow-mlflow ARGS="--backfill"
 ```
@@ -119,13 +122,13 @@ python3 scripts/models/cb_comp/cb_comp_h1_shadow_mlflow.py \
 
 - Без `--month`, `--path`, `--backfill` — ошибка.
 - `--month` и `--path` вместе: месяц в JSON обязан совпасть.
-- **URI обязателен для реального прогона:** `--tracking-uri` или `MLFLOW_TRACKING_URI` (staging-туннель `http://127.0.0.1:15001`). Локальный `http://127.0.0.1:5000` **не подставляется молча**. Без URI — ошибка с подсказкой про staging, туннель и `--tracking-uri`.
+- **URI обязателен для реального прогона:** `--tracking-uri` или `MLFLOW_TRACKING_URI` (staging `http://192.168.3.9:5000`; fallback — туннель `http://127.0.0.1:15001`). Локальный `http://127.0.0.1:5000` **не подставляется молча**. Без URI — ошибка с подсказкой про staging, туннель и `--tracking-uri`.
 - `--dry-run` работает без URI.
 - Валидация JSON: обязательные поля P0.6 (`version`, `month`, `cutoff`, `run_date`, `git_sha`, `models`, `served`, `asof`, `inputs_sha256`, `truth`), `version == wk_mix_ex@v1`, `run_date <= cutoff`, все 4 модели finite, `served` в цепочке fallback, sha256 — 64 hex. Тяжёлые модули модели не импортируются.
 
 Make:
 
-- `MLFLOW_TRACKING_URI=http://127.0.0.1:15001 make cb-comp-h1-shadow-mlflow ARGS="--backfill"` — месячный/backfill-прогон в staging;
+- `MLFLOW_TRACKING_URI=http://192.168.3.9:5000 make cb-comp-h1-shadow-mlflow ARGS="--backfill"` — месячный/backfill-прогон в staging (fallback — туннель `http://127.0.0.1:15001`);
 - `make cb-comp-h1-shadow-mlflow ARGS="--month 2026-10 --dry-run"` — план без URI;
 - `make cb-comp-h1-shadow-mlflow-test` — офлайн-тесты.
 - Цель не подставляет локальный `build/mlflow` молча: без `MLFLOW_TRACKING_URI`/`--tracking-uri` (и без `--dry-run`) печатает staging-инструкцию и завершается с ошибкой.
@@ -160,7 +163,7 @@ Make:
 
 1. Спека/план — первые коммиты ветки.
 2. `make cb-comp-h1-shadow-mlflow-test` — зелёный, офлайн (25 тестов).
-3. `MLFLOW_TRACKING_URI=http://127.0.0.1:15001 make cb-comp-h1-shadow-mlflow ARGS="--backfill"` — staging run 2026-10 существует (`9c536…`, experiment 1), повтор — `skipped 9c536…`; staging run не перезаписывается.
+3. `MLFLOW_TRACKING_URI=http://192.168.3.9:5000 make cb-comp-h1-shadow-mlflow ARGS="--backfill"` — staging run 2026-10 существует (`9c536…`, experiment 1), повтор — `skipped 9c536…`; staging run не перезаписывается. Первичная приёмка шла через туннель `15001`, после #486 повторена напрямую.
 4. `make cb-comp-h1-shadow-mlflow ARGS="--month 2026-10 --dry-run"` — план без URI и без записи.
 5. `make docs-check`, `make all` — зелёные; `git status` — только ожидаемые файлы; `build/mlflow` не коммитится.
 6. README, гайд §8.1–§8.3, роадмап обновлены; статус пункта — In Review в PR.

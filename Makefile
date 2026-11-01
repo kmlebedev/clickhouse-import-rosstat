@@ -993,9 +993,10 @@ cb-comp-h1-p06-versions:
 cb-comp-h1-shadow-mlflow:
 	@if [ -z "$(MLFLOW_TRACKING_URI_EXPLICIT)" ] && ! printf '%s' "$(ARGS)" | grep -Eq -- '--tracking-uri|--dry-run'; then \
 		echo "MLflow tracking URI не задан: канонический backend — staging, не локальный build/mlflow."; \
-		echo "  ssh -N -L 15001:127.0.0.1:5000 palmshell"; \
+		echo "  MLFLOW_TRACKING_URI=http://192.168.3.9:5000 make cb-comp-h1-shadow-mlflow ARGS=\"--backfill\""; \
+		echo "  fallback: ssh -N -L 15001:127.0.0.1:5000 palmshell"; \
 		echo "  MLFLOW_TRACKING_URI=http://127.0.0.1:15001 make cb-comp-h1-shadow-mlflow ARGS=\"--backfill\""; \
-		echo "  или ARGS=\"--tracking-uri http://127.0.0.1:15001\""; \
+		echo "  или ARGS=\"--tracking-uri http://192.168.3.9:5000\""; \
 		echo "  локальный 127.0.0.1:5000 — только dev/офлайн-тесты"; \
 		exit 1; \
 	fi
