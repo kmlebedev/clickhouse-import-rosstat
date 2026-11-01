@@ -145,7 +145,7 @@ Python-тесты — офлайн, через `uv run --with ... python3 script
 | `metrics` | RMSE/MAE/bias, DM p, границы 95 % CI, forecast/actual/error по фолдам и агрегату | Только конечные числа; `primary_metric` — имя метрики (тег), а не число. |
 | `artifacts` | `run.json`, `predictions.jsonl`, config/sample JSON, report.md, model card, gate JSON; у каждого — sha256 и размер в паспорте | Артефакт без sha256 не воспроизводим; MLflow — не единственное хранилище. |
 
-`run_id` (канонический UUID) — в отчёте, gate-артефакте и `ml_runs`, не только в MLflow UI. В `scripts/lib/ml_experiment.py` lineage (`config_hash`, `sample_hash`, `git_sha`, `git_dirty`, `spec_path`, `data_asof`) пишется тегами, а `params` — скалярный конфиг: оба варианта immutable, дублировать в оба namespace не нужно.
+`run_id` (канонический UUID) — из staging-run'а; в отчёте, gate-артефакте и `ml_runs`, не только в MLflow UI. `MLFLOW_TRACKING_URI` канонических прогонов — staging-туннель (`http://127.0.0.1:15001`), не локальный dev `:5000`; run, созданный на `build/mlflow`, не evidence. В `scripts/lib/ml_experiment.py` lineage (`config_hash`, `sample_hash`, `git_sha`, `git_dirty`, `spec_path`, `data_asof`) пишется тегами, а `params` — скалярный конфиг: оба варианта immutable, дублировать в оба namespace не нужно.
 
 ### 7.2 MLflow vs ClickHouse
 
@@ -157,7 +157,9 @@ Python-тесты — офлайн, через `uv run --with ... python3 script
 | Прогон без MLflow | `make mlflow-backfill ARGS="--run-id <uuid>"` создаёт run с тегом `clickhouse_run_id`; повторный — `skip`, `--force` — осознанный дубль. |
 | `MLFLOW=0` | Только осознанно (отладка, недоступный сервер); причина — в отчёте/PR. Gate-вход всё равно обязан быть в ClickHouse. |
 | Preflight | `make mlflow-preflight` (или автоматически перед `make`-целью). Недоступный API в не-TTY — стоп; `MLFLOW_ALLOW_NO_LOG=1` — явное решение, не обход. |
-| Локальный сервер | SQLite `build/mlflow/mlflow.db`, артефакты `build/mlflow/artifacts`; `/build/` gitignored. `make mlflow-up/down/status`. |
+| Staging — единственный канонический backend | `ps-palmshell` (ssh-алиас `palmshell`): systemd `mlflow.service`, backend `sqlite:////var/lib/mlflow/mlflow.db`, артефакты `/var/lib/mlflow/artifacts`, API `127.0.0.1:5000` хоста. Доступ — SSH-туннель `ssh -N -L 15001:127.0.0.1:5000 palmshell` (локальный порт 15001 или свободный; 5000 — если свободен), `MLFLOW_TRACKING_URI=http://127.0.0.1:15001`. |
+| Локальный `build/mlflow` | Только офлайн-тесты/изолированные прогоны: SQLite `build/mlflow/mlflow.db`, артефакты `build/mlflow/artifacts`; `/build/` gitignored; `make mlflow-up/down/status` — только dev. Не канонический backend, не evidence, не называть его staging/production. |
+| Канонические run'ы | Не логировать в локальный сервер. Если `MLFLOW_TRACKING_URI` ведёт на локальный сервер `build/mlflow`, а не на staging-туннель, это ошибка политики: run не станет evidence; локальный порт 5000 допустим только как туннель к staging. |
 | Хранение артефактов | Не только в MLflow и не только в `build/`: паспорт/отчёт/JSON с sha256 — в git или research-артефакте. |
 
 ### 7.3 Реестр и aliases
@@ -165,28 +167,30 @@ Python-тесты — офлайн, через `uv run --with ... python3 script
 | Объект | Как правильно | Почему |
 |---|---|---|
 | Сохраняемая модель | `log_model` только для реального model object (CPI CatBoost direct); при логировании — `signature`, `input_example`, `pip_requirements` | Без них версия не проверяется на входе и не воспроизводится; `mlflow.catboost.log_model(model, name=...)` без signature — дефект паспорта. |
-| CPI registry | `make mlflow-register ARGS="--run-id <id> --name cpi_nowcast_catboost_direct"` ставит `challenger`; `make mlflow-promote ARGS="--name ... --version N"` двигает `champion` | Явные команды после gate; alias — registry, не deployment. |
+| CPI registry | `make mlflow-register ARGS="--run-id <id> --name cpi_nowcast_catboost_direct"` ставит `challenger`; `make mlflow-promote ARGS="--name ... --version N"` двигает `champion` | Явные команды после gate; alias — registry, не deployment; только на staging. |
 | Key-rate `taylor`/`ordered_logit` | Теги run (`champion`, `challenger`, `decision`), registry и aliases не использовать | Нет сохраняемого model object — регистрировать нечего; промоушен — gate + `--stage`. |
 | Research-линии `combo3`/`wk_mix_ex` | Теги run: `champion=combo3`, `challenger=wk_mix_ex@v1`; aliases не создавать | Registry — для загружаемых и деплоимых объектов, не для research-артефактов. |
+| Размещение registry | Версии и aliases `champion`/`challenger` — только на staging; локальный `build/mlflow`-реестр — тестовый, не канонический | Evidence и промоушен читаются со staging; локальный реестр не считается. |
 | Alias | Не называть deployment и не двигать вручную без gate | Production-переключение — shadow/canary и решение владельца; `make mlflow-models` — только чтение. |
 
 ### 7.4 Shadow mirror P0.6
 
-**Паттерн.** Закоммиченный `docs/research/cb-comp-h1-shadow/<YYYY-MM>.json` — паспорт paper shadow (P0.6); MLflow-run — зеркало для поиска и сравнения. JSON остаётся источником истины, MLflow его не заменяет.
+**Паттерн.** Закоммиченный `docs/research/cb-comp-h1-shadow/<YYYY-MM>.json` — паспорт paper shadow (P0.6); staging-run в experiment `cb_comp_h1_shadow` — каноническое зеркало для поиска и сравнения. JSON остаётся источником истины, staging его не заменяет; локальный run — только тест.
 
 | Поле | Значение |
 |---|---|
-| `experiment` | `cb_comp_h1_shadow` |
-| `run_name` | `shadow__<YYYY-MM>__<json_sha256:12>` |
-| `params` | `month`, `cutoff`, `git_sha`, `v1_code_sha`, `inputs_sha256`, `json_sha256` |
-| `tags` | `decision=shadow`, `stage=paper_shadow`, `champion=combo3`, `challenger=wk_mix_ex@v1`, `source=docs/research/cb-comp-h1-shadow/<YYYY-MM>.json`, `json_sha256` |
-| `metrics` | Прогнозы `combo3`, `wk_mix_ex`, `wk_mix_d`, `live_cb_wk`; после публикации факта — `error`/`abs_error`; `actual` до факта не писать |
-| `artifacts` | JSON месяца как закоммичен; после факта — обновлённый JSON (новый sha256), sha256 — в паспорте |
+| `experiment` | `cb_comp_h1_shadow` (staging experiment id `1`) |
+| `run_name` | `shadow__<YYYY-MM>__wk_mix_ex@v1` |
+| `params` | `month`, `cutoff`, `run_date`, `git_sha`, `v1_code_sha`, `inputs_sha256`, `json_sha256` |
+| `tags` | `decision=shadow`, `stage=paper_shadow`, `champion=combo3`, `challenger=wk_mix_ex@v1`, `model_version=wk_mix_ex@v1`, `source=json`, `json_sha256` |
+| `metrics` | `pred.<model>`, `served.value`, `weekly_features.*`, `s0.*`; после факта — `actual.t_live_rt`, `error_bp`, `abs_error_bp`; `actual` до факта не писать |
+| `artifacts` | `shadow.json` (байты источника) и `run_summary.json`; после факта — новый run с новым `json_sha256`; sha256 — в паспорте |
 
 - Идемпотентность: ключ `month`+`json_sha256`; повторный backfill того же файла — `skip`, не новый run.
 - Новый или перегенерированный JSON — новый run; старый не переписывать (append-only, §7.8 гайда).
-- `docs/research/cb-comp-h1-shadow/*.json` зеркалируются по одному run на файл; `make mlflow-backfill` принимает только `--run-id` из `ml_runs` и для JSON shadow не подходит — не выдавать его за готовый backfill.
-- JSON без MLflow — валидный артефакт: тень можно сдать и без сервера; MLflow-зеркало best-effort, но `run_id`/sha256 обязательны в отчёте.
+- Зеркало/backfill — `make cb-comp-h1-shadow-mlflow ARGS="--backfill"` (или `ARGS="--month 2026-10"`; `--dry-run` — проверка без записи), запускать с `MLFLOW_TRACKING_URI` staging-туннеля. `make mlflow-backfill` — только для ClickHouse `ml_runs`, не для shadow-JSON.
+- Пример канонического зеркала: staging experiment `1` `cb_comp_h1_shadow`, run `9c53630947894b2682bae2d0d1908762`, artifact `shadow.json` sha256 `f98b1e281e2ae376bd7e15c01b66c498accbd9be187ba102226e66c4d8db282d` (побайтно равен JSON). Локальный run `b034…` на dev — тест, не evidence.
+- JSON без staging-зеркала — валидный research-артефакт, но канонический run/evidence появляется только после записи в staging; `run_id`/sha256 — в отчёте.
 
 ### 7.5 Анти-паттерны
 
@@ -195,6 +199,7 @@ Python-тесты — офлайн, через `uv run --with ... python3 script
 | Секреты, токены, сырые данные в params/artifacts | Утечка и раздувание run | Только env; агрегаты и хеши; сырые данные — в ClickHouse. |
 | `champion` alias как deployment | Registry не равен проду | Gate + shadow/canary + rollback; key-rate и research — aliases не применять. |
 | Артефакты только в MLflow | Сервер недоступен/run удалён — evidence нет | `run.json`/отчёт/JSON с sha256 в git или research-артефакте. |
+| Канонический run в локальном `build/mlflow` | Локальный сервер — dev; run не evidence, staging его не видит | `MLFLOW_TRACKING_URI` — staging-туннель; локальный сервер только для офлайн-тестов. |
 | Нет `git_dirty`/`config_hash`/`sample_hash` | Не отличить коммит от грязного дерева, не проверить повтор | `ML_LOG=1` паспорт; повтор сверять по hash. |
 | Логировать каждый epoch вместо конфигурации | Шум, тысячи metrics, нет паспорта | Один run = один конфиг; эпохи — только при реальном early stopping. |
 | `log_model` без signature/input_example | Версия не воспроизводится и не проверяется | `signature`, `input_example`, `pip_requirements`. |
