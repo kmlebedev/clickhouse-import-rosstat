@@ -42,8 +42,10 @@ func silenceCbLogs(t *testing.T) {
 // Пустая папка данных — не ошибка (warn + 0 строк): dagu не должен краснеть до
 // первого скачивания выгрузок. conn при этом не трогается вовсе — тест зовёт
 // Import с nil и упал бы паникой уже на первом обращении к соединению.
+// Флаг DAG снимается явно: режим ручного прогона не должен зависеть от окружения оболочки.
 func TestCbImportEmptyDirIsNoop(t *testing.T) {
 	silenceCbLogs(t)
+	t.Setenv(wgcRequireDataEnv, "")
 
 	stat := cbReservesStat{dir: t.TempDir()}
 	count, err := stat.Import(context.Background(), nil)
@@ -52,6 +54,62 @@ func TestCbImportEmptyDirIsNoop(t *testing.T) {
 	}
 	if count != 0 {
 		t.Errorf("Import пустого каталога = %d строк, ожидалось 0", count)
+	}
+}
+
+// С WGC_REQUIRE_DATA=1 (так шаг идёт в DAG) пустая папка — ошибка, а не warn + 0: тихий
+// ноль на staging оставлял DAG зелёным при пустой витрине v_cb_gold_dynamics (#507).
+// Ошибка наступает до разбора и до PrepareBatch — Import зовётся с nil, обращение к conn
+// упало бы паникой. В тексте обязаны быть флаг, каталог и обе маски: по нему видно, какие
+// файлы не доехали.
+func TestCbImportRequireDataEmptyDir(t *testing.T) {
+	silenceCbLogs(t)
+	t.Setenv(wgcRequireDataEnv, "1")
+
+	dir := t.TempDir()
+	stat := cbReservesStat{dir: dir}
+
+	count, err := stat.Import(context.Background(), nil)
+	if err == nil {
+		t.Fatal("WGC_REQUIRE_DATA=1 и пустой каталог должны давать ошибку")
+	}
+	if count != 0 {
+		t.Errorf("Import = %d строк, ожидалось 0", count)
+	}
+	for _, want := range []string{"WGC_REQUIRE_DATA=1", dir, cbChangesMask, cbHoldingsMask} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("ошибка не содержит %q: %v", want, err)
+		}
+	}
+}
+
+// Частичный набор при WGC_REQUIRE_DATA=1 — тоже ошибка: без holdings витрина осталась бы
+// без уровней (часть колонок NULL), а DAG — зелёным. Файл-заглушка writeDataFile не xlsx,
+// поэтому разбор упал бы на excelize: ошибка обязана называть флаг и отсутствующую маску,
+// то есть наступать раньше открытия файла (и соединения — conn здесь nil).
+func TestCbImportRequireDataPartial(t *testing.T) {
+	silenceCbLogs(t)
+	t.Setenv(wgcRequireDataEnv, "1")
+
+	dir := t.TempDir()
+	writeDataFile(t, filepath.Join(dir, cbChangesFile), time.Date(2026, time.October, 4, 12, 0, 0, 0, time.UTC))
+
+	stat := cbReservesStat{dir: dir}
+	count, err := stat.Import(context.Background(), nil)
+	if err == nil {
+		t.Fatal("WGC_REQUIRE_DATA=1 и только changes должны давать ошибку")
+	}
+	if count != 0 {
+		t.Errorf("Import = %d строк, ожидалось 0", count)
+	}
+	if !strings.Contains(err.Error(), "WGC_REQUIRE_DATA=1") {
+		t.Errorf("ошибка не фиксирует режим WGC_REQUIRE_DATA=1: %v", err)
+	}
+	if !strings.Contains(err.Error(), cbHoldingsMask) {
+		t.Errorf("ошибка не называет отсутствующую маску %s: %v", cbHoldingsMask, err)
+	}
+	if strings.Contains(err.Error(), cbChangesMask) {
+		t.Errorf("ошибка называет присутствующую маску %s: %v", cbChangesMask, err)
 	}
 }
 
