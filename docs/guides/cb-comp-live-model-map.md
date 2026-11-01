@@ -18,7 +18,7 @@
 6. **Новый компонент должен быть слабо коррелирован с ошибками `combo3`.** EN, pooled и VAR проиграли не потому, что «плохо обучены», а потому что несли тот же сигнал: корреляция ошибок VAR с `combo3` — 0,888 на h3 и 0,792 на h6. Равновесное среднее с коррелированным и более слабым компонентом ухудшает прогноз.
 7. **PIT/винтажей нет, живой истины после 2024-07 нет.** SA групп считается на всей выборке, ценовые ожидания — текущий винтаж ЦБ, `TARGET_FULL` заканчивается 2024-07. `T_LIVE@2009` расширяет начало цели, но не даёт PIT: сверки с архивом за 2009 нет, веса 2009 — ближайший 2016. Честная проверка после 2024-07 — только paper shadow на `T_LIVE`, а не «live-точность».
 8. **54 normal-месяца — это низкая мощность.** MDE на h1–h3 ≈ 13 %; «не значимо» не значит «одинаково». Паритет с CB_COMP не доказан ни на одном горизонте; TOST не проходил.
-9. **`ML_LOG`/MLflow в этой линии не использовались.** Паспорт — JSON-артефакт и sha256 входов; gate читает ClickHouse, а run'ов этой линии в `v_ml_error_by_fold` нет. Для промоушена это отдельный follow-up.
+9. **`ML_LOG`/MLflow включены с P0.5 ([#485](https://github.com/kmlebedev/clickhouse-import-rosstat/issues/485)).** `combo3`/`live_cb` пишут паспорт в `ml_runs`/`ml_predictions` (`experiment=cb_comp_88_groups`, folds `h1…h6`, `actual=TARGET_FULL`), gate читает run из `v_ml_error_by_fold`; JSON + sha256 остаются артефактом, MLflow — зеркало. Промоушен по-прежнему не заявляется: gate — проводка, решение о смене базы — §7.8.
 10. **Каждый новый шаг — предрегистрация и свой гейт.** Спека/протокол пишутся до прогона, отрицательный результат публикуется так же, как положительный. Нельзя выбирать окно, веса или модель по тесту.
 11. **G11 Task 4b пройден, но база пока не сменена.** На h1-nowcast арене `T_LIVE` 2023+ (45 мес.) `wk_mix_ex = 0,5·combo3 + 0,5·wk_agg_ex` — 0,1411 против 0,2094 у `combo3` (DM p = 0,0003); основной вклад — месячные дамми (NSA→SA), ЖКУ-очистка вторична. Это другая задача (nowcast по недельному ИПЦ месяца M) и другая арена, чем `TARGET_FULL` normal-54. Пройденный гейт — не промоушен: порядок приёмки и смены h1-базы — §7.8 и P0.6; до решения владельца `combo3` — база всех горизонтов. P0.6: на real-time SA-истине выигрыш держится (0,1535 против 0,2216, p = 0,0001), на cutoff `publication` — нет (p = 0,19); shadow 2026-10 зафиксирован до cutoff.
 
@@ -175,7 +175,7 @@ TARGET_FULL (архив) ──► оценка normal-54, DM/CI/MCS, G9
 - Ценовые ожидания — текущий винтаж ЦБ; винтажей нет.
 - Защиты: `assert_no_leakage` (parity), `assert_no_leakage_bottomup` (origin), правило `t ≤ M−h` (BS), `cutoff_for` (МП/ИПЦ).
 - Детерминизм: OLS детерминирован; CatBoost seed; повторный прогон даёт побайтно те же `predictions.csv` и `result.json`.
-- `ML_LOG`/MLflow **не используются** (как Task 2/3/4/10/11/12). Паспорт — JSON с git SHA, sha256 входов, R9-значениями.
+- `ML_LOG=1` пишет паспорт в `ml_runs`/`ml_predictions` и MLflow (`experiment=cb_comp_88_groups`): folds `h1`/`h2`/`h3`/`h6`, `unit=pp`, `actual=TARGET_FULL`, `t_live` в `meta_json`; JSON с git SHA, sha256 входов и R9-значениями остаётся артефактом (P0.5, #485).
 
 **Версии `T_LIVE` (Task 14).** `@2010` — канон: train 2010-03…2018-12, fit live-X-13 с 2010-01. `@2009` — та же архитектура и train-окна, но fit live-X-13 с 2008-12 и `T_LIVE` с 2009-01; 2009 не входит в обучающие строки, меняется только SA-окно и история цели. Числа `@2009` — в §1.8b; `@2010` остаётся каноном до решения владельца.
 
@@ -342,7 +342,7 @@ make cb-comp-h1-weekly ARGS="--version 2009 --frozen-only"
 | **Покрытие весов 0,927 / 85–87 групп** | не весь ИПЦ; пропуски 9218/9260/803/930.АГ | импортёр весов 2025–26; политика пропусков |
 | **Нет интервалов** | только точка; нет CRPS/coverage | quantile/conformal слой |
 | **Нет проверки шоков** | 2022 исключён из normal-54; live-поведение в шоке не измерено | Task 5, shock-aware протокол |
-| **Нет MLflow/`ML_LOG`** | run'ы не в `v_ml_error_by_fold`; gate/promotion не готовы. P0.6a зеркалит shadow-JSON в `cb_comp_h1_shadow`, но не в `ml_runs` — gate по-прежнему не видит | MLflow-паспорт, экспорт; shadow-зеркало — P0.6a (#462) |
+| **MLflow/`ML_LOG`** | закрыто P0.5 ([#485](https://github.com/kmlebedev/clickhouse-import-rosstat/issues/485)): run'ы `combo3`/`live_cb` в `v_ml_error_by_fold`, gate читает их; shadow-зеркало — P0.6a (#462) | промоушена нет: gate — проводка; смена базы — §7.8 |
 | **Gate не умеет разные имена моделей** | для пар `v3_bottomup` vs `v2_bottomup` нужен `--champion-model`/`--challenger-model` | follow-up к #184 |
 | **`publication`-вариант не считан** | `late` может быть мягче | robustness-прогон |
 | **Нет walk-forward h3/h6 2022+** | задача #419 требует h1 только; h3/h6 — окно статьи | отдельная арена |
@@ -359,7 +359,7 @@ make cb-comp-h1-weekly ARGS="--version 2009 --frozen-only"
 4. Go-импортёр весов 2025–26 и, при необходимости, витрина прогноза.
 5. CPI-метрика в `forecast_log` + `v_cpi_live_accuracy` + алерты (отдельный Go/ML-пункт).
 6. PIT-слой или явная консервативная конвенция; без этого live-оценка остаётся приблизительной.
-7. MLflow/`ML_LOG`-паспорт и run в `v_ml_error_by_fold` — иначе gate не видит run.
+7. ~~MLflow/`ML_LOG`-паспорт и run в `v_ml_error_by_fold` — иначе gate не видит run.~~ Сделано P0.5 ([#485](https://github.com/kmlebedev/clickhouse-import-rosstat/issues/485)).
 
 **Роли:** ML — модель, протокол, артефакты, интерпретация; Go — импортёры, DDL, витрины, гранты, расписание; владелец — решение о замене базы, промоушене и публикации.
 
@@ -533,7 +533,7 @@ make cb-comp-h1-weekly ARGS="--version 2009 --frozen-only"
 | 5 | Хватит ли покрытия весов? | 85–87 групп, пропуски 9218/9260/803/930.АГ | 0,927 маппинг; 0,895 агрегат; веса 2025–26 не импортированы | Go-импортёр весов; политика пропусков; отчёт по покрытию | P0 |
 | 6 | Что с швом 2023+? | РФ без новых субъектов; состав групп меняется | NSA совпадает до 1e-14; 4 группы с переименованием/поздним стартом | Мониторинг шва; тест на 2023+; отдельная строка отчёта | P1 |
 | 7 | Нужна ли CPI-метрика в `forecast_log`? | Без неё нет live-мониторинга и shadow/canary | Нет; live-слой #184 — только `cbr_rate` | Отдельный Go/ML-пункт: ingest payload, `v_cpi_live_accuracy`, алерты | P1 |
-| 8 | Нужен ли MLflow/`ML_LOG`? | Gate читает `v_ml_error_by_fold`; run'ов линии там нет | Паспорт — JSON; MLflow не использовался | MLflow-паспорт, `make mlflow-export`, run в ClickHouse | P1 |
+| 8 | Нужен ли MLflow/`ML_LOG`? | Gate читает `v_ml_error_by_fold`; до P0.5 run'ов линии там не было | Сделано P0.5: паспорт в `ml_runs`/`ml_predictions`, MLflow-зеркало, gate читает run | Поддерживать при новых прогонах; экспорт — fallback | ✅ |
 | 9 | Как учитывать неопределённость? | Публикации и ставка требуют интервалов, не только точки | Только точечный прогноз; CRPS/coverage нет | Quantile CatBoost / conformal; gate по coverage/CRPS | P1 |
 | 10 | Что с шоками? | 2022 исключён из normal-54; live-поведение в шоке не измерено | W5b показал провал wf; Task 5 не сделан | Shock-aware протокол; отдельная метрика на 2022; не менять normal-54 | P1 |
 | 11 | Есть ли новый независимый сигнал? | EN/pooled/VAR не дали; нужен слабокоррелированный компонент | Корреляции VAR 0,888/0,792; BS дали независимый сигнал | Кандидат с individual ratio ≤ 1,10 и corr < 0,8; предрегистрация | P2 |
@@ -620,6 +620,8 @@ make cb-comp-h1-weekly ARGS="--version 2009 --frozen-only"
 3. Проверить repeat-детерминизм и видимость в `v_ml_error_by_fold`, `v_ml_leaderboard`.
 
 **Гейт.** Run виден в витринах; повтор даёт те же предсказания; артефакты sha256; gate читает run.
+
+**Сделано ([#485](https://github.com/kmlebedev/clickhouse-import-rosstat/issues/485), [отчёт](../research/2026-11-01-cb-comp-p05-mlflow.md), [спека](../superpowers/specs/2026-11-01-cb-comp-p05-mlflow-design.md), [план](../superpowers/plans/2026-11-01-cb-comp-p05-mlflow.md)).** `ML_LOG=1` пишет паспорт в `ml_runs`/`ml_predictions` и MLflow для `cb_comp_h1_bs_combo` и `cb_comp_live_bottomup`: `experiment=cb_comp_88_groups`, folds `h1`/`h2`/`h3`/`h6`, `unit=pp`, `actual=TARGET_FULL`, `t_live` в `meta_json`, 864 fold-строки на combo-run. Два прогона @2010 (`9f6e6bf9…`, `ae591fa4…`) дали один `config_hash` `b3197565…`, `sample_hash` `0e39e019…`, sha256 `predictions.csv` `e4ced16b…` и `result.json` `aec3f008…`; symmetric difference fold-значений — 0. Лидерборд — 16 строк × 54 фолда: `combo3` 0,1643 / 0,2839 / 0,4481 / 0,8685 (отношения 1,035 / 0,957 / 1,010 / 0,894 — совпадают с Task 9). Gate на паре одинаковых конфигов — `iterate`/`no_improvement`, DM p = 1, folds 54 (проводка, не промоушен); пара `@2010` vs `@2009` (`a2c17a05…`) — h1 0,16433 → 0,16524 (Δ +0,00091 [−0,00198; +0,00390], p = 0,559), h3 p = 0,920, h6 p = 0,936, то же чтение, что в Task 16. MLflow — локальный `127.0.0.1:5000` (staging-туннель закрыт; код принимает `MLFLOW_TRACKING_URI`); `make mlflow-export ARGS="--experiment cb_comp_88_groups --dry-run"` видит все run'ы, ClickHouse не меняет. DDL, витрины, гранты и `ml_gate.py` не менялись; alias/registry не используются.
 
 **Оценка:** 2–3 person-days. **Зависимости:** нет; можно делать параллельно.
 
@@ -840,7 +842,7 @@ make cb-comp-h1-weekly ARGS="--version 2009 --frozen-only"
 
 ### 7.5. Паспорт run
 
-Минимум: `run_id`, experiment/run name, git SHA/branch/dirty, spec/plan path, config + hash, data as-of + sample hash, окружение, per-fold predictions, агрегаты, DM/CI, artifacts sha256, решение и причина. `ML_LOG=1` и MLflow — по P0.5; gate читает `v_ml_error_by_fold`, а не MLflow.
+Минимум: `run_id`, experiment/run name, git SHA/branch/dirty, spec/plan path, config + hash, data as-of + sample hash, окружение, per-fold predictions, агрегаты, DM/CI, artifacts sha256, решение и причина. `ML_LOG=1` и MLflow — по P0.5: `experiment=cb_comp_88_groups`, `window=hN`, `unit=pp`, `actual=TARGET_FULL`; gate читает `v_ml_error_by_fold`, а не MLflow.
 
 ### 7.6. Чек-лист
 
@@ -918,13 +920,14 @@ make cb-comp-h1-weekly ARGS="--version 2009 --frozen-only"
 | `scripts/models/cb_comp/cb_comp_h1_weekly_ex.py` | Task 4b: `agg_ex`, `wk_agg_ex`/`wk_mix_ex`, G11, контроли ревью | `g11_check`, `run` | merged (Task 4b) |
 | `scripts/models/cb_comp/cb_comp_h1_shadow.py` | P0.6: ретро-robustness и paper shadow `wk_mix_ex@v1` | `robustness`, `shadow_forecast`, `serve`, `t_live_rt` | PR #455 (P0.6, #453) |
 | `scripts/models/cb_comp/cb_comp_h1_shadow_mlflow.py` | P0.6a: MLflow-зеркало shadow-JSON месяца (только чтение JSON) | `load_payload`, `build_plan`, `log_path`, `collect_paths` | PR (P0.6a, #462) |
+| `scripts/models/cb_comp/cb_comp_mlog.py` | P0.5: паспорт run'а линии — folds `hN`, `config_hash`/`sample_hash`, sha256 артефактов | `build_fold_rows`, `start`, `record`, `log_run` | PR (P0.5, #485) |
 
 ### 8.2. Make-цели
 
 | Цель | Что делает |
 |---|---|
-| `make cb-comp-h1-bs-combo` / `-test` | Task 9: `combo3`, R9, G9; 18 офлайн-тестов |
-| `make cb-comp-live-bottomup` / `-test` | Task 2: `live_cb`, `T_LIVE`, G2; 16 тестов |
+| `make cb-comp-h1-bs-combo` / `-test` | Task 9: `combo3`, R9, G9; `ML_LOG=1` — паспорт в `ml_runs`/`ml_predictions` и MLflow (P0.5); офлайн-тесты |
+| `make cb-comp-live-bottomup` / `-test` | Task 2: `live_cb`, `T_LIVE`, G2; `ML_LOG=1` — паспорт (P0.5); офлайн-тесты |
 | `make cb-comp-live-en` / `-test` | Task 3: EN, G3; 13 тестов |
 | `make cb-comp-groups-panel` / `-test` | Task 1: 88-групповая панель; 35 тестов |
 | `make cb-comp-public-export` | CSV публичной панели и карты листов |
