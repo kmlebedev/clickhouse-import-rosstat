@@ -1227,13 +1227,15 @@ deploy-staging-data: staging-precheck
 	@ssh $(STAGING_HOST) 'cp /root/polyus/data/polyus_datapack_fy2025_new.xlsx /root/dagu/polyus/data/ && cp "/root/financial/data/ЮГК_databook_2024.xlsx" "/root/dagu/financial/data/" && echo "OK   датапаки Polyus/ЮГК на месте"'
 	# wgc/data в .gitignore: в чистом CI выгрузок нет — деплой не роняем, но предупреждаем,
 	# что DAG wgc с WGC_REQUIRE_DATA=1 упадёт, пока выгрузки ЦБ не положены на хост.
-	# Перед копированием старые CB-винтажи на хосте удаляются (только две маски ЦБ), иначе
-	# старый файл удовлетворял бы проверке после копирования и давал ложный OK, когда
-	# локальный набор содержит лишь одну из двух выгрузок. ETF-фолбэк (ETF_Flows_*.xlsx)
-	# не трогаем: локальный wgc/data может его не содержать. scp -p сохраняет mtime
-	# источника — по нему findLatestFile выбирает свежайшую выгрузку при разных mtime.
-	# Остаточный риск (pre-existing, здесь не чинится): при равных mtime tie-break идёт по
-	# имени, а «Oct2026» лексикографически больше «Nov2026» — выбранной может остаться не та.
+	# Перед копированием старые CB-маски на хосте удаляются, только если локальный wgc/data
+	# содержит хотя бы одну CB-выгрузку (Changes_* или holdings_*): иначе старый файл
+	# удовлетворял бы проверке после копирования и давал ложный OK при неполном наборе.
+	# ETF-фолбэк (ETF_Flows_*.xlsx) не трогается: локальный wgc/data может его не содержать;
+	# в наборе только с ETF host-resident CB остаются, и OK отражает состояние хоста.
+	# scp -p сохраняет mtime источника — по нему findLatestFile выбирает свежайшую выгрузку
+	# при разных mtime. Остаточный риск (pre-existing, здесь не чинится): при равных mtime
+	# tie-break идёт по имени, а «Oct2026» лексикографически больше «Nov2026» — выбранной
+	# может остаться не та.
 	@if [ -d wgc/data ] && ls wgc/data/*.xlsx >/dev/null 2>&1; then \
 		if ls wgc/data/Changes_latest_as_of_*.xlsx >/dev/null 2>&1 || ls wgc/data/World_official_gold_holdings_as_of_*.xlsx >/dev/null 2>&1; then \
 			ssh $(STAGING_HOST) 'rm -f /root/dagu/wgc/data/Changes_latest_as_of_*.xlsx /root/dagu/wgc/data/World_official_gold_holdings_as_of_*.xlsx' || exit 1; \
