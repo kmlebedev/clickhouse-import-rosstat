@@ -114,6 +114,8 @@ databook_polyus (CH)  ──факт добычи 2021–2025──┐
 | `emit_csv` | `polyus_lom_reconciled_long.csv` — колонки long-формата для ручного контроля (включая рублёвую справку). |
 | `validate` | Guard'ы: невязка < 1 %, `aisc ≥ tcc`, `r̄_i > 0`, добыча ≥ 0, годы плана ⊆ `[2000, 2100)`, все 5 активов на месте. |
 
+> **Оговорка 2026-11-01 (#484).** Предикат `read_actuals` — исторический: `dcf/mine_plans_import.go` теперь читает `Total refined gold output` по точной дате `date = makeDate(year + 1, 1, 1)`, а не `Total Dore gold output` через `toYear(date)`. `scripts/models/polyus/aisc.py` и сгенерированный им сид `sql/dcf_mine_plans_seed.sql` оставлены на прежнем предикате (`dore`, `toYear`) — план описывает исполненный шаг AISC-сида, а не текущий Go-сид.
+
 ### 3.3 Единицы (сверены с DDL)
 
 | Величина | Единица | Куда идёт |
