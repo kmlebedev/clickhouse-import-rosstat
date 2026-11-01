@@ -997,6 +997,14 @@ cb-comp-88-live-gate:
 cb-comp-88-live-gate-test:
 	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/cb_comp/cb_comp_88_live_gate_test.py -v
 
+# Task 11 #439: h3 — EN по 88 группам с окном 2016+ и помесячным переобучением,
+# combo4 = среднее combo3 и live_en16; R11, гейт G11 (спека).
+cb-comp-live-en16:
+	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --with arch --with "holidays>=0.60" --python 3.12 python3 scripts/models/cb_comp/cb_comp_live_en16.py $(ARGS)
+
+cb-comp-live-en16-test:
+	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/cb_comp/cb_comp_live_en16_test.py -v
+
 # Разбор PR #435 (research 2026-10-31): per-code МП, гармонизация SA, разрыв h1.
 # Шаги: ARGS="--step distinct|forward|inverse|noise|priors|sa-inputs|sa-compare|panels|dm".
 # Входы — build/cb-comp-parity (архив per-code + публичная панель) и книги ЦБ
