@@ -1214,16 +1214,44 @@ deploy-staging-mlflow: staging-precheck
 	@echo "прогрев кэша uv (скачивание mlflow==$(MLFLOW_VERSION))..."
 	@ssh $(STAGING_HOST) '$(STAGING_BIN_DIR)/uv run --with mlflow==$(MLFLOW_VERSION) --python 3.12 python -c "pass" >/dev/null 2>&1 || true'
 
-# Данные-артефакты DCF/датапаков: без них падают databook_polyus и databook_ugk
-# (импортёры читают относительный путь polyus/data/... и financial/data/...).
+# Данные-артефакты DCF/датапаков и выгрузки WGC: без них падают databook_polyus,
+# databook_ugk и wgc_cb_reserves (импортёры читают относительный путь polyus/data/...,
+# financial/data/... и wgc/data/...).
 # Копируются в оба возможных рабочих каталога: CLI-прогон из /root и DAG-и dagu,
-# которым /root/dagu задан полем working_dir (dagu/financial.yaml): без него dagu
+# которым /root/dagu задан полем working_dir (dagu/financial.yaml, dagu/wgc.yaml): без него dagu
 # запускает шаги в каталоге прогона dag-run-work/<dag>/<id>, а не в WorkingDirectory сервиса.
 deploy-staging-data: staging-precheck
-	@ssh $(STAGING_HOST) 'install -d -m 755 /root/polyus/data /root/financial/data /root/dagu/polyus/data /root/dagu/financial/data'
+	@ssh $(STAGING_HOST) 'install -d -m 755 /root/polyus/data /root/financial/data /root/dagu/polyus/data /root/dagu/financial/data /root/dagu/wgc/data'
 	@scp -q polyus/data/polyus_datapack_fy2025_new.xlsx $(STAGING_HOST):/root/polyus/data/
 	@scp -q 'financial/data/ЮГК_databook_2024.xlsx' $(STAGING_HOST):/root/financial/data/
 	@ssh $(STAGING_HOST) 'cp /root/polyus/data/polyus_datapack_fy2025_new.xlsx /root/dagu/polyus/data/ && cp "/root/financial/data/ЮГК_databook_2024.xlsx" "/root/dagu/financial/data/" && echo "OK   датапаки Polyus/ЮГК на месте"'
+	# wgc/data в .gitignore: в чистом CI выгрузок нет — деплой не роняем, но предупреждаем,
+	# что DAG wgc с WGC_REQUIRE_DATA=1 упадёт, пока выгрузки ЦБ не положены на хост.
+	# Перед копированием старые CB-маски на хосте удаляются, только если локальный wgc/data
+	# содержит хотя бы одну CB-выгрузку (Changes_* или holdings_*): иначе старый файл
+	# удовлетворял бы проверке после копирования и давал ложный OK при неполном наборе.
+	# ETF-фолбэк (ETF_Flows_*.xlsx) не трогается: локальный wgc/data может его не содержать;
+	# в наборе только с ETF host-resident CB остаются, и OK отражает состояние хоста.
+	# scp -p сохраняет mtime источника — по нему findLatestFile выбирает свежайшую выгрузку
+	# при разных mtime. Остаточный риск (pre-existing, здесь не чинится): при равных mtime
+	# tie-break идёт по имени, а «Oct2026» лексикографически больше «Nov2026» — выбранной
+	# может остаться не та.
+	@if [ -d wgc/data ] && ls wgc/data/*.xlsx >/dev/null 2>&1; then \
+		if ls wgc/data/Changes_latest_as_of_*.xlsx >/dev/null 2>&1 || ls wgc/data/World_official_gold_holdings_as_of_*.xlsx >/dev/null 2>&1; then \
+			ssh $(STAGING_HOST) 'rm -f /root/dagu/wgc/data/Changes_latest_as_of_*.xlsx /root/dagu/wgc/data/World_official_gold_holdings_as_of_*.xlsx' || exit 1; \
+		fi; \
+		scp -p -q wgc/data/*.xlsx $(STAGING_HOST):/root/dagu/wgc/data/ && \
+		ssh $(STAGING_HOST) 'missing=""; \
+			ls /root/dagu/wgc/data/Changes_latest_as_of_*.xlsx >/dev/null 2>&1 || missing="$$missing Changes_latest_as_of_*.xlsx"; \
+			ls /root/dagu/wgc/data/World_official_gold_holdings_as_of_*.xlsx >/dev/null 2>&1 || missing="$$missing World_official_gold_holdings_as_of_*.xlsx"; \
+			if [ -n "$$missing" ]; then \
+				echo "WARN в /root/dagu/wgc/data неполный набор выгрузок ЦБ — отсутствуют:$$missing; DAG wgc с WGC_REQUIRE_DATA=1 упадёт"; \
+			else \
+				echo "OK   WGC-выгрузки на месте"; \
+			fi'; \
+	 else \
+		echo "WARN в wgc/data нет xlsx — выгрузки WGC не скопированы; DAG wgc с WGC_REQUIRE_DATA=1 упадёт, пока файлы не положены"; \
+	 fi
 
 # Полный деплой: бинарь → dagu → mcp → mlflow → DAG'и → проверка ДО включения → включение → smoke.
 #

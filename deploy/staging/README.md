@@ -27,6 +27,7 @@
 | `/root/dagu/` | DAG-файлы из `dagu/` репозитория |
 | `/root/polyus/data/polyus_datapack_fy2025_new.xlsx` | датапак Полюса для `databook_polyus`/`dcf_mine_plans` (копия из репозитория, `make deploy-staging-data`) |
 | `/root/financial/data/ЮГК_databook_2024.xlsx` | датапак ЮГК для `databook_ugk` (копия из репозитория, `make deploy-staging-data`) |
+| `/root/dagu/wgc/data/*.xlsx` | выгрузки WGC ЦБ для `wgc_cb_reserves` (`Changes_latest_as_of_*.xlsx`, `World_official_gold_holdings_as_of_*.xlsx`) и фолбэк ETF-канала (копия локального `wgc/data/`, `make deploy-staging-data`; каталог в `.gitignore`, без файлов цель печатает `WARN`) |
 
 В юнитах пути **абсолютные**: systemd не читает `.bashrc`, его `PATH` не содержит `.local/bin`.
 
