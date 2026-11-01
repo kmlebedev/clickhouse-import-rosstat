@@ -176,7 +176,7 @@ make cb-comp-tlive-target-test
 
 Нужны: архив CB_COMP (`--archive` или `CB_COMP_ARCHIVE`; md5 `797f00518c3a0fe6d4cd2c2ad22aa70a`), R `seasonal`, чтение `v_fedstat_ipc`. В ClickHouse не пишет.
 
-Детерминизм: два прогона `@2010` подряд дали побайтно те же `target.csv` (`f6f859f6…`) и `result.json` (`60f4bc21…`). Паспорт содержит `git_sha`, `git_dirty`, sha256 панели, весов и `target.csv`.
+Детерминизм: по два прогона каждой версии на одном коммите дали побайтно те же `result.json` — `9c08305bb4da…` (`@2010`) и `df6074f0fa91…` (`@2009`); `target.csv` — `f6f859f6772a…` и `6e294d2a1543…` соответственно. Паспорт не зависит от флагов (`--copy-json`, `--snapshot`), содержит `git_sha`, `git_dirty`, sha256 панели, весов и `target.csv`; копия паспорта в `docs/research/` совпадает с ним побайтно.
 
 ## 10. Границы
 
