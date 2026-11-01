@@ -284,5 +284,39 @@ class CompareToCbTest(unittest.TestCase):
         self.assertEqual(out["class"], "worse")  # устойчивая разность значима — паритет не фиксируется
 
 
+
+class HypothesisW5bTest(unittest.TestCase):
+    """#425: окно шоков и правило H-W5b (до кода и прогона, спека §17.5)."""
+
+    def test_window_touches_h1(self):
+        self.assertTrue(cc.window_touches(date(2022, 3, 1), 1, cc.SHOCK_MONTHS))
+        self.assertFalse(cc.window_touches(date(2023, 3, 1), 1, cc.SHOCK_MONTHS))
+
+    def test_window_touches_h6(self):
+        self.assertTrue(cc.window_touches(date(2023, 5, 1), 6, cc.SHOCK_MONTHS))
+        self.assertFalse(cc.window_touches(date(2023, 6, 1), 6, cc.SHOCK_MONTHS))
+
+    def test_window_touches_default_empty(self):
+        self.assertFalse(cc.window_touches(date(2022, 3, 1), 1, frozenset()))
+
+    def test_verdict_support(self):
+        out = cc.hypothesis_verdict(2.5, 1.2, 1.2)
+        self.assertTrue(out["reproduce"])
+        self.assertTrue(out["mechanism"])
+        self.assertEqual(out["verdict"], "support")
+
+    def test_verdict_partial(self):
+        out = cc.hypothesis_verdict(2.5, 2.4, 1.2)
+        self.assertTrue(out["reproduce"])
+        self.assertFalse(out["mechanism"])
+        self.assertEqual(out["verdict"], "partial")
+
+    def test_verdict_reject(self):
+        out = cc.hypothesis_verdict(1.1, 1.0, 1.2)
+        self.assertFalse(out["reproduce"])
+        self.assertIsNone(out["mechanism"])
+        self.assertEqual(out["verdict"], "reject")
+
+
 if __name__ == "__main__":
     unittest.main()
