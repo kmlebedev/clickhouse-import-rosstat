@@ -2,8 +2,12 @@ package polyus
 
 import (
 	"math"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/xuri/excelize/v2"
 )
 
 func TestParseDatapackReadsAssetRows(t *testing.T) {
@@ -133,6 +137,140 @@ func TestParseDatapackDateConvention(t *testing.T) {
 			t.Errorf("%s/%s/%s с датой %s не найдена: дата не по конвенции "+
 				"«первое число месяца, следующего за концом периода»",
 				wantTable, tc.name, tc.period, tc.date.Format("2006-01-02"))
+		}
+	}
+}
+
+// datapackFixtureWithLabel копирует эталонный датапак во временный файл и
+// подменяет метку блока в B84 (в FY2025-файле там `VERNINSKOYE2`). Фикстура в
+// репозитории не меняется: 1H25-датапак с `VERNINSKOYE**` — доказательство
+// дефекта и тест-кейс, а не импортируемый в прод источник.
+func datapackFixtureWithLabel(t *testing.T, label string) string {
+	t.Helper()
+
+	const src = "testdata/polyus_datapack_fy2025_new.xlsx"
+
+	dst := filepath.Join(t.TempDir(), "datapack.xlsx")
+
+	xlsx, err := excelize.OpenFile(src)
+	if err != nil {
+		t.Fatalf("open %s: %v", src, err)
+	}
+	defer func() { _ = xlsx.Close() }()
+
+	// B84 — строка заголовка блока VERNINSKOYE2 (колонка B, строка 84).
+	if err = xlsx.SetCellValue(datapackSheet, "B84", label); err != nil {
+		t.Fatalf("set %s!B84 = %q: %v", datapackSheet, label, err)
+	}
+
+	if err = xlsx.SaveAs(dst); err != nil {
+		t.Fatalf("save %s: %v", dst, err)
+	}
+
+	return dst
+}
+
+// datapackDuplicateKeys возвращает ключи (Table, Name, Data, Date), которые
+// встретились больше одного раза.
+func datapackDuplicateKeys(rows []datapackRow) map[datapackRowKey]int {
+	counts := make(map[datapackRowKey]int, len(rows))
+	for _, r := range rows {
+		counts[datapackRowKey{Table: r.Table, Name: r.Name, Data: r.Data, Date: r.Date.Format("2006-01-02")}]++
+	}
+
+	dups := make(map[datapackRowKey]int)
+	for key, n := range counts {
+		if n > 1 {
+			dups[key] = n
+		}
+	}
+
+	return dups
+}
+
+// TestParseDatapackFootnoteAssetAlias — footnote-маркер в метке блока
+// (`VERNINSKOYE**` из 1H25-датапака) снимается нормализацией, а alias
+// возвращает каноническое `VERNINSKOYE2`; иначе строки остаются у предыдущего
+// актива. На staging эта ошибка дала 208 строк TITIMUKHTA после 2020 со
+// значениями Вернинского.
+func TestParseDatapackFootnoteAssetAlias(t *testing.T) {
+	path := datapackFixtureWithLabel(t, "VERNINSKOYE**")
+
+	rows, _, err := parseDatapack(path)
+	if err != nil {
+		t.Fatalf("parseDatapack: %v", err)
+	}
+
+	const (
+		wantTable = "VERNINSKOYE2"
+		wantName  = "Ore processed"
+		wantData  = "ANNUAL"
+		wantValue = 3277
+	)
+
+	wantDate := time.Date(2021, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	found := false
+
+	for _, r := range rows {
+		if r.Table != wantTable || r.Name != wantName || r.Data != wantData || !r.Date.Equal(wantDate) {
+			continue
+		}
+
+		found = true
+
+		if diff := math.Abs(float64(r.Value) - wantValue); diff > 0.01 {
+			t.Errorf("%s/%s/%s %s: значение %v, want %d (diff %v)",
+				wantTable, wantName, wantData, wantDate.Format("2006-01-02"), r.Value, wantValue, diff)
+		}
+	}
+
+	if !found {
+		t.Fatalf("%s/%s/%s %s не найдена: метка блока не распознана",
+			wantTable, wantName, wantData, wantDate.Format("2006-01-02"))
+	}
+
+	// Дефект staging: строки Вернинского уезжали в TITIMUKHTA и повторяли его
+	// числа. В чистом датапаке у TITIMUKHTA после 2020 остаются только нули
+	// полугодий (годовые ячейки — `-`, они пропускаются), поэтому ненулевое
+	// значение здесь и есть утечка.
+	after2020 := time.Date(2020, 12, 31, 0, 0, 0, 0, time.UTC)
+
+	for _, r := range rows {
+		if r.Table != "TITIMUKHTA" || !r.Date.After(after2020) {
+			continue
+		}
+
+		if r.Value != 0 {
+			t.Errorf("TITIMUKHTA/%s/%s %s = %v: строки Вернинского утекли в TITIMUKHTA",
+				r.Name, r.Data, r.Date.Format("2006-01-02"), r.Value)
+		}
+	}
+
+	// Дублей ключа (Table, Name, Data, Date) в затронутых блоках быть не должно.
+	// Во всём датапаке они есть только у KURANAKH (секции Mill и Heap-leach обе
+	// содержат `Ore processed`) — это штатная структура, а не дефект меток.
+	for key, n := range datapackDuplicateKeys(rows) {
+		if key.Table == "TITIMUKHTA" || key.Table == wantTable {
+			t.Errorf("duplicate key %s/%s/%s %s: %d строк", key.Table, key.Name, key.Data, key.Date, n)
+		}
+	}
+}
+
+// TestParseDatapackUnknownBlock — неизвестная all-caps метка после первого
+// актива не должна молча относить строки к предыдущему блоку: разбор падает с
+// номером строки и меткой.
+func TestParseDatapackUnknownBlock(t *testing.T) {
+	path := datapackFixtureWithLabel(t, "UNKNOWNASSET")
+
+	_, _, err := parseDatapack(path)
+	if err == nil {
+		t.Fatal("parseDatapack must fail on an unknown all-caps block label")
+	}
+
+	for _, want := range []string{"UNKNOWNASSET", "line 84"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not contain %q", err, want)
 		}
 	}
 }
