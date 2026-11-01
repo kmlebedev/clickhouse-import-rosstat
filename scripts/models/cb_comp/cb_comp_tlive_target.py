@@ -146,6 +146,17 @@ def weight_year(weights: dict, month: date) -> tuple:
 # ---------------------------------------------------------------------------
 
 
+def rt_series(sa_full: dict, sa_asof: dict) -> dict:
+    """As-of SA только по группам с валидной полной серией (`renorm_v1` п. 3).
+
+    `group_sa` считает `rt` независимыми помесячными фитами, поэтому у группы
+    со статусом `sa_failed` (9218) в панели есть отдельные as-of значения без
+    полной серии. В цель такая группа не входит: иначе корзина `T_LIVE_rt`
+    отличалась бы от `T_LIVE` по составу.
+    """
+    return {code: values for code, values in sa_asof.items() if code in sa_full}
+
+
 def aggregate_with_coverage(sa: dict, weights: dict, totals: dict, months: list, codes: list,
                             rule: str = RULE) -> tuple:
     """`(mm, stats)` по правилу `rule`: `Σ w·sa / Σ w` по группам с SA и весом.
@@ -525,6 +536,15 @@ def git_sha() -> str:
         return ""
 
 
+def git_dirty() -> bool:
+    try:
+        status = subprocess.run(["git", "status", "--porcelain", "--untracked-files=no"], cwd=ROOT,
+                                capture_output=True, text=True, check=True).stdout
+    except (OSError, subprocess.CalledProcessError):
+        return False
+    return bool(status.strip())
+
+
 def snapshot_payload(version: str, month: date, series: dict, rt_series: dict, stats: dict,
                      panel_sha: str, weights_sha: str) -> dict:
     stat = stats.get(month, {})
@@ -597,8 +617,9 @@ def run(archive: Path, panel_csv: Path, out_dir: Path, version: str, snapshot: b
     weights, totals = load_weights(archive, WEIGHT_YEARS, codes)
 
     mm, stats = aggregate_with_coverage(sa_full, weights, totals, months, codes)
-    mm_rt, stats_rt = aggregate_with_coverage(sa_asof, weights, totals, sorted(
-        {month for series in sa_asof.values() for month in series}), codes)
+    asof = rt_series(sa_full, sa_asof)
+    mm_rt, stats_rt = aggregate_with_coverage(asof, weights, totals, sorted(
+        {month for series in asof.values() for month in series}), codes)
     live = targets(mm)
     live_rt = targets(mm_rt)
 
@@ -625,6 +646,7 @@ def run(archive: Path, panel_csv: Path, out_dir: Path, version: str, snapshot: b
         "version": version,
         "rule": RULE,
         "git_sha": git_sha(),
+        "git_dirty": git_dirty(),
         "panel": str(panel_csv),
         "panel_sha256": sha256(panel_csv),
         "weights_sha256": weights_sha,

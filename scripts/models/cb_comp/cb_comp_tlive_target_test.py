@@ -48,6 +48,12 @@ class WeightYearTest(unittest.TestCase):
 
 
 class MissingRuleTest(unittest.TestCase):
+    def test_rt_series_drops_groups_without_full_series(self):
+        # 9218: as-of значения есть, полной серии нет — в цель не входит.
+        sa_full = {"10": {MONTHS[0]: 1.0}}
+        sa_asof = {"10": {MONTHS[0]: 1.0}, "9218": {MONTHS[0]: 5.0}}
+        self.assertEqual(sorted(tt.rt_series(sa_full, sa_asof)), ["10"])
+
     def test_renormalizes_over_groups_with_sa(self):
         sa = {"10": {month: 1.0 for month in MONTHS},
               "20": {month: 2.0 for month in MONTHS}}
