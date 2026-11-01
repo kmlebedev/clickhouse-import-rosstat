@@ -2,6 +2,13 @@ type: chain
 schedule: "23 10 * * 1"
 overlap_policy: skip
 
+# databook_polyus и databook_ugk читают датапаки по относительным путям
+# polyus/data/... и financial/data/..., которые deploy-staging-data кладёт в
+# /root/dagu. Без working_dir dagu 2.18 запускает шаги в пустом каталоге прогона
+# dag-run-work/financial/<id>: первый шаг падал с "no such file or directory",
+# и цепочка не доходила до polyus_financial_metrics (staging 2026-10-12…26).
+working_dir: /root/dagu
+
 steps:
   - id: databook_polyus
     run: "$ROSSTAT_IMPORT_BIN"

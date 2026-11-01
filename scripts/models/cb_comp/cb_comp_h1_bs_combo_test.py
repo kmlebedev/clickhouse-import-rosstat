@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from models.cb_comp import cb_comp_bottomup as bu
 from models.cb_comp import cb_comp_h1_bs_combo as bs
+from models.cb_comp import cb_comp_mlog as mlog
 
 
 def grid(first: date, last: date) -> list:
@@ -186,6 +187,49 @@ class GateTest(unittest.TestCase):
     def test_r9c(self):
         self.assertTrue(bs.r9c_check({1: 1.1934, 2: 1.013, 3: 1.0755, 6: 1.062})["ok"])
         self.assertFalse(bs.r9c_check({1: 1.195, 2: 1.013, 3: 1.076, 6: 1.062})["ok"])
+
+
+class MlogKwargsTest(unittest.TestCase):
+    """P0.5: контракт паспорта — experiment, folds, sample и имена окон."""
+
+    months = [date(2024, 1, 1), date(2024, 2, 1)]
+
+    def kwargs(self, version="2010"):
+        forecasts = {
+            model: {h: {month: 1.0 for month in self.months} for h in bs.HORIZONS}
+            for model in bs.CANDIDATES
+        }
+        target = {h: {month: 2.0 for month in self.months} for h in bs.HORIZONS}
+        data = {"normal": self.months,
+                "train_months": [date(2010, 3, 1), date(2018, 12, 1)],
+                "t_live": {h: {month: 1.5 for month in self.months} for h in bs.HORIZONS}}
+        result = {"spec": "docs/spec.md", "ratios": {"combo3": {1: 1.0}},
+                  "g9": {"ok": True}, "noharm": {"ok": True}, "mcs": {},
+                  "inputs": {"panel_csv": "abc"}}
+        checks = {"r9a": {"ok": True}, "r9b": {"ok": True}}
+        return bs.mlog_kwargs(forecasts, target, data, self.months, result, checks,
+                              version, Path("build/cb-comp-h1-bs-combo"))
+
+    def test_contract(self):
+        kwargs = self.kwargs()
+        self.assertEqual(kwargs["run_name"], "combo3__h1-h6__normal54__target_full__2010")
+        self.assertEqual(kwargs["config"]["normal"], len(self.months))
+        self.assertEqual(kwargs["config"]["truth"], mlog.TRUTH)
+        self.assertEqual(kwargs["config"]["models"], list(bs.CANDIDATES))
+        self.assertEqual(kwargs["data_asof"], bs.cp.TEST_END)
+        self.assertEqual(len(kwargs["sample"]), len(bs.HORIZONS) * len(self.months))
+        self.assertEqual([path.name for path in kwargs["artifacts"]],
+                         ["predictions.csv", "result.json"])
+
+    def test_fold_rows_cover_candidates(self):
+        kwargs = self.kwargs(version="2009")
+        rows = mlog.build_fold_rows(kwargs["aggregated"], kwargs["truth"], kwargs["months"],
+                                    kwargs["models"], kwargs["horizons"],
+                                    t_live=kwargs["t_live"], version=kwargs["version"])
+        self.assertEqual(len(rows), len(bs.CANDIDATES) * len(bs.HORIZONS) * len(self.months))
+        self.assertEqual({row.window for row in rows}, {"h1", "h2", "h3", "h6"})
+        self.assertEqual({row.meta["version"] for row in rows}, {"2009"})
+        self.assertEqual({row.meta["truth"] for row in rows}, {"target_full"})
 
 
 if __name__ == "__main__":
