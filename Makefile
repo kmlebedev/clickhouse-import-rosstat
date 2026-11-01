@@ -103,7 +103,7 @@ DAGU_VERSION     ?= v2.18.2
 MKDOCS_VERSION ?= 9.7.7
 MKDOCS := uv run --with mkdocs-material==$(MKDOCS_VERSION) --python 3.12 mkdocs
 
-.PHONY: all lint fmt vet test build run deps clean info ch-up ch-down ch-status ch-sql mlflow-up mlflow-down mlflow-status mlflow-export mlflow-backfill mlflow-backfill-test mlflow-preflight mlflow-register mlflow-promote mlflow-models ml-gate ml-gate-test ml-live-check ml-live-check-test dev-check env-check import mp-llm-eval archive-registry archive-list archive-restore mcp-run mcp-user mcp-check build-ingest run-ingest deploy-staging deploy-staging-binary deploy-staging-dagu deploy-staging-mcp deploy-staging-mlflow deploy-staging-preflight deploy-staging-smoke upgrade-staging mcp-user-staging staging-precheck grafana-build grafana-validate grafana-up grafana-down grafana-deploy-test grafana-deploy-staging grafana-provision-staging grafana-check grafana-test-token grafana-provision-alerting-staging key-rate-model key-rate-cbr-rule key-rate-cbr-rule-test key-rate-scenario-fan key-rate-scenario-fan-test key-rate-scenario-fan-v2 key-rate-scenario-fan-v2-test key-rate-scenario-fan-v3 key-rate-scenario-fan-v3-test key-rate-cpi-v3-experiment key-rate-cpi-v3-experiment-test cpi-live3-horizons cpi-live3-horizons-test shock-classifier shock-classifier-test key-rate-llm-forecast key-rate-forecast-log cpi-nowcast cpi-monthly cpi-monthly-v3 cpi-monthly-v3-test cpi-monthly-v3-public cpi-monthly-v3-public-test cpi-monthly-industry cpi-monthly-industry-test cpi-public-audit cpi-public-audit-test cpi-weekly-panel cpi-weekly-panel-test weekly-core-proxy weekly-core-proxy-test cpi-weekly-aggregate cpi-weekly-aggregate-test cpi-v4-leaderboard cpi-v4-leaderboard-test cpi-v4-grid cpi-v4-grid-test cpi-core-nnls cpi-core-nnls-test cpi-v4-h2 cpi-v4-h2-test cpi-v4-core cpi-v4-core-test cpi-sa-reconciliation cpi-sa-reconciliation-test cpi-asof-test cpi-weekly-sa-asof cpi-weekly-sa-asof-test cpi-two-stage-targets-test cpi-two-stage-folds cpi-two-stage-folds-test cpi-two-stage-s1 cpi-two-stage-s1-test cb-comp-data-reconcile cb-comp-data-reconcile-test cpi-two-stage-cb-comp cpi-two-stage-cb-comp-test cpi-two-stage-w2 cpi-two-stage-w2-test weekly-core-components weekly-core-components-test cpi-pipeline-stage1 cpi-pipeline-stage1-test cpi-pipeline-stage2 cpi-pipeline-stage2-test cpi-pipeline-sa-test publication-calendar-test cb-comp-parity cb-comp-parity-test cb-comp-live-bottomup cb-comp-live-bottomup-test cb-comp-live-en cb-comp-live-en-test cb-comp-h1-bs-combo cb-comp-h1-bs-combo-test cb-comp-h1-weekly cb-comp-h1-weekly-test cb-comp-h1-weekly-ex cb-comp-h1-weekly-ex-test cb-comp-h1-shadow-robustness cb-comp-h1-shadow-forecast cb-comp-h1-shadow-test cb-comp-h1-shadow-mlflow cb-comp-h1-shadow-mlflow-test cb-comp-h3-h6-var cb-comp-h3-h6-var-test cb-comp-per-code-review cb-comp-per-code-review-test cb-comp-per-code-review-books cb-comp-per-code-review-x13 cb-comp-groups-panel cb-comp-groups-panel-test cb-comp-live cb-comp-live-test cb-comp-live-compare cb-comp-proxy ppi-sa-weights-panel ppi-sa-weights-panel-test ppi-sa-parity ppi-sa-parity-test ppi-sa-text-anchors ppi-sa-text-anchors-test ppi-sa-industry ppi-sa-industry-test ppi-monthly-forecast ppi-monthly-forecast-test edisclosure-login edisclosure-collect docs-check docs-build docs-serve plugin-manifests-check plugin-manifests-sync cb-comp-per-code-reconstruction cb-comp-per-code-reconstruction-test
+.PHONY: all lint fmt vet test build run deps clean info ch-up ch-down ch-status ch-sql mlflow-up mlflow-down mlflow-status mlflow-export mlflow-backfill mlflow-backfill-test mlflow-preflight mlflow-register mlflow-promote mlflow-models ml-gate ml-gate-test ml-live-check ml-live-check-test dev-check env-check import mp-llm-eval archive-registry archive-list archive-restore mcp-run mcp-user mcp-check build-ingest run-ingest deploy-staging deploy-staging-binary deploy-staging-dagu deploy-staging-mcp deploy-staging-mlflow deploy-staging-preflight deploy-staging-smoke upgrade-staging mcp-user-staging staging-precheck grafana-build grafana-validate grafana-up grafana-down grafana-deploy-test grafana-deploy-staging grafana-provision-staging grafana-check grafana-test-token grafana-provision-alerting-staging key-rate-model key-rate-cbr-rule key-rate-cbr-rule-test key-rate-scenario-fan key-rate-scenario-fan-test key-rate-scenario-fan-v2 key-rate-scenario-fan-v2-test key-rate-scenario-fan-v3 key-rate-scenario-fan-v3-test key-rate-cpi-v3-experiment key-rate-cpi-v3-experiment-test cpi-live3-horizons cpi-live3-horizons-test shock-classifier shock-classifier-test key-rate-llm-forecast key-rate-forecast-log cpi-nowcast cpi-monthly cpi-monthly-v3 cpi-monthly-v3-test cpi-monthly-v3-public cpi-monthly-v3-public-test cpi-monthly-industry cpi-monthly-industry-test cpi-public-audit cpi-public-audit-test cpi-weekly-panel cpi-weekly-panel-test weekly-core-proxy weekly-core-proxy-test cpi-weekly-aggregate cpi-weekly-aggregate-test cpi-v4-leaderboard cpi-v4-leaderboard-test cpi-v4-grid cpi-v4-grid-test cpi-v4-h2o cpi-v4-h2o-test cpi-core-nnls cpi-core-nnls-test cpi-v4-h2 cpi-v4-h2-test cpi-v4-core cpi-v4-core-test cpi-sa-reconciliation cpi-sa-reconciliation-test cpi-asof-test cpi-weekly-sa-asof cpi-weekly-sa-asof-test cpi-two-stage-targets-test cpi-two-stage-folds cpi-two-stage-folds-test cpi-two-stage-s1 cpi-two-stage-s1-test cb-comp-data-reconcile cb-comp-data-reconcile-test cpi-two-stage-cb-comp cpi-two-stage-cb-comp-test cpi-two-stage-w2 cpi-two-stage-w2-test weekly-core-components weekly-core-components-test cpi-pipeline-stage1 cpi-pipeline-stage1-test cpi-pipeline-stage2 cpi-pipeline-stage2-test cpi-pipeline-sa-test publication-calendar-test cb-comp-parity cb-comp-parity-test cb-comp-live-bottomup cb-comp-live-bottomup-test cb-comp-live-en cb-comp-live-en-test cb-comp-h1-bs-combo cb-comp-h1-bs-combo-test cb-comp-h1-weekly cb-comp-h1-weekly-test cb-comp-h1-weekly-ex cb-comp-h1-weekly-ex-test cb-comp-h1-shadow-robustness cb-comp-h1-shadow-forecast cb-comp-h1-shadow-test cb-comp-h1-shadow-mlflow cb-comp-h1-shadow-mlflow-test cb-comp-h3-h6-var cb-comp-h3-h6-var-test cb-comp-tlive-target cb-comp-tlive-target-test cb-comp-88-live-gate cb-comp-88-live-gate-test cb-comp-per-code-review cb-comp-per-code-review-test cb-comp-per-code-review-books cb-comp-per-code-review-x13 cb-comp-groups-panel cb-comp-groups-panel-test cb-comp-live cb-comp-live-test cb-comp-live-compare cb-comp-proxy ppi-sa-weights-panel ppi-sa-weights-panel-test ppi-sa-parity ppi-sa-parity-test ppi-sa-text-anchors ppi-sa-text-anchors-test ppi-sa-industry ppi-sa-industry-test ppi-monthly-forecast ppi-monthly-forecast-test edisclosure-login edisclosure-collect docs-check docs-build docs-serve cb-comp-per-code-reconstruction cb-comp-per-code-reconstruction-test
 
 all: lint test build build-ingest
 
@@ -671,6 +671,20 @@ cpi-v4-grid:
 cpi-v4-grid-test:
 	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --with arch --python 3.12 python3 scripts/models/cpi/cpi_v4_grid_test.py -v
 
+# #502: H2O AutoML как генератор challenger'а для CPI v4. Селектор видит
+# только до-тестовые origin'ы (O + h <= 2015-12), затем frozen refit в том же
+# walk-forward, что сетка v4; gate — build/ml-gate/cpi_v4_h2o.{json,md}.
+# Нужен JDK 8–17 (H2O 3.46): brew install openjdk@17.
+H2O_JAVA_HOME ?= $(shell brew --prefix openjdk@17 2>/dev/null)
+cpi-v4-h2o:
+	@test -x "$(H2O_JAVA_HOME)/bin/java" || { echo "JDK 8–17 не найден: brew install openjdk@17"; exit 1; }
+	@$(MLFLOW_PREFLIGHT)
+	JAVA_HOME="$(H2O_JAVA_HOME)" PATH="$(H2O_JAVA_HOME)/bin:$$PATH" \
+	$(MLFLOW_ENV) $(MLFLOW_HTTP_ENV) uv run $(MLFLOW_PKG) --with "h2o==3.46.0.12" --with "catboost>=1.2" --with pandas --with numpy --with scikit-learn --with "statsmodels>=0.15" --with scipy --with arch --python 3.12 python3 scripts/models/cpi/cpi_v4_h2o.py $(ARGS)
+
+cpi-v4-h2o-test:
+	uv run --with "catboost>=1.2" --with pandas --with numpy --with scikit-learn --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/cpi/cpi_v4_h2o_test.py -v
+
 # Issue #396 Task 3: core_nnls (NNLS-веса по 14 корзинам панели #364, as-of) и
 # модели v4c/v4d для T_CORE. Диагностика читает CSV панели и ClickHouse.
 cpi-core-nnls:
@@ -861,11 +875,14 @@ cb-comp-groups-panel-test:
 # Task 2 #422: live bottom-up по 88 группам на нашей панели, цель T_LIVE —
 # R0 (регрессия #252), G2, сравнение с CB_COMP «каждый на своей цели».
 # Нужны артефакты make cb-comp-groups-panel ARGS="--asof" и make cb-comp-public-export.
+# ML_LOG=1 — паспорт и fold-предсказания (P0.5); MLFLOW=0 — осознанно выключить.
 cb-comp-live-bottomup:
-	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --with arch --with "holidays>=0.60" --python 3.12 python3 scripts/models/cb_comp/cb_comp_live_bottomup.py $(ARGS)
+	@$(MLFLOW_PREFLIGHT)
+	$(MLFLOW_ENV) $(MLFLOW_HTTP_ENV) uv run $(MLFLOW_PKG) --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --with arch --with "holidays>=0.60" --python 3.12 python3 scripts/models/cb_comp/cb_comp_live_bottomup.py $(ARGS)
 
 cb-comp-live-bottomup-test:
 	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/cb_comp/cb_comp_live_bottomup_test.py -v
+	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --python 3.12 python3 scripts/models/cb_comp/cb_comp_mlog_test.py -v
 
 # Task 3 #423: EN_COMP и CB+EN на нашей панели, истина TARGET_FULL —
 # классификация против CB_COMP, MCS, выбор модели, гейт G3 (спека §15).
@@ -877,12 +894,26 @@ cb-comp-live-en-test:
 
 # Task 9 #436: h1 — комбинация live_cb + BS_ECON16/BS_ROZN16 статьи (OLS на
 # T_LIVE и SA ценовых ожиданиях ЦБ, окно 2016+, переобучение без утечки).
-# Только чтение ClickHouse и локального архива CB_COMP; в БД не пишет.
+# ML_LOG=1 — паспорт run'а в ml_runs/ml_predictions и MLflow (P0.5);
+# MLFLOW=0 — осознанно выключить.
 cb-comp-h1-bs-combo:
-	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --with arch --with "holidays>=0.60" --python 3.12 python3 scripts/models/cb_comp/cb_comp_h1_bs_combo.py $(ARGS)
+	@$(MLFLOW_PREFLIGHT)
+	$(MLFLOW_ENV) $(MLFLOW_HTTP_ENV) uv run $(MLFLOW_PKG) --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --with arch --with "holidays>=0.60" --python 3.12 python3 scripts/models/cb_comp/cb_comp_h1_bs_combo.py $(ARGS)
 
 cb-comp-h1-bs-combo-test:
 	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/cb_comp/cb_comp_h1_bs_combo_test.py -v
+	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --python 3.12 python3 scripts/models/cb_comp/cb_comp_mlog_test.py -v
+
+# Task 17 #501: CatBoost vs LightGBM/XGBoost на том же конвейере Task 9 —
+# плечи defaults/matched, точность (RMSE/ratio/DM/CI/MCS) и время fit;
+# ML_LOG=1 — паспорта в эксперименте cb_comp_88_groups (MLflow + ml_runs).
+# Входы — как у cb-comp-h1-bs-combo; в ClickHouse не пишет.
+cb-comp-backend-compare:
+	@$(MLFLOW_PREFLIGHT)
+	$(MLFLOW_ENV) $(MLFLOW_HTTP_ENV) uv run $(MLFLOW_PKG) --with "catboost==1.2.10" --with "lightgbm==4.7.0" --with "xgboost==3.4.1" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --with arch --with "holidays>=0.60" --python 3.12 python3 scripts/models/cb_comp/cb_comp_backend_compare.py $(ARGS)
+
+cb-comp-backend-compare-test:
+	uv run --with "catboost==1.2.10" --with "lightgbm==4.7.0" --with "xgboost==3.4.1" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/cb_comp/cb_comp_backend_compare_test.py -v
 
 # Task 10 #438: pooled CatBoost на 87 группах (окно 2016+ / control 2010-03+),
 # годовая переподготовка без утечки; G10 против combo3, MCS 90 %.
@@ -892,6 +923,17 @@ cb-comp-pooled:
 
 cb-comp-pooled-test:
 	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/cb_comp/cb_comp_pooled_test.py -v
+
+# Task 5 #425: режим переобучения live_cb — frozen / annual / annual_shock /
+# annual_dummy / rolling96 / rolling120, шоки (2014-12…2015-03, 2020-04, 2022)
+# в train и гипотеза W5b (месячный wf на live_cb + прямой тест v3/v5_direct).
+# Входы — как у cb-comp-h1-bs-combo; W5b-диагностике нужны R seasonal и ClickHouse.
+# Только чтение ClickHouse и локального архива CB_COMP; в БД не пишет.
+cb-comp-refit-modes:
+	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --with arch --with "holidays>=0.60" --python 3.12 python3 scripts/models/cb_comp/cb_comp_refit_modes.py $(ARGS)
+
+cb-comp-refit-modes-test:
+	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --with arch --python 3.12 python3 scripts/models/cb_comp/cb_comp_refit_modes_test.py -v
 
 # Task 4 #424: h1 — недельный ИПЦ поверх combo3: маппинг 148 недельных позиций
 # на 88 групп, wk_g_* в live_cb, смешивание с недельным агрегатом, walk-forward
@@ -926,8 +968,22 @@ cb-comp-h1-shadow-forecast:
 	uv run --with pandas --python 3.12 python3 scripts/models/cb_comp/cb_comp_public_export.py --out-dir build/cb-comp-h1-shadow/public
 	$(CB_COMP_SHADOW_UV) scripts/models/cb_comp/cb_comp_h1_shadow.py forecast --month $(MONTH) --public-dir build/cb-comp-h1-shadow/public $(ARGS)
 
+# Решение владельца 2026-10-31 (#419): ежемесячно — засчитываемый v2 (@2009,
+# docs/research/cb-comp-h1-shadow-2009/) и контроль v1 (@2010) на тех же входах.
+cb-comp-h1-shadow-forecast-v2:
+	@test -n "$(MONTH)" || (echo "MONTH=YYYY-MM обязателен" && exit 1)
+	$(MAKE) cb-comp-h1-shadow-forecast MONTH=$(MONTH) ARGS="--version 2009 $(ARGS)"
+	$(MAKE) cb-comp-h1-shadow-forecast MONTH=$(MONTH) ARGS="--version 2010 $(ARGS)"
+
 cb-comp-h1-shadow-test:
 	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/cb_comp/cb_comp_h1_shadow_test.py -v
+	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/cb_comp/cb_comp_h1_p06_versions_test.py -v
+
+# Task 16 #466: P0.6 по версиям цели @2010/@2009 — матрица 2×2 (прогнозы ×
+# истины), Δ версий и правило смены базы цели. Читает готовые
+# predictions_robustness.csv (`cb-comp-h1-shadow-robustness ARGS="--version …"`).
+cb-comp-h1-p06-versions:
+	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/cb_comp/cb_comp_h1_p06_versions.py $(ARGS)
 
 # P0.6a #462: MLflow-зеркало shadow-JSON месяца (experiment cb_comp_h1_shadow,
 # run на month+json_sha256). Канонический backend — staging MLflow, не локальный
@@ -958,6 +1014,35 @@ cb-comp-h3-h6-var:
 
 cb-comp-h3-h6-var-test:
 	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/cb_comp/cb_comp_h3_h6_var_test.py -v
+
+# P0.3 #480: живая цель T_LIVE 2024-08+ — правило пропусков renorm_v1,
+# покрытие весов/групп по месяцам, альтернатива T_LIVE_direct (X-13 на
+# NSA-агрегате), NSA-проверка весов против публикуемого ИПЦ и append-only
+# снимок цели. Только чтение ClickHouse и архива CB_COMP; в БД не пишет.
+cb-comp-tlive-target:
+	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/cb_comp/cb_comp_tlive_target.py $(ARGS)
+
+cb-comp-tlive-target-test:
+	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/cb_comp/cb_comp_tlive_target_test.py -v
+
+# Task 7 #427: итоговый gate линии 88 групп — классы §6.3 против CB_COMP на
+# normal-54/67, MCS 90 %, пины Task 9 и справочные режимы Task 5
+# (ARGS="--refit-predictions build/cb-comp-refit-modes/predictions.csv"), плюс
+# paper shadow 2024-08…2026-09 на as-of входах (T_LIVE_rt/T_LIVE, SA ЦБ, B1).
+# Артефакт — build/ml-gate/cb_comp_88_live.{json,md}; в ClickHouse не пишет.
+cb-comp-88-live-gate:
+	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --with arch --with "holidays>=0.60" --python 3.12 python3 scripts/models/cb_comp/cb_comp_88_live_gate.py $(ARGS)
+
+cb-comp-88-live-gate-test:
+	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/cb_comp/cb_comp_88_live_gate_test.py -v
+
+# Task 11 #439: h3 — EN по 88 группам с окном 2016+ и помесячным переобучением,
+# combo4 = среднее combo3 и live_en16; R11, гейт G11 (спека).
+cb-comp-live-en16:
+	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --with arch --with "holidays>=0.60" --python 3.12 python3 scripts/models/cb_comp/cb_comp_live_en16.py $(ARGS)
+
+cb-comp-live-en16-test:
+	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/cb_comp/cb_comp_live_en16_test.py -v
 
 # Разбор PR #435 (research 2026-10-31): per-code МП, гармонизация SA, разрыв h1.
 # Шаги: ARGS="--step distinct|forward|inverse|noise|priors|sa-inputs|sa-compare|panels|dm".
@@ -1130,8 +1215,9 @@ deploy-staging-mlflow: staging-precheck
 
 # Данные-артефакты DCF/датапаков: без них падают databook_polyus и databook_ugk
 # (импортёры читают относительный путь polyus/data/... и financial/data/...).
-# Копируются в оба возможных рабочих каталога: CLI-прогон из /root и сервисный
-# WorkingDirectory=/root/dagu.
+# Копируются в оба возможных рабочих каталога: CLI-прогон из /root и DAG-и dagu,
+# которым /root/dagu задан полем working_dir (dagu/financial.yaml): без него dagu
+# запускает шаги в каталоге прогона dag-run-work/<dag>/<id>, а не в WorkingDirectory сервиса.
 deploy-staging-data: staging-precheck
 	@ssh $(STAGING_HOST) 'install -d -m 755 /root/polyus/data /root/financial/data /root/dagu/polyus/data /root/dagu/financial/data'
 	@scp -q polyus/data/polyus_datapack_fy2025_new.xlsx $(STAGING_HOST):/root/polyus/data/
@@ -1506,16 +1592,6 @@ info:
 docs-check:
 	python3 scripts/docs_build.py --check
 	python3 scripts/docs_build_test.py
-
-# Метаданные LLM-плагина: канон — .claude-plugin/plugin.json (version,
-# длинное description) и .claude-plugin/marketplace.json (name, короткое
-# description); sync-manifests.yml проверяет дрейф на PR и дописывает на main.
-plugin-manifests-check:
-	python3 scripts/plugin_manifests.py --check
-	python3 scripts/plugin_manifests_test.py
-
-plugin-manifests-sync:
-	python3 scripts/plugin_manifests.py --write
 
 docs-build:
 	python3 scripts/docs_build.py --out build/site-docs

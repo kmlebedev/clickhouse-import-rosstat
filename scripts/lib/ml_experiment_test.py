@@ -869,6 +869,18 @@ class MlflowSinkTest(unittest.TestCase):
             _, rows = _sql_payload(runs_sql)
             self.assertEqual(rows[0]["run_id"], CANONICAL_MLFLOW_RUN_ID)
 
+    def test_extra_tags_merge_and_set_tags_after_start(self):
+        fake = FakeMlflow()
+        with _mlflow_env(), patch.dict(sys.modules, {"mlflow": fake}), \
+                patch.object(me, "ch_exec"):
+            run = start_run("exp", "run", {}, date(2026, 10, 18), {}, [], enabled=True,
+                            tags={"stage": "backtest", "experiment": "evil"})
+            self.assertEqual(run._mlflow_tags()["stage"], "backtest")
+            self.assertEqual(run._mlflow_tags()["experiment"], "exp")
+            run.set_tags({"decision": "keep_catboost"})
+            self.assertEqual(fake.calls_of("set_tags")[-1][1][0], {"decision": "keep_catboost"})
+            run.finish("finished", "ok")
+
     def test_primary_metric_uses_public_set_tags_api(self):
         # Регрессия live-приёмки #183: `mlflow.log_tags` нет в публичном API
         # MLflow. Двойник намеренно НЕ определяет log_tags — обращение к
