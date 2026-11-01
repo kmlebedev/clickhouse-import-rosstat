@@ -148,11 +148,30 @@ class SumsTest(unittest.TestCase):
         sums = wc.live_sums(query=query)
         self.assertEqual([item["n"] for item in sums], [550, 552])
 
-    def test_sum_tolerance(self):
-        sums = [{"year": 2025, "variant": "", "total": 100.4, "n": 550}]
-        self.assertTrue(all(abs(item["total"] - 100.0) <= 0.5 for item in sums))
-        sums[0]["total"] = 100.6
-        self.assertFalse(all(abs(item["total"] - 100.0) <= 0.5 for item in sums))
+    def test_pair_sums_adds_combined_group(self):
+        items = [
+            {"year": 2024, "variant": "", "total": 99.141, "n": 559},
+            {"year": 2025, "variant": "", "total": 99.157, "n": 549},
+        ]
+        combined = {(2024, ""): 0.859, (2025, ""): 0.843}
+        pairs = wc.pair_sums(items, combined)
+        self.assertAlmostEqual(pairs[0]["pair_total"], 100.0)
+        self.assertAlmostEqual(pairs[1]["pair_total"], 100.0)
+        self.assertTrue(all(abs(item["pair_total"] - 100.0) <= 0.5 for item in pairs))
+
+    def test_pair_sums_fails_without_combined(self):
+        items = [{"year": 2025, "variant": "", "total": 99.157, "n": 549}]
+        pairs = wc.pair_sums(items, {})
+        self.assertFalse(all(abs(item["pair_total"] - 100.0) <= 0.5 for item in pairs))
+
+    def test_combined_group_sums_reads_group_file(self):
+        def query(sql):
+            self.assertIn("CPR_Gr-Tov-RF", sql)
+            self.assertIn("positionCaseInsensitive", sql)
+            return [{"year": 2025, "variant": "", "total": 0.843}]
+
+        combined = wc.combined_group_sums(query=query)
+        self.assertEqual(combined[(2025, "")], 0.843)
 
 
 if __name__ == "__main__":
