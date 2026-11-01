@@ -15,7 +15,7 @@
   `ipc31074/Все товары и услуги` (2022+); измеряет дрейф архивных весов 2024;
 * **гейт** — нет разрывов, `cov_total ≥ 0,85`, расхождение описано, повтор
   побайтно тот же; провал — `exit 2`;
-* **снимок** — `docs/research/cb-comp-tlive-vintage/<M>.json`, append-only.
+* **снимок** — `docs/research/cb-comp-tlive-vintage/<версия>/<M>.json`, append-only.
 
 Только чтение ClickHouse и локальных файлов; в БД не пишет. Запуск —
 `make cb-comp-tlive-target`, тесты — `make cb-comp-tlive-target-test`.
@@ -550,7 +550,7 @@ def snapshot_payload(version: str, month: date, series: dict, rt_series: dict, s
     stat = stats.get(month, {})
     return {
         "version": version,
-        "month": month.isoformat(),
+        "month": f"{month.year:04d}-{month.month:02d}",
         "computed_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "cutoff": "late",
         "rule": RULE,
@@ -687,7 +687,7 @@ def run(archive: Path, panel_csv: Path, out_dir: Path, version: str, snapshot: b
         if frozen not in stats:
             raise SystemExit(f"снимок: месяца {frozen.isoformat()} нет в панели")
         payload = snapshot_payload(version, frozen, live, live_rt, stats, result["panel_sha256"], weights_sha)
-        result["snapshot"] = write_snapshot(VINTAGE_DIR / f"{frozen.isoformat()[:7]}.json", payload)
+        result["snapshot"] = write_snapshot(VINTAGE_DIR / version / f"{frozen.isoformat()[:7]}.json", payload)
         if result["snapshot"]["status"] == "conflict":
             (out_dir / "result.json").write_text(
                 json.dumps(jsonable(result), ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
