@@ -677,7 +677,7 @@ cpi-v4-h2o:
 	@test -x "$(H2O_JAVA_HOME)/bin/java" || { echo "JDK 8–17 не найден: brew install openjdk@17"; exit 1; }
 	@$(MLFLOW_PREFLIGHT)
 	JAVA_HOME="$(H2O_JAVA_HOME)" PATH="$(H2O_JAVA_HOME)/bin:$$PATH" \
-	$(MLFLOW_ENV) $(MLFLOW_HTTP_ENV) uv run $(MLFLOW_PKG) --with "h2o==3.46.0.12" --with "catboost>=1.2" --with pandas --with numpy --with scikit-learn --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/cpi/cpi_v4_h2o.py $(ARGS)
+	$(MLFLOW_ENV) $(MLFLOW_HTTP_ENV) uv run $(MLFLOW_PKG) --with "h2o==3.46.0.12" --with "catboost>=1.2" --with pandas --with numpy --with scikit-learn --with "statsmodels>=0.15" --with scipy --with arch --python 3.12 python3 scripts/models/cpi/cpi_v4_h2o.py $(ARGS)
 
 cpi-v4-h2o-test:
 	uv run --with "catboost>=1.2" --with pandas --with numpy --with scikit-learn --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/cpi/cpi_v4_h2o_test.py -v
