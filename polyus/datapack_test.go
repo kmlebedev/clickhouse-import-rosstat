@@ -1,6 +1,7 @@
 package polyus
 
 import (
+	"math"
 	"testing"
 	"time"
 )
@@ -75,5 +76,63 @@ func TestParseDatapackToleratesBadCell(t *testing.T) {
 	}
 	if !refSeen {
 		t.Errorf("reference fixture must contain Total rock moved ANNUAL FY2007 = %d", goodTotalRockMovedFY2007)
+	}
+}
+
+// TestParseDatapackDateConvention — дата точки датапака — первое число месяца,
+// следующего за концом периода; у годового наблюдения это 1 января СЛЕДУЮЩЕГО
+// года (FY2024 → 2025-01-01), а не 1 декабря отчётного.
+//
+// Конвенция проверяется на всех трёх типах периода, потому что дефект в ней не
+// виден в логе: DCF читает год точной датой (dcf/mine_plans_import.go), и
+// «1 декабря» молча подменило бы факт FY2025 (OLIMPIADA 926.5) фактом FY2024
+// (1265.7) — именно это и произошло на staging. Квартальная и полугодовая ветки
+// проверяются вместе с годовой, чтобы правка одной не разошлась с остальными.
+func TestParseDatapackDateConvention(t *testing.T) {
+	const wantTable = "OLIMPIADA"
+
+	rows, _, err := parseDatapack("testdata/polyus_datapack_fy2025_new.xlsx")
+	if err != nil {
+		t.Fatalf("parseDatapack: %v", err)
+	}
+
+	cases := []struct {
+		name   string
+		period string // колонка data
+		date   time.Time
+		value  float32
+	}{
+		// Подпись «2024» — FY2024, точка датирована 1 января 2025.
+		{"Total refined gold output", "ANNUAL", time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC), 1265.7},
+		// 4Q'07 — первое число месяца после конца квартала.
+		{"Total rock moved", "QUARTERLY", time.Date(2008, 1, 1, 0, 0, 0, 0, time.UTC), 8438.8},
+		// 2H'24 — первое число месяца после конца полугодия.
+		{"Total rock moved", "SEMI-ANNUAL", time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC), 40830},
+	}
+
+	for _, tc := range cases {
+		found := false
+		for _, r := range rows {
+			if r.Table != wantTable || r.Name != tc.name || r.Data != tc.period || !r.Date.Equal(tc.date) {
+				continue
+			}
+			found = true
+			// Допуск шире float32-погрешности: parseDatapack читает
+			// ОТФОРМАТИРОВАННУЮ строку ячейки (excelize.GetRows), а квартальные
+			// Total rock moved отформатированы в датапаке как `#,##0`. Поэтому
+			// сырое 4Q'07 = 8438.8 приходит как 8439 (сдвиг 0.2), и допуск в
+			// половину отображаемой единицы покрывает такую оцифровку, не мешая
+			// поймать подмену года, ради которой написан тест.
+			const valueTolerance = 0.5
+			if diff := math.Abs(float64(r.Value) - float64(tc.value)); diff > valueTolerance {
+				t.Errorf("%s/%s/%s %s: значение %v, want %v (diff %v)",
+					wantTable, tc.name, tc.period, tc.date.Format("2006-01-02"), r.Value, tc.value, diff)
+			}
+		}
+		if !found {
+			t.Errorf("%s/%s/%s с датой %s не найдена: дата не по конвенции "+
+				"«первое число месяца, следующего за концом периода»",
+				wantTable, tc.name, tc.period, tc.date.Format("2006-01-02"))
+		}
 	}
 }
