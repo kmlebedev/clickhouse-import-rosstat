@@ -13,7 +13,7 @@
 
 2. **Границы блоков датапака.**
    - `polyus/datapack.go`: нормализация метки, alias `VERNINSKOYE` → `VERNINSKOYE2`; неизвестная all-caps метка после первого актива — ошибка; дубли ключа `(table, name, data, date)` — ошибка.
-   - `polyus/datapack_test.go`: временная копия FY2025-фикстуры с `B84 = VERNINSKOYE**`; `VERNINSKOYE2` `Ore processed` 2021-01-01 = 3277, у `TITIMUKHTA` нет строк после 2020, дублей нет. Отдельный тест: неизвестная all-caps метка → ошибка.
+   - `polyus/datapack_test.go`: временная копия FY2025-фикстуры с `B84 = VERNINSKOYE**`; `VERNINSKOYE2` `Ore processed` 2021-01-01 = 3277, у `TITIMUKHTA` нет **ненулевых** значений после 2020 (нулевые полугодовые строки допустимы), дублей в затронутых блоках нет. Отдельный тест: неизвестная all-caps метка → ошибка.
    - `ARCHITECTURE.md:431`, `docs/IMPORTERS.md` — alias/guard.
 
 3. **Решения по 2H25 и 1H26.**
@@ -23,7 +23,7 @@
 4. **Приёмка.**
    - `make all`, `make docs-check`, `dagu validate dagu/financial.yaml dagu/dcf.yaml`.
    - Dev: `make import STAT=databook_polyus` (8 484 строки), `make import STAT=dcf_mine_plans` (OLIMPIADA 926.5), `DCF_RUN_ID=<uuid> make import STAT=dcf_engine` (36 строк); NAV до/после в `v_dcf_assumptions`.
-   - Staging: TRUNCATE `databook_polyus` + reimport; `TITIMUKHTA` без строк после 2020; `dcf_mine_plans` — 926.5; `dcf_engine` — 36 строк; `make mcp-check`.
+   - Staging: TRUNCATE `databook_polyus` + reimport; `TITIMUKHTA` без **ненулевых** значений после 2020; `dcf_mine_plans` — 926.5; `dcf_engine` — 36 строк; `make mcp-check`.
    - Протокол — комментарием в PR.
 
 ## Порядок

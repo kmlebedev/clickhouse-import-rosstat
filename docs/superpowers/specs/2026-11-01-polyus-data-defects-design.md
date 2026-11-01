@@ -42,7 +42,7 @@ AND date = makeDate({year:UInt16} + 1, 1, 1)
 `databook_polyus` на staging содержит 208 устаревших строк `TITIMUKHTA` (`date >= 2021-01-01`), которые текущий импортёр не порождает. Точечный `DELETE` оставил бы риск других stale-ключей; по решению владельца таблица очищается и датапак импортируется заново. Это разрушающая операция на общей БД, поэтому:
 
 - окно — вне расписания `financial` (пн 10:23 МСК) и `wgc` (ежедневно 20:17 МСК);
-- до TRUNCATE фиксируются `count()` и SHA-256 файла, после — `count()`, крайние даты и отсутствие `TITIMUKHTA` после 2020;
+- до TRUNCATE фиксируются `count()` и SHA-256 файла, после — `count()`, крайние даты и отсутствие **ненулевых** значений `TITIMUKHTA` после 2020 (нулевые полугодовые строки — штатные, их пишет чистый датапак);
 - `v_company_operating` пересоздаётся шагом `company_views`.
 
 ### 2.4. 2H25 и 1H26 — отдельные follow-up
@@ -63,9 +63,9 @@ AND date = makeDate({year:UInt16} + 1, 1, 1)
 
 1. Тест конвенции даты: FY2024 → `2025-01-01`, 4Q'07 → `2008-01-01`, 2H'24 → `2025-01-01`.
 2. Тест формы запроса: `actualProductionSelect` использует точную дату, не голый `toYear(date)`.
-3. Тест границ: FY2025-фикстура с `B84 = VERNINSKOYE**` даёт `VERNINSKOYE2` `Ore processed` 2021-01-01 = 3277, у `TITIMUKHTA` нет строк после 2020, дублей нет; неизвестная all-caps метка — ошибка.
+3. Тест границ: FY2025-фикстура с `B84 = VERNINSKOYE**` даёт `VERNINSKOYE2` `Ore processed` 2021-01-01 = 3277, у `TITIMUKHTA` нет **ненулевых** значений после 2020 (нулевые полугодовые строки допустимы), дублей в затронутых блоках нет; неизвестная all-caps метка — ошибка.
 4. `make all`, `make docs-check`, `dagu validate dagu/financial.yaml dagu/dcf.yaml` — зелёные.
-5. На staging после TRUNCATE + reimport: `databook_polyus` — 8 484 строки, `TITIMUKHTA` без строк после 2020, `VERNINSKOYE2` без изменений.
+5. На staging после TRUNCATE + reimport: `databook_polyus` — 8 484 строки, `TITIMUKHTA` без **ненулевых** значений после 2020, `VERNINSKOYE2` без изменений.
 6. На staging `dcf_mine_plans`: `OLIMPIADA — факт базы 926.5 koz (2025)`, `Imported 87 rows`; `dcf_engine` — 36 строк; NAV до/после зафиксирован в протоколе (чистое сравнение — на dev).
 7. `make mcp-check` — ПРОВЕРКА ПРОЙДЕНА; `v_company_operating` и `v_dcf_assumptions` читаются через MCP.
 8. По 2H25 и 1H26 — решение в issue и роадмапе (отдельные follow-up).
