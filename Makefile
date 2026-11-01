@@ -858,11 +858,14 @@ cb-comp-groups-panel-test:
 # Task 2 #422: live bottom-up по 88 группам на нашей панели, цель T_LIVE —
 # R0 (регрессия #252), G2, сравнение с CB_COMP «каждый на своей цели».
 # Нужны артефакты make cb-comp-groups-panel ARGS="--asof" и make cb-comp-public-export.
+# ML_LOG=1 — паспорт и fold-предсказания (P0.5); MLFLOW=0 — осознанно выключить.
 cb-comp-live-bottomup:
-	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --with arch --with "holidays>=0.60" --python 3.12 python3 scripts/models/cb_comp/cb_comp_live_bottomup.py $(ARGS)
+	@$(MLFLOW_PREFLIGHT)
+	$(MLFLOW_ENV) $(MLFLOW_HTTP_ENV) uv run $(MLFLOW_PKG) --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --with arch --with "holidays>=0.60" --python 3.12 python3 scripts/models/cb_comp/cb_comp_live_bottomup.py $(ARGS)
 
 cb-comp-live-bottomup-test:
 	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/cb_comp/cb_comp_live_bottomup_test.py -v
+	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --python 3.12 python3 scripts/models/cb_comp/cb_comp_mlog_test.py -v
 
 # Task 3 #423: EN_COMP и CB+EN на нашей панели, истина TARGET_FULL —
 # классификация против CB_COMP, MCS, выбор модели, гейт G3 (спека §15).
@@ -874,12 +877,15 @@ cb-comp-live-en-test:
 
 # Task 9 #436: h1 — комбинация live_cb + BS_ECON16/BS_ROZN16 статьи (OLS на
 # T_LIVE и SA ценовых ожиданиях ЦБ, окно 2016+, переобучение без утечки).
-# Только чтение ClickHouse и локального архива CB_COMP; в БД не пишет.
+# ML_LOG=1 — паспорт run'а в ml_runs/ml_predictions и MLflow (P0.5);
+# MLFLOW=0 — осознанно выключить.
 cb-comp-h1-bs-combo:
-	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --with arch --with "holidays>=0.60" --python 3.12 python3 scripts/models/cb_comp/cb_comp_h1_bs_combo.py $(ARGS)
+	@$(MLFLOW_PREFLIGHT)
+	$(MLFLOW_ENV) $(MLFLOW_HTTP_ENV) uv run $(MLFLOW_PKG) --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --with arch --with "holidays>=0.60" --python 3.12 python3 scripts/models/cb_comp/cb_comp_h1_bs_combo.py $(ARGS)
 
 cb-comp-h1-bs-combo-test:
 	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/cb_comp/cb_comp_h1_bs_combo_test.py -v
+	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --python 3.12 python3 scripts/models/cb_comp/cb_comp_mlog_test.py -v
 
 # Task 10 #438: pooled CatBoost на 87 группах (окно 2016+ / control 2010-03+),
 # годовая переподготовка без утечки; G10 против combo3, MCS 90 %.
