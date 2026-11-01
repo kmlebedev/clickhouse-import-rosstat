@@ -36,6 +36,7 @@ sys.path.insert(0, str(ROOT / "scripts" / "models" / "cpi"))
 from models.cb_comp import cb_comp_bottomup as bu
 from models.cb_comp import cb_comp_live_bottomup as lb
 from models.cb_comp import cb_comp_live_en as en
+from models.cb_comp import cb_comp_mlog as mlog
 from models.cb_comp import cb_comp_parity as cp
 from models.cpi import cpi_monthly as cm
 
@@ -333,7 +334,60 @@ def run(archive: Path, panel_csv: Path, public_dir: Path, out_dir: Path, version
                 for month in sorted(forecasts[model][h]):
                     writer.writerow([model, h, month.isoformat(), repr(forecasts[model][h][month])])
     (out_dir / "result.json").write_text(json.dumps(lb._jsonable(result), ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+    mlog_status = mlog.log_run(**mlog_kwargs(forecasts, target_full, data, test_months, result, checks, version, out_dir))
+    if mlog_status != "disabled":
+        print(f"Паспорт прогона: {mlog_status}", flush=True)
     return result
+
+
+def mlog_kwargs(forecasts: dict, target_full: dict, data: dict, test_months: list,
+                result: dict, checks: dict, version: str, out_dir: Path) -> dict:
+    """Аргументы `cb_comp_mlog.log_run`: конфиг, выборка, folds, метрики, артефакты.
+
+    `TARGET_FULL` — `actual` (предзарегистрированная истина normal-54),
+    `T_LIVE` — только в `meta_json`; `window=hN` — горизонт.
+    """
+    normal = data["normal"]
+    return {
+        "run_name": f"combo3__h1-h6__normal54__target_full__{version}",
+        "config": {
+            "version": version,
+            "seed": bu.SEED,
+            "horizons": list(HORIZONS),
+            "primary_horizons": list(PRIMARY_HORIZONS),
+            "train": [str(data["train_months"][0]), str(data["train_months"][-1]), len(data["train_months"])],
+            "test": [str(test_months[0]), str(test_months[-1]), len(test_months)],
+            "normal": len(normal),
+            "models": list(CANDIDATES),
+            "truth": mlog.TRUTH,
+            "unit": mlog.UNIT,
+            "spec_path": result["spec"],
+            "inputs": result["inputs"],
+        },
+        "data_asof": cp.TEST_END,
+        "sample_meta": {"rows": len(normal) * len(HORIZONS), "normal": len(normal),
+                        "first": normal[0].isoformat(), "last": normal[-1].isoformat(),
+                        "models": list(CANDIDATES), "horizons": list(HORIZONS)},
+        "sample": [
+            {"horizon": h, "month": m.isoformat(), "target_full": float(target_full[h][m]),
+             "t_live": float(data["t_live"][h][m]) if m in data["t_live"][h] else None}
+            for h in HORIZONS for m in normal
+        ],
+        "spec_path": result["spec"],
+        "aggregated": forecasts,
+        "truth": target_full,
+        "months": normal,
+        "models": CANDIDATES,
+        "horizons": HORIZONS,
+        "t_live": data["t_live"],
+        "version": version,
+        "metrics": {"primary_metric": "rmse_pp", "ratios": result["ratios"], "g9": result["g9"],
+                    "noharm": result["noharm"], "mcs": result["mcs"],
+                    "r9": {name: checks[name]["ok"] for name in ("r9a", "r9b")}},
+        "artifacts": [out_dir / "predictions.csv", out_dir / "result.json"],
+        "notes": f"version={version}; normal={len(normal)}; horizons=h1,h2,h3,h6",
+    }
 
 
 def main(argv=None) -> int:
