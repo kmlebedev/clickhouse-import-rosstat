@@ -604,7 +604,8 @@ def jsonable(value):
 
 def run(archive: Path, panel_csv: Path, out_dir: Path, version: str, snapshot: bool = False,
         month: date = None, copy_json: bool = False, nsa_check: bool = True,
-        with_direct: bool = True) -> dict:
+        with_direct: bool = True) -> tuple:
+    """`(result, side)`: паспорт не зависит от флагов, вывод флагов — в `side`."""
     archive_data = cp.check_archive(archive)
     target_full = archive_data["target"]
     normal = archive_data["normal"]
@@ -675,27 +676,23 @@ def run(archive: Path, panel_csv: Path, out_dir: Path, version: str, snapshot: b
     write_coverage(out_dir / "coverage.csv", stats)
     write_groups(out_dir / "groups.csv", group_report(sa_full, nsa, weights, codes, months[-1]))
     result["target_sha256"] = sha256(out_dir / "target.csv")
+    (out_dir / "result.json").write_text(
+        json.dumps(jsonable(result), ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+    side = {}
     if copy_json:
         path = Path(str(JSON_COPY).format(version=version))
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(jsonable(result), ensure_ascii=False, indent=2, sort_keys=True) + "\n",
                         encoding="utf-8")
-        result["json_copy"] = str(path)
-
+        side["json_copy"] = str(path)
     if snapshot:
         frozen = month or months[-1]
         if frozen not in stats:
             raise SystemExit(f"снимок: месяца {frozen.isoformat()} нет в панели")
         payload = snapshot_payload(version, frozen, live, live_rt, stats, result["panel_sha256"], weights_sha)
-        result["snapshot"] = write_snapshot(VINTAGE_DIR / version / f"{frozen.isoformat()[:7]}.json", payload)
-        if result["snapshot"]["status"] == "conflict":
-            (out_dir / "result.json").write_text(
-                json.dumps(jsonable(result), ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-            return result
-
-    (out_dir / "result.json").write_text(json.dumps(jsonable(result), ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-                                         encoding="utf-8")
-    return result
+        side["snapshot"] = write_snapshot(VINTAGE_DIR / version / f"{frozen.isoformat()[:7]}.json", payload)
+    return result, side
 
 
 def summary(result: dict) -> dict:
@@ -733,10 +730,12 @@ def main(argv=None) -> int:
     out_dir = Path(args.out) if args.out else versioned_dir(OUT_DIR, args.version)
     archive = cp.resolve_archive(args.archive)
     month = date.fromisoformat(f"{args.month}-01") if args.month else None
-    result = run(archive, panel, out_dir, args.version, args.snapshot, month, args.copy_json,
-                 not args.skip_nsa_check, not args.skip_direct)
+    result, side = run(archive, panel, out_dir, args.version, args.snapshot, month, args.copy_json,
+                       not args.skip_nsa_check, not args.skip_direct)
+    if side:
+        print(json.dumps(jsonable(side), ensure_ascii=False, indent=2))
     print(json.dumps(jsonable(summary(result)), ensure_ascii=False, indent=2))
-    if result.get("snapshot", {}).get("status") == "conflict":
+    if side.get("snapshot", {}).get("status") == "conflict":
         return EXIT_CONFLICT
     return 0 if result["gates"]["ok"] else EXIT_GATE
 
