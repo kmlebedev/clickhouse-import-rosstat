@@ -22,14 +22,15 @@
 | A | 2010 | `9f6e6bf9-3e4c-473b-a503-a47b8ddddbe0` | `b3197565…` | `0e39e019…` | `e4ced16b…` | `aec3f008…` |
 | B (повтор) | 2010 | `ae591fa4-2a92-4899-bd30-327283f39bc7` | `b3197565…` | `0e39e019…` | `e4ced16b…` | `aec3f008…` |
 | C | 2009 | `a2c17a05-49aa-4ff5-9b3f-6d6b518797b8` | `e49ecb6b…` | `3797c221…` | `b11d02d9…` | `8a8fd518…` |
+| D (bottom-up) | 2010 | `42de36a6-a993-4b1c-8852-4abceeb206a9` | `32cd2d9b…` | `0e39e019…` | `68378cb9…` | `c1de5e63…` |
 
 Повтор A/B: одинаковые `config_hash`, `sample_hash`, sha256 `predictions.csv` (`e4ced16b76595e775f78a4f40dd6c44aca9aa1ec4b555e2e191a5ed3f94ade36`) и `result.json` (`aec3f0085735401dd96f9c3098125e2c8af947a9e47781df55e5d7d5aafbff82`), `run_id` разный. `git_dirty=0`, `status='finished'`.
 
 ### 2.2. Витрины
 
-- `v_ml_error_by_fold`: **864 строки** на run (4 модели × 4 горизонта × 54 normal-месяца); симметричная разность fold-значений A и B — **0**.
+- `v_ml_error_by_fold`: **864 строки** на combo-run (4 модели × 4 горизонта × 54 normal-месяца), **648** на bottom-up (3 × 4 × 54); симметричная разность fold-значений A и B — **0**.
 - `v_ml_leaderboard`: 16 строк на run (4 модели × 4 горизонта), по 54 фолда. `combo3` — 0,164327 / 0,283931 / 0,448147 / 0,868518 на h1/h2/h3/h6 (отношения к CB_COMP 1,035 / 0,957 / 1,010 / 0,894 — как в Task 9); `live_cb` — 0,189431 / 0,300424 / 0,477259 / 1,031389; `bs_econ16` — 0,166706 / 0,322351 / 0,521499 / 0,897860; `bs_rozn16` — 0,168930 / 0,322598 / 0,516526 / 0,996425.
-- `v_ml_runs`: три run'а `experiment='cb_comp_88_groups'`, `notes='version=…; normal=54; horizons=h1,h2,h3,h6'`, артефакты с sha256 и размером.
+- `v_ml_runs`: четыре run'а `experiment='cb_comp_88_groups'` (3 combo + 1 bottom-up), `notes='version=…; normal=54; horizons=h1,h2,h3,h6'`, артефакты с sha256 и размером.
 
 ### 2.3. Gate читает run
 
@@ -43,15 +44,17 @@
 
 Backend — локальный `http://127.0.0.1:5000` (staging-туннель `15001` в момент прогона закрыт; код принимает `MLFLOW_TRACKING_URI`, канонический staging-прогон — повтор командой владельца). `run_id` в MLflow совпадает с `ml_runs.run_id` (канонический UUID), `clickhouse_run_id` — тот же.
 
-`make mlflow-export ARGS="--experiment cb_comp_88_groups --dry-run"` видит все run'ы эксперимента и их предсказания, ClickHouse не меняет.
+`make mlflow-export ARGS="--experiment cb_comp_88_groups --dry-run"` видит **4 run'а / 3240 предсказаний** (3 combo + 1 bottom-up), ClickHouse не меняет.
 
 ### 2.5. Тесты
 
-`make cb-comp-h1-bs-combo-test` — 21 тест combo + 10 тестов `cb_comp_mlog`; `make cb-comp-live-bottomup-test` — тесты bottom-up + 10 тестов `cb_comp_mlog`. Все офлайн, без ClickHouse и MLflow.
+`make cb-comp-h1-bs-combo-test` — 21 тест combo + 10 тестов `cb_comp_mlog`; `make cb-comp-live-bottomup-test` — 22 теста bottom-up + 10 тестов `cb_comp_mlog`. Все офлайн, без ClickHouse и MLflow.
 
 ## 3. Bottom-up
 
-`ML_LOG=1 make cb-comp-live-bottomup` пишет паспорт с именами `live_per_sheet` / `live_nomp` / `live_per_sheet_asof` (648 fold-строк: 3 модели × 4 горизонта × 54 месяца). Это тот же оценщик, что `live_cb` в combo-run, но под своим именем; пара между ними требует `--champion-model`/`--challenger-model` (P1.5), поэтому gate на этой паре здесь не запускается.
+`ML_LOG=1 make cb-comp-live-bottomup` — run `42de36a6-a993-4b1c-8852-4abceeb206a9`, `config_hash` `32cd2d9b…`, `sample_hash` `0e39e019…`, sha256 `predictions.csv` `68378cb9…` / `result.json` `c1de5e63…`; **648 fold-строк** (3 модели × 4 горизонта × 54 месяца), лидерборд — 12 строк × 54 фолда. `live_per_sheet` — 0,189431 / 0,300424 / 0,477259 / 1,031389 на h1/h2/h3/h6: те же числа, что `live_cb` в combo-run (кросс-проверка паспорта); `live_nomp` — 0,212245 / 0,411916 / 0,626699 / 1,087271; `live_per_sheet_asof` — 0,189391 / 0,311443 / 0,481228 / 1,024827.
+
+Это тот же оценщик, что `live_cb` в combo-run, но под своим именем; пара между ними требует `--champion-model`/`--challenger-model` (P1.5), поэтому gate на этой паре здесь не запускается.
 
 ## 4. Что не проверено
 
