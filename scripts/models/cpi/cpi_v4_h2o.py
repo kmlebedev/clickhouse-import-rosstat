@@ -348,16 +348,16 @@ def run_select(sample: str, out_dir: Path, seed: int = lb.SEED) -> dict:
         for run_seed in (seed, seed + 1):
             aml = H2OAutoML(
                 max_models=MAX_MODELS,
+                nfolds=SELECT_FOLDS,
                 seed=run_seed,
                 sort_metric="RMSE",
                 stopping_metric="RMSE",
                 exclude_algos=["DeepLearning", "StackedEnsemble"],
-                fold_column="sel_fold",
                 keep_cross_validation_predictions=False,
                 project_name=f"cpi_v4_h2o_select_{sample}_h1_{run_seed}",
                 verbosity="warn",
             )
-            aml.train(x=names, y=cm.TARGET_ALL, training_frame=frame)
+            aml.train(x=names, y=cm.TARGET_ALL, training_frame=frame, fold_column="sel_fold")
             leader = aml.leader
             leaderboard = _leaderboard_rows(aml)
             runs.append(

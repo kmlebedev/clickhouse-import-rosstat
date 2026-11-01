@@ -40,13 +40,15 @@ make cpi-v4-h2o ARGS="--stage select"
 
 Проверка: `select.json` с семейством, параметрами, версиями, sha256 кадра; второй seed — то же семейство либо `selection_stable=false`.
 
+**Факт 2026-11-01:** кадр 78 origin'ов (2009-06…2015-11); seed `20261018` → GBM (CV 0,5110), seed `20261019` → DRF (CV 0,5090), `selection_stable=false`; заморожен DRF `DRF_1` (`min_rows=1`, `ntrees=23`). XGBoost в H2O OSS 3.46 недоступен.
+
 ## Task 4. Refit
 
 ```
-make cpi-v4-h2o ARGS="--stage refit --sample S_L09 --cells T_NSA:1,T_NSA:3 --quick"
-make cpi-v4-h2o ARGS="--stage refit --sample S_L09 --cells T_NSA:1,T_NSA:3,T_NSA:6"
-make cpi-v4-h2o ARGS="--stage refit --sample S_L13 --cells T_NSA:1,T_NSA:3 --quick"
-make cpi-v4-h2o ARGS="--stage refit --sample S_W22 --cells T_NSA:1,T_NSA:3"
+make cpi-v4-h2o ARGS="--stage refit --sample S_L09 --horizons 1 --quick"
+ML_LOG=1 make cpi-v4-h2o ARGS="--stage refit --sample S_L09 --horizons 1,3,6"
+make cpi-v4-h2o ARGS="--stage refit --sample S_L13 --horizons 1,3"
+make cpi-v4-h2o ARGS="--stage refit --sample S_W22 --horizons 1,3"
 ```
 
 Повтор full-прогона `S_L09` — сверка sha256 `predictions.csv`, при расхождении — max |Δpred| в отчёт.
