@@ -1,6 +1,6 @@
 ---
 name: ml-engineer
-description: Use when starting, running, reviewing, promoting, or publishing an ML experiment in clickhouse-import-rosstat — CPI nowcast, key-rate model, CatBoost/gold ML, MLflow runs, gate/shadow/canary, forecast_log, live monitoring, feature/model changes, or interpreting backtest results
+description: Use when starting, running, reviewing, promoting, or publishing an ML experiment in clickhouse-import-rosstat — CPI nowcast, key-rate model, CatBoost/gold ML, MLflow runs, gate/shadow/canary, forecast_log, live monitoring, feature/model changes, or interpreting backtest results; base switch after a passed gate is routed to ml-engineer-teamlead
 type: prompt
 whenToUse: When a task involves an ML experiment, model, feature set, backtest, MLflow registry, promotion gate, shadow/canary, forecast_log, live accuracy, or ML interpretation in clickhouse-import-rosstat
 ---
@@ -19,7 +19,7 @@ whenToUse: When a task involves an ML experiment, model, feature set, backtest, 
 - Промоушен challenger'а: gate DM/MCS, shadow/canary, rollback, разбор live-ошибки и алертов.
 - Подготовка ML-раздела публикации или ответа «модель лучше/хуже бенчмарка».
 
-**Когда не применять:** чистый Go-импортёр, DDL/витрина/грант, дашборд без ML-содержания, инфраструктура сборки. Это зона `AGENTS.md` и [IMPORTER_PACKAGE_STANDARD.md](../../../docs/IMPORTER_PACKAGE_STANDARD.md).
+**Когда не применять:** приёмка гейта G-N и смена базы — [`ml-engineer-teamlead`](../ml-engineer-teamlead/SKILL.md); чистый Go-импортёр, DDL/витрина/грант, дашборд без ML-содержания, инфраструктура сборки. Это зона `AGENTS.md` и [IMPORTER_PACKAGE_STANDARD.md](../../../docs/IMPORTER_PACKAGE_STANDARD.md).
 
 ## 2. Что прочитать перед стартом
 
@@ -28,7 +28,8 @@ whenToUse: When a task involves an ML experiment, model, feature set, backtest, 
 3. [stat-ml-models.md](../../../docs/guides/stat-ml-models.md) §4 (валидация), §6 (ловушки), §7 (данные).
 4. [ml-experiment-management.md](../../../docs/research/2026-10-18-ml-experiment-management.md) §4 (паспорт run), §7 (цикл и gates).
 5. [KEY_RATE_MODEL.md](../../../docs/KEY_RATE_MODEL.md) §4/§6 — если задача про ставку или CPI-nowcast.
-6. Спека/план своего пункта; для промоушена и live — [2026-10-20-ml-promotion-live-monitoring-design.md](../../../docs/superpowers/specs/2026-10-20-ml-promotion-live-monitoring-design.md); для витрин/грантов — [IMPORTER_PACKAGE_STANDARD.md](../../../docs/IMPORTER_PACKAGE_STANDARD.md).
+6. Для линии live 88 групп / `combo3` — [cb-comp-live-model-map.md](../../../docs/guides/cb-comp-live-model-map.md): model card, данные, канонические числа, реестр исследований, что уже отвергнуто, следующие шаги и §7.8 — разобранный пример смены базы; сам процесс приёмки гейта и смены базы — [`ml-engineer-teamlead`](../ml-engineer-teamlead/SKILL.md). Не переоткрывать закрытые вопросы без новых данных.
+7. Спека/план своего пункта; для промоушена и live — [2026-10-20-ml-promotion-live-monitoring-design.md](../../../docs/superpowers/specs/2026-10-20-ml-promotion-live-monitoring-design.md); для витрин/грантов — [IMPORTER_PACKAGE_STANDARD.md](../../../docs/IMPORTER_PACKAGE_STANDARD.md).
 
 ## 3. Границы ролей
 
@@ -104,6 +105,7 @@ whenToUse: When a task involves an ML experiment, model, feature set, backtest, 
 | `make key-rate-model` | ставка: Тейлор, ordered logit, walk-forward; `ML_LOG=1` |
 | `make shock-classifier` | классификатор шоков и причинные веса; `ML_LOG=1` |
 | `make cb-comp-parity` | паритет с CB_COMP (direct + bottom-up, DM/TOST); `ML_LOG=1` |
+| `make cb-comp-h1-bs-combo` | Task 9: `combo3` = `live_cb` + BS статьи; `ML_LOG=1` — паспорт в `ml_runs`/`ml_predictions` и MLflow (`experiment=cb_comp_88_groups`, gate читает run) |
 | `make key-rate-llm-forecast` | LLM-трек: as-of, 3 повтора, медиана; `ARGS="--log"` — payload |
 | `make key-rate-forecast-log` | запись прогноза в `forecast_log` через ingest; `ARGS="--dry-run"`, `ARGS="--stage shadow|canary"` — staged-трек |
 | `make ml-gate` | gate промоушена: DM-HLN, 95% бутстрап, robustness, MCS; артефакт `build/ml-gate/<run>.json`; `ARGS="--live --live-track cbr_rate:<track>"` — live-оценка shadow/canary |
@@ -131,6 +133,81 @@ Python-тесты — офлайн, через `uv run --with ... python3 script
 - Канонические MLflow-теги решения: `decision=promote|reject|iterate|shadow|canary`, `gate=dm|mcs|dm+mcs`, `primary_metric`, `model_version`, `run_id`; причина решения — в артефакте, не только в PR.
 - Сырые `ml_runs`/`ml_predictions` агенту не выданы; для анализа — витрины `v_ml_runs`, `v_ml_leaderboard`, `v_ml_error_by_fold`, `v_ml_live_accuracy`.
 - Артефакты не должны существовать только в gitignored-каталоге: паспорт и sha256 — обязательны.
+
+### 7.1 MLflow: что логировать
+
+| Поле | Что кладём | Правило |
+|---|---|---|
+| `experiment` | контур/семейство: `cpi_nowcast`, `cpi_monthly_v3`, `key_rate_model`, `cb_comp_h1_shadow` | Версия контура — новый эксперимент, а не суффикс `run_name`; иначе фильтры и ретеншн смешиваются. |
+| `run_name` | `<model>__<window>__start<...>__embargo<...>__<spec-версия>` | Читается без открытия паспорта; без даты «сегодня» и случайных суффиксов. |
+| `params` | immutable config: seed, гиперпараметры, флаги; `config_hash`, `sample_hash`, `git_sha`, `git_dirty`, `spec_path`, `data_asof`, `model_version`, `month`, `cutoff` | Params нельзя изменить после старта; длинные JSON, списки и секреты — в `run.json`/артефакт, не в params. |
+| `tags` | searchable-метки: `decision` (`promote/reject/iterate/shadow/canary`), `gate` (`dm/mcs/dm+mcs`), `primary_metric`, `model_version`, `stage` (`backtest/paper_shadow/shadow/canary/production`; не путать с `forecast_log.metric`-суффиксом), `clickhouse_run_id`, `champion`, `challenger`, `source` (путь/имя источника без URL с секретом) | Короткие значения из закрытого словаря; по ним ищут gate, registry и аудит. |
+| `metrics` | RMSE/MAE/bias, DM p, границы 95 % CI, forecast/actual/error по фолдам и агрегату | Только конечные числа; `primary_metric` — имя метрики (тег), а не число. |
+| `artifacts` | `run.json`, `predictions.jsonl`, config/sample JSON, report.md, model card, gate JSON; у каждого — sha256 и размер в паспорте | Артефакт без sha256 не воспроизводим; MLflow — не единственное хранилище. |
+
+`run_id` (канонический UUID) — из staging-run'а; в отчёте, gate-артефакте и `ml_runs`, не только в MLflow UI. `MLFLOW_TRACKING_URI` канонических прогонов — staging-туннель (`http://127.0.0.1:15001`), не локальный dev `:5000`; run, созданный на `build/mlflow`, не evidence. В `scripts/lib/ml_experiment.py` lineage (`config_hash`, `sample_hash`, `git_sha`, `git_dirty`, `spec_path`, `data_asof`) пишется тегами, а `params` — скалярный конфиг: оба варианта immutable, дублировать в оба namespace не нужно.
+
+### 7.2 MLflow vs ClickHouse
+
+| Вопрос | Правило |
+|---|---|
+| Источник истины для gate | ClickHouse `v_ml_error_by_fold`, не MLflow API. Run только в MLflow для gate не существует. |
+| Связь контуров | `clickhouse_run_id` = канонический UUID run'а; один и тот же id в MLflow, `ml_runs` и отчёте. |
+| Прогон без ClickHouse | `make mlflow-export ARGS="--experiment <name> --since <date>"` проигрывает `run.json`/`predictions.jsonl` в `ml_runs`/`ml_predictions`; повтор идемпотентен. |
+| Прогон без MLflow | `make mlflow-backfill ARGS="--run-id <uuid>"` создаёт run с тегом `clickhouse_run_id`; повторный — `skip`, `--force` — осознанный дубль. |
+| `MLFLOW=0` | Только осознанно (отладка, недоступный сервер); причина — в отчёте/PR. Gate-вход всё равно обязан быть в ClickHouse. |
+| Preflight | `make mlflow-preflight` (или автоматически перед `make`-целью). Недоступный API в не-TTY — стоп; `MLFLOW_ALLOW_NO_LOG=1` — явное решение, не обход. |
+| Staging — единственный канонический backend | `ps-palmshell` (ssh-алиас `palmshell`): systemd `mlflow.service`, backend `sqlite:////var/lib/mlflow/mlflow.db`, артефакты `/var/lib/mlflow/artifacts`, API `127.0.0.1:5000` хоста. Доступ — SSH-туннель `ssh -N -L 15001:127.0.0.1:5000 palmshell` (локальный порт 15001 или свободный; 5000 — если свободен), `MLFLOW_TRACKING_URI=http://127.0.0.1:15001`. |
+| Локальный `build/mlflow` | Только офлайн-тесты/изолированные прогоны: SQLite `build/mlflow/mlflow.db`, артефакты `build/mlflow/artifacts`; `/build/` gitignored; `make mlflow-up/down/status` — только dev. Не канонический backend, не evidence, не называть его staging/production. |
+| Канонические run'ы | Не логировать в локальный сервер. Если `MLFLOW_TRACKING_URI` ведёт на локальный сервер `build/mlflow`, а не на staging-туннель, это ошибка политики: run не станет evidence; локальный порт 5000 допустим только как туннель к staging. |
+| Хранение артефактов | Не только в MLflow и не только в `build/`: паспорт/отчёт/JSON с sha256 — в git или research-артефакте. |
+
+### 7.3 Реестр и aliases
+
+| Объект | Как правильно | Почему |
+|---|---|---|
+| Сохраняемая модель | `log_model` только для реального model object (CPI CatBoost direct); при логировании — `signature`, `input_example`, `pip_requirements` | Без них версия не проверяется на входе и не воспроизводится; `mlflow.catboost.log_model(model, name=...)` без signature — дефект паспорта. |
+| CPI registry | `make mlflow-register ARGS="--run-id <id> --name cpi_nowcast_catboost_direct"` ставит `challenger`; `make mlflow-promote ARGS="--name ... --version N"` двигает `champion` | Явные команды после gate; alias — registry, не deployment; только на staging. |
+| Key-rate `taylor`/`ordered_logit` | Теги run (`champion`, `challenger`, `decision`), registry и aliases не использовать | Нет сохраняемого model object — регистрировать нечего; промоушен — gate + `--stage`. |
+| Research-линии `combo3`/`wk_mix_ex` | Теги run: `champion=combo3`, `challenger=wk_mix_ex@v1`; aliases не создавать | Registry — для загружаемых и деплоимых объектов, не для research-артефактов. |
+| Размещение registry | Версии и aliases `champion`/`challenger` — только на staging; локальный `build/mlflow`-реестр — тестовый, не канонический | Evidence и промоушен читаются со staging; локальный реестр не считается. |
+| Alias | Не называть deployment и не двигать вручную без gate | Production-переключение — shadow/canary и решение владельца; `make mlflow-models` — только чтение. |
+
+### 7.4 Shadow mirror P0.6
+
+**Паттерн.** Закоммиченный `docs/research/cb-comp-h1-shadow/<YYYY-MM>.json` — паспорт paper shadow (P0.6); staging-run в experiment `cb_comp_h1_shadow` — каноническое зеркало для поиска и сравнения. JSON остаётся источником истины, staging его не заменяет; локальный run — только тест.
+
+| Поле | Значение |
+|---|---|
+| `experiment` | `cb_comp_h1_shadow` (staging experiment id `1`) |
+| `run_name` | `shadow__<YYYY-MM>__wk_mix_ex@v1` |
+| `params` | `month`, `cutoff`, `run_date`, `git_sha`, `v1_code_sha`, `inputs_sha256`, `json_sha256` |
+| `tags` | `decision=shadow`, `stage=paper_shadow`, `champion=combo3`, `challenger=wk_mix_ex@v1`, `model_version=wk_mix_ex@v1`, `source=json`, `json_sha256` |
+| `metrics` | `pred.<model>`, `served.value`, `weekly_features.*`, `s0.*`; после факта — `actual.t_live_rt`, `error_bp`, `abs_error_bp`; `actual` до факта не писать |
+| `artifacts` | `shadow.json` (байты источника) и `run_summary.json`; после факта — новый run с новым `json_sha256`; sha256 — в паспорте |
+
+- Идемпотентность: ключ `month`+`json_sha256`; повторный backfill того же файла — `skip`, не новый run.
+- Новый или перегенерированный JSON — новый run; старый не переписывать (append-only, §7.8 гайда).
+- Зеркало/backfill — `make cb-comp-h1-shadow-mlflow ARGS="--backfill"` (или `ARGS="--month 2026-10"`; `--dry-run` — проверка без записи), запускать с `MLFLOW_TRACKING_URI` staging-туннеля. `make mlflow-backfill` — только для ClickHouse `ml_runs`, не для shadow-JSON.
+- Пример канонического зеркала: staging experiment `1` `cb_comp_h1_shadow`, run `9c53630947894b2682bae2d0d1908762`, artifact `shadow.json` sha256 `f98b1e281e2ae376bd7e15c01b66c498accbd9be187ba102226e66c4d8db282d` (побайтно равен JSON). Локальный run `b034…` на dev — тест, не evidence.
+- JSON без staging-зеркала — валидный research-артефакт, но канонический run/evidence появляется только после записи в staging; `run_id`/sha256 — в отчёте.
+
+### 7.5 Анти-паттерны
+
+| Ошибка | Почему плохо | Как правильно |
+|---|---|---|
+| Секреты, токены, сырые данные в params/artifacts | Утечка и раздувание run | Только env; агрегаты и хеши; сырые данные — в ClickHouse. |
+| `champion` alias как deployment | Registry не равен проду | Gate + shadow/canary + rollback; key-rate и research — aliases не применять. |
+| Артефакты только в MLflow | Сервер недоступен/run удалён — evidence нет | `run.json`/отчёт/JSON с sha256 в git или research-артефакте. |
+| Канонический run в локальном `build/mlflow` | Локальный сервер — dev; run не evidence, staging его не видит | `MLFLOW_TRACKING_URI` — staging-туннель; локальный сервер только для офлайн-тестов. |
+| Нет `git_dirty`/`config_hash`/`sample_hash` | Не отличить коммит от грязного дерева, не проверить повтор | `ML_LOG=1` паспорт; повтор сверять по hash. |
+| Логировать каждый epoch вместо конфигурации | Шум, тысячи metrics, нет паспорта | Один run = один конфиг; эпохи — только при реальном early stopping. |
+| `log_model` без signature/input_example | Версия не воспроизводится и не проверяется | `signature`, `input_example`, `pip_requirements`. |
+| `mlflow` в зависимостях репозитория | Версия MLflow меняет окружение экспериментов | Только `uv run --with "mlflow==3.17.1"` через `make`. |
+| Запуск без preflight | Run молча без лога, gate его не видит | `make mlflow-preflight`; `MLFLOW_ALLOW_NO_LOG=1` — только осознанно. |
+| Ручной alias без gate | Промоушен без DM/CI | `make ml-gate` → `make mlflow-promote` (CPI). |
+
+**Ссылки.** [ml-experiment-management.md](../../../docs/research/2026-10-18-ml-experiment-management.md) §4 (паспорт) и §7 (цикл/gates); [promotion spec](../../../docs/superpowers/specs/2026-10-20-ml-promotion-live-monitoring-design.md); P0.6 — [отчёт](../../../docs/research/2026-10-31-cb-comp-h1-shadow-p06.md), [2026-10.json](../../../docs/research/cb-comp-h1-shadow/2026-10.json); скрипты — `scripts/mlflow_preflight.py`, `mlflow_export.py`, `mlflow_backfill.py`, `mlflow_registry.py`; цели — `make mlflow-*`, `make ml-gate`.
 
 ## 8. Промоушен и live: рабочий контур
 
@@ -208,6 +285,12 @@ Python-тесты — офлайн, через `uv run --with ... python3 script
 - Live-точность и алерты живут в ClickHouse/Grafana, не в MLflow UI; MLflow показывает run, registry и artifacts, но не `v_ml_live_accuracy`.
 - Key-rate registry — отдельный follow-up; не обещай alias `champion` для key-rate.
 
+### 8.6 Смена базы — отдельный процесс
+
+Пройденный предрегистрированный гейт G-N (G2…G12 в #419, S1/S2 в #401, gate #76) отвечает на вопрос «стоит ли кандидат проверки на новых данных», а **не** «заменить ли базу». Приёмка гейта, вердикт `shadow`, заморозка кандидата, проспективный shadow, правило решения и переключение в границах арены — процесс и скил [`ml-engineer-teamlead`](../ml-engineer-teamlead/SKILL.md); разобранный пример — [cb-comp-live-model-map.md](../../../docs/guides/cb-comp-live-model-map.md) §7.8.
+
+Здесь остаются эксперимент, паспорт run/MLflow, `make ml-gate` и production-промоушен `cbr_rate` (§8.1–8.5). В teamlead передаются `run_id`, gate-артефакт, спека/отчёт, замороженная версия кандидата и ограничения. `promote` после одного бэктеста не ставится.
+
 ## 9. Открытая очередь
 
 | Приоритет | Issue | Следующий шаг |
@@ -232,6 +315,7 @@ Python-тесты — офлайн, через `uv run --with ... python3 script
 - [ ] Shadow 2 + canary 1 (если live-трек), staged-строки не публикуются; live-gate `promote/hold/rollback` записан.
 - [ ] Перед публикацией — `make ml-live-check`; после заседания — `forecast_resolve`, `v_ml_live_accuracy`, `error_bp`.
 - [ ] Вывод сформулирован честно: значимо/незначимо, что не проверено.
+- [ ] Пройденный гейт G-N: вердикт `shadow`, не `promote`; смена базы — по [`ml-engineer-teamlead`](../ml-engineer-teamlead/SKILL.md); здесь DoD заканчивается на gate-артефакте.
 - [ ] Python-тесты, `make all`, `make docs-check`; `make mcp-check` — если схема/гранты/витрина.
 - [ ] Протокол приёмки — комментарием в PR; статус роадмапа обновлён.
 - [ ] Нет ad-hoc DDL, секретов и изменений Go-кода вне пункта.
@@ -257,14 +341,17 @@ Python-тесты — офлайн, через `uv run --with ... python3 script
 | Сравнивать `weekly` и `long` как одну выборку (#76) | Разные периоды/фолды, разная мощность | Gate дважды: primary `weekly`, robustness `long` |
 | Gate на разные имена моделей (#76) | `ml-gate` сейчас берёт один `--model` для двух run'ов | Добавить `--champion-model/--challenger-model` или использовать in-script DM/CI |
 | Ждать shadow/canary для CPI (#76) | В `forecast_log` нет CPI-метрики и ingest | Paper shadow/отдельный live-слой — follow-up, не production |
+| Сравнивать nowcast только с базой без данных месяца | Завышает прирост (Task 4b: 0,068 против 0,045) | Бенчмарк — сильнейшая модель с тем же информационным множеством |
 | Игнорирование origin/лаг | Look-ahead и ложное преимущество | Origin `M−(h−1)`, as-of правила (#190) |
 | Молчаливое удаление выбросов | Меняет измеряемую ошибку | Шок остаётся, ошибка исправляется с записью |
 | «Staging проверен» без SSH | Ложная приёмка | Писать «не проверено», оставить владельцу (#183) |
 
 ## 12. Ссылки
 
+- Приёмка гейта и смена базы: [`ml-engineer-teamlead`](../ml-engineer-teamlead/SKILL.md).
 - Промоушен и live: [2026-10-20-ml-promotion-live-monitoring-design.md](../../../docs/superpowers/specs/2026-10-20-ml-promotion-live-monitoring-design.md), [план](../../../docs/superpowers/plans/2026-10-20-ml-promotion-live-monitoring.md), [GRAFANA.md](../../../docs/GRAFANA.md).
 - CPI-компоненты (#76): [спека](../../../docs/superpowers/specs/2026-10-19-cpi-components-public-data-design.md), [план](../../../docs/superpowers/plans/2026-10-19-cpi-components-public-data.md), [Stage 1 отчёт](../../../docs/research/2026-10-19-cpi-components-public-data.md), [Stage 2 отчёт](../../../docs/research/2026-10-19-cpi-industry-mp-features.md).
+- Live 88 групп / `combo3` (#419): [карта модели и исследований](../../../docs/guides/cb-comp-live-model-map.md), [спека Task 9](../../../docs/superpowers/specs/2026-10-31-cb-comp-h1-bs-combo-design.md), [отчёт Task 9](../../../docs/research/2026-10-31-cb-comp-88-groups-task9.md).
 - Ревью ML-issue: [2026-10-19-ml-issue-review.md](../../../docs/research/2026-10-19-ml-issue-review.md).
 - Методология: [stat-ml-models.md](../../../docs/guides/stat-ml-models.md) §2–§7.
 - MLOps: [2026-10-18-ml-experiment-management.md](../../../docs/research/2026-10-18-ml-experiment-management.md).

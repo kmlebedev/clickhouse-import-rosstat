@@ -20,8 +20,9 @@ whenToUse: When starting, updating, or closing a roadmap item; creating sub-issu
 | `dcf-metals` | `docs/ROADMAP_DCF_METALS.md` |
 | `key-rate` | `docs/ROADMAP_KEY_RATE.md` |
 | `infra` | `docs/ROADMAP_INFRA.md` |
+| `rosstat` | `docs/ROADMAP_ROSSTAT.md` |
 
-Пункт живёт ровно в одном роадмапе. Если работа упомянута в двух файлах, issue заводится у владельца, а второй файл получает ссылку на этот issue. Шестой роадмап не заводится без решения владельца.
+Пункт живёт ровно в одном роадмапе. Если работа упомянута в двух файлах, issue заводится у владельца, а второй файл получает ссылку на этот issue. Следующий новый роадмап не заводится без решения владельца.
 
 ## 2. Создание issue
 
@@ -55,7 +56,7 @@ Depends on: #...
 
 Labels: `roadmap:<slug>` — группировка до появления Project V2 (создать при первом использовании); `role:<role>` — роль исполнения (`role:go`, `role:python`, `role:ml`, `role:research`, `role:mixed`, `role:shared`), ровно один на issue; `needs-answer` — пока в issue есть открытый вопрос Q&A. Обязательных labels у шаблона нет: до шага `infra/3.2` форма должна работать без предварительной настройки репозитория.
 
-**Role routing.** Агент, взявший issue, сначала читает его `role:*` через MCP `issue_read` (поле `labels`) и открывает соответствующий скил: `role:go` → `go-engineer`, `role:python` → `python-engineer`, `role:ml` → `ml-engineer`, `role:research` → `research-engineer`, `role:shared` → `github-tracker` и профильный скил, `role:mixed` → все скилы, названные в спеке/плане. Если лейбла нет — роль определяется по таблице `AGENTS.md`, лейбл добавляется до первого коммита. При диспатче субагента без GitHub MCP роль передаётся в промпте.
+**Role routing.** Агент, взявший issue, сначала читает его `role:*` через MCP `issue_read` (поле `labels`) и открывает соответствующий скил: `role:go` → `go-engineer`, `role:python` → `python-engineer`, `role:ml` → `ml-engineer`, а для приёмки гейта G-N и смены базы — дополнительно `ml-engineer-teamlead`, `role:research` → `research-engineer`, `role:shared` → `github-tracker` и профильный скил, `role:mixed` → все скилы, названные в спеке/плане. Если лейбла нет — роль определяется по таблице `AGENTS.md`, лейбл добавляется до первого коммита. При диспатче субагента без GitHub MCP роль передаётся в промпте.
 
 **Claim.** Перед работой — комментарий в issue: «Taking `<slug>/<item-id>`; branch `<type>/<slug>`; worktree `.worktrees/<slug>`». Затем `Status = In Progress`, `Branch`. Если claim уже есть у другой сессии — не дублировать, выбрать другой пункт.
 

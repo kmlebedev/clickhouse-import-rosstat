@@ -1,0 +1,351 @@
+{
+  "apiVersion": "dashboard.grafana.app/v1beta1",
+  "kind": "Dashboard",
+  "metadata": {
+    "name": "transaq-trades"
+  },
+  "spec": {
+    "uid": "transaq-trades",
+    "title": "Сделки MOEX — нетто покупок и продаж",
+    "tags": [
+      "transaq",
+      "moex",
+      "ofz-market"
+    ],
+    "timezone": "browser",
+    "editable": true,
+    "graphTooltip": 0,
+    "time": {
+      "from": "now-7d",
+      "to": "now"
+    },
+    "fiscalYearStartMonth": 0,
+    "refresh": "5m",
+    "schemaVersion": 42,
+    "panels": [
+      {
+        "type": "row",
+        "collapsed": false,
+        "title": "Итоги периода",
+        "gridPos": {
+          "h": 1,
+          "w": 24,
+          "x": 0,
+          "y": 0
+        },
+        "id": 21,
+        "panels": []
+      },
+      {
+        "type": "bargauge",
+        "id": 1,
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT\n    sec_code AS \"Инструмент\",\n    sum(net_value_rub) AS \"Нетто покупок, ₽\"\nFROM v_transaq_net_flows_daily\nWHERE board = 'TQBR'\n  AND $__dateFilter(date)\nGROUP BY sec_code\nHAVING sum(net_value_rub) \u003e 0\nORDER BY \"Нетто покупок, ₽\" DESC\nLIMIT 10\n",
+            "editorType": "sql",
+            "format": 1,
+            "queryType": "table",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "Нетто покупки в IMOEX, ₽",
+        "description": "Сумма нетто-объёма (оценка покупок минус продаж) по коду бумаги за выбранный период; режим торгов TQBR — акции IMOEX. Топ-10 по величине нетто покупок. Рублёвая оценка — Σ цена × лоты × lotsize из снимка transaq_securities, а не биржевой оборот: сделки без lotsize в сумму не входят, ETF (TQTF) в TQBR не попадают. Только фактические сделки ленты: разрыв сессии не догоняется, провал может означать пропуск данных, а не рынок. Это аналитика, а не сигнал и не рекомендация.",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 9,
+          "w": 12,
+          "x": 0,
+          "y": 1
+        },
+        "repeatDirection": "h",
+        "options": {
+          "displayMode": "basic",
+          "valueMode": "color",
+          "namePlacement": "auto",
+          "showUnfilled": true,
+          "sizing": "auto",
+          "minVizWidth": 8,
+          "minVizHeight": 16,
+          "legend": {
+            "displayMode": "list",
+            "placement": "bottom",
+            "showLegend": false,
+            "calcs": []
+          },
+          "reduceOptions": {
+            "values": true,
+            "calcs": []
+          },
+          "maxVizHeight": 300,
+          "orientation": "horizontal"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "currencyRUB",
+            "decimals": 0
+          },
+          "overrides": []
+        }
+      },
+      {
+        "type": "bargauge",
+        "id": 2,
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT\n    sec_code AS \"Инструмент\",\n    -sum(net_value_rub) AS \"Нетто продаж, ₽\"\nFROM v_transaq_net_flows_daily\nWHERE board = 'TQBR'\n  AND $__dateFilter(date)\nGROUP BY sec_code\nHAVING sum(net_value_rub) \u003c 0\nORDER BY \"Нетто продаж, ₽\" DESC\nLIMIT 10\n",
+            "editorType": "sql",
+            "format": 1,
+            "queryType": "table",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "Нетто продажи в IMOEX, ₽",
+        "description": "Сумма нетто-объёма (продажи минус покупки) по коду бумаги за выбранный период; режим торгов TQBR — акции IMOEX. Топ-10 по величине перевеса продавцов; значения показаны положительными, знак минуса снят намеренно. Рублёвая оценка — Σ цена × лоты × lotsize из снимка transaq_securities: сделки без lotsize в сумму не входят. Только фактические сделки ленты, разрывы не догоняются. Это аналитика, а не сигнал и не рекомендация.",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 9,
+          "w": 12,
+          "x": 12,
+          "y": 1
+        },
+        "repeatDirection": "h",
+        "options": {
+          "displayMode": "basic",
+          "valueMode": "color",
+          "namePlacement": "auto",
+          "showUnfilled": true,
+          "sizing": "auto",
+          "minVizWidth": 8,
+          "minVizHeight": 16,
+          "legend": {
+            "displayMode": "list",
+            "placement": "bottom",
+            "showLegend": false,
+            "calcs": []
+          },
+          "reduceOptions": {
+            "values": true,
+            "calcs": []
+          },
+          "maxVizHeight": 300,
+          "orientation": "horizontal"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "currencyRUB",
+            "decimals": 0
+          },
+          "overrides": []
+        }
+      },
+      {
+        "type": "row",
+        "collapsed": false,
+        "title": "Объёмы по интервалам",
+        "gridPos": {
+          "h": 1,
+          "w": 24,
+          "x": 0,
+          "y": 10
+        },
+        "id": 22,
+        "panels": []
+      },
+      {
+        "type": "timeseries",
+        "id": 3,
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT\n    $__timeInterval(minute) AS time,\n    sum(net_value_rub) AS \"Нетто, ₽\"\nFROM v_transaq_net_flows\nWHERE board = 'TQBR'\n  AND $__timeFilter(minute)\nGROUP BY time\nORDER BY time\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "Нетто-поток IMOEX по интервалам, ₽",
+        "description": "Нетто buy − sell по бакетам, которые Grafana выбирает под ширину панели и диапазон ($__timeInterval). Нулевая линия разделяет перевес покупателей и продавцов. Пропуск в ряду — нет сделок в бакете или разрыв ленты: нули не подставляются и линия через пропуск не проводится. Значение — рублёвая оценка через lotsize; это не биржевой оборот и не сигнал.",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 24,
+          "x": 0,
+          "y": 11
+        },
+        "repeatDirection": "h",
+        "options": {
+          "legend": {
+            "displayMode": "table",
+            "placement": "bottom",
+            "showLegend": true,
+            "calcs": [
+              "sum",
+              "mean",
+              "max"
+            ]
+          },
+          "tooltip": {
+            "mode": "single",
+            "sort": "none"
+          }
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "currencyRUB",
+            "decimals": 0,
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "gradientMode": "none",
+              "lineWidth": 1,
+              "lineInterpolation": "smooth",
+              "fillOpacity": 0,
+              "spanNulls": false
+            }
+          },
+          "overrides": []
+        }
+      },
+      {
+        "type": "timeseries",
+        "id": 4,
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT\n    $__timeInterval(minute) AS time,\n    sum(buy_value_rub) AS \"Покупки, ₽\",\n    -sum(sell_value_rub) AS \"Продажи, ₽\"\nFROM v_transaq_net_flows\nWHERE board = 'TQBR'\n  AND $__timeFilter(minute)\nGROUP BY time\nORDER BY time\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "Покупки и продажи IMOEX по интервалам, ₽",
+        "description": "Покупки и продажи по инициативной стороне сделки (buy_sell ленты) в рублях; продажи показаны со знаком минус, чтобы перевес читался по нулевой линии. Это не оборот MOEX, а оценка по сделкам, попавшим в ленту Transaq: разрывы не догоняются, нули не подставляются.",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 24,
+          "x": 0,
+          "y": 19
+        },
+        "repeatDirection": "h",
+        "options": {
+          "legend": {
+            "displayMode": "table",
+            "placement": "bottom",
+            "showLegend": true,
+            "calcs": [
+              "sum",
+              "mean",
+              "max"
+            ]
+          },
+          "tooltip": {
+            "mode": "single",
+            "sort": "none"
+          }
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "currencyRUB",
+            "decimals": 0,
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "gradientMode": "none",
+              "lineWidth": 1,
+              "lineInterpolation": "smooth",
+              "fillOpacity": 0,
+              "spanNulls": false
+            }
+          },
+          "overrides": []
+        }
+      },
+      {
+        "type": "timeseries",
+        "id": 5,
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT\n    $__timeInterval(minute) AS time,\n    sum(buy_value_rub) AS \"Покупки, ₽\",\n    -sum(sell_value_rub) AS \"Продажи, ₽\"\nFROM v_transaq_net_flows\nWHERE board = 'TQOB'\n  AND $__timeFilter(minute)\nGROUP BY time\nORDER BY time\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "Покупки и продажи ОФЗ (TQOB) по интервалам, ₽",
+        "description": "Покупки и продажи по инициативной стороне сделки в режиме TQOB — государственные облигации (ОФЗ). Продажи показаны со знаком минус. Для облигаций лоты и денежный объём не совпадают, а lotsize берётся из снимка каталога, поэтому значения — ориентир, а не точный оборот; разрывы ленты не догоняются.",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 24,
+          "x": 0,
+          "y": 27
+        },
+        "repeatDirection": "h",
+        "options": {
+          "legend": {
+            "displayMode": "table",
+            "placement": "bottom",
+            "showLegend": true,
+            "calcs": [
+              "sum",
+              "mean",
+              "max"
+            ]
+          },
+          "tooltip": {
+            "mode": "single",
+            "sort": "none"
+          }
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "currencyRUB",
+            "decimals": 0,
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "gradientMode": "none",
+              "lineWidth": 1,
+              "lineInterpolation": "smooth",
+              "fillOpacity": 0,
+              "spanNulls": false
+            }
+          },
+          "overrides": []
+        }
+      }
+    ],
+    "templating": {},
+    "annotations": {}
+  }
+}

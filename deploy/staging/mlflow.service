@@ -13,7 +13,7 @@ StateDirectory=mlflow
 # not proxy, and a remote client would write to a path that does not exist on its host).
 ExecStartPre=/bin/mkdir -p /var/lib/mlflow/artifacts
 ExecStart=/root/.local/bin/uv run --with mlflow==3.17.1 --python 3.12 \
-  mlflow server --host 127.0.0.1 --port 5000 --workers 1 \
+  mlflow server --host 0.0.0.0 --port 5000 --workers 1 \
   --backend-store-uri sqlite:////var/lib/mlflow/mlflow.db \
   --artifacts-destination /var/lib/mlflow/artifacts --serve-artifacts
 Restart=always
