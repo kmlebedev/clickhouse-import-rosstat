@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from models.cb_comp import cb_comp_bottomup as bu
 from models.cb_comp import cb_comp_live_bottomup as lb
+from models.cb_comp import cb_comp_mlog as mlog
 
 
 def grid(first: date, last: date) -> list:
@@ -191,6 +192,42 @@ class EvalTest(unittest.TestCase):
         self.assertEqual(out["n"], 2)
         self.assertAlmostEqual(out["rmse"], 0.1)
         self.assertAlmostEqual(out["bias"], 0.0)
+
+
+class MlogKwargsTest(unittest.TestCase):
+    """P0.5: паспорт bottom-up — свои имена моделей и тот же контракт окон."""
+
+    months = [date(2024, 1, 1), date(2024, 2, 1)]
+
+    def kwargs(self):
+        aggregated = {
+            model: {h: {month: 1.0 for month in self.months} for h in lb.HORIZONS}
+            for model in lb.MODELS
+        }
+        truth_full = {h: {month: 2.0 for month in self.months} for h in lb.HORIZONS}
+        live = {h: {month: 1.5 for month in self.months} for h in lb.HORIZONS}
+        config = {"seed": 1, "models": list(lb.MODELS), "skip_asof": False}
+        return lb.mlog_kwargs(aggregated, truth_full, live, self.months, self.months,
+                              config, {"panel_csv": "abc"}, {}, {}, True, lb.MODELS,
+                              "2010", False, Path("build/cb-comp-live-bottomup"))
+
+    def test_contract(self):
+        kwargs = self.kwargs()
+        self.assertEqual(kwargs["run_name"], "live_cb__h1-h6__normal54__target_full__2010")
+        self.assertEqual(kwargs["config"]["truth"], mlog.TRUTH)
+        self.assertEqual(kwargs["config"]["version"], "2010")
+        self.assertEqual(len(kwargs["sample"]), len(lb.HORIZONS) * len(self.months))
+        self.assertEqual([path.name for path in kwargs["artifacts"]],
+                         ["predictions.csv", "result.json"])
+
+    def test_fold_rows_cover_models(self):
+        kwargs = self.kwargs()
+        rows = mlog.build_fold_rows(kwargs["aggregated"], kwargs["truth"], kwargs["months"],
+                                    kwargs["models"], kwargs["horizons"],
+                                    t_live=kwargs["t_live"], version=kwargs["version"])
+        self.assertEqual(len(rows), len(lb.MODELS) * len(lb.HORIZONS) * len(self.months))
+        self.assertEqual({row.model for row in rows}, set(lb.MODELS))
+        self.assertEqual({row.unit for row in rows}, {mlog.UNIT})
 
 
 if __name__ == "__main__":

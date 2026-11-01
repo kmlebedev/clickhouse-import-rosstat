@@ -20,8 +20,9 @@ whenToUse: When starting, updating, or closing a roadmap item; creating sub-issu
 | `dcf-metals` | `docs/ROADMAP_DCF_METALS.md` |
 | `key-rate` | `docs/ROADMAP_KEY_RATE.md` |
 | `infra` | `docs/ROADMAP_INFRA.md` |
+| `rosstat` | `docs/ROADMAP_ROSSTAT.md` |
 
-Пункт живёт ровно в одном роадмапе. Если работа упомянута в двух файлах, issue заводится у владельца, а второй файл получает ссылку на этот issue. Шестой роадмап не заводится без решения владельца.
+Пункт живёт ровно в одном роадмапе. Если работа упомянута в двух файлах, issue заводится у владельца, а второй файл получает ссылку на этот issue. Следующий новый роадмап не заводится без решения владельца.
 
 ## 2. Создание issue
 

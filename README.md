@@ -111,7 +111,7 @@ deploy/staging/      артефакты staging
 | `INGEST_URL` | Базовый URL ingest-endpoint для `scripts/key_rate_forecast_log.py` (например, `http://127.0.0.1:8081`); обязательна вместе с `INGEST_TOKEN` |
 | `EDISCLOSURE_INPUT_DIR`, `EDISCLOSURE_RECHECK`, `EDISCLOSURE_ALLOW_MISSING`, `EDISCLOSURE_OUT` | документы e-disclosure: каталог снапшота коллектора (по умолчанию `build/edisclosure`), глубокий прогон (`1`; переписывает строку при смене `sha256`/метаданных **или** при пустом `archive_key` и включённом архиве — самолечение), мягкий пропуск отсутствующего снапшота в dagu (`1`) и каталог выхода коллектора |
 | `ML_LOG`, `ML_RUN_NAME`, `ML_LOCAL_DIR` | журнал ML-эксперимента: `ML_LOG=1` — мастер-выключатель записи в ClickHouse и включения MLflow-приёмника; имя прогона и каталог локального fallback (по умолчанию `build/ml-runs`) |
-| `MLFLOW`, `MLFLOW_TRACKING_URI`, `MLFLOW_HOME`, `MLFLOW_PORT`, `MLFLOW_VERSION` | make-уровень MLflow: `MLFLOW=1` **по умолчанию** — добавляет `mlflow==3.17.1` в uv-окружение всех ML-целей и подставляет `MLFLOW_TRACKING_URI` (`http://127.0.0.1:5000`); `MLFLOW=0` осознанно выключает. Перед прогоном `mlflow_preflight.py` проверяет API и при недоступности спрашивает (не-TTY: `MLFLOW_ALLOW_NO_LOG=1`). `MLFLOW_HOME`/`MLFLOW_PORT`/`MLFLOW_VERSION` — каталог `build/mlflow`, порт и пин пакета |
+| `MLFLOW`, `MLFLOW_TRACKING_URI`, `MLFLOW_HOME`, `MLFLOW_PORT`, `MLFLOW_VERSION` | make-уровень MLflow: `MLFLOW=1` **по умолчанию** — добавляет `mlflow==3.17.1` в uv-окружение всех ML-целей и подставляет `MLFLOW_TRACKING_URI` (`http://127.0.0.1:5000` — dev; канонический staging задаётся явно `http://192.168.3.9:5000`, fallback — SSH-туннель `http://127.0.0.1:15001`); `MLFLOW=0` осознанно выключает. Перед прогоном `mlflow_preflight.py` проверяет API и при недоступности спрашивает (не-TTY: `MLFLOW_ALLOW_NO_LOG=1`). `MLFLOW_HOME`/`MLFLOW_PORT`/`MLFLOW_VERSION` — каталог `build/mlflow` (только dev), порт и пин пакета |
 
 Полный список, `ARCHIVE_*`, MCP-конфигурация и работа с ключами — [docs/CONFIGURATION.md](docs/CONFIGURATION.md).
 
@@ -123,21 +123,29 @@ deploy/staging/      артефакты staging
 
 ## MLflow (ML-инфраструктура)
 
-MLflow — control plane ML-экспериментов (`cpi_nowcast`, `key_rate_model`): UI, сравнение run'ов и реестр моделей. Хранилище — SQLite `build/mlflow/mlflow.db` и артефакты `build/mlflow/artifacts` (Postgres/MinIO не нужны); сервер запускается с `--artifacts-destination` + `--serve-artifacts` и проксирует upload, слушает только `127.0.0.1:5000`, доступ — localhost или SSH-туннель. ClickHouse остаётся аналитической репликой: run'ы экспортируются в `ml_runs`/`ml_predictions`, схема не меняется.
+MLflow — control plane ML-экспериментов (`cpi_nowcast`, `key_rate_model`): UI, сравнение run'ов и реестр моделей. **Канонический backend — staging** на `ps-palmshell` (ssh-алиас `palmshell`): systemd `mlflow.service`, SQLite `sqlite:////var/lib/mlflow/mlflow.db`, артефакты `/var/lib/mlflow/artifacts`, API `0.0.0.0:5000` (служба слушает внешний интерфейс). Доступ — `MLFLOW_TRACKING_URI=http://192.168.3.9:5000`; fallback — SSH-туннель `ssh -N -L 15001:127.0.0.1:5000 palmshell` → `MLFLOW_TRACKING_URI=http://127.0.0.1:15001`. Локальный `build/mlflow` — только dev/офлайн-тесты и изолированные прогоны: SQLite `build/mlflow/mlflow.db`, артефакты `build/mlflow/artifacts`; он не канонический, не evidence и не называется staging/production. ClickHouse остаётся аналитической репликой: run'ы экспортируются в `ml_runs`/`ml_predictions`, схема не меняется.
 
 ```bash
-make mlflow-up                             # сервер и /health; UI http://127.0.0.1:5000
+# staging — канонический backend: прямой URL (fallback — туннель в отдельном терминале)
+export MLFLOW_TRACKING_URI=http://192.168.3.9:5000
+# fallback: ssh -N -L 15001:127.0.0.1:5000 palmshell && export MLFLOW_TRACKING_URI=http://127.0.0.1:15001
+
+# канонические прогоны: staging URI в окружении терминала
 ML_LOG=1 make cpi-nowcast                  # MLflow по умолчанию + паспорт/fold'ы в ClickHouse
 ML_LOG=1 make key-rate-model
-make mlflow-backfill ARGS="--run-id <clickhouse-uuid>"   # старый ClickHouse-run → MLflow
-make mlflow-export                         # MLflow → ml_runs/ml_predictions (идемпотентно)
+make mlflow-backfill ARGS="--run-id <clickhouse-uuid>"   # старый ClickHouse-run → staging
+make mlflow-export                         # staging → ml_runs/ml_predictions (идемпотентно)
 make mlflow-register ARGS="--run-id <mlflow-run-id> --name cpi_nowcast_catboost_direct"
 make mlflow-promote  ARGS="--name cpi_nowcast_catboost_direct --version 1"
 make mlflow-models   ARGS="--name cpi_nowcast_catboost_direct"
+
+# локальный dev — только офлайн-тесты/изолированные прогоны, не канонический backend
+unset MLFLOW_TRACKING_URI                  # вернуться на dev-URI 127.0.0.1:5000
+make mlflow-up                             # сервер и /health; UI http://127.0.0.1:5000
 make mlflow-down
 ```
 
-`ML_LOG=1` — мастер-выключатель журнала; без `MLFLOW_TRACKING_URI`/`MLFLOW=1` MLflow не включается. Если MLflow остановлен, прогон не падает: паспорт и предсказания по-прежнему пишутся в ClickHouse или в локальный fallback `build/ml-runs/`, а `make mlflow-export` догоняет run'ы позже — это отдельный шаг, в DAG его нет. На staging MLflow развёрнут юнитом `deploy/staging/mlflow.service`, доступ — через туннель `ssh -N -L 5000:127.0.0.1:5000 palmshell` (операции — [docs/OPERATIONS.md](docs/OPERATIONS.md), бэкап и upgrade — `deploy/staging/README.md`). Устройство и реестр моделей — [ARCHITECTURE.md](ARCHITECTURE.md) §6.8.
+`ML_LOG=1` — мастер-выключатель журнала; без `MLFLOW_TRACKING_URI`/`MLFLOW=1` MLflow не включается. Канонические run'ы логируются только в staging; если `MLFLOW_TRACKING_URI` указывает на локальный dev (`127.0.0.1:5000` без staging-туннеля) или `build/mlflow`, это ошибка политики — такой run не evidence. Если MLflow остановлен, прогон не падает: паспорт и предсказания по-прежнему пишутся в ClickHouse или в локальный fallback `build/ml-runs/`, а `make mlflow-export` догоняет run'ы позже — это отдельный шаг, в DAG его нет. Staging MLflow развёрнут юнитом `deploy/staging/mlflow.service`, операции — [docs/OPERATIONS.md](docs/OPERATIONS.md), бэкап и upgrade — `deploy/staging/README.md`. Устройство и реестр моделей — [ARCHITECTURE.md](ARCHITECTURE.md) §6.8.
 
 ## Контур прогноза золота
 
@@ -168,7 +176,7 @@ make mlflow-down
 | `make cpi-pipeline-sa-test` | офлайн-тесты real-time SA (STL, только данные ≤ `as_of`, без финальных факторов) |
 | `make cpi-pipeline-stage2` / `make cpi-pipeline-stage2-test` | stage 2 конвейера: SA-путь `M0…M0+5` + cumulative h1/h3/h6, expectations/МП, nested OOF; **Gate 2 FAIL** (h1 1,0085 против live3 0,9205), поэтому stage 3 не строился; артефакты в `build/cpi-pipeline-stage2/` / офлайн-тесты |
 | `make key-rate-llm-forecast` | экспериментальный LLM-прогноз ключевой ставки: as-of снимок, три повтора, медиана/разброс, локальные артефакты; в ClickHouse не пишет; `ARGS="--log"` готовит payload для #127 |
-| `make mlflow-up` / `make mlflow-down` / `make mlflow-status` | локальный MLflow-сервер (SQLite + артефакты, `127.0.0.1:5000`) |
+| `make mlflow-up` / `make mlflow-down` / `make mlflow-status` | локальный dev-MLflow-сервер (SQLite + артефакты, `127.0.0.1:5000`); только офлайн-тесты/изолированные прогоны, не канонический backend |
 | `make mlflow-export` | экспорт run'ов MLflow в `ml_runs`/`ml_predictions` (`ARGS` — `--since/--limit/--dry-run`) |
 | `make mlflow-register` / `make mlflow-promote` / `make mlflow-models` | реестр моделей и алиасы `challenger`/`champion` (аргументы — в `ARGS`) |
 | `make ml-gate` / `make ml-gate-test` | gate промоушена: DM-HLN, 95% бутстрап CI, robustness-окна, MCS при >2 кандидатах; артефакт `build/ml-gate/<run>.json`; live-режим `ARGS="--live --live-track cbr_rate:ordered_logit"` / офлайн-тесты |
@@ -176,16 +184,21 @@ make mlflow-down
 | `make mcp-check` | MCP end-to-end |
 | `make cb-comp-parity` / `make cb-comp-parity-test` | паритет nowcast с CB_COMP (direct + bottom-up, архив авторов) / офлайн-тесты parity-скриптов |
 | `make cb-comp-groups-panel` / `make cb-comp-groups-panel-test` | Task 1 #421: live-панель 88 групп CB_COMP из ЕМИСС 31074 (`v_fedstat_ipc`) — маппинг, NSA, X-13 по группам (R `seasonal`), сборка против `TARGET_FULL` (гейт #190); `ARGS="--asof --jobs N"`; нужен локальный архив CB_COMP; в ClickHouse не пишет, артефакты `build/cb-comp-groups/` / офлайн-тесты без ClickHouse, R и архива |
-| `make cb-comp-live-bottomup` / `make cb-comp-live-bottomup-test` | Task 2 #422: live bottom-up по 88 группам на нашей панели (цель `T_LIVE`, МП по листам) — R0 (регрессия #252), G2, сравнение с CB_COMP «каждый на своей цели» и на `TARGET_FULL`; нужны артефакты `make cb-comp-groups-panel ARGS="--asof"` и `make cb-comp-public-export`; в ClickHouse не пишет / офлайн-тесты |
+| `make cb-comp-live-bottomup` / `make cb-comp-live-bottomup-test` | Task 2 #422: live bottom-up по 88 группам на нашей панели (цель `T_LIVE`, МП по листам) — R0 (регрессия #252), G2, сравнение с CB_COMP «каждый на своей цели» и на `TARGET_FULL`; нужны артефакты `make cb-comp-groups-panel ARGS="--asof"` и `make cb-comp-public-export`; `ML_LOG=1` — паспорт в `ml_runs`/`ml_predictions` и MLflow (P0.5) / офлайн-тесты |
 | `make cb-comp-live-en` / `make cb-comp-live-en-test` | Task 3 #423: EN_COMP (ElasticNetCV в конфигурации B3) и CB+EN на нашей панели 88 групп, истина `TARGET_FULL` — классификация против CB_COMP, MCS 90 %, выбор модели, гейт G3; входы — как у `cb-comp-live-bottomup`; в ClickHouse не пишет / офлайн-тесты |
+| `make cb-comp-h1-bs-combo` / `make cb-comp-h1-bs-combo-test` | Task 9 #436: h1 — комбинация `live_cb` с BS_ECON16/BS_ROZN16 статьи (OLS на `T_LIVE` и SA ценовых ожиданиях ЦБ, окно 2016+, помесячное переобучение без утечки), R9-сверка с авторами, гейт G9; входы — как у `cb-comp-live-en` + `macro_series`; `ML_LOG=1` — паспорт в `ml_runs`/`ml_predictions` и MLflow (P0.5) / офлайн-тесты |
+| `make cb-comp-backend-compare` / `make cb-comp-backend-compare-test` | Task 17 #501: CatBoost vs LightGBM/XGBoost на конвейере Task 9 — плечи `defaults`/`matched`, точность (`live_cb_<backend>`, `combo3_<backend>`; RMSE/ratio к CB_COMP, DM-HLN/CI, MCS 90 %) и время `fit` каждого компонента; `ML_LOG=1` — паспорта в `cb_comp_88_groups` (MLflow + `ml_runs`); входы — как у `cb-comp-h1-bs-combo`; в ClickHouse не пишет / офлайн-тесты |
+| `make cb-comp-live-en16` / `make cb-comp-live-en16-test` | Task 11 #439: h3 — EN по 88 группам с окном 2016+ и помесячным переобучением (`live_en16`), `combo4` = среднее `combo3` и `live_en16`, R11-сверка с Task 3/9, гейт G11; входы — как у `cb-comp-h1-bs-combo`; в ClickHouse не пишет / офлайн-тесты |
 | `make cb-comp-per-code-reconstruction` / `make cb-comp-per-code-reconstruction-test` | Task 8 #434 (research): восстановление per-code МП (87 кодов) из листовых агрегатов обратной задачей — forward `W`, rank/null-space, методы identity/offset/ridge/factor/omp/coord/elim, гейты G-R1/G-R2; только локальные CSV, в ClickHouse не пишет / офлайн-тесты |
-| `make cb-comp-h1-bs-combo` / `make cb-comp-h1-bs-combo-test` | Task 9 #436: h1 — комбинация `live_cb` с BS_ECON16/BS_ROZN16 статьи (OLS на `T_LIVE` и SA ценовых ожиданиях ЦБ, окно 2016+, помесячное переобучение без утечки), R9-сверка с авторами, гейт G9; входы — как у `cb-comp-live-en` + `macro_series`; в ClickHouse не пишет / офлайн-тесты |
 | `make cb-comp-h1-weekly` / `make cb-comp-h1-weekly-test` | Task 4 #424: h1 — недельный ИПЦ поверх `combo3`: маппинг 148 недельных позиций на 88 групп, `wk_g_*` в `live_cb`, смешивание с недельным агрегатом, walk-forward 2022+ (ежемесячный expanding), гейт G10; входы — как у `cb-comp-h1-bs-combo`; в ClickHouse не пишет / офлайн-тесты |
 | `make cb-comp-h1-weekly-ex` / `make cb-comp-h1-weekly-ex-test` | Task 4b #446: h1 — недельный агрегат без ЖКУ (9470, покрытие 83,1 %) и с месячными дамми поверх `combo3`; база — готовые прогнозы Task 4, G11 на 2023+ и контроли ревью (дамми vs ЖКУ, `live_cb_wk`, тарифный срез); входы — как у `cb-comp-h1-weekly`; в ClickHouse не пишет / офлайн-тесты |
 | `make cb-comp-h1-shadow-robustness` / `make cb-comp-h1-shadow-forecast MONTH=YYYY-MM` / `make cb-comp-h1-shadow-test` | P0.6 #453: paper shadow `wk_mix_ex@v1` (гайд `cb-comp-live-model-map` §7.8) — ретро-robustness 2023+ на входах Task 4b (real-time SA, `publication`, тарифы, недельные срезы, fallback) и прогноз месяца M в `docs/research/cb-comp-h1-shadow/<M>.json` до cutoff; в ClickHouse не пишет / офлайн-тесты |
-| `make cb-comp-h1-shadow-mlflow` / `make cb-comp-h1-shadow-mlflow-test` | P0.6a #462: MLflow-зеркало shadow-JSON месяца; **канонический backend — staging** (`ssh -N -L 15001:127.0.0.1:5000 palmshell`, `MLFLOW_TRACKING_URI=http://127.0.0.1:15001`; experiment `cb_comp_h1_shadow`, run `shadow__<M>__wk_mix_ex@v1`, идемпотентность `month`+`json_sha256`); URI обязателен, локальный `build/mlflow` не подставляется и годится только для dev/тестов; backfill — `ARGS="--backfill"`, dry-run без URI — `ARGS="--dry-run"`; JSON — источник истины, в ClickHouse не пишет, gate/пороги не меняются / 25 офлайн-тестов на SQLite |
+| `make cb-comp-h1-shadow-mlflow` / `make cb-comp-h1-shadow-mlflow-test` | P0.6a #462: MLflow-зеркало shadow-JSON месяца; **канонический backend — staging** (`MLFLOW_TRACKING_URI=http://192.168.3.9:5000`; tunnel fallback `ssh -N -L 15001:127.0.0.1:5000 palmshell` → `http://127.0.0.1:15001`; experiment `cb_comp_h1_shadow`, run `shadow__<M>__wk_mix_ex@v1`, идемпотентность `month`+`json_sha256`); URI обязателен, локальный `build/mlflow` не подставляется и годится только для dev/тестов; backfill — `ARGS="--backfill"`, dry-run без URI — `ARGS="--dry-run"`; JSON — источник истины, в ClickHouse не пишет, gate/пороги не меняются / 25 офлайн-тестов на SQLite |
+| `make cb-comp-tlive-target` / `make cb-comp-tlive-target-test` | P0.3 #480: живая цель `T_LIVE` 2024-08+ — значения до 2026-09 с sha256, правило пропусков `renorm_v1`, покрытие весов/групп по месяцам (отдельно `9218`/`9260`/`803`/`930.АГ`), альтернатива `T_LIVE_direct` и NSA-проверка весов, append-only снимок `docs/research/cb-comp-tlive-vintage/<версия>/<M>.json`; `ARGS="--version 2009|2010 --snapshot --copy-json"`; нужны панель `cb-comp-groups-panel`, архив CB_COMP и чтение `v_fedstat_ipc`; в ClickHouse не пишет / офлайн-тесты |
 | `make cb-comp-pooled` / `make cb-comp-pooled-test` | Task 10 #438: одна pooled CatBoost-модель на строках `(группа, месяц)` (87 групп с SA, окно 2016+ / control 2010-03+, годовая переподготовка без утечки) против `combo3` и CB_COMP; G10, MCS 90 %; входы — как у `cb-comp-h1-bs-combo`; в ClickHouse не пишет / офлайн-тесты |
+| `make cb-comp-refit-modes` / `make cb-comp-refit-modes-test` | Task 5 #425: режим переобучения `live_cb` — `frozen`, `annual` (expanding 2010+, шоки исключены), `annual_shock` (контроль), `annual_dummy`, `rolling96`/`rolling120`; годовой перефит в начале года с cutoff по доступности, гейт no-harm к `frozen` (normal-54, 2023–24, 67 месяцев) с DM/CI/MCS, гипотеза W5b на месячном wf `live_cb` и на `v3_direct`/`v5_direct`; входы — как у `cb-comp-h1-bs-combo`; в ClickHouse не пишет / офлайн-тесты |
 | `make cb-comp-h3-h6-var` / `make cb-comp-h3-h6-var-test` | Task 12 #440: h3/h6 — агрегатный VAR/BVAR по ИПЦ SA без КУ, ставке, USD/руб и SA ценовым ожиданиям (окно 2016+, лаг 1…6 по BIC внутри train, помесячное переобучение, накопление) и комбинация `combo3 + var16`; R12, гейт G12 (DM p < 0,10 на h3/h6, h1 не хуже, MCS 90 %); входы — как у `cb-comp-h1-bs-combo` + `cbr_key_rate`/`cbr_currency_usd`; в ClickHouse не пишет / офлайн-тесты |
+| `make cb-comp-88-live-gate` / `make cb-comp-88-live-gate-test` | Task 7 #427: итоговый gate линии 88 групп — классы §6.3 против CB_COMP (normal-54 primary, 67 справочно, h1/h3/h6 + h2), MCS 90 %, пины Task 9 и справочные режимы Task 5 (`ARGS="--refit-predictions …"`), плюс paper shadow 2024-08…2026-09 на as-of входах (`T_LIVE_rt`/`T_LIVE`, SA ЦБ, B1); артефакт `build/ml-gate/cb_comp_88_live.{json,md}`, в ClickHouse не пишет / офлайн-тесты |
 | `make cb-comp-per-code-review` / `-test` / `-books` / `-x13` | Разбор PR #435 (research 2026-10-31): различимость per-code МП, лист против кодов, per-code ridge на 496 публичных SA-рядах, шум остатка, X-13 по рецепту авторов, панели `per_sheet` и DM для `cb-comp-parity`; `ARGS="--step ..."`; только локальные файлы / офлайн-тесты |
 
 | `make ppi-sa-parity` / `make ppi-sa-parity-test` | паритет `ppi_sa` с 10 якорями «Инфляции в России» (read-only, JSON `docs/research/2026-10-21-ppi-sa-parity.json`) / офлайн-тесты паритетного скрипта |
@@ -211,21 +224,17 @@ make mlflow-down
 
 ### Подключение как плагин LLM-клиента
 
-Репозиторий устанавливается как плагин в Kimi Code, Claude Code, Codex, Cursor и Qwen Code. Единственный источник скилов — [`.kimi-code/skills/`](.kimi-code/skills/); манифесты в корне только ссылаются на него, поэтому состав плагина совпадает с составом ролевых скилов.
+LLM-плагин [`rosstat-mcp`](https://github.com/kmlebedev/rosstat-mcp) живёт в отдельном репозитории и даёт read-only MCP: сервер `rosstat-staging` — `https://mcp.selfinvesting.ru:8443/mcp` (витрины `v_*` staging, включая point-in-time слой) — и один скил `rosstat-sql`: как найти ряд и писать оптимальные запросы ClickHouse к этим витринам (с версии 0.4.0, `infra/5.11`). Ролевые скилы [`.kimi-code/skills/`](.kimi-code/skills/) — для сессий, работающих в этом репозитории, и плагином не публикуются.
 
 | Клиент | Установка |
 |---|---|
-| Kimi Code | `/plugins install https://github.com/kmlebedev/clickhouse-import-rosstat/tree/main` |
-| Claude Code | `claude plugin marketplace add kmlebedev/clickhouse-import-rosstat`<br>`claude plugin install clickhouse-import-rosstat@clickhouse-import-rosstat` |
-| Codex | `codex plugin marketplace add kmlebedev/clickhouse-import-rosstat`<br>`codex plugin add clickhouse-import-rosstat@clickhouse-import-rosstat` |
-| Cursor | `/add-plugin https://github.com/kmlebedev/clickhouse-import-rosstat` |
-| Qwen Code | `qwen extensions install kmlebedev/clickhouse-import-rosstat` |
+| Claude Code | `claude plugin marketplace add kmlebedev/rosstat-mcp`<br>`claude plugin install rosstat-mcp@rosstat-mcp` |
+| Codex | `codex plugin marketplace add kmlebedev/rosstat-mcp`<br>`codex plugin add rosstat-mcp@rosstat-mcp` |
+| Kimi Code | `/plugins install https://github.com/kmlebedev/rosstat-mcp` |
+| Qwen Code | `qwen extensions install kmlebedev/rosstat-mcp` |
+| Cursor | `/add-plugin https://github.com/kmlebedev/rosstat-mcp` |
 
-После установки — `/reload` или новая сессия. Скилы вызываются с namespace: `/skill:clickhouse-import-rosstat:go-engineer`; Kimi дополнительно получает агента `coder`.
-
-Ограничения: установка копирует снапшот репозитория (~86 МБ), и относительные ссылки в скилах ведут в этот снапшот, а не в рабочее дерево — после изменения docs/скилов плагин нужно переустановить. Короткий GitHub-URL Kimi (`/plugins install https://github.com/...`) ставит последний релиз; пока в нём нет манифеста, используйте `/tree/main`. MCP: плагин подключает read-only сервер `rosstat-staging` — `https://mcp.selfinvesting.ru:8443/mcp` (витрины `v_*` staging, включая point-in-time слой). Токен выдаёт владелец; положите его в переменную окружения `ROSSTAT_MCP_TOKEN` до запуска клиента (в Cursor — в переменную плагина `ROSSTAT_MCP_TOKEN`). В манифестах токена нет. Локальный dev-доступ к ClickHouse по-прежнему даёт [`.kimi-code/mcp.json`](.kimi-code/mcp.json) (сервер `clickhouse`, stdio).
-
-Метаданные манифестов (`name`, `version`, длинное и короткое описание) синхронизируются из `.claude-plugin/plugin.json` и `.claude-plugin/marketplace.json`: на PR [`.github/workflows/sync-manifests.yml`](.github/workflows/sync-manifests.yml) проверяет дрейф, на push в `main` — дописывает и коммитит. Локально — `make plugin-manifests-check` и `make plugin-manifests-sync`.
+Токен выдаёт владелец; положите его в переменную окружения `ROSSTAT_MCP_TOKEN` до запуска клиента (в Cursor — в переменную плагина `ROSSTAT_MCP_TOKEN`). Старый плагин `clickhouse-import-rosstat` (скилы + MCP, установка всего репозитория) больше не публикуется — удаление и миграция описаны в README плагина. Локальный dev-доступ к ClickHouse по-прежнему даёт [`.kimi-code/mcp.json`](.kimi-code/mcp.json) (сервер `clickhouse`, stdio).
 
 Полный набор целей, Python-тесты, зависимости и CI — [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
