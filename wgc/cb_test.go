@@ -3,6 +3,7 @@ package wgc
 import (
 	"bytes"
 	"context"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -113,6 +114,51 @@ func TestCbImportRequireDataPartial(t *testing.T) {
 	}
 }
 
+// copyCbFixture кладёт копию фикстуры винтажа под именем выгрузки в тестовый каталог:
+// Import ищет файлы по маскам, а не по путям фикстур.
+func copyCbFixture(t *testing.T, dst, src string) {
+	t.Helper()
+
+	data, err := os.ReadFile(src)
+	if err != nil {
+		t.Fatalf("ReadFile(%s): %v", src, err)
+	}
+	if err := os.WriteFile(dst, data, 0o644); err != nil {
+		t.Fatalf("WriteFile(%s): %v", dst, err)
+	}
+}
+
+// Оба файла при WGC_REQUIRE_DATA=1 — не ошибка: разбор идёт, и прогон доходит до
+// соединения. Фикстуры винтажа 2026-10 (те же, что у parse-тестов) дают точки, а
+// etfFakeConn останавливает Import на PrepareBatch — значит, проверка файлов и разбор
+// пройдены, и флаг не даёт ложного fail-loud «нет выгрузок» при полном наборе.
+func TestCbImportRequireDataBothPresent(t *testing.T) {
+	silenceCbLogs(t)
+	t.Setenv(wgcRequireDataEnv, "1")
+
+	dir := t.TempDir()
+	copyCbFixture(t, filepath.Join(dir, cbChangesFile), cbChangesFixturePath)
+	copyCbFixture(t, filepath.Join(dir, cbHoldingsFile), cbHoldingsFixturePath)
+
+	conn := &etfFakeConn{}
+	stat := cbReservesStat{dir: dir}
+	count, err := stat.Import(context.Background(), conn)
+	if err == nil {
+		t.Fatal("фейковый PrepareBatch обязан вернуть ошибку: молчаливого нуля без записи быть не должно")
+	}
+	if count != 0 {
+		t.Errorf("Import = %d строк, ожидалось 0 (ошибка до Send)", count)
+	}
+	for _, banned := range []string{wgcRequireDataEnv, "нет выгрузок"} {
+		if strings.Contains(err.Error(), banned) {
+			t.Errorf("ошибка похожа на fail-loud по файлам (%q): %v", banned, err)
+		}
+	}
+	if len(conn.calls) != 2 || !strings.HasPrefix(conn.calls[1], "preparebatch: ") {
+		t.Errorf("обращения к соединению = %v, ожидались DDL и PrepareBatch (разбор обоих файлов пройден)", conn.calls)
+	}
+}
+
 // Выгрузки ЦБ скачиваются вручную и появляются в папке по отдельности, поэтому
 // частичный набор — норма: "" = файла нет, и он не мешает разобрать вторую выгрузку.
 func TestCbSelectFilesPartial(t *testing.T) {
@@ -201,6 +247,9 @@ func writeCbHoldingsWithoutTargets(t *testing.T, dir string) {
 // обращение к conn упало бы паникой.
 func TestCbImportWorkbooksWithoutPointsFail(t *testing.T) {
 	silenceCbLogs(t)
+	// Флаг DAG снимается явно: тест проверяет разбор выгрузок, а не режим WGC_REQUIRE_DATA,
+	// и с флагом из окружения частичные подкейсы падали бы на отсутствующей второй маске.
+	t.Setenv(wgcRequireDataEnv, "")
 
 	for _, tc := range []struct {
 		name     string

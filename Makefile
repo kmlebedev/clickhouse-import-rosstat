@@ -1227,9 +1227,21 @@ deploy-staging-data: staging-precheck
 	@ssh $(STAGING_HOST) 'cp /root/polyus/data/polyus_datapack_fy2025_new.xlsx /root/dagu/polyus/data/ && cp "/root/financial/data/ЮГК_databook_2024.xlsx" "/root/dagu/financial/data/" && echo "OK   датапаки Polyus/ЮГК на месте"'
 	# wgc/data в .gitignore: в чистом CI выгрузок нет — деплой не роняем, но предупреждаем,
 	# что DAG wgc с WGC_REQUIRE_DATA=1 упадёт, пока выгрузки ЦБ не положены на хост.
+	# Копируется весь локальный набор *.xlsx: старые файлы на хосте удаляются, иначе рядом с
+	# новой выгрузкой осталась бы прошлая — findLatestFile выбирает по mtime, а не по имени.
+	# scp -p обязателен: без -p mtime становится временем копирования, и выбранной могла бы
+	# оказаться старая выгрузка с более поздним именем месяца.
 	@if [ -d wgc/data ] && ls wgc/data/*.xlsx >/dev/null 2>&1; then \
-		scp -q wgc/data/*.xlsx $(STAGING_HOST):/root/dagu/wgc/data/; \
-		echo "OK   WGC-выгрузки на месте"; \
+		ssh $(STAGING_HOST) 'rm -f /root/dagu/wgc/data/*.xlsx' && \
+		scp -p -q wgc/data/*.xlsx $(STAGING_HOST):/root/dagu/wgc/data/ && \
+		ssh $(STAGING_HOST) 'missing=""; \
+			ls /root/dagu/wgc/data/Changes_latest_as_of_*.xlsx >/dev/null 2>&1 || missing="$$missing Changes_latest_as_of_*.xlsx"; \
+			ls /root/dagu/wgc/data/World_official_gold_holdings_as_of_*.xlsx >/dev/null 2>&1 || missing="$$missing World_official_gold_holdings_as_of_*.xlsx"; \
+			if [ -n "$$missing" ]; then \
+				echo "WARN в /root/dagu/wgc/data неполный набор выгрузок ЦБ — отсутствуют:$$missing; DAG wgc с WGC_REQUIRE_DATA=1 упадёт"; \
+			else \
+				echo "OK   WGC-выгрузки на месте"; \
+			fi'; \
 	 else \
 		echo "WARN в wgc/data нет xlsx — выгрузки WGC не скопированы; DAG wgc с WGC_REQUIRE_DATA=1 упадёт, пока файлы не положены"; \
 	 fi
