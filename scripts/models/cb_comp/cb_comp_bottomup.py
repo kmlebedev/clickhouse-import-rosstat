@@ -267,33 +267,46 @@ def _level_map(dictionary: pd.DataFrame) -> dict:
     return level_map
 
 
-def _year_weights(archive: Path, year: int, specs: list, book=None) -> dict:
-    """Веса групп за год: листья (уровень 7) агрегируются по уровню группы.
-
-    Отсутствующий лист года — не ошибка: архив кончается 2024, а live-набор
-    годов может тянуться до 2026. `book` передаётся, когда читается несколько
-    лет подряд: файл открывается один раз.
-    """
-    if book is None:
-        book = pd.ExcelFile(weights_path(archive))
-    if str(year) not in book.sheet_names:
-        return None
-    weights = pd.read_excel(book, sheet_name=str(year))
-    weights["code"] = weights["код_товара_услуги"].map(normalize_code)
-    weights["okato"] = weights["окато_код"].map(normalize_code)
-    weights = weights[weights["okato"] == "643"]
+def _dictionary_frame(archive: Path, year: int) -> pd.DataFrame:
+    """Словарь иерархии года: коды, уровень и уровни-предки."""
     dictionary = pd.read_excel(dictionary_path(archive), sheet_name=str(year))
     dictionary["code"] = dictionary["код_товара_услуги"].map(normalize_code)
     for level in range(1, 8):
         dictionary[f"уровень_{level}"] = dictionary[f"уровень_{level}"].map(normalize_code)
+    return dictionary
+
+
+def _dictionary_year(archive: Path, year: int) -> int:
+    """Год словаря: сам год, иначе ближайший более ранний, иначе самый ранний.
+
+    Для 2025–2026 словаря нет: состав групп берётся из последнего (2024), а
+    новые коды, которых в нём нет, выпадают из агрегата — это видно в проверке.
+    """
+    book = pd.ExcelFile(dictionary_path(archive))
+    available = sorted(int(sheet) for sheet in book.sheet_names if str(sheet).isdigit())
+    if not available:
+        raise ValueError(f"{dictionary_path(archive)}: нет листов-годов")
+    earlier = [value for value in available if value <= year]
+    return earlier[-1] if earlier else available[0]
+
+
+def _aggregate_year_weights(weights: pd.DataFrame, dictionary: pd.DataFrame, specs: list) -> dict:
+    """Веса групп за год: листья (уровень 7) агрегируются по уровню группы.
+
+    `weights` — DataFrame с колонками `code`, `weight` (доли); `dictionary` —
+    иерархия года. Один и тот же код для архива и live: так live-путь
+    воспроизводит архивную арифметику, а не повторяет её «похоже».
+    """
     merged = weights.merge(
-        dictionary[["code", "уровень"] + [f"уровень_{i}" for i in range(1, 8)]],
+        dictionary[["code", "уровень"] + [f"уровень_{i}" for i in range(1, 7)]],
         on="code",
         how="left",
     )
     merged = merged[merged["уровень"] == 7]
+    if merged.empty:
+        return {}
     by_level = {
-        level: merged.groupby(f"уровень_{level}")["вес_товара"].sum()
+        level: merged.groupby(f"уровень_{level}")["weight"].sum()
         for level in range(1, 7)
     }
     level_map = _level_map(dictionary)
@@ -311,6 +324,20 @@ def _year_weights(archive: Path, year: int, specs: list, book=None) -> dict:
     return result
 
 
+def _year_weights(archive: Path, year: int, specs: list, book=None) -> dict:
+    """Веса групп за год из архива; отсутствующий лист года — `None`."""
+    if book is None:
+        book = pd.ExcelFile(weights_path(archive))
+    if str(year) not in book.sheet_names:
+        return None
+    weights = pd.read_excel(book, sheet_name=str(year))
+    weights["code"] = weights["код_товара_услуги"].map(normalize_code)
+    weights["okato"] = weights["окато_код"].map(normalize_code)
+    weights = weights[weights["okato"] == "643"]
+    weights = weights.rename(columns={"вес_товара": "weight"})[["code", "weight"]]
+    return _aggregate_year_weights(weights, _dictionary_frame(archive, year), specs)
+
+
 def load_archive_weights(archive: Path, years, specs: list) -> dict:
     """`{год: {код: доля}}` из архива CB_COMP; годы без листа пропускаются."""
     book = pd.ExcelFile(weights_path(archive))
@@ -323,54 +350,79 @@ def load_archive_weights(archive: Path, years, specs: list) -> dict:
 
 
 LIVE_WEIGHTS_VIEW = "v_rosstat_cpi_weights"
-LIVE_WEIGHTS_GROUP_FILE = "CPR_Gr-Tov-RF"
-LIVE_WEIGHTS_ITEM_FILE = "CPR_tov_RF"
+LIVE_WEIGHTS_ITEMS = "CPR_tov_RF"
+# Публичный товарный файл публикует «Воздушный и железнодорожный транспорт»
+# одной группой, а модель — двумя кодами (9260, 9290). Для лет архива (2016–2024)
+# веса этих двух кодов берутся из архива — это именованное исключение, а не
+# молчаливый фолбэк: `cb-comp-weights-check` перечисляет его в отчёте. Для
+# 2025–2026 архива нет: коды остаются без веса и выпадают из агрегата (покрытие
+# −0,0086), импутации нет.
+LIVE_ARCHIVE_FALLBACK = ("9260", "9290")
 # Live-набор годов: архив кончается 2024, а для месяцев 2026 нужен вес 2025.
 LIVE_WEIGHT_YEARS = tuple(range(2016, 2027))
 
 
-def load_live_weights(years, specs: list, query=None) -> dict:
+def live_weights_query(years) -> str:
+    """SQL товарных строк витрины: коды есть у товарного файла во всех годах.
+
+    Групповой файл в 2016–2024 публикует только названия (без кодов), поэтому
+    веса групп считаются из товарных листьев и словаря — той же арифметикой,
+    что архив; групповой файл остаётся сверкой по названиям.
+    """
+    years = sorted({int(year) for year in years})
+    return (
+        "SELECT year, code, weight FROM " + LIVE_WEIGHTS_VIEW + " "
+        f"WHERE source_file = '{LIVE_WEIGHTS_ITEMS}' AND year IN ({', '.join(str(year) for year in years)}) "
+        "AND NOT startsWith(code, 'name:') ORDER BY year, code FORMAT JSON"
+    )
+
+
+def _live_items(rows) -> dict:
+    """`{год: {код: доля}}` из строк витрины: проценты публикации → доли."""
+    result = {}
+    for row in rows:
+        year = int(row["year"])
+        result.setdefault(year, {})[str(row["code"])] = float(row["weight"]) / 100.0
+    return result
+
+
+def load_live_weights(archive: Path, years, specs: list, query=None) -> dict:
     """`{год: {код: доля}}` из витрины `v_rosstat_cpi_weights`.
 
-    Витрина хранит проценты как в публикации, API модели — доли архива:
-    поэтому `/100`. Групповой файл — приоритет (в нём опубликован вес группы),
-    товарный — фолбэк; если оба дали разные значения для одного кода, это
-    ошибка данных, а не молчаливый выбор. Отсутствующий код — отсутствие веса,
-    а не ноль.
+    Веса групп считаются из товарных листьев (коды) и словаря того же года —
+    ровно как архивный путь; для 2025–2026 используется словарь 2024. Коды,
+    которых нет в словаре, выпадают из агрегата: это не ноль и не бэккаст, а
+    строка отчёта `cb-comp-weights-check`.
     """
     if query is None:
         from lib.clickhouse import ch_query as query
 
     years = sorted({int(year) for year in years})
-    codes = sorted({spec.code for spec in specs} | {UTILITIES_CODE})
-    if not years or not codes:
+    if not years:
         return {}
-    codes_sql = ", ".join("'" + code.replace("'", "''") + "'" for code in codes)
-    rows = query(
-        "SELECT year, code, source_file, weight FROM " + LIVE_WEIGHTS_VIEW + " "
-        f"WHERE year IN ({', '.join(str(year) for year in years)}) "
-        f"AND code IN ({codes_sql}) "
-        "ORDER BY year, code, source_file FORMAT JSON"
-    )
-    by_year = {}
-    for row in rows:
-        year = int(row["year"])
-        code = str(row["code"])
-        source = str(row["source_file"])
-        weight = float(row["weight"])
-        by_year.setdefault(year, {}).setdefault(code, {})[source] = weight
+    items = _live_items(query(live_weights_query(years)))
     result = {}
-    for year, table in by_year.items():
-        result[year] = {}
-        for code, files in table.items():
-            group = files.get(LIVE_WEIGHTS_GROUP_FILE)
-            item = files.get(LIVE_WEIGHTS_ITEM_FILE)
-            if group is not None and item is not None and abs(group - item) > 1e-6:
-                raise ValueError(
-                    f"live weights: {year} {code}: группа {group} и товар {item} расходятся"
-                )
-            value = group if group is not None else item
-            result[year][code] = value / 100.0
+    dictionary_cache = {}
+    for year in years:
+        if not items.get(year):
+            continue
+        dictionary_year = _dictionary_year(archive, year)
+        if dictionary_year not in dictionary_cache:
+            dictionary_cache[dictionary_year] = _dictionary_frame(archive, dictionary_year)
+        table = _aggregate_year_weights(
+            pd.DataFrame({"code": list(items[year]), "weight": list(items[year].values())}),
+            dictionary_cache[dictionary_year],
+            specs,
+        )
+        if table:
+            missing = [code for code in LIVE_ARCHIVE_FALLBACK if code not in table]
+            if missing:
+                archive_table = _year_weights(archive, year, specs)
+                if archive_table:
+                    for code in missing:
+                        if code in archive_table:
+                            table[code] = archive_table[code]
+            result[year] = table
     return result
 
 
@@ -384,7 +436,7 @@ def load_weights(archive: Path, years, specs: list, source: str = "archive", que
     live bottom-up, gate); замороженные P0.6/Task 4/4b остаются на архиве.
     """
     if source == "live":
-        return load_live_weights(years, specs, query=query)
+        return load_live_weights(archive, years, specs, query=query)
     if source == "archive":
         return load_archive_weights(archive, years, specs)
     raise ValueError(f"неизвестный источник весов: {source!r} (ожидалось live|archive)")
