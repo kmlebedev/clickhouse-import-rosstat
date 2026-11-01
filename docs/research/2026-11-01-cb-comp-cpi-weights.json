@@ -136,7 +136,7 @@
   },
   "gate": {
     "weights_2016_2024": {"status": "pass_8_of_9_years", "max_abs_diff": "<= 7e-18 for 2016-2021, 2023, 2024", "exception_2022": "9540 0.0043"},
-    "sums_2025_2026": {"status": "partial", "2025": 99.157, "2026": "not_probed"},
+    "sums_2025_2026": {"status": "pair_ok_2024_2025", "2024": 100.0, "2025": 100.0, "2026": "not_probed", "method": "item list + combined air/rail group"},
     "task9_repeat": {"status": "archive_passed", "live": "pending"},
     "coverage": {"status": "pending_live", "expected_2025": 0.918, "threshold": 0.85}
   },

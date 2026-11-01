@@ -75,7 +75,7 @@ def compare_gate(comparison: dict, years=ARCHIVE_YEARS) -> tuple:
 
 
 def live_sums(query=None) -> list:
-    """Суммы товарного листа по (год, вариант): 100 ± 0,5 без итоговой строки."""
+    """Суммы товарного листа по (год, вариант) — без итоговой строки."""
     if query is None:
         from lib.clickhouse import ch_query as query
 
@@ -93,6 +93,35 @@ def live_sums(query=None) -> list:
         }
         for row in rows
     ]
+
+
+def combined_group_sums(query=None) -> dict:
+    """Вес объединённой группы «Воздушный и железнодорожный транспорт» по годам.
+
+    Товарный файл не содержит отдельных 9260/9290 — их вес лежит в групповом
+    файле одной строкой. Пара «товарный лист + эта строка» и есть 100 %.
+    """
+    if query is None:
+        from lib.clickhouse import ch_query as query
+
+    rows = query(
+        "SELECT year, variant, sum(weight) AS total FROM v_rosstat_cpi_weights "
+        "WHERE source_file = 'CPR_Gr-Tov-RF' AND year >= 2016 "
+        "AND positionCaseInsensitive(name, 'воздушный') > 0 "
+        "AND positionCaseInsensitive(name, 'железнодорожный') > 0 "
+        "GROUP BY year, variant ORDER BY year, variant FORMAT JSON"
+    )
+    return {(int(row["year"]), str(row["variant"])): float(row["total"]) for row in rows}
+
+
+def pair_sums(items: list, combined: dict) -> list:
+    """Пара файлов: товарный лист + объединённая группа; сумма обязана быть 100 ± 0,5."""
+    result = []
+    for item in items:
+        key = (item["year"], item["variant"])
+        group = combined.get(key, 0.0)
+        result.append({**item, "combined": group, "pair_total": item["total"] + group})
+    return result
 
 
 def coverage_report(weights: dict, sa_full: dict, codes: list, months: list) -> list:
@@ -139,8 +168,8 @@ def build_report(archive: Path, panel_csv: Path, years=LIVE_YEARS) -> dict:
     comparison = compare_weights(live_weights, archive_weights)
     gate_ok, problems = compare_gate(comparison)
 
-    sums = live_sums()
-    sums_ok = all(abs(item["total"] - 100.0) <= 0.5 for item in sums)
+    sums = pair_sums(live_sums(), combined_group_sums())
+    sums_ok = all(abs(item["pair_total"] - 100.0) <= 0.5 for item in sums)
     sa_full, _ = lb.load_group_panel(panel_csv)
     last = max(month for values in sa_full.values() for month in values)
     months = cp.month_range(date(2025, 1, 1), min(last, date(2026, 12, 1)))
