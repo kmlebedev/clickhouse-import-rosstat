@@ -466,6 +466,7 @@
     "source": "docs/research/2026-10-31-cb-comp-88-groups-task11.md",
     "page": "research-2026-10-31-cb-comp-88-groups-task11.md",
     "title": "CB_COMP: h3 — EN 2016+ и combo4 (Task 11)",
+    "section": "Исследования"
   },
   {
     "source": "docs/research/2026-10-31-cb-comp-88-groups-task7.md",
@@ -513,6 +514,12 @@
     "source": "docs/research/2026-10-31-cb-comp-88-groups-task12.md",
     "page": "research-2026-10-31-cb-comp-88-groups-task12.md",
     "title": "CB_COMP: h3/h6 — агрегатный VAR/BVAR в комбинации (Task 12)",
+    "section": "Исследования"
+  },
+  {
+    "source": "docs/research/2026-11-01-cb-comp-backend-compare.md",
+    "page": "research-2026-11-01-cb-comp-backend-compare.md",
+    "title": "CB_COMP: CatBoost vs LightGBM/XGBoost — точность и скорость (Task 17)",
     "section": "Исследования"
   }
 ]

@@ -544,7 +544,8 @@ def render_report(result: dict) -> str:
 
 
 def run(archive: Path, panel: Path, public_dir: Path, out_dir: Path,
-        version: str = DEFAULT_VERSION, backends=None, arms=None) -> dict:
+        version: str = DEFAULT_VERSION, backends=None, arms=None,
+        write_evidence: bool = True) -> dict:
     backends = tuple(backends or BACKEND_ORDER)
     arms = tuple(arms or ARMS)
     selected = [(b, a) for b, a in RUNS if b in backends and a in arms]
@@ -706,10 +707,12 @@ def run(archive: Path, panel: Path, public_dir: Path, out_dir: Path,
         write_predictions(out_dir / "predictions.csv", runs)
         write_timings(out_dir / "timings.csv", all_timings)
         (out_dir / "report.md").write_text(render_report(lb._jsonable(result)), encoding="utf-8")
-        EVIDENCE_JSON.parent.mkdir(parents=True, exist_ok=True)
-        EVIDENCE_JSON.write_text(json.dumps(lb._jsonable(result), ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        if write_evidence:
+            EVIDENCE_JSON.parent.mkdir(parents=True, exist_ok=True)
+            EVIDENCE_JSON.write_text(json.dumps(lb._jsonable(result), ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
-        for (backend_name, arm), record in runs.items():
+        for key, record in runs.items():
+            backend_name, arm = record["backend"], record["arm"]
             predictions_path = out_dir / f"predictions_{backend_name}__{arm}.csv"
             timings_path = out_dir / f"timings_{backend_name}__{arm}.csv"
             write_run_predictions(predictions_path, record)
@@ -735,7 +738,8 @@ def run(archive: Path, panel: Path, public_dir: Path, out_dir: Path,
                                                 tags={"decision": decision})
         result["mlog"] = {key: record.get("mlog_status") for key, record in runs.items()}
         (out_dir / "result.json").write_text(json.dumps(lb._jsonable(result), ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-        EVIDENCE_JSON.write_text(json.dumps(lb._jsonable(result), ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        if write_evidence:
+            EVIDENCE_JSON.write_text(json.dumps(lb._jsonable(result), ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         return result
     finally:
         for logger in loggers.values():
@@ -799,6 +803,8 @@ def main(argv=None) -> int:
     parser.add_argument("--backend", choices=("all",) + BACKEND_ORDER, default="all")
     parser.add_argument("--arm", choices=("all",) + ARMS, default="all")
     parser.add_argument("--out", default=None, help="по умолчанию build/cb-comp-backend-compare[-<версия>]")
+    parser.add_argument("--no-evidence", action="store_true",
+                        help="не перезаписывать docs/research/<отчёт>.json (повтор/диагностика)")
     args = parser.parse_args(argv)
     panel = Path(args.panel) if args.panel else lb.default_panel(args.version)
     lb.check_panel_version(lb.load_group_panel(panel)[0], args.version)
@@ -806,7 +812,8 @@ def main(argv=None) -> int:
     archive = cp.resolve_archive(args.archive)
     backends = BACKEND_ORDER if args.backend == "all" else (args.backend,)
     arms = ARMS if args.arm == "all" else (args.arm,)
-    result = run(archive, panel, Path(args.public_dir), out_dir, args.version, backends, arms)
+    result = run(archive, panel, Path(args.public_dir), out_dir, args.version, backends, arms,
+                 write_evidence=not args.no_evidence)
     print(json.dumps({
         "decision": result["decision_summary"],
         "ratios_live": {key: {str(h): round(v, 3) for h, v in per.items()} for key, per in result["ratios_live"].items()},
