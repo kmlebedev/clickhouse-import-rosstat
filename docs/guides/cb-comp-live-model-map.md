@@ -346,7 +346,7 @@ make cb-comp-h1-weekly ARGS="--version 2009 --frozen-only"
 | **Покрытие весов 0,927 / 85–87 групп** | не весь ИПЦ; пропуски 9218/9260/803/930.АГ | импортёр весов 2025–26; политика пропусков |
 | **Нет интервалов** | только точка; нет CRPS/coverage | quantile/conformal слой |
 | **Нет проверки шоков** | 2022 исключён из normal-54; live-поведение в шоке не измерено | Task 5, shock-aware протокол |
-| **MLflow/`ML_LOG`** | закрыто P0.5 ([#485](https://github.com/kmlebedev/clickhouse-import-rosstat/issues/485)): run'ы `combo3`/`live_cb` в `v_ml_error_by_fold`, gate читает их; shadow-зеркало — P0.6a (#462) | промоушена нет: gate — проводка; смена базы — §7.8 |
+| **MLflow/`ML_LOG`** | Закрыто P0.5 ([#485](https://github.com/kmlebedev/clickhouse-import-rosstat/issues/485)): run'ы `combo3`/`live_cb` в `v_ml_error_by_fold`, gate читает их; shadow-зеркало P0.6a (#462) — staging `cb_comp_h1_shadow`, в `ml_runs` не пишется | промоушена нет: gate — проводка; смена базы — §7.8; канонический backend зеркала — staging |
 | **Gate не умеет разные имена моделей** | для пар `v3_bottomup` vs `v2_bottomup` нужен `--champion-model`/`--challenger-model` | follow-up к #184 |
 | **`publication`-вариант не считан** | `late` может быть мягче | robustness-прогон |
 | **Нет walk-forward h3/h6 2022+** | задача #419 требует h1 только; h3/h6 — окно статьи | отдельная арена |
@@ -935,8 +935,8 @@ make cb-comp-h1-weekly ARGS="--version 2009 --frozen-only"
 | `scripts/models/cb_comp/cb_comp_per_code_review.py` | Task 8: per-code МП, X-13, панели | `main` | merged |
 | `scripts/models/cb_comp/cb_comp_h1_weekly_ex.py` | Task 4b: `agg_ex`, `wk_agg_ex`/`wk_mix_ex`, G11, контроли ревью | `g11_check`, `run` | merged (Task 4b) |
 | `scripts/models/cb_comp/cb_comp_h1_shadow.py` | P0.6: ретро-robustness и paper shadow `wk_mix_ex@v1` | `robustness`, `shadow_forecast`, `serve`, `t_live_rt` | PR #455 (P0.6, #453) |
-| `scripts/models/cb_comp/cb_comp_h1_shadow_mlflow.py` | P0.6a: MLflow-зеркало shadow-JSON месяца (только чтение JSON) | `load_payload`, `build_plan`, `log_path`, `collect_paths` | PR (P0.6a, #462) |
-| `scripts/models/cb_comp/cb_comp_mlog.py` | P0.5: паспорт run'а линии — folds `hN`, `config_hash`/`sample_hash`, sha256 артефактов | `build_fold_rows`, `start`, `record`, `log_run` | PR (P0.5, #485) |
+| `scripts/models/cb_comp/cb_comp_h1_shadow_mlflow.py` | P0.6a: MLflow-зеркало shadow-JSON месяца (только чтение JSON; staging — канонический backend) | `load_payload`, `build_plan`, `resolve_tracking_uri`, `log_path`, `collect_paths` | merged (P0.6a, #462); In Review — PR #469 |
+| `scripts/models/cb_comp/cb_comp_mlog.py` | P0.5: паспорт run'а линии — folds `hN`, `config_hash`/`sample_hash`, sha256 артефактов | `build_fold_rows`, `start`, `record`, `log_run` | merged (P0.5, #485) |
 
 ### 8.2. Make-цели
 
@@ -955,7 +955,7 @@ make cb-comp-h1-weekly ARGS="--version 2009 --frozen-only"
 | `make cb-comp-per-code-review` / `-test` | Task 8: per-code разбор; 12 тестов |
 | `make cb-comp-h1-weekly-ex` / `-test` | Task 4b: очищенный недельный агрегат, G11; 22 теста; нужен `predictions.csv` Task 4 |
 | `make cb-comp-h1-shadow-robustness` / `cb-comp-h1-shadow-forecast MONTH=YYYY-MM` / `cb-comp-h1-shadow-test` | P0.6: robustness на входах Task 4b; shadow-JSON месяца в `docs/research/cb-comp-h1-shadow/`; 19 тестов |
-| `make cb-comp-h1-shadow-mlflow` / `cb-comp-h1-shadow-mlflow-test` | P0.6a: зеркало shadow-JSON в MLflow (`cb_comp_h1_shadow`, run на `month`+`json_sha256`); `ARGS="--backfill"` / `ARGS="--month 2026-10 --dry-run"`; 21 офлайн-тест на временном SQLite |
+| `make cb-comp-h1-shadow-mlflow` / `cb-comp-h1-shadow-mlflow-test` | P0.6a: зеркало shadow-JSON в MLflow (`cb_comp_h1_shadow`, run на `month`+`json_sha256`); **канонический backend — staging**, URI обязателен (`MLFLOW_TRACKING_URI=http://192.168.3.9:5000`; fallback — `http://127.0.0.1:15001` через `ssh -N -L 15001:127.0.0.1:5000 palmshell`); локальный `build/mlflow` не подставляется; `ARGS="--backfill"` / `ARGS="--month 2026-10 --dry-run"` (dry-run без URI); 25 офлайн-тестов на временном SQLite |
 
 ### 8.3. Артефакты
 
@@ -974,7 +974,8 @@ make cb-comp-h1-weekly ARGS="--version 2009 --frozen-only"
 | `build/cb-comp-parity/{public_panel.csv,sheet_map.csv}` | публичная панель/карта | нет |
 | `build/cb-comp-h1-weekly/`, `build/cb-comp-h1-weekly-ex/`, `build/cb-comp-pooled/`, `build/cb-comp-live-en16/`, `build/cb-comp-h3-h6-var/` | артефакты экспериментов | нет |
 | `docs/research/cb-comp-h1-shadow/<YYYY-MM>.json` | P0.6: paper shadow месяца — источник истины для MLflow-зеркала | да |
-| MLflow `cb_comp_h1_shadow` / run `shadow__<YYYY-MM>__wk_mix_ex@v1` | P0.6a: зеркало shadow-JSON (теги, метрики, `shadow.json`, `run_summary.json`) | нет: `build/mlflow/` gitignored |
+| **staging** MLflow `cb_comp_h1_shadow` / run `shadow__<YYYY-MM>__wk_mix_ex@v1` (2026-10 — `9c53630947894b2682bae2d0d1908762`, experiment 1) | P0.6a: каноническое зеркало shadow-JSON (теги, метрики, `shadow.json`, `run_summary.json`) | нет: staging SQLite `/var/lib/mlflow/mlflow.db` |
+| Локальный MLflow `cb_comp_h1_shadow` / run `shadow__<YYYY-MM>__wk_mix_ex@v1` (`build/mlflow`, 2026-10 — `b034a74df13743f9ad7a79b53fb79054`, experiment 3) | P0.6a: dev-артефакт, **не канонический** и не live-приёмка | нет: `build/mlflow/` gitignored |
 
 ### 8.4. Витрины и таблицы
 
