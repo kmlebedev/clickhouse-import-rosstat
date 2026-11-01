@@ -10,26 +10,26 @@ wget https://dl.grafana.com/oss/release/grafana_11.2.0_arm64.deb
 sudo dpkg -i grafana_11.2.0_arm64.deb
 ```
 
-Дашборды контура — **`gold-thesis`** (статья про золото), **`key-rate-publications`** (иллюстрации к публикациям по ключевой ставке) и **`finance-polyus`** («Полюс (PLZL) — финансы и прогноз»: графики статьи PLZL) — живут как код, а не как экспорт из UI. Конвейер:
+Дашборды контура — **`gold-thesis`** (статья про золото), **`key-rate-publications`** (иллюстрации к публикациям по ключевой ставке), **`finance-polyus`** («Полюс (PLZL) — финансы и прогноз»: графики статьи PLZL) и **`transaq-trades`** («Сделки MOEX — нетто покупок и продаж»: лента сделок Transaq) — живут как код, а не как экспорт из UI. Конвейер:
 
 ```text
 grafana/ (Go, grafana-foundation-sdk) --make grafana-build--> dashboard/<uid>.json
-                                                              (gold-thesis, key-rate-publications, finance-polyus; все коммитятся)
+                                                              (gold-thesis, key-rate-publications, finance-polyus, transaq-trades; все коммитятся)
         |                                                              |
-   make grafana-validate                                       make grafana-deploy-test / -staging (gcx resources push всех трёх)
+   make grafana-validate                                       make grafana-deploy-test / -staging (gcx resources push всех четырёх)
    (go vet + тесты)                                                |
    CI dashboards.yml: тесты, сборка,                           make grafana-check
-   diff-проверка артефактов, gcx dev lint                 (smoke: uid + точки панелей, по всем трём)
+   diff-проверка артефактов, gcx dev lint                 (smoke: uid + точки панелей, по всем четырём)
 ```
 
 Легаси-экспорты `dashboard/rosstat.json` и `dashboard/chmf.json` остаются как есть — их миграция на код (процесс — скил `.kimi-code/skills/dashboard-migration/SKILL.md`, живая очередь — [docs/ROADMAP_INFRA.md](ROADMAP_INFRA.md), Фаза 2), алерты Grafana и PNG-рендер панелей для статей — отдельные пункты вне объёма этой работы. Прежний легаси-экспорт `dashboard/finance-polyus.json` заменён генерируемым артефактом 2026-10-16 (история — в git).
 
 ### Дашборд как код
 
-- Источник истины — `grafana/` (отдельный Go-модуль): дашборды `gold-thesis` (9 панелей id 1–9 в 5 рядах), `key-rate-publications` (33 панели id 1–19, 25–33 и 35–39 в 6 рядах, «Ключевая ставка — публикации»; линии графиков — smooth-интерполяция) и `finance-polyus` (19 панелей id 1–19 в 4 рядах id 31–34, «Полюс (PLZL) — финансы и прогноз»); все запросы — только по витринам `v_*`, датасорс каждой панели — константа uid `ch-rosstat`. CLI — флаги `-dashboard <uid>|all` (дефолт `all`) и `-out-dir` (дефолт `../dashboard`): файл артефакта — `<out-dir>/<uid>.json`. Артефакты `dashboard/gold-thesis.json`, `dashboard/key-rate-publications.json` и `dashboard/finance-polyus.json` (k8s-ресурс `dashboard.grafana.app/v1beta1`, uid = `metadata.name`) руками не правятся: `make grafana-build` перезаписывает их детерминированно, а CI падает, если артефакт разошёлся с кодом.
-- `make grafana-validate` — `go vet` + тесты модуля (состав панелей всех трёх дашбордов и негативные правила `Validate`). Серверный `gcx resources validate` намеренно не входит в цель: он проверяет ресурс на живом инстансе (server-side dry-run) и требует кредов — рабочая форма записана в комментарии цели.
+- Источник истины — `grafana/` (отдельный Go-модуль): дашборды `gold-thesis` (9 панелей id 1–9 в 5 рядах), `key-rate-publications` (33 панели id 1–19, 25–33 и 35–39 в 6 рядах, «Ключевая ставка — публикации»; линии графиков — smooth-интерполяция), `finance-polyus` (19 панелей id 1–19 в 4 рядах id 31–34, «Полюс (PLZL) — финансы и прогноз») и `transaq-trades` (5 панелей id 1–5 в 2 рядах id 21–22, «Сделки MOEX — нетто покупок и продаж»: top-10 по дневной витрине, графики потоков по минутной); все запросы — только по витринам `v_*`, датасорс каждой панели — константа uid `ch-rosstat`. CLI — флаги `-dashboard <uid>|all` (дефолт `all`) и `-out-dir` (дефолт `../dashboard`): файл артефакта — `<out-dir>/<uid>.json`. Артефакты `dashboard/gold-thesis.json`, `dashboard/key-rate-publications.json`, `dashboard/finance-polyus.json` и `dashboard/transaq-trades.json` (k8s-ресурс `dashboard.grafana.app/v1beta1`, uid = `metadata.name`) руками не правятся: `make grafana-build` перезаписывает их детерминированно, а CI падает, если артефакт разошёлся с кодом.
+- `make grafana-validate` — `go vet` + тесты модуля (состав панелей всех четырёх дашбордов и негативные правила `Validate`). Серверный `gcx resources validate` намеренно не входит в цель: он проверяет ресурс на живом инстансе (server-side dry-run) и требует кредов — рабочая форма записана в комментарии цели.
 - Локальный стенд: `make grafana-up` (brew-Grafana; данные, логи и плагины в `$(GF_DIR)`, провижининг датасорса — `grafana/provisioning/datasources/clickhouse.yaml`, порт 3000) и `make grafana-down`. При первом входе в UI смените пароль `admin/admin`.
-- **`$__timeFilter` — по умолчанию.** Каждый timeseries-таргет несёт `$__timeFilter` по своей временной колонке (`date`, `period_date`, `meeting_date`): без него панель игнорирует выбор периода в правом верхнем углу. Если время на графике вычисляется (наложение прошлого года `date_add(YEAR, 1, date)`, 4-недельная средняя), фильтр ставится на вычисленное `time`, а не на сырой `date` — иначе ряд выходит за окно (у панели 2 прошлый год дал бы 0 точек вместо 42). Норма машинная: `TestKeyRateAllTimeseriesUseTimeFilter` и `TestKeyRateWeeklyYearOverlay` в `grafana/` валят `make grafana-validate`; табличные и stat-панели не проверяются — у них время не ось.
+- **`$__timeFilter` — по умолчанию, `$__dateFilter` — для Date.** Каждый timeseries-таргет несёт `$__timeFilter` по своей временной колонке (`date`, `period_date`, `meeting_date`): без него панель игнорирует выбор периода в правом верхнем углу. Для `Date`-колонок используется документированный макрос `$__dateFilter(date)` (`$__timeFilter` по Date даёт неявный каст), для `DateTime` — `$__timeFilter(time)`. Если время на графике вычисляется (наложение прошлого года `date_add(YEAR, 1, date)`, 4-недельная средняя), фильтр ставится на вычисленное `time`, а не на сырой `date` — иначе ряд выходит за окно (у панели 2 прошлый год дал бы 0 точек вместо 42). Норма машинная: `TestKeyRateAllTimeseriesUseTimeFilter`, `TestKeyRateWeeklyYearOverlay` и `TestTransaqTradesSQLContract` в `grafana/` валят `make grafana-validate`; табличные и stat-панели не проверяются — у них время не ось. Практики ClickHouse для time-series SQL (зерно витрины, бакеты, пропуск ≠ ноль, `WITH FILL`) — раздел «Time-series SQL: практики ClickHouse» скила `dashboard-migration`.
 
 ### Переменные окружения стендов
 
@@ -56,8 +56,8 @@ grafana/ (Go, grafana-foundation-sdk) --make grafana-build--> dashboard/<uid>.js
 ```bash
 make ch-up && make grafana-up           # ClickHouse + локальный стенд с провижинингом датасорса
 make grafana-build && make grafana-validate
-make grafana-deploy-test                # gcx resources push всех трёх дашбордов на $(GRAFANA_TEST_URL) + smoke
-make grafana-check                      # только smoke (все три uid)
+make grafana-deploy-test                # gcx resources push всех четырёх дашбордов на $(GRAFANA_TEST_URL) + smoke
+make grafana-check                      # только smoke (все четыре uid)
 ```
 
 Push идемпотентен: повторный прогон обновляет тот же ресурс (`metadata.name=<uid>` — uid дашборда из списка `DASHBOARDS`), дубль не создаётся. Перед публикацией — серверная проверка ресурса на живом инстансе (шаг ручной, нужны креды; по файлу на дашборд — `dashboard/<uid>.json`):
@@ -86,6 +86,8 @@ curl -u admin:<пароль> -X POST http://localhost:3001/api/admin/provisionin
 
 (либо один `systemctl restart grafana-server`). Цель Grafana не перезапускает и сама печатает эту команду; подробности — `deploy/staging/README.md`.
 
+**Датасорс и `readonly`.** `kimi_reader` создаётся с `readonly = 2` (`sql/mcp_kimi_reader.sql`, обновляется `make mcp-user` / `make mcp-user-staging`): запись на постоянные таблицы запрещена и на этом уровне, но плагин `grafana-clickhouse-datasource` 4.14+ при подключении выставляет `max_execution_time`. На `readonly = 1` health датасорса возвращает `failed to create ClickHouse client`, а в логе Grafana — `Cannot modify 'max_execution_time' setting in readonly mode` (проверено на staging 2026-10-31).
+
 ### Алерты live-мониторинга ML (`infra/4.3`)
 
 `grafana/provisioning/alerting/ml-live.yaml` — два правила Grafana Alerting:
@@ -99,7 +101,7 @@ curl -u admin:<пароль> -X POST http://localhost:3001/api/admin/provisionin
 
 Проверка firing на локальном стенде: временно понизить порог `ml-live-degradation` через API/UI, дождаться состояния Firing, вернуть 100; в протоколе PR фиксируются UID, порог и наблюдённое состояние. Прод-данные для этого не нужны.
 
-### Проверки и приёмка (gold-thesis — 2026-10-12; key-rate-publications — 2026-10-16; finance-polyus — v1 2026-10-16; живой деплой + smoke трёх uid на локальном стенде — 2026-10-16)
+### Проверки и приёмка (gold-thesis — 2026-10-12; key-rate-publications — 2026-10-16; finance-polyus — v1 2026-10-16; transaq-trades — v1 2026-10-31; живой деплой + smoke трёх uid на локальном стенде — 2026-10-16)
 
 **Проверено на стенде/локально (пункты с пометкой «по отчёту исполнителя» приводятся со слов исполнителя задачи и при финальном ревью повторно не проверялись):**
 
@@ -113,9 +115,10 @@ curl -u admin:<пароль> -X POST http://localhost:3001/api/admin/provisionin
 - **Второй дашборд `key-rate-publications` (v1, 2026-10-16).** Артефакт собран кодом (19 панелей id 1–19 в рядах «Ставка и инфляция», «Деньги, кредит, бюджет, труд», «Рыночный контур», «Сигнал, консенсус, календарь»; каждый запрос — по витринам `v_*`, датасорс `ch-rosstat`); `make grafana-build` детерминирован — повторный прогон даёт пустой `git diff -- dashboard/`; `gcx` 1.5.0 по обоим файлам артефактов — «2 files linted. No violations found.» (exit 0).
 - **Третий дашборд `finance-polyus` (v1, 2026-10-16).** Артефакт собран кодом (19 панелей id 1–19 / 48 таргетов в рядах «Золото, ставки, рынок», «Операционные показатели», «Финансовые показатели», «Прогноз и точность»; каждый запрос — по витринам `v_*`, датасорс `ch-rosstat`); `make grafana-build` детерминирован (повторная сборка — байт-идентичный артефакт), `gcx` 1.5.0 по всем трём файлам артефактов — «3 files linted. No violations found.» (exit 0), SQL панелей прогнан живьём под `kimi_reader` через MCP — **по отчёту исполнителя задачи**.
 - **Живой прогон трёх дашбордов на локальном стенде (2026-10-16), уже с Bearer-токеном.** `make grafana-deploy-test` (стенд Grafana 13.2.3, `gcx` 1.5.0) — по `✔ 1 resources pushed, 0 errors` на `gold-thesis`, `key-rate-publications` и `finance-polyus`; smoke `make grafana-check` — «ПРОВЕРКА ПРОЙДЕНА» на каждом uid: `gold-thesis` виден (версия 13, 9 панелей с таргетами, панель 1 — 252 точки), `key-rate-publications` (версия 5, 19 панелей, первая панель — 784 точки), `finance-polyus` (версия 1, 19 панелей, первые две панели — по 1232 точки; расхождение с ручным `count()` = 1233 — пограничный день окна `now-5y`, объяснено в протоколе PR).
+- **Четвёртый дашборд `transaq-trades` (v1, 2026-10-31).** Артефакт собран кодом (5 панелей id 1–5 в 2 рядах id 21–22: top-10 нетто покупок/продаж IMOEX по дневной витрине с `$__dateFilter(date)`; нетто-поток IMOEX и покупки/продажи IMOEX и ОФЗ по минутной с `$__timeFilter(minute)` + `$__timeInterval(minute)`; все запросы — `v_transaq_net_flows*`, датасорс `ch-rosstat`); `make grafana-build` детерминирован (повторная сборка — байт-идентичный артефакт); `gcx` 1.5.0 по всем четырём файлам — «4 files linted. No violations found.» (exit 0); `make all`, `make grafana-validate`, `make docs-check` зелёные; SQL всех пяти таргетов прогнан под `kimi_reader` через MCP после публикации витрин (`make import STAT=transaq_net_flows`; локальная лента пуста — результат пустой, ошибок нет), `EXPLAIN ESTIMATE` панели 3 — 0 частей. Локальный smoke не показателен: dev-лента Transaq пуста; staging smoke — owner-assisted.
 
 **Ещё не подтверждено (ожидает владельца):**
 
-- Полный staging-прогон `make grafana-deploy-staging` (туннель `:3001` → провижининг датасорса → push → smoke): `GRAFANA_STAGING_TOKEN` задан, туннель ещё не поднимался; после первого провижининга нужен один admin-reload датасорса (см. «Ловушка staging»). Цель идёт циклом по всем трём дашбордам — smoke по `gold-thesis`, `key-rate-publications` и `finance-polyus`.
+- Полный staging-прогон `make grafana-deploy-staging` (туннель `:3001` → провижининг датасорса → push → smoke): `GRAFANA_STAGING_TOKEN` задан, туннель ещё не поднимался; после первого провижининга нужен один admin-reload датасорса (см. «Ловушка staging»). Цель идёт циклом по всем четырём дашбордам — smoke по `gold-thesis`, `key-rate-publications`, `finance-polyus` и `transaq-trades`.
 - Серверная `gcx resources validate` по артефактам `key-rate-publications` и `finance-polyus` — не выполнялась (нужны креды и стек-конфиг стенда; в `make grafana-validate` серверная валидация не входит); у `gold-thesis` — по отчёту исполнителя задачи.
 - Визуальный просмотр дашбордов в браузере (`http://localhost:3000`).

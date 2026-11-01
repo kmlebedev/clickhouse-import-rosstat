@@ -2,7 +2,7 @@
 
 Артефакты деплоя на хост `palmshell` (Ubuntu 24.04, x86_64, вход `root`). Разворачивает четыре
 компонента: бинарник `clickhouse-import-rosstat`, планировщик `dagu`, MCP-сервер
-`mcp-clickhouse` (HTTP, read-only) и MLflow (SQLite + локальные артефакты). ClickHouse на хосте
+`mcp-clickhouse` (HTTPS `:8443`, read-only) и MLflow (SQLite + локальные артефакты). ClickHouse на хосте
 **не трогается**; у Grafana — только
 файл провижининга датасорса для дашбордов `gold-thesis` и `key-rate-publications` (раздел
 [«Grafana на staging»](#grafana-на-staging-датасорс-провижининг-и-деплой-дашбордов)),
@@ -19,6 +19,8 @@
 | `/etc/systemd/system/dagu.service` | юнит dagu (копия из этого каталога) |
 | `/root/.config/dagu/base.yaml` | base DAG dagu: `env` шагов и SMTP-уведомления (копия `dagu-base.yaml` из этого каталога) |
 | `/etc/systemd/system/mcp-clickhouse.service` | юнит MCP (копия из этого каталога) |
+| `/usr/local/lib/clickhouse-import-rosstat/mcp_clickhouse_tls.py` | запускальщик MCP с TLS (копия из этого каталога) |
+| `/etc/letsencrypt/live/mcp.selfinvesting.ru/` | сертификат публичного MCP (`make deploy-staging-mcp-cert`) |
 | `/etc/systemd/system/mlflow.service` | юнит MLflow (копия из этого каталога) |
 | `/var/lib/mlflow/` | SQLite `mlflow.db` и артефакты MLflow (бэкап — см. «MLflow на staging») |
 | `/etc/clickhouse-import-rosstat.env` | секреты, права `600`, **вне git** |
@@ -145,8 +147,20 @@ ssh -N -L 8123:127.0.0.1:8123 palmshell &
 CLICKHOUSE_PASSWORD=<пароль kimi_reader> make mcp-check MCP_CHECK_HOST=127.0.0.1 MCP_CHECK_PORT=8123
 ```
 
+Публичный MCP — `https://mcp.selfinvesting.ru:8443/mcp`. Первый запуск:
+
+```bash
+# 1. на роутере: внешние :80 и :8443 → хост (:80 нужен и для продления сертификата)
+# 2. сертификат Let's Encrypt (certbot standalone, certbot.timer, deploy-hook перезапускает MCP)
+make deploy-staging-mcp-cert MCP_CERT_EMAIL=<почта для уведомлений LE>
+# 3. в /etc/clickhouse-import-rosstat.env — CLICKHOUSE_MCP_ALLOWED_HOSTS из env.example
+make deploy-staging-mcp && ssh palmshell 'systemctl restart mcp-clickhouse'
+make deploy-staging-smoke
+```
+
 Smoke-проверки внутри `deploy-staging`: наличие бинарей и DAG-файлов, непустой токен (до
-включения сервисов), затем `dagu` отвечает, MCP `/health` = 200, MCP **без токена → 401**,
+включения сервисов), затем `dagu` отвечает, MCP `/health` = 200 по HTTPS с проверкой сертификата и имени
+(`curl --resolve mcp.selfinvesting.ru:8443:127.0.0.1`), MCP **без токена → 401**,
 MCP с токеном отвечает, MLflow `/health` = 200.
 
 ## MLflow на staging
@@ -234,7 +248,8 @@ Grafana и systemd на хосте цель **не трогает**: тольк�
 ### Датасорс
 
 - Шаблон: `grafana-datasource.yaml` — `host: localhost`, `port: 8123`, `protocol: http`,
-  пользователь `kimi_reader` (тот же readonly-пользователь, что у MCP), uid `ch-rosstat`
+  пользователь `kimi_reader` (тот же readonly-пользователь, что у MCP; `readonly = 2` — запись
+  запрещена, но плагин Grafana может менять настройки сессии, в т.ч. `max_execution_time`), uid `ch-rosstat`
   (совпадает с `grafana/clickhouse.go` и с таргетами панелей дашборда).
 - Пароля в репозитории нет: плейсхолдер `__CLICKHOUSE_PASSWORD__` подставляет **на хосте**
   `make grafana-provision-staging` из `/etc/clickhouse-import-rosstat.env` (600). Подстановка —
@@ -278,10 +293,11 @@ Grafana и systemd на хосте цель **не трогает**: тольк�
   `GRAFANA_STAGING_TOKEN` в `~/.config/rosstat/env`. На самом хосте токен не нужен: push идёт через туннель.
 - admin-reload провижининга датасорса (см. выше) — при первом деплое и после каждой правки
   `grafana-datasource.yaml`. Цель печатает напоминание, когда файл был переустановлен.
-- Пользователь ClickHouse `kimi_reader` уже есть на хосте (гранты readonly на витрины `v_*`).
+- Пользователь ClickHouse `kimi_reader` уже есть на хосте (гранты только на витрины `v_*`,
+  `readonly = 2` — запись запрещена; создаётся/обновляется `make mcp-user-staging`).
 
 Приёмка полного прогона: `make grafana-deploy-staging` → по каждому uid из `DASHBOARDS`
-(`gold-thesis`, `key-rate-publications`, `finance-polyus`) `OK   дашборд виден` и непустые точки по первым панелям,
+(`gold-thesis`, `key-rate-publications`, `finance-polyus`, `transaq-trades`) `OK   дашборд виден` и непустые точки по первым панелям,
 затем `gcx dashboards list` показывает все дашборды из `DASHBOARDS` (существующие на staging не затронуты).
 
 ## Отладка и откат
@@ -303,5 +319,5 @@ ssh palmshell 'mv /root/.local/bin/dagu.bak /root/.local/bin/dagu && systemctl r
 ## Что осознанно не делается
 
 Юнит `clickhouse-import-rosstat.service` не создаётся: импортёр — короткоживущий процесс,
-его запускают DAG'и. Публикация наружу (Caddy, TLS) — следующая фаза; сейчас все сервисы
-слушают только `127.0.0.1`.
+его запускают DAG'и. Наружу опубликован только MCP (HTTPS `:8443`, TLS в самом
+`mcp-clickhouse`, без reverse proxy); dagu, MLflow и Grafana слушают только `127.0.0.1`.

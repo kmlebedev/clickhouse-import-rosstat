@@ -38,7 +38,7 @@ GF_PLUGINS   := $(GF_DIR)/plugins
 # уходит в окружение процесса gcx (make экспортирует переменные) и не светится в командной строке.
 # Список uid всех дашбордов контура — источник истины для деплоя и smoke: цели ниже идут по нему
 # циклом, поэтому новый дашборд добавляется здесь одной строкой (свои uid генератор grafana/ знает сам).
-DASHBOARDS       := gold-thesis key-rate-publications finance-polyus
+DASHBOARDS       := gold-thesis key-rate-publications finance-polyus transaq-trades
 GRAFANA_TEST_URL ?= http://localhost:3000
 GRAFANA_ORG_ID   ?= 1
 GRAFANA_TOKEN    ?= $(GRAFANA_TEST_TOKEN)
@@ -85,6 +85,14 @@ MLFLOW_PREFLIGHT := $(if $(filter 1,$(MLFLOW)),python3 scripts/mlflow_preflight.
 STAGING_HOST     ?= palmshell
 STAGING_BIN_DIR  ?= /root/.local/bin
 STAGING_ENV_FILE ?= /etc/clickhouse-import-rosstat.env
+# Публичный MCP (HTTPS прямо в mcp-clickhouse, см. deploy/staging/mcp_clickhouse_tls.py).
+STAGING_MCP_LIB_DIR ?= /usr/local/lib/clickhouse-import-rosstat
+MCP_PUBLIC_HOST  ?= mcp.selfinvesting.ru
+MCP_PUBLIC_PORT  ?= 8443
+MCP_PUBLIC_URL   := https://$(MCP_PUBLIC_HOST):$(MCP_PUBLIC_PORT)
+MCP_CERT_EMAIL   ?=
+# smoke на хосте: публичное имя → loopback, чтобы проверять сертификат и имя без выхода наружу
+MCP_SMOKE_CURL   := --resolve $(MCP_PUBLIC_HOST):$(MCP_PUBLIC_PORT):127.0.0.1
 STAGING_DAGU_BASE ?= deploy/staging/dagu-base.yaml
 DAGU_VERSION     ?= v2.18.2
 
@@ -92,7 +100,7 @@ DAGU_VERSION     ?= v2.18.2
 MKDOCS_VERSION ?= 9.7.7
 MKDOCS := uv run --with mkdocs-material==$(MKDOCS_VERSION) --python 3.12 mkdocs
 
-.PHONY: all lint fmt vet test build run deps clean info ch-up ch-down ch-status ch-sql mlflow-up mlflow-down mlflow-status mlflow-export mlflow-backfill mlflow-backfill-test mlflow-preflight mlflow-register mlflow-promote mlflow-models ml-gate ml-gate-test ml-live-check ml-live-check-test dev-check env-check import mp-llm-eval archive-registry archive-list archive-restore mcp-run mcp-user mcp-check build-ingest run-ingest deploy-staging deploy-staging-binary deploy-staging-dagu deploy-staging-mcp deploy-staging-mlflow deploy-staging-preflight deploy-staging-smoke upgrade-staging mcp-user-staging staging-precheck grafana-build grafana-validate grafana-up grafana-down grafana-deploy-test grafana-deploy-staging grafana-provision-staging grafana-check grafana-test-token grafana-provision-alerting-staging key-rate-model key-rate-cbr-rule key-rate-cbr-rule-test key-rate-scenario-fan key-rate-scenario-fan-test key-rate-scenario-fan-v2 key-rate-scenario-fan-v2-test key-rate-scenario-fan-v3 key-rate-scenario-fan-v3-test key-rate-cpi-v3-experiment key-rate-cpi-v3-experiment-test cpi-live3-horizons cpi-live3-horizons-test shock-classifier shock-classifier-test key-rate-llm-forecast key-rate-forecast-log cpi-nowcast cpi-monthly cpi-monthly-v3 cpi-monthly-v3-test cpi-monthly-v3-public cpi-monthly-v3-public-test cpi-monthly-industry cpi-monthly-industry-test cpi-public-audit cpi-public-audit-test cpi-weekly-panel cpi-weekly-panel-test weekly-core-proxy weekly-core-proxy-test cpi-weekly-aggregate cpi-weekly-aggregate-test cpi-v4-leaderboard cpi-v4-leaderboard-test cpi-v4-grid cpi-v4-grid-test cpi-core-nnls cpi-core-nnls-test cpi-v4-h2 cpi-v4-h2-test cpi-v4-core cpi-v4-core-test cpi-sa-reconciliation cpi-sa-reconciliation-test cpi-asof-test cpi-weekly-sa-asof cpi-weekly-sa-asof-test cpi-two-stage-targets-test cpi-two-stage-folds cpi-two-stage-folds-test cpi-two-stage-s1 cpi-two-stage-s1-test cb-comp-data-reconcile cb-comp-data-reconcile-test cpi-two-stage-cb-comp cpi-two-stage-cb-comp-test cpi-two-stage-w2 cpi-two-stage-w2-test weekly-core-components weekly-core-components-test cpi-pipeline-stage1 cpi-pipeline-stage1-test cpi-pipeline-stage2 cpi-pipeline-stage2-test cpi-pipeline-sa-test publication-calendar-test cb-comp-parity cb-comp-parity-test cb-comp-live-bottomup cb-comp-live-bottomup-test cb-comp-live-en cb-comp-live-en-test cb-comp-h1-bs-combo cb-comp-h1-bs-combo-test cb-comp-live-en16 cb-comp-live-en16-test cb-comp-per-code-review cb-comp-per-code-review-test cb-comp-per-code-review-books cb-comp-per-code-review-x13 cb-comp-groups-panel cb-comp-groups-panel-test cb-comp-live cb-comp-live-test cb-comp-live-compare cb-comp-proxy ppi-sa-weights-panel ppi-sa-weights-panel-test ppi-sa-parity ppi-sa-parity-test ppi-sa-text-anchors ppi-sa-text-anchors-test ppi-sa-industry ppi-sa-industry-test ppi-monthly-forecast ppi-monthly-forecast-test edisclosure-login edisclosure-collect docs-check docs-build docs-serve plugin-manifests-check plugin-manifests-sync
+.PHONY: all lint fmt vet test build run deps clean info ch-up ch-down ch-status ch-sql mlflow-up mlflow-down mlflow-status mlflow-export mlflow-backfill mlflow-backfill-test mlflow-preflight mlflow-register mlflow-promote mlflow-models ml-gate ml-gate-test ml-live-check ml-live-check-test dev-check env-check import mp-llm-eval archive-registry archive-list archive-restore mcp-run mcp-user mcp-check build-ingest run-ingest deploy-staging deploy-staging-binary deploy-staging-dagu deploy-staging-mcp deploy-staging-mlflow deploy-staging-preflight deploy-staging-smoke upgrade-staging mcp-user-staging staging-precheck grafana-build grafana-validate grafana-up grafana-down grafana-deploy-test grafana-deploy-staging grafana-provision-staging grafana-check grafana-test-token grafana-provision-alerting-staging key-rate-model key-rate-cbr-rule key-rate-cbr-rule-test key-rate-scenario-fan key-rate-scenario-fan-test key-rate-scenario-fan-v2 key-rate-scenario-fan-v2-test key-rate-scenario-fan-v3 key-rate-scenario-fan-v3-test key-rate-cpi-v3-experiment key-rate-cpi-v3-experiment-test cpi-live3-horizons cpi-live3-horizons-test shock-classifier shock-classifier-test key-rate-llm-forecast key-rate-forecast-log cpi-nowcast cpi-monthly cpi-monthly-v3 cpi-monthly-v3-test cpi-monthly-v3-public cpi-monthly-v3-public-test cpi-monthly-industry cpi-monthly-industry-test cpi-public-audit cpi-public-audit-test cpi-weekly-panel cpi-weekly-panel-test weekly-core-proxy weekly-core-proxy-test cpi-weekly-aggregate cpi-weekly-aggregate-test cpi-v4-leaderboard cpi-v4-leaderboard-test cpi-v4-grid cpi-v4-grid-test cpi-core-nnls cpi-core-nnls-test cpi-v4-h2 cpi-v4-h2-test cpi-v4-core cpi-v4-core-test cpi-sa-reconciliation cpi-sa-reconciliation-test cpi-asof-test cpi-weekly-sa-asof cpi-weekly-sa-asof-test cpi-two-stage-targets-test cpi-two-stage-folds cpi-two-stage-folds-test cpi-two-stage-s1 cpi-two-stage-s1-test cb-comp-data-reconcile cb-comp-data-reconcile-test cpi-two-stage-cb-comp cpi-two-stage-cb-comp-test cpi-two-stage-w2 cpi-two-stage-w2-test weekly-core-components weekly-core-components-test cpi-pipeline-stage1 cpi-pipeline-stage1-test cpi-pipeline-stage2 cpi-pipeline-stage2-test cpi-pipeline-sa-test publication-calendar-test cb-comp-parity cb-comp-parity-test cb-comp-live-bottomup cb-comp-live-bottomup-test cb-comp-live-en cb-comp-live-en-test cb-comp-h1-bs-combo cb-comp-h1-bs-combo-test cb-comp-h1-weekly cb-comp-h1-weekly-test cb-comp-h1-weekly-ex cb-comp-h1-weekly-ex-test cb-comp-h1-shadow-robustness cb-comp-h1-shadow-forecast cb-comp-h1-shadow-test cb-comp-h1-shadow-mlflow cb-comp-h1-shadow-mlflow-test cb-comp-h3-h6-var cb-comp-h3-h6-var-test cb-comp-tlive-target cb-comp-tlive-target-test cb-comp-88-live-gate cb-comp-88-live-gate-test cb-comp-per-code-review cb-comp-per-code-review-test cb-comp-per-code-review-books cb-comp-per-code-review-x13 cb-comp-groups-panel cb-comp-groups-panel-test cb-comp-live cb-comp-live-test cb-comp-live-compare cb-comp-proxy ppi-sa-weights-panel ppi-sa-weights-panel-test ppi-sa-parity ppi-sa-parity-test ppi-sa-text-anchors ppi-sa-text-anchors-test ppi-sa-industry ppi-sa-industry-test ppi-monthly-forecast ppi-monthly-forecast-test edisclosure-login edisclosure-collect docs-check docs-build docs-serve cb-comp-per-code-reconstruction cb-comp-per-code-reconstruction-test
 
 all: lint test build build-ingest
 
@@ -850,11 +858,14 @@ cb-comp-groups-panel-test:
 # Task 2 #422: live bottom-up по 88 группам на нашей панели, цель T_LIVE —
 # R0 (регрессия #252), G2, сравнение с CB_COMP «каждый на своей цели».
 # Нужны артефакты make cb-comp-groups-panel ARGS="--asof" и make cb-comp-public-export.
+# ML_LOG=1 — паспорт и fold-предсказания (P0.5); MLFLOW=0 — осознанно выключить.
 cb-comp-live-bottomup:
-	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --with arch --with "holidays>=0.60" --python 3.12 python3 scripts/models/cb_comp/cb_comp_live_bottomup.py $(ARGS)
+	@$(MLFLOW_PREFLIGHT)
+	$(MLFLOW_ENV) $(MLFLOW_HTTP_ENV) uv run $(MLFLOW_PKG) --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --with arch --with "holidays>=0.60" --python 3.12 python3 scripts/models/cb_comp/cb_comp_live_bottomup.py $(ARGS)
 
 cb-comp-live-bottomup-test:
 	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/cb_comp/cb_comp_live_bottomup_test.py -v
+	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --python 3.12 python3 scripts/models/cb_comp/cb_comp_mlog_test.py -v
 
 # Task 3 #423: EN_COMP и CB+EN на нашей панели, истина TARGET_FULL —
 # классификация против CB_COMP, MCS, выбор модели, гейт G3 (спека §15).
@@ -866,12 +877,125 @@ cb-comp-live-en-test:
 
 # Task 9 #436: h1 — комбинация live_cb + BS_ECON16/BS_ROZN16 статьи (OLS на
 # T_LIVE и SA ценовых ожиданиях ЦБ, окно 2016+, переобучение без утечки).
-# Только чтение ClickHouse и локального архива CB_COMP; в БД не пишет.
+# ML_LOG=1 — паспорт run'а в ml_runs/ml_predictions и MLflow (P0.5);
+# MLFLOW=0 — осознанно выключить.
 cb-comp-h1-bs-combo:
-	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --with arch --with "holidays>=0.60" --python 3.12 python3 scripts/models/cb_comp/cb_comp_h1_bs_combo.py $(ARGS)
+	@$(MLFLOW_PREFLIGHT)
+	$(MLFLOW_ENV) $(MLFLOW_HTTP_ENV) uv run $(MLFLOW_PKG) --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --with arch --with "holidays>=0.60" --python 3.12 python3 scripts/models/cb_comp/cb_comp_h1_bs_combo.py $(ARGS)
 
 cb-comp-h1-bs-combo-test:
 	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/cb_comp/cb_comp_h1_bs_combo_test.py -v
+	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --python 3.12 python3 scripts/models/cb_comp/cb_comp_mlog_test.py -v
+
+# Task 10 #438: pooled CatBoost на 87 группах (окно 2016+ / control 2010-03+),
+# годовая переподготовка без утечки; G10 против combo3, MCS 90 %.
+# Входы — как у cb-comp-h1-bs-combo.
+cb-comp-pooled:
+	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --with arch --with "holidays>=0.60" --python 3.12 python3 scripts/models/cb_comp/cb_comp_pooled.py $(ARGS)
+
+cb-comp-pooled-test:
+	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/cb_comp/cb_comp_pooled_test.py -v
+
+# Task 5 #425: режим переобучения live_cb — frozen / annual / annual_shock /
+# annual_dummy / rolling96 / rolling120, шоки (2014-12…2015-03, 2020-04, 2022)
+# в train и гипотеза W5b (месячный wf на live_cb + прямой тест v3/v5_direct).
+# Входы — как у cb-comp-h1-bs-combo; W5b-диагностике нужны R seasonal и ClickHouse.
+# Только чтение ClickHouse и локального архива CB_COMP; в БД не пишет.
+cb-comp-refit-modes:
+	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --with arch --with "holidays>=0.60" --python 3.12 python3 scripts/models/cb_comp/cb_comp_refit_modes.py $(ARGS)
+
+cb-comp-refit-modes-test:
+	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --with arch --python 3.12 python3 scripts/models/cb_comp/cb_comp_refit_modes_test.py -v
+
+# Task 4 #424: h1 — недельный ИПЦ поверх combo3: маппинг 148 недельных позиций
+# на 88 групп, wk_g_* в live_cb, смешивание с недельным агрегатом, walk-forward
+# 2022+ (ежемесячный expanding) и G10/Holm. Только чтение ClickHouse и архива.
+cb-comp-h1-weekly:
+	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --with arch --with "holidays>=0.60" --python 3.12 python3 scripts/models/cb_comp/cb_comp_h1_weekly.py $(ARGS)
+
+cb-comp-h1-weekly-test:
+	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/cb_comp/cb_comp_weekly_groups_test.py -v
+	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/cb_comp/cb_comp_h1_weekly_test.py -v
+
+# Task 4b #446: h1 — недельный агрегат без ЖКУ (9470) и с месячными дамми поверх
+# combo3; база — готовые прогнозы Task 4 (predictions.csv), G11 на 2023+.
+# Только чтение ClickHouse и локального архива CB_COMP; в БД не пишет.
+cb-comp-h1-weekly-ex:
+	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --with arch --with "holidays>=0.60" --python 3.12 python3 scripts/models/cb_comp/cb_comp_h1_weekly_ex.py $(ARGS)
+
+cb-comp-h1-weekly-ex-test:
+	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/cb_comp/cb_comp_h1_weekly_ex_test.py -v
+
+# P0.6 #453: paper shadow wk_mix_ex@v1 (гайд cb-comp-live-model-map §7.8).
+# robustness — 2023-01…2026-09 на входах Task 4b (R-P0, publication, real-time
+# SA, тарифы, bias, недельные срезы, fallback); forecast — прогноз месяца
+# MONTH=YYYY-MM со свежей МП-панелью в build/cb-comp-h1-shadow/public и JSON в
+# docs/research/cb-comp-h1-shadow/. Только чтение ClickHouse и архива.
+CB_COMP_SHADOW_UV = uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --with arch --with "holidays>=0.60" --python 3.12 python3
+cb-comp-h1-shadow-robustness:
+	$(CB_COMP_SHADOW_UV) scripts/models/cb_comp/cb_comp_h1_shadow.py robustness $(ARGS)
+
+cb-comp-h1-shadow-forecast:
+	@test -n "$(MONTH)" || (echo "MONTH=YYYY-MM обязателен" && exit 1)
+	uv run --with pandas --python 3.12 python3 scripts/models/cb_comp/cb_comp_public_export.py --out-dir build/cb-comp-h1-shadow/public
+	$(CB_COMP_SHADOW_UV) scripts/models/cb_comp/cb_comp_h1_shadow.py forecast --month $(MONTH) --public-dir build/cb-comp-h1-shadow/public $(ARGS)
+
+# Решение владельца 2026-10-31 (#419): ежемесячно — засчитываемый v2 (@2009,
+# docs/research/cb-comp-h1-shadow-2009/) и контроль v1 (@2010) на тех же входах.
+cb-comp-h1-shadow-forecast-v2:
+	@test -n "$(MONTH)" || (echo "MONTH=YYYY-MM обязателен" && exit 1)
+	$(MAKE) cb-comp-h1-shadow-forecast MONTH=$(MONTH) ARGS="--version 2009 $(ARGS)"
+	$(MAKE) cb-comp-h1-shadow-forecast MONTH=$(MONTH) ARGS="--version 2010 $(ARGS)"
+
+cb-comp-h1-shadow-test:
+	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/cb_comp/cb_comp_h1_shadow_test.py -v
+	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/cb_comp/cb_comp_h1_p06_versions_test.py -v
+
+# Task 16 #466: P0.6 по версиям цели @2010/@2009 — матрица 2×2 (прогнозы ×
+# истины), Δ версий и правило смены базы цели. Читает готовые
+# predictions_robustness.csv (`cb-comp-h1-shadow-robustness ARGS="--version …"`).
+cb-comp-h1-p06-versions:
+	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/cb_comp/cb_comp_h1_p06_versions.py $(ARGS)
+
+# P0.6a #462: MLflow-зеркало shadow-JSON месяца (experiment cb_comp_h1_shadow,
+# run на month+json_sha256). Читает docs/research/cb-comp-h1-shadow/*.json,
+# в ClickHouse не пишет; backfill — ARGS="--backfill", проверка — ARGS="--dry-run".
+cb-comp-h1-shadow-mlflow:
+	MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) $(MLFLOW_HTTP_ENV) uv run --with "mlflow==$(MLFLOW_VERSION)" --python 3.12 \
+		python3 scripts/models/cb_comp/cb_comp_h1_shadow_mlflow.py --tracking-uri $(MLFLOW_TRACKING_URI) $(ARGS)
+
+cb-comp-h1-shadow-mlflow-test:
+	uv run --with "mlflow==$(MLFLOW_VERSION)" --python 3.12 python3 scripts/models/cb_comp/cb_comp_h1_shadow_mlflow_test.py -v
+
+# Task 12 #440: h3/h6 — агрегатный VAR/BVAR по ИПЦ SA без КУ, ставке, USD/руб
+# и SA ценовым ожиданиям (окно 2016+, BIC-лаг, помесячное переобучение) и
+# комбинация combo3 + var16; R12, гейт G12. Только чтение ClickHouse и архива.
+cb-comp-h3-h6-var:
+	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --with arch --with "holidays>=0.60" --python 3.12 python3 scripts/models/cb_comp/cb_comp_h3_h6_var.py $(ARGS)
+
+cb-comp-h3-h6-var-test:
+	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/cb_comp/cb_comp_h3_h6_var_test.py -v
+
+# P0.3 #480: живая цель T_LIVE 2024-08+ — правило пропусков renorm_v1,
+# покрытие весов/групп по месяцам, альтернатива T_LIVE_direct (X-13 на
+# NSA-агрегате), NSA-проверка весов против публикуемого ИПЦ и append-only
+# снимок цели. Только чтение ClickHouse и архива CB_COMP; в БД не пишет.
+cb-comp-tlive-target:
+	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/cb_comp/cb_comp_tlive_target.py $(ARGS)
+
+cb-comp-tlive-target-test:
+	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/cb_comp/cb_comp_tlive_target_test.py -v
+
+# Task 7 #427: итоговый gate линии 88 групп — классы §6.3 против CB_COMP на
+# normal-54/67, MCS 90 %, пины Task 9 и справочные режимы Task 5
+# (ARGS="--refit-predictions build/cb-comp-refit-modes/predictions.csv"), плюс
+# paper shadow 2024-08…2026-09 на as-of входах (T_LIVE_rt/T_LIVE, SA ЦБ, B1).
+# Артефакт — build/ml-gate/cb_comp_88_live.{json,md}; в ClickHouse не пишет.
+cb-comp-88-live-gate:
+	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --with arch --with "holidays>=0.60" --python 3.12 python3 scripts/models/cb_comp/cb_comp_88_live_gate.py $(ARGS)
+
+cb-comp-88-live-gate-test:
+	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/cb_comp/cb_comp_88_live_gate_test.py -v
 
 # Task 11 #439: h3 — EN по 88 группам с окном 2016+ и помесячным переобучением,
 # combo4 = среднее combo3 и live_en16; R11, гейт G11 (спека).
@@ -901,6 +1025,17 @@ cb-comp-per-code-review-books:
 
 cb-comp-per-code-review-x13:
 	Rscript scripts/models/cb_comp/cb_comp_per_code_review_x13.R $(CB_COMP_REVIEW_DIR)/sheets_nsa_sa.csv $(CB_COMP_REVIEW_DIR)/sheets_x13.csv
+
+# Task 8 #434 (research): восстановление per-code МП (87 кодов) из листовых агрегатов
+# обратной задачей — forward-оператор W, rank/null-space, методы identity/offset/
+# ridge/factor/omp/coord/elim; гейты G-R1/G-R2 (спека §16). Только чтение локальных
+# файлов: panel.csv + public_panel.csv/sheet_map.csv из build/cb-comp-parity.
+cb-comp-per-code-reconstruction:
+	uv run --with pandas --with numpy --python 3.12 python3 scripts/models/cb_comp/cb_comp_per_code_reconstruction.py $(ARGS)
+
+cb-comp-per-code-reconstruction-test:
+	uv run --with pandas --with numpy --python 3.12 python3 scripts/models/cb_comp/cb_comp_per_code_reconstruction_test.py -v
+
 
 # Прокси-путь CB_COMP (issue #190): SA ИПЦ без КУ из публичных рядов ЦБ/Росстата
 # и RMSE нашего месячного nowcast на окне статьи 2019-01…2024-07. Читает ClickHouse,
@@ -1016,7 +1151,11 @@ deploy-staging-dagu: staging-precheck
 # mcp-clickhouse: юнит + прогрев кэша uv (пакет разрешается при старте сервиса).
 # Отдельного «скачивания» нет: uv разрешает пакет по пину MCP_VERSION.
 deploy-staging-mcp: staging-precheck
+	ssh $(STAGING_HOST) 'install -d -m 755 $(STAGING_MCP_LIB_DIR)'
+	scp deploy/staging/mcp_clickhouse_tls.py $(STAGING_HOST):$(STAGING_MCP_LIB_DIR)/mcp_clickhouse_tls.py
 	scp deploy/staging/mcp-clickhouse.service $(STAGING_HOST):/etc/systemd/system/mcp-clickhouse.service
+	@ssh $(STAGING_HOST) 'test -f /etc/letsencrypt/live/$(MCP_PUBLIC_HOST)/fullchain.pem && echo "OK   сертификат $(MCP_PUBLIC_HOST) на месте"' || { echo "FAIL нет сертификата $(MCP_PUBLIC_HOST): make deploy-staging-mcp-cert"; exit 1; }
+	@ssh $(STAGING_HOST) 'grep -q "^CLICKHOUSE_MCP_ALLOWED_HOSTS=.*$(MCP_PUBLIC_HOST):$(MCP_PUBLIC_PORT)" $(STAGING_ENV_FILE) && echo "OK   CLICKHOUSE_MCP_ALLOWED_HOSTS содержит $(MCP_PUBLIC_HOST):$(MCP_PUBLIC_PORT)"' || { echo "FAIL в $(STAGING_ENV_FILE) нет $(MCP_PUBLIC_HOST):$(MCP_PUBLIC_PORT) в CLICKHOUSE_MCP_ALLOWED_HOSTS (см. env.example)"; exit 1; }
 	ssh $(STAGING_HOST) 'systemctl daemon-reload'
 	@echo "прогрев кэша uv (скачивание mcp-clickhouse==$(MCP_VERSION))..."
 	@ssh $(STAGING_HOST) '$(STAGING_BIN_DIR)/uv tool run --from mcp-clickhouse==$(MCP_VERSION) python -c "pass" >/dev/null 2>&1 || true'
@@ -1037,8 +1176,9 @@ deploy-staging-mlflow: staging-precheck
 
 # Данные-артефакты DCF/датапаков: без них падают databook_polyus и databook_ugk
 # (импортёры читают относительный путь polyus/data/... и financial/data/...).
-# Копируются в оба возможных рабочих каталога: CLI-прогон из /root и сервисный
-# WorkingDirectory=/root/dagu.
+# Копируются в оба возможных рабочих каталога: CLI-прогон из /root и DAG-и dagu,
+# которым /root/dagu задан полем working_dir (dagu/financial.yaml): без него dagu
+# запускает шаги в каталоге прогона dag-run-work/<dag>/<id>, а не в WorkingDirectory сервиса.
 deploy-staging-data: staging-precheck
 	@ssh $(STAGING_HOST) 'install -d -m 755 /root/polyus/data /root/financial/data /root/dagu/polyus/data /root/dagu/financial/data'
 	@scp -q polyus/data/polyus_datapack_fy2025_new.xlsx $(STAGING_HOST):/root/polyus/data/
@@ -1085,6 +1225,19 @@ deploy-staging-preflight:
 		done; \
 		[ -z "$$missing" ] && echo "OK   SMTP-переменные заданы" || { echo "FAIL не заданы:$$missing — письма dagu не уйдут на шлюз CMC"; exit 1; }'
 
+# Сертификат Let's Encrypt для публичного MCP (HTTP-01, certbot standalone).
+# Требует проброса внешнего :80 на хост — и для выпуска, и для продления (certbot.timer).
+# deploy-hook перезапускает mcp-clickhouse после каждого продления.
+deploy-staging-mcp-cert: staging-precheck
+	@test -n "$(MCP_CERT_EMAIL)" || { echo "задайте MCP_CERT_EMAIL (уведомления Let's Encrypt о сроке)"; exit 1; }
+	# apt-get update не фатален: сторонние репозитории хоста (grafana и др.) бывают недоступны,
+	# а certbot ставится из основного репозитория Ubuntu.
+	ssh $(STAGING_HOST) 'command -v certbot >/dev/null || { apt-get update -qq || true; apt-get install -y -qq certbot; }'
+	ssh $(STAGING_HOST) 'certbot certonly --standalone --non-interactive --agree-tos -m $(MCP_CERT_EMAIL) \
+		-d $(MCP_PUBLIC_HOST) --keep-until-expiring \
+		--deploy-hook "systemctl try-restart mcp-clickhouse"'
+	ssh $(STAGING_HOST) 'systemctl enable --now certbot.timer && certbot certificates -d $(MCP_PUBLIC_HOST) | grep -E "Expiry|Certificate Path"'
+
 # Smoke после включения сервисов. Токен читается на хосте и не выводится.
 deploy-staging-smoke:
 	@echo "--- smoke: dagu ---"
@@ -1096,18 +1249,18 @@ deploy-staging-smoke:
 		grep -q "ENV_OK" /tmp/dagu-env-smoke.log && echo "OK   dagu видит ROSSTAT_IMPORT_BIN и CLICKHOUSE_URL" || { echo "FAIL env-smoke: шаг не увидел окружение"; cat /tmp/dagu-env-smoke.log; rc=1; }; \
 		rm -f /tmp/dagu-env-smoke.yaml /tmp/dagu-env-smoke.log; exit $$rc'
 	@echo "--- smoke: mcp-clickhouse /health ---"
-	@ssh $(STAGING_HOST) 'systemctl is-active --quiet mcp-clickhouse && curl -sf -m 5 -o /dev/null http://127.0.0.1:8000/health && echo "OK   MCP /health = 200"' || { \
+	@ssh $(STAGING_HOST) 'systemctl is-active --quiet mcp-clickhouse && curl -sf -m 5 -o /dev/null $(MCP_SMOKE_CURL) $(MCP_PUBLIC_URL)/health && echo "OK   MCP /health = 200 по HTTPS, сертификат валиден для $(MCP_PUBLIC_HOST)"' || { \
 		echo "FAIL mcp-clickhouse /health — сервис не отвечает или не видит ClickHouse."; \
 		echo "  Частая причина на первом развёртывании: пользователь kimi_reader ещё не создан."; \
 		echo "  Проверьте: systemctl status mcp-clickhouse; journalctl -u mcp-clickhouse -n 50"; \
 		echo "  Создать пользователя: make mcp-user-staging"; exit 1; }
 	@echo "--- smoke: MCP требует токен ---"
 	@ssh $(STAGING_HOST) 'set -a; . $(STAGING_ENV_FILE); set +a; \
-		code=$$(curl -s -o /dev/null -w "%{http_code}" -X POST http://127.0.0.1:8000/mcp -H "Content-Type: application/json" -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\"}"); \
+		code=$$(curl -s -o /dev/null -w "%{http_code}" $(MCP_SMOKE_CURL) -X POST $(MCP_PUBLIC_URL)/mcp -H "Content-Type: application/json" -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\"}"); \
 		[ "$$code" = "401" ] && echo "OK   без токена → 401" || { echo "FAIL без токена получен $$code, ожидался 401"; exit 1; }'
 	@echo "--- smoke: MCP с токеном ---"
 	@ssh $(STAGING_HOST) 'set -a; . $(STAGING_ENV_FILE); set +a; \
-		body=$$(curl -s -m 10 -X POST http://127.0.0.1:8000/mcp -H "Content-Type: application/json" -H "Authorization: Bearer $$CLICKHOUSE_MCP_AUTH_TOKEN" -H "Accept: application/json, text/event-stream" -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}"); \
+		body=$$(curl -s -m 10 $(MCP_SMOKE_CURL) -X POST $(MCP_PUBLIC_URL)/mcp -H "Content-Type: application/json" -H "Authorization: Bearer $$CLICKHOUSE_MCP_AUTH_TOKEN" -H "Accept: application/json, text/event-stream" -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}"); \
 		echo "$$body" | grep -q "Missing session ID" && echo "OK   MCP отвечает с токеном" || { echo "FAIL MCP с токеном ответил: $$body"; exit 1; }'
 	@echo "--- smoke: mlflow /health ---"
 	@ssh $(STAGING_HOST) 'systemctl is-active --quiet mlflow || { \
@@ -1175,10 +1328,11 @@ grafana-build:
 # Без конфига/кредов команда падает: «context references no stack with grafana config» (exit 1),
 # с неверными кредами — 401 (exit 3); basic auth поддержан (GRAFANA_USER/GRAFANA_PASSWORD).
 # Офлайновая альтернатива в CI (тоже gcx, без секретов) — линтер по файлам артефактов:
-# `gcx dev lint run PATH...` принимает несколько путей и линтит их одним прогоном (проверено на gcx 1.5.0:
-# «3 files linted. No violations found.», exit 0):
+# `gcx dev lint run PATH...` принимает несколько путей и линтит их одним прогоном (на gcx 1.5.0 —
+# «4 files linted. No violations found.», exit 0):
 #   gcx dev lint run --disable uneditable-dashboard --disable panel-title-description \
-#     dashboard/gold-thesis.json dashboard/key-rate-publications.json dashboard/finance-polyus.json
+#     dashboard/gold-thesis.json dashboard/key-rate-publications.json dashboard/finance-polyus.json \
+#     dashboard/transaq-trades.json
 grafana-validate:
 	cd grafana && go vet ./... && go test ./...
 	@go test ./views -run TestMLLiveAlertProvisioning
@@ -1229,7 +1383,7 @@ grafana-down:
 		echo "PID-файл $(GF_PID) не найден или процесс не запущен (сервер, поднятый вне make, не останавливается)"; \
 	fi
 
-# Выгрузка артефактов dashboard/<uid>.json всех трёх дашбордов на тест-стенд и smoke-проверка панелей.
+# Выгрузка артефактов dashboard/<uid>.json всех четырёх дашбордов на тест-стенд и smoke-проверка панелей.
 # Рабочая форма вызова подобрана живьём на стенде Grafana 13.2.3 (gcx 1.5.0): selector dashboards
 # + --path на файл-артефакт; push принимает apiVersion dashboard.grafana.app/v1beta1 и идемпотентен
 # (повторный прогон обновляет тот же ресурс metadata.name=<uid>, дубль не создаётся).
@@ -1368,7 +1522,7 @@ grafana-provision-alerting-staging:
 		echo "     reload: curl -u admin:<пароль> -X POST http://127.0.0.1:3000/api/admin/provisioning/alert-rules/reload"; \
 		echo "     (или systemctl restart grafana-server)"'
 
-# Деплой всех трёх дашбордов ($(DASHBOARDS)) на staging: провижининг датасорса → push → smoke.
+# Деплой всех четырёх дашбордов ($(DASHBOARDS)) на staging: провижининг датасорса → push → smoke.
 # Токен (GRAFANA_STAGING_TOKEN, сервис-аккаунт Editor на staging) живёт только у владельца
 # в $(ROSSTAT_ENV); gcx общается с инстансом через туннель, а панели — с ClickHouse хоста.
 # Grafana и systemd на хосте не трогаются: нужен только поднятый туннель.
@@ -1399,16 +1553,6 @@ info:
 docs-check:
 	python3 scripts/docs_build.py --check
 	python3 scripts/docs_build_test.py
-
-# Метаданные LLM-плагина: канон — .claude-plugin/plugin.json (version,
-# длинное description) и .claude-plugin/marketplace.json (name, короткое
-# description); sync-manifests.yml проверяет дрейф на PR и дописывает на main.
-plugin-manifests-check:
-	python3 scripts/plugin_manifests.py --check
-	python3 scripts/plugin_manifests_test.py
-
-plugin-manifests-sync:
-	python3 scripts/plugin_manifests.py --write
 
 docs-build:
 	python3 scripts/docs_build.py --out build/site-docs

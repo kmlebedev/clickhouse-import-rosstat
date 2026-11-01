@@ -18,6 +18,9 @@
   2009-01…2024-08. Сверка двух видов: Q3-A против архивного `mom_sa` (гейт
   §7) и Q3-B против панели `data_panel_bi_sa.fst`, которую использует CB_COMP
   (диагностика); по флагу `--asof` — as-of с 2019-01;
+* **версии** (Task 14): `--version 2010` — текущая панель (fit live с 2010-01,
+  первый SA 2010-02), `--version 2009` — `T_LIVE` с 2009-01 (fit live с
+  2008-12, первый SA 2009-01; маппинг/валидация остаются на 2010+);
 * **Q4 сборка** — функция гейта #190 (`cb_comp_bottomup.reconstruction`) на
   наших SA-группах против `TARGET_FULL`; веса — лаг год;
 * **Q6 швы** — NSA-ошибка до 2023 и 2023+ (РФ без новых субъектов), смены
@@ -61,7 +64,16 @@ from models.cb_comp import cb_comp_parity as cp
 # ---------------------------------------------------------------------------
 
 SERIES_PREFIX = "ipc31074/"
+# Версии панели/цели Task 14: @2010 — текущий канон, @2009 — новая цель.
+# fit_start live-окна у @2009 — 2008-12, чтобы первый SA м/м был 2009-01.
 PANEL_START = date(2010, 1, 1)
+MAPPING_START = date(2010, 1, 1)
+LEAF_FALLBACK_START = date(2010, 1, 1)
+VERSION_PRESETS = {
+    "2010": {"panel_start": PANEL_START, "fit_start": PANEL_START},
+    "2009": {"panel_start": date(2009, 1, 1), "fit_start": date(2008, 12, 1)},
+}
+DEFAULT_VERSION = "2010"
 # Окна эталонов (спека §14): сверка идёт на той выборке, на которой посчитан
 # эталон; live-режим Task 2 по-прежнему берёт ряд до последнего месяца панели.
 REFERENCE_WINDOWS = {
@@ -303,12 +315,13 @@ def aggregated_mm(group: GroupMap, product_mm: dict, leaf_weights: dict, months:
 
 
 def group_nsa(group: GroupMap, product_mm: dict, leaf_weights: dict, months: list,
-              fallback_first: date = PANEL_START) -> tuple:
+              fallback_first: date = LEAF_FALLBACK_START) -> tuple:
     """`(mm, sources)`: м/м группы и источник каждого месяца (`chain:i` | `leaves`).
 
-    `fallback_first` — с какого месяца разрешён резерв по листьям. До `PANEL_START`
-    веса СПР не публикуются, поэтому агрегат взял бы веса ближайшего доступного
-    года (2016) и подмешал чужую структуру в историю окна `fst` (ревью #431).
+    `fallback_first` — с какого месяца разрешён резерв по листьям. До
+    `LEAF_FALLBACK_START` (2010-01) веса СПР в архиве не публикуются, поэтому
+    агрегат взял бы веса ближайшего доступного года (2016) и подмешал чужую
+    структуру в историю окна `fst`/2009 (ревью #431).
     """
     out, sources = {}, {}
     aggregated_months = [m for m in months if m >= fallback_first]
@@ -377,29 +390,31 @@ def group_sa(mm: dict, last: date, runner_factory, asof: bool, first: date = PAN
 
 
 def fit_window_start(code: str, fit_first: date, selection_first: dict) -> date:
-    """Старт ряда для подгонки: окно прогона, окно выбора поправки и `PANEL_START` — минимум.
+    """Старт ряда для подгонки: минимум окна прогона и окна выбора поправки.
 
     Группам поправки нужен более ранний старт, чем окно прогона (9550 — с 2009-01
     в любом режиме, спека §14), иначе правило «выбор на 2009–2018» в окнах
     csv/live фактически считалось бы на 2010–2018 (ревью #431).
     """
-    return min(fit_first, selection_first.get(code, PANEL_START), PANEL_START)
+    return min(fit_first, selection_first.get(code, fit_first))
 
 
 def fit_series_map(codes: list, groups: dict, nsa: dict, fit_mm: dict, leaf_weights: dict,
-                   fit_first: date, last: date, selection_first: dict) -> dict:
-    """`{код: ряд}` для X-13: история до `PANEL_START` достраивается только по цепочке.
+                   fit_first: date, last: date, selection_first: dict,
+                   panel_start: date = PANEL_START,
+                   fallback_first: date = LEAF_FALLBACK_START) -> dict:
+    """`{код: ряд}` для X-13: история до `panel_start` достраивается только по цепочке.
 
-    До `PANEL_START` веса СПР не публикуются, поэтому резерв по листьям там
-    запрещён (`fallback_first=PANEL_START`); после — берётся готовый `nsa`.
+    До `fallback_first` (2010-01) веса СПР в архиве не публикуются, поэтому
+    резерв по листьям там запрещён; после — берётся готовый `nsa`.
     """
-    head_last = month_from_index(month_index(PANEL_START) - 1)
+    head_last = month_from_index(month_index(panel_start) - 1)
     out = {}
     for code in codes:
         start = fit_window_start(code, fit_first, selection_first)
-        if start < PANEL_START and groups[code].method == "direct":
+        if start < panel_start and groups[code].method == "direct":
             head = group_nsa(groups[code], fit_mm, leaf_weights,
-                             month_grid(start, head_last), fallback_first=PANEL_START)[0]
+                             month_grid(start, head_last), fallback_first=fallback_first)[0]
             out[code] = {**head, **nsa[code]}
         else:
             out[code] = nsa[code]
@@ -471,12 +486,13 @@ def choose_spec(scores: dict) -> str:
     return min(spec for value, spec in valid if value - best <= SPEC_TIE)
 
 
-def select_spec(code: str, mm: dict, mom_sa: dict, factory_for=spec_factory, first: date = PANEL_START) -> dict:
+def select_spec(code: str, mm: dict, mom_sa: dict, factory_for=spec_factory, first: date = MAPPING_START) -> dict:
     """Выбор спецификации группы по данным ≤ 2018-12 (спека §11, §14).
 
     9540/9950 — RMSE SA м/м против архивного `mom_sa` на 2016–2018; 9218/9550 —
     AICc regARIMA (эталон в выборе не участвует). 2019+ в выбор не попадает:
-    ряд обрезается до подгонки; `first` — старт окна (9550 — с 2009-01).
+    ряд обрезается до подгонки; `first` — старт окна (9550 — с 2009-01,
+    остальные — с `MAPPING_START` 2010-01).
     """
     by_aicc = code in AICC_GROUPS
     window = {m: v for m, v in mm.items() if first <= m <= SELECTION_END}
@@ -549,9 +565,10 @@ def log_diff_frame(series_by_code: dict, months: list) -> pd.DataFrame:
     return pd.DataFrame(data, index=pd.Index(months, name="month"))
 
 
-def assembly(series_by_code: dict, target_full: pd.DataFrame, group_weights: dict, months: list) -> dict:
+def assembly(series_by_code: dict, target_full: pd.DataFrame, group_weights: dict, months: list,
+             panel_start: date = PANEL_START) -> dict:
     """Гейт #190 на наших SA-группах: `{окно: {h: метрики}}`."""
-    grid = month_grid(PANEL_START, max(months))
+    grid = month_grid(panel_start, max(months))
     targets = bu.component_targets(log_diff_frame(series_by_code, grid))
     normal = cp.normal_months()
     return {
@@ -606,15 +623,30 @@ def load_products(start: date = PANEL_START) -> tuple:
     return product_mm, regions
 
 
-def product_index(product_mm: dict) -> dict:
-    """Нормализованное название → ряд; коллизия названий — ошибка."""
-    index = {}
+def product_index(product_mm: dict, collisions: list = None) -> dict:
+    """Нормализованное название → ряд; коллизия — по числу точек, равенство — ошибка.
+
+    31074 иногда отдаёт дубль названия с двойным пробелом и коротким рядом
+    (2026, 9 точек, `Электроэнергия  в квартирах…`). Каноническим считается ряд
+    с большим числом точек; при равенстве выбор не делается — `ValueError`.
+    """
+    index, dropped = {}, []
     for series in product_mm:
         name = series[len(SERIES_PREFIX):] if series.startswith(SERIES_PREFIX) else series
         key = normalize_name(name)
-        if key in index and index[key] != series:
-            raise ValueError(f"31074: два ряда с названием {key!r}")
-        index[key] = series
+        if key not in index:
+            index[key] = series
+            continue
+        current = index[key]
+        if len(product_mm[series]) == len(product_mm[current]):
+            raise ValueError(f"31074: два ряда с названием {key!r} и равной длиной")
+        keep, drop = ((series, current) if len(product_mm[series]) > len(product_mm[current])
+                      else (current, series))
+        index[key] = keep
+        dropped.append({"name": key, "kept": keep, "dropped": drop,
+                        "kept_points": len(product_mm[keep]), "dropped_points": len(product_mm[drop])})
+    if dropped and collisions is not None:
+        collisions.extend(dropped)
     return index
 
 
@@ -666,29 +698,37 @@ def sha256(path: Path) -> str:
 # ---------------------------------------------------------------------------
 
 
-def run(archive: Path, out_dir: Path, runner_factory, asof: bool, jobs: int, fit_window: str = "live") -> dict:
+def run(archive: Path, out_dir: Path, runner_factory, asof: bool, jobs: int,
+        fit_window: str = "live", version: str = DEFAULT_VERSION) -> dict:
     if fit_window not in FIT_WINDOWS:
         raise ValueError(f"неизвестное окно {fit_window!r}: ожидается {FIT_WINDOWS}")
+    if version not in VERSION_PRESETS:
+        raise ValueError(f"неизвестная версия {version!r}: ожидается {sorted(VERSION_PRESETS)}")
+    preset = VERSION_PRESETS[version]
+    panel_start = preset["panel_start"]
+    live_fit_start = preset["fit_start"]
     specs = bu.load_specs(archive)
     codes = [spec.code for spec in specs]
     dictionaries = load_dictionaries(archive)
     leaf_weights = load_leaf_weights(archive)
     group_weights = bu.load_weights(archive, WEIGHT_YEARS, specs)
     weights_2024 = {code: group_weights[COVERAGE_YEAR].get(code, 0.0) for code in codes}
-    # Маппинг, Q1/Q2 и отчёт строятся по данным с `PANEL_START`: загрузка 2009
+    # Маппинг, Q1/Q2 и отчёт строятся по данным с `MAPPING_START`: загрузка 2009
     # не должна менять входы маппинга (коллизии имён, direct-ряд без данных
-    # после 2010). История до 2010 нужна только подгонке окна fst и выбору
+    # после 2010). История до 2010 нужна только подгонке окна fst/2009 и выбору
     # поправки 9550 — для неё отдельная загрузка (ревью #431).
-    product_mm, regions = load_products(PANEL_START)
-    products = product_index(product_mm)
+    product_mm_map, regions = load_products(MAPPING_START)
+    series_collisions = []
+    products = product_index(product_mm_map, series_collisions)
+    product_mm = product_mm_map if panel_start == MAPPING_START else load_products(panel_start)[0]
     last = max(m for values in product_mm.values() for m in values)
-    months = month_grid(PANEL_START, last)
+    months = month_grid(panel_start, last)
     if fit_window == "live":
-        fit_first, fit_last = PANEL_START, last
+        fit_first, fit_last = live_fit_start, last
     else:
         fit_first, fit_last = REFERENCE_WINDOWS[fit_window]
-    fit_start = min([fit_first, DATA_START] + list(SELECTION_FIRST.values()))
-    fit_mm = load_products(fit_start)[0] if fit_start < PANEL_START else product_mm
+    fit_start = min([fit_first] + list(SELECTION_FIRST.values()))
+    fit_mm = load_products(fit_start)[0] if fit_start < panel_start else product_mm
 
     # Q1/Q6 — маппинг, покрытие, смены состава.
     groups = {code: map_group(code, dictionaries, leaf_weights, products) for code in codes}
@@ -699,7 +739,8 @@ def run(archive: Path, out_dir: Path, runner_factory, asof: bool, jobs: int, fit
     # Q2 — NSA.
     nsa, sources = {}, {}
     for code in codes:
-        nsa[code], sources[code] = group_nsa(groups[code], product_mm, leaf_weights, months)
+        nsa[code], sources[code] = group_nsa(groups[code], product_mm, leaf_weights, months,
+                                             fallback_first=LEAF_FALLBACK_START)
     mom, mom_sa = load_archive_reference(archive)
     nsa_metrics = {c: compare(nsa[c], mom.get(c, {}), *NSA_WINDOW) for c in codes}
     nsa_pre = {c: compare(nsa[c], mom.get(c, {}), NSA_WINDOW[0], date(2022, 12, 1)) for c in codes}
@@ -708,9 +749,11 @@ def run(archive: Path, out_dir: Path, runner_factory, asof: bool, jobs: int, fit
 
     # Q3 — X-13 по группам на окне сверки (спека §14): live — до последнего
     # месяца панели, csv/fst — на выборке эталона.
-    # Окно fst начинается с 2009-01, а NSA считается с PANEL_START: история
-    # достраивается только по цепочке (веса СПР до 2016 не публикуются).
-    fit_inputs = fit_series_map(codes, groups, nsa, fit_mm, leaf_weights, fit_first, last, SELECTION_FIRST)
+    # Окно fst начинается с 2009-01, а NSA для @2009 считается с panel_start:
+    # история до 2010 достраивается только по цепочке (веса СПР до 2016 не
+    # публикуются).
+    fit_inputs = fit_series_map(codes, groups, nsa, fit_mm, leaf_weights, fit_first, last, SELECTION_FIRST,
+                                panel_start=panel_start, fallback_first=LEAF_FALLBACK_START)
     with ThreadPoolExecutor(max_workers=max(1, jobs)) as pool:
         futures = {c: pool.submit(group_sa, fit_inputs[c], fit_last, runner_factory, asof, fit_first) for c in codes}
         sa = {c: futures[c].result() for c in codes}
@@ -738,7 +781,7 @@ def run(archive: Path, out_dir: Path, runner_factory, asof: bool, jobs: int, fit
             continue
         series = fit_inputs[code]
         selection[code] = select_spec(code, series, mom_sa.get(code, {}),
-                                      first=SELECTION_FIRST.get(code, PANEL_START))
+                                      first=SELECTION_FIRST.get(code, MAPPING_START))
         chosen = selection[code]["chosen"]
         sa_amended[code] = (
             group_sa(series, fit_last, spec_factory(chosen), asof, fit_first) if chosen
@@ -755,13 +798,16 @@ def run(archive: Path, out_dir: Path, runner_factory, asof: bool, jobs: int, fit
     # Q4 — сборка; справочно — сборка архивного mom_sa теми же функциями.
     target_full = cp.read_target_full(archive)
     test_months = cp.month_range(cp.TEST_START, cp.TEST_END)
-    ours = assembly(sa_full, target_full, group_weights, test_months)
-    reference = assembly({c: mom_sa.get(c, {}) for c in codes}, target_full, group_weights, test_months)
-    amended = assembly(sa_full_amended, target_full, group_weights, test_months)
+    ours = assembly(sa_full, target_full, group_weights, test_months, panel_start=panel_start)
+    reference = assembly({c: mom_sa.get(c, {}) for c in codes}, target_full, group_weights, test_months,
+                         panel_start=panel_start)
+    amended = assembly(sa_full_amended, target_full, group_weights, test_months, panel_start=panel_start)
     ours_asof = amended_asof = None
     if asof:
-        ours_asof = assembly({c: sa[c]["rt"] for c in codes}, target_full, group_weights, test_months)
-        amended_asof = assembly({c: sa_amended[c]["rt"] for c in codes}, target_full, group_weights, test_months)
+        ours_asof = assembly({c: sa[c]["rt"] for c in codes}, target_full, group_weights, test_months,
+                             panel_start=panel_start)
+        amended_asof = assembly({c: sa_amended[c]["rt"] for c in codes}, target_full, group_weights, test_months,
+                                panel_start=panel_start)
 
     # Q3-B применим только на своём окне: на чужом сравнение меряет разницу
     # окон, а не качество фильтра (спека §14), поэтому решение — None.
@@ -770,10 +816,26 @@ def run(archive: Path, out_dir: Path, runner_factory, asof: bool, jobs: int, fit
     decision = decisions(coverage_abs, nsa_rmse, sa_rmse, sa_corr, ours["test_67"][1]["rmse"], fst_diag)
     decision_amended = decisions(coverage_abs, nsa_rmse, sa_rmse_amended, sa_corr_amended,
                                  amended["test_67"][1]["rmse"], fst_diag_amended)
+    first_sa_month = min((m for c in codes for m in sa_full[c]), default=None)
+    first_weights = bu.weight_for_month(group_weights, first_sa_month) if first_sa_month else {}
+    first_covered = sum(first_weights.get(c, 0.0) for c in codes if first_sa_month in sa_full.get(c, {}))
+    first_total = sum(first_weights.get(c, 0.0) for c in codes)
     result = {
         "spec": "docs/superpowers/specs/2026-10-30-cb-comp-88-groups-live-design.md",
+        "version_spec": "docs/superpowers/specs/2026-10-31-cb-comp-tlive-2009-design.md",
+        "version": version,
         "fit_window": fit_window,
         "fit_span": [fit_first.isoformat(), fit_last.isoformat()],
+        "panel": {
+            "start": panel_start.isoformat(),
+            "mapping_start": MAPPING_START.isoformat(),
+            "leaf_fallback_start": LEAF_FALLBACK_START.isoformat(),
+            "live_fit_start": live_fit_start.isoformat(),
+            "first_sa_month": first_sa_month.isoformat() if first_sa_month else None,
+            "groups_with_sa_first_month": sum(1 for c in codes if first_sa_month in sa_full.get(c, {})),
+            "weight_coverage_first_month": first_covered / first_total if first_total else float("nan"),
+            "missing_first_month": sorted(c for c in codes if first_sa_month not in sa_full.get(c, {})),
+        },
         "thresholds": {
             "coverage_min": COVERAGE_MIN, "nsa_rmse_max": NSA_RMSE_MAX, "nsa_group_flag": NSA_GROUP_FLAG,
             "sa_rmse_max": SA_RMSE_MAX, "sa_corr_min": SA_CORR_MIN, "assembly_rmse_h1_max": ASSEMBLY_RMSE_H1_MAX,
@@ -783,8 +845,10 @@ def run(archive: Path, out_dir: Path, runner_factory, asof: bool, jobs: int, fit
             "model_xlsx_sha256": sha256(bu.model_path(archive)),
             "weights_sha256": sha256(bu.weights_path(archive)),
             "dictionary_sha256": sha256(bu.dictionary_path(archive)),
-            "fedstat_series": len(product_mm),
+            "fedstat_series": len(product_mm_map),
+            "fedstat_panel_series": len(product_mm),
             "fedstat_regions": regions,
+            "series_collisions": series_collisions,
             "last_month": last.isoformat(),
         },
         "mapping": {
@@ -880,7 +944,9 @@ def _jsonable(value):
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--archive", default=None, help="каталог архива CB_COMP (иначе CB_COMP_ARCHIVE / известные пути)")
-    parser.add_argument("--out", default=str(OUT_DIR))
+    parser.add_argument("--out", default=None, help="каталог артефактов (по умолчанию build/cb-comp-groups[-<версия>])")
+    parser.add_argument("--version", choices=sorted(VERSION_PRESETS), default=DEFAULT_VERSION,
+                        help="версия панели: @2010 — текущий канон, @2009 — цель с 2009-01")
     parser.add_argument("--asof", action="store_true", help="дополнительно X-13 as-of с 2019-01 (для Task 2)")
     parser.add_argument("--fit-window", choices=FIT_WINDOWS, default="live",
                         help="окно подгонки SA: live — до последнего месяца панели, csv/fst — окно эталона (спека §14)")
@@ -889,8 +955,10 @@ def main(argv=None) -> int:
     from models.cpi import cpi_sa_reconciliation as sar
 
     archive = cp.resolve_archive(args.archive)
-    result = run(archive, Path(args.out), sar.make_r_runner, args.asof, args.jobs, args.fit_window)
-    print(json.dumps({k: _jsonable(result[k]) for k in ("mapping", "nsa", "sa", "decisions", "amendment")}, ensure_ascii=False, indent=2))
+    out_dir = Path(args.out) if args.out else (OUT_DIR if args.version == DEFAULT_VERSION
+                                               else ROOT / "build" / f"cb-comp-groups-{args.version}")
+    result = run(archive, out_dir, sar.make_r_runner, args.asof, args.jobs, args.fit_window, args.version)
+    print(json.dumps({k: _jsonable(result[k]) for k in ("version", "panel", "mapping", "nsa", "sa", "decisions", "amendment")}, ensure_ascii=False, indent=2))
     print("primary", json.dumps(_jsonable(result["assembly"]["ours_full"]["test_67"]), ensure_ascii=False))
     print("amended", json.dumps(_jsonable(result["assembly"]["amended_full"]["test_67"]), ensure_ascii=False))
     return 0

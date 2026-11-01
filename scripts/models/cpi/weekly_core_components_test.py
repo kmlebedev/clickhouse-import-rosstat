@@ -86,6 +86,8 @@ class FourierDesignTest(unittest.TestCase):
         self.assertEqual(july[-1], 0.0)  # January
         self.assertEqual(january[-2], 0.0)
         self.assertEqual(january[-1], 1.0)
+        self.assertEqual(wcc.fourier_design("2022-12")[-2], 1.0)  # перенос 2023
+        self.assertEqual(wcc.fourier_design("2023-07")[-2], 0.0)  # индексации не было
 
     def test_three_harmonics_values(self):
         design = wcc.fourier_design("2024-07")

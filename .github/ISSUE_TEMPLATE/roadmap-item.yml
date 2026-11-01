@@ -18,6 +18,7 @@ body:
         - key-rate
         - infra
         - ofz-market
+        - rosstat
     validations:
       required: true
   - type: dropdown

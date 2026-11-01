@@ -78,3 +78,55 @@
 
 - Пороги G3 заданы по E3 первого прогона; после §13.1 они не пересматриваются, чтобы не подгонять гейт под новый вход.
 - На h6 отрыв от порога — 0,012, в пределах шума MCS; вывод формулируется как «не пройден», а не «почти пройден».
+
+## Задачи Task 8 (#434, research)
+
+Ветка `research/cb-comp-per-code-mp-reconstruction`, worktree `.worktrees/cb-comp-per-code`. Протокол — спека §16; data request исключён владельцем.
+
+- [x] **8.1 Протокол** — спека §16 и этот раздел; issue #434; до кода и результатов.
+- [x] **8.2 Данные** — экспорт 87 × 3 из архива (регион 643), 11 листов `v_cbr_mp_public_panel` и 16 листов `cbr_mp_survey`; sha256 входов; forward-оператор.
+- [x] **8.3 Методы** — `identity`/`offset`, `ridge_prior`, `factor`, `omp`, `coord`, `elim`; офлайн-тесты на синтетике.
+- [x] **8.4 Прогон** — G-R1 (forward), G-R2 (inverse); downstream G-R3 только при пройденном G-R2. **Результат: no-go** — G-R1 (forward, тест ложной агрегации) и G-R2 (inverse) не пройдены; причина по независимому разбору: лист ≠ агрегат кодов, 496 публичных рядов не помогают, остаток — короткая память, потолок VOI ≤ 7,5 % на h6.
+- [x] **8.5 Отчёт** — `docs/research/2026-10-31-cb-comp-per-code-mp-reconstruction.{md,json}`; роадмап, `docs/site-pages.json`; `make all`, `make docs-check`; PR `Closes #434`.
+
+## Риски Task 8
+
+- Обратная задача недоопределена: 11 уравнений на 87 неизвестных (76 степеней свободы на месяц). Даже при стабильном W восстановление опирается на prior; при провале G-R2 отрицательный результат публикуется и закрывает вопрос.
+- Публичная книга могла сменить методику/веса после 2022 — тогда OOS-провал 2023–2024 структурный, а не шумовой; это фиксируется как причина no-go.
+- Архив — производная от данных «по запросу»: восстановленные ряды не публикуются и не идут в прод без решения владельца.
+
+## Задачи Task 5 (#425)
+
+Ветка `exp/cb-comp-88-groups-task5`, worktree `.worktrees/cb-comp-88-task5`. Протокол — спека §17 (записан до кода и результатов); решение владельца Q1 = **A** (`live_cb`, `combo3` справочно).
+
+- [x] **5.1 Протокол** — спека §17 и этот раздел; роадмап; issue #425: комментарий с решением Q1 = A, `needs-answer` снят, Project `In Progress`.
+- [x] **5.2 Код до прогона** — `scripts/models/cb_comp/cb_comp_refit_modes.py` (+ `_test.py`): `year_windows`, `train_months(exclude_shocks)`, `rolling_start`, `fit_predict_mode`, `fit_predict_wf`, `evaluate`, `gate`, `hypothesis_*`, паспорт; `cpi_two_stage_cb_comp.py`: `exclude_months` (default `()`), `hypothesis_check()`, `--hypothesis-check`, вариант в ключе кэша; тесты фильтра в `cpi_two_stage_cb_comp_test.py`; `make cb-comp-refit-modes(-test)`; README. **Коммит до прогона.**
+- [x] **5.3 Данные** — `make ch-status`; `make cb-comp-public-export`; `build/cb-comp-groups/panel.csv` (sha `aec91f99…`) и архив `resolve_archive()`.
+- [x] **5.4 Прогон ×2** — `make cb-comp-refit-modes`; полный повтор дважды падал SIGSEGV в CatBoost (потоки), поэтому повтор — процессный пул (`--parallel process`) и три части (`--only grid`, `--only wf --wf-horizons 6`, `--only w5b`); совпадение побайтное: 4 824 строки grid, 134 строки wf h6, все W5b-числа (`build/determinism.json`). W5b-кэш `build/cpi-two-stage/w5b-cache-task5`.
+- [x] **5.5 Отчёт** — `docs/research/2026-10-31-cb-comp-88-groups-task5.{md,json}`: вердикт гейта, таблица режимов, подпериоды, MCS, H-W5b (A и B), R14–R16, «что не проверено», детерминизм; гайд `cb-comp-live-model-map.md` §P0.2 и реестр исследований; `docs/site-pages.json`; README; роадмап — итог Task 5.
+- [ ] **5.6 Приёмка** — `make cb-comp-refit-modes-test`, `make cpi-two-stage-cb-comp-test`, `make cb-comp-live-bottomup-test`, `make all`, `make docs-check`; протокол — комментарием в PR; PR `Closes #425`.
+
+**Итог Task 5:** гейт — `adopt:rolling120` после исправления P4 (литеральное чтение — `keep_frozen`, спека §17.8); `annual` эквивалентен. H-W5b — `partial`. Смена режима — Task 7/решение владельца.
+
+## Риски Task 5
+
+- Подготовка данных W5b требует R `seasonal` и ClickHouse; недоступность — тест A не выполняется, в отчёте «не проверено»; тест B его не подменяет.
+- Годовые режимы на границе 2019 обучаются на 1 (h1) … 5 (h6) месяцах меньше `frozen`; `frozen_honest` отделяет это от эффекта режима, но не устраняет из гейта.
+- Мощность: 54 месяца и перекрывающиеся окна h6 дают большой MDE; `adopt` не означает «значимо лучше».
+- Месячный wf (23,6 тыс. фитов) может выйти за бюджет; сокращать горизонты после результата нельзя — при превышении фиксируется `partial` с указанием посчитанных горизонтов.
+- Правка `wf_predict` (чужой модуль): поведение по умолчанию обязано остаться прежним (R15 + тест на no-op), иначе откат.
+
+## Задачи Task 7 (#427)
+
+Ветка `exp/cb-comp-88-groups-task7`, worktree `.worktrees/cb-comp-88-task7` (от `main` после #477). Протокол — спека §18; числа уже известны (Task 9), поэтому записано не «что предсказываем», а «что воспроизводим и чем проверяем».
+
+- [x] **7.1 Протокол** — спека §18 и этот раздел; роадмап; issue #427 `In Progress`.
+- [x] **7.2 Код до прогона** — `scripts/models/cb_comp/cb_comp_88_live_gate.py` (+ `_test.py`), `make cb-comp-88-live-gate(-test)`:
+  - `gate` — `cb_comp_h1_bs_combo.run()` в собственный каталог, пины R (combo3/live_cb/CB), таблица классов §6.3 на normal-54 и 67, MCS, справочные строки `annual`/`rolling120` из `--refit-predictions`; решение по §18.2;
+  - `shadow` — `combo3@frozen` на 2024-08…2026-09: as-of лаги `sa_asof_mm`, МП/макро as-of, `T_LIVE_rt`/`T_LIVE`/SA ЦБ, B1, RMSE/MAE/bias по годам;
+  - артефакт `build/ml-gate/cb_comp_88_live.{json,md}` + предсказания.
+- [x] **7.3 Тесты до прогона** — правило классов (4 ветки), пины и их допуски, `T_LIVE_rt` и накопление h, разрыв целей, окно/origin, анти-утечка, решение, схема и детерминизм артефакта; существующие тесты линии остаются зелёными.
+- [x] **7.4 Прогон ×2** — `make cb-comp-88-live-gate`; sha256 `gate.json` и `predictions*.csv` совпадают; пины 1e-6.
+- [x] **7.5 Отчёт** — `docs/research/2026-10-31-cb-comp-88-groups-task7.{md,json}`: таблица классов, MCS, режимные строки, shadow (по горизонтам и годам, обе истины + SA ЦБ), решение и причина, вердикт #76, «что не проверено», воспроизводимость.
+- [x] **7.6 Документы** — гайд `cb-comp-live-model-map.md` §6.2 P0.1 и §1.8 (live-период), README, `docs/site-pages.json`, роадмап; `make all`, `make docs-check`.
+- [x] **7.7 Приёмка** — протокол комментарием в PR; PR `Closes #427`; Project V2 — `In Review`.

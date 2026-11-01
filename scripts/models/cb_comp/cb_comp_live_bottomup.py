@@ -38,6 +38,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 sys.path.insert(0, str(ROOT / "scripts" / "models" / "cpi"))
 
 from models.cb_comp import cb_comp_bottomup as bu
+from models.cb_comp import cb_comp_mlog as mlog
 from models.cb_comp import cb_comp_parity as cp
 
 # ---------------------------------------------------------------------------
@@ -65,6 +66,20 @@ MODELS = (MODEL_LIVE, MODEL_NOMP, MODEL_ASOF)
 PANEL_CSV = ROOT / "build" / "cb-comp-groups" / "panel.csv"
 PUBLIC_DIR = ROOT / "build" / "cb-comp-parity"
 OUT_DIR = ROOT / "build" / "cb-comp-live-bottomup"
+# Task 14: версии цели T_LIVE. Версию панели фиксирует первый SA-месяц;
+# каталоги по умолчанию у @2009 — с суффиксом, чтобы не затирать канон @2010.
+VERSIONS = ("2010", "2009")
+DEFAULT_VERSION = "2010"
+VERSION_FIRST_SA = {"2010": date(2010, 2, 1), "2009": date(2009, 1, 1)}
+
+
+def versioned_dir(path: Path, version: str) -> Path:
+    """Каталог по умолчанию для версии: `@2010` — как есть, иначе `<каталог>-<версия>`."""
+    return path if version == DEFAULT_VERSION else path.with_name(f"{path.name}-{version}")
+
+
+def default_panel(version: str) -> Path:
+    return versioned_dir(PANEL_CSV.parent, version) / PANEL_CSV.name
 
 
 def g2_threshold(horizon: int) -> float:
@@ -86,6 +101,18 @@ def load_group_panel(path: Path) -> tuple:
                 if row[column]:
                     table.setdefault(row["code"], {})[month] = float(row[column])
     return sa_full, sa_asof
+
+
+def first_sa_month(series: dict) -> date:
+    """Первый SA-месяц панели: @2010 → 2010-02, @2009 → 2009-01."""
+    return min(m for values in series.values() for m in values)
+
+
+def check_panel_version(sa_full: dict, version: str) -> None:
+    """Панель другой версии — ошибка: пины R9c/R10 и каталоги привязаны к версии."""
+    first = first_sa_month(sa_full)
+    if first != VERSION_FIRST_SA[version]:
+        raise SystemExit(f"панель начинается с {first}, а версия @{version} ждёт {VERSION_FIRST_SA[version]}")
 
 
 def asof_series(sa_full: dict, sa_asof: dict) -> dict:
@@ -237,7 +264,8 @@ def git_sha() -> str:
         return ""
 
 
-def run(archive: Path, panel_csv: Path, public_dir: Path, out_dir: Path, skip_r0: bool = False) -> dict:
+def run(archive: Path, panel_csv: Path, public_dir: Path, out_dir: Path, skip_r0: bool = False,
+        skip_asof: bool = False, version: str = DEFAULT_VERSION) -> dict:
     import cpi_two_stage_cb_comp as w5b
 
     archive_data = cp.check_archive(archive)
@@ -285,10 +313,17 @@ def run(archive: Path, panel_csv: Path, public_dir: Path, out_dir: Path, skip_r0
     groups_without_sa = sorted(c for c in codes if not sa_full.get(c))
     if len(groups_without_sa) > 2:
         raise SystemExit(f"в панели групп нет SA у {groups_without_sa}: панель не та, что в Task 1")
+    # Без as-of колонки `live_per_sheet_asof` молча совпал бы с full-SA до 2019
+    # и обучился бы на NaN после: такой прогон — только с `--skip-asof`.
+    if not skip_asof and not sa_asof:
+        raise SystemExit("в панели нет sa_asof_mm: пересоберите панель с --asof или запустите с --skip-asof")
     last = max(m for values in sa_full.values() for m in values)
-    months = cp.month_range(date(2010, 1, 1), last)
+    # Старт T_LIVE — первый SA-месяц панели (Task 14): @2010 → 2010-02,
+    # @2009 → 2009-01. Хардкод 2010-01 занижал старт @2010 и не видел 2009.
+    first = first_sa_month(sa_full)
+    months = cp.month_range(first, last)
     diff_full = log_diff_frame(sa_full, codes, months)
-    diff_asof = log_diff_frame(asof_series(sa_full, sa_asof), codes, months)
+    diff_asof = log_diff_frame(asof_series(sa_full, sa_asof), codes, months) if not skip_asof else None
     targets = bu.component_targets(diff_full)
     live = t_live({c: sa_full.get(c, {}) for c in codes}, weights, months)
 
@@ -297,20 +332,24 @@ def run(archive: Path, panel_csv: Path, public_dir: Path, out_dir: Path, skip_r0
     # попавший на выброс train или до 2010-03, строки не даёт.
     feature_months = sorted(set(train_months) | set(test_months))
     features_full = bu.feature_table(specs, feature_months, diff_full, macro, mp_lookup, feature_mode="per_sheet")
-    features_asof = bu.feature_table(specs, feature_months, diff_asof, macro, mp_lookup, feature_mode="per_sheet")
+    features_asof = (bu.feature_table(specs, feature_months, diff_asof, macro, mp_lookup, feature_mode="per_sheet")
+                     if not skip_asof else None)
 
     group_predictions = {
         MODEL_LIVE: fit_predict(specs, features_full, features_full, targets, train_months, test_months, with_mp=True),
         MODEL_NOMP: fit_predict(specs, features_full, features_full, targets, train_months, test_months, with_mp=False),
-        MODEL_ASOF: fit_predict(specs, features_full, features_asof, targets, train_months, test_months, with_mp=True),
     }
-    aggregated = {model: aggregate_predictions(group_predictions[model], weights, test_months) for model in MODELS}
+    if not skip_asof:
+        group_predictions[MODEL_ASOF] = fit_predict(
+            specs, features_full, features_asof, targets, train_months, test_months, with_mp=True)
+    models = tuple(group_predictions)
+    aggregated = {model: aggregate_predictions(group_predictions[model], weights, test_months) for model in models}
 
     # Сравнения.
     truth_full = {h: target_full[h].dropna().to_dict() for h in HORIZONS}
     cb_errors = {h: cp._cb_errors(archive_data["sheet"], target_full, h, normal) for h in HORIZONS}
     comparisons = {}
-    for model in MODELS:
+    for model in models:
         per_h = {}
         for horizon in HORIZONS:
             months_live, err_live = errors_on(aggregated[model][horizon], live[horizon], normal)
@@ -342,7 +381,7 @@ def run(archive: Path, panel_csv: Path, public_dir: Path, out_dir: Path, skip_r0
     }
     config = {"seed": bu.SEED, "horizons": list(HORIZONS), "train": [str(train_months[0]), str(train_months[-1]), len(train_months)],
               "test": [str(test_months[0]), str(test_months[-1]), len(test_months)], "normal": len(normal),
-              "models": list(MODELS), "g2_thresholds": {h: g2_threshold(h) for h in HORIZONS}}
+              "models": list(models), "skip_asof": skip_asof, "g2_thresholds": {h: g2_threshold(h) for h in HORIZONS}}
     result = {
         "spec": "docs/superpowers/specs/2026-10-30-cb-comp-88-groups-live-design.md §13",
         "git_sha": git_sha(),
@@ -356,16 +395,55 @@ def run(archive: Path, panel_csv: Path, public_dir: Path, out_dir: Path, skip_r0
         "target_gap": gaps,
     }
     out_dir.mkdir(parents=True, exist_ok=True)
-    write_predictions(out_dir / "predictions.csv", aggregated, live, truth_full, test_months, set(normal))
+    write_predictions(out_dir / "predictions.csv", aggregated, live, truth_full, test_months, set(normal), models)
     (out_dir / "result.json").write_text(json.dumps(_jsonable(result), ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+    mlog_status = mlog.log_run(**mlog_kwargs(aggregated, truth_full, live, normal, test_months, config, inputs,
+                                             comparisons, gaps, g2_pass, models, version, skip_asof, out_dir))
+    if mlog_status != "disabled":
+        print(f"Паспорт прогона: {mlog_status}", flush=True)
     return result
 
 
-def write_predictions(path: Path, aggregated: dict, live: dict, truth_full: dict, months: list, normal: set) -> None:
+def mlog_kwargs(aggregated: dict, truth_full: dict, live: dict, normal: list, test_months: list,
+                config: dict, inputs: dict, comparisons: dict, gaps: dict, g2_pass: bool,
+                models, version: str, skip_asof: bool, out_dir: Path) -> dict:
+    """Аргументы `cb_comp_mlog.log_run`; `TARGET_FULL` — `actual`, `T_LIVE` — в meta."""
+    return {
+        "run_name": f"live_cb__h1-h6__normal54__target_full__{version}",
+        "config": {**config, "version": version, "truth": mlog.TRUTH, "unit": mlog.UNIT,
+                   "spec_path": "docs/superpowers/specs/2026-10-30-cb-comp-88-groups-live-design.md §13",
+                   "inputs": inputs},
+        "data_asof": cp.TEST_END,
+        "sample_meta": {"rows": len(normal) * len(HORIZONS), "normal": len(normal),
+                        "first": normal[0].isoformat(), "last": normal[-1].isoformat(),
+                        "models": list(models), "horizons": list(HORIZONS)},
+        "sample": [
+            {"horizon": h, "month": m.isoformat(), "target_full": float(truth_full[h][m]),
+             "t_live": float(live[h][m]) if m in live[h] else None}
+            for h in HORIZONS for m in normal
+        ],
+        "spec_path": "docs/superpowers/specs/2026-10-30-cb-comp-88-groups-live-design.md §13",
+        "aggregated": aggregated,
+        "truth": truth_full,
+        "months": normal,
+        "models": models,
+        "horizons": HORIZONS,
+        "t_live": live,
+        "version": version,
+        "metrics": {"primary_metric": "rmse_pp", "comparisons": comparisons,
+                    "target_gap": gaps, "g2_pass": g2_pass},
+        "artifacts": [out_dir / "predictions.csv", out_dir / "result.json"],
+        "notes": f"version={version}; normal={len(normal)}; skip_asof={skip_asof}",
+    }
+
+
+def write_predictions(path: Path, aggregated: dict, live: dict, truth_full: dict, months: list, normal: set,
+                      models=MODELS) -> None:
     with path.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.writer(handle)
         writer.writerow(["model", "horizon", "month", "normal", "y_pred", "t_live", "target_full"])
-        for model in MODELS:
+        for model in models:
             for horizon in HORIZONS:
                 for month in months:
                     if month not in aggregated[model][horizon]:
@@ -377,9 +455,11 @@ def write_predictions(path: Path, aggregated: dict, live: dict, truth_full: dict
 
 
 def _jsonable(value):
+    if isinstance(value, date):
+        return value.isoformat()
     if isinstance(value, dict):
         return {str(k.isoformat() if isinstance(k, date) else k): _jsonable(v) for k, v in value.items()}
-    if isinstance(value, (list, tuple)):
+    if isinstance(value, (list, tuple, set, frozenset)):
         return [_jsonable(v) for v in value]
     if isinstance(value, (np.floating,)):
         value = float(value)
@@ -395,19 +475,27 @@ def _jsonable(value):
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--archive", default=None)
-    parser.add_argument("--panel", default=str(PANEL_CSV), help="panel.csv (C0, спека §13.1) из make cb-comp-groups-panel ARGS=--asof")
+    parser.add_argument("--panel", default=None,
+                        help="panel.csv (C0, спека §13.1) из make cb-comp-groups-panel ARGS=--asof; по умолчанию — панель версии")
     parser.add_argument("--public-dir", default=str(PUBLIC_DIR), help="каталог public_panel.csv и sheet_map.csv (make cb-comp-public-export)")
-    parser.add_argument("--out", default=str(OUT_DIR))
+    parser.add_argument("--out", default=None, help="по умолчанию build/cb-comp-live-bottomup[-<версия>]")
+    parser.add_argument("--version", choices=VERSIONS, default=DEFAULT_VERSION,
+                        help="версия цели: 2010 — канон, 2009 — T_LIVE с 2009-01")
     parser.add_argument("--skip-r0", action="store_true", help="только для отладки; итоговый прогон — с R0")
+    parser.add_argument("--skip-asof", action="store_true",
+                        help="без модели live_per_sheet_asof (для версии без as-of панели; primary live_cb остаётся)")
     args = parser.parse_args(argv)
+    panel = Path(args.panel) if args.panel else default_panel(args.version)
+    check_panel_version(load_group_panel(panel)[0], args.version)
+    out_dir = Path(args.out) if args.out else versioned_dir(OUT_DIR, args.version)
     archive = cp.resolve_archive(args.archive)
-    result = run(archive, Path(args.panel), Path(args.public_dir), Path(args.out), args.skip_r0)
+    result = run(archive, panel, Path(args.public_dir), out_dir, args.skip_r0, args.skip_asof, args.version)
     summary = {
         "r0": result["r0"], "g2_pass": result["g2_pass"],
         "models": {m: {h: {k: result["comparisons"][m][h][k] for k in ("rmse_t_live", "rmse_target_full", "rmse_cb")}
                        | {"g2": result["comparisons"][m][h]["g2"], "e2": result["comparisons"][m][h]["e2_own_target"]["class"],
                           "e3": result["comparisons"][m][h]["e3_target_full"]["class"]}
-                       for h in HORIZONS} for m in MODELS},
+                       for h in HORIZONS} for m in result["comparisons"]},
         "target_gap": result["target_gap"],
     }
     print(json.dumps(_jsonable(summary), ensure_ascii=False, indent=2))
