@@ -177,12 +177,17 @@ def t_live(sa: dict, weights: dict, months: list) -> dict:
 
 
 def fit_predict(specs: list, features_train: dict, features_test: dict, targets: dict,
-                train_months: list, test_months: list, with_mp: bool) -> dict:
+                train_months: list, test_months: list, with_mp: bool, regressor=None) -> dict:
     """`{код: {h: {M: прогноз}}}`; MP-модель — только у групп с BSU и `with_mp`.
 
     Строки обучения — признаки origin `M−(h−1)` из `features_train`, тестовые —
     из `features_test` (для as-of варианта они разные; модели одни и те же).
+    `regressor` — необязательный learner с интерфейсом
+    `fit(train_rows, names, horizon)` / `predict(model, rows, names)`;
+    по умолчанию — CatBoost `bu.fit_component`/`bu.predict_component`.
     """
+    fit_component = bu.fit_component if regressor is None else regressor.fit
+    predict_component = bu.predict_component if regressor is None else regressor.predict
     out = {}
     for spec in specs:
         use_mp = with_mp and bool(spec.bsu_codes)
@@ -195,9 +200,9 @@ def fit_predict(specs: list, features_train: dict, features_test: dict, targets:
             ]
             if len(train_rows) < bu.MIN_TRAIN_ROWS:
                 continue
-            model = bu.fit_component(train_rows, names, horizon)
+            model = fit_component(train_rows, names, horizon)
             test_rows = bu.model_rows(spec.code, features_test.get(spec.code, {}), targets[horizon], horizon, test_months)
-            predictions = bu.predict_component(model, test_rows, names)
+            predictions = predict_component(model, test_rows, names)
             out.setdefault(spec.code, {})[horizon] = {row[0]: value for row, value in zip(test_rows, predictions)}
     return out
 
