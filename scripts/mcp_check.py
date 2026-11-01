@@ -1175,7 +1175,8 @@ async def check(params, server_log):
             # точное 169 перестало бы сходиться на любом живом прогоне.
             rosstat_catalog = text(await session.call_tool("run_query", {"query":
                 "SELECT count() AS n FROM v_series_catalog WHERE source = 'rosstat' "
-                "AND NOT startsWith(series, 'okpd2:') AND NOT startsWith(series, 'ved-weight:')"}))
+                "AND NOT startsWith(series, 'okpd2:') AND NOT startsWith(series, 'ved-weight:') "
+                "AND NOT startsWith(series, 'cpi-weight:')"}))
             rosstat_catalog_rows = result_rows(rosstat_catalog)
             rosstat_catalog_n = rosstat_catalog_rows[0].get("n") if rosstat_catalog_rows else None
             if rosstat_catalog_rows is None:
@@ -1219,6 +1220,40 @@ async def check(params, server_log):
                                           "прогнать make import STAT=rosstat_ppi_weights")
             failed += not expect("каталог rosstat_ppi_weights полон", rosstat_weights_n == 76, rosstat_weights_detail)
 
+            # Веса ИПЦ (P0.4, #479): витрина v_rosstat_cpi_weights читается агентом и
+            # непуста; годов 2016–2026 не меньше, чем в источнике; каталог описывает
+            # cpi-weight:<код>:<items|groups>. Точное число строк зависит от перечня
+            # позиций года (500+ товаров и 50+ групп в каждом из двух файлов), поэтому
+            # проверяются непустота, покрытие кодов и горизонт, а не равенство.
+            cpi_weights_view = text(await session.call_tool("run_query", {"query":
+                "SELECT count() AS rows, uniqExact(code) AS codes, min(year) AS mn, max(year) AS mx "
+                "FROM v_rosstat_cpi_weights"}))
+            cpi_weights_rows = result_rows(cpi_weights_view)
+            cpi_weights_n = cpi_weights_rows[0].get("rows") if cpi_weights_rows else None
+            cpi_weights_codes = cpi_weights_rows[0].get("codes") if cpi_weights_rows else None
+            cpi_weights_mn = cpi_weights_rows[0].get("mn") if cpi_weights_rows else None
+            cpi_weights_mx = cpi_weights_rows[0].get("mx") if cpi_weights_rows else None
+            if cpi_weights_rows is None:
+                cpi_weights_detail = f"витрина не читается: {cpi_weights_view[:200]}"
+            elif (cpi_weights_n or 0) > 0 and (cpi_weights_codes or 0) >= 400 and (cpi_weights_mx or 0) >= 2026:
+                cpi_weights_detail = (f"строк: {cpi_weights_n}, кодов: {cpi_weights_codes}, "
+                                      f"годы: {cpi_weights_mn}–{cpi_weights_mx}")
+            else:
+                cpi_weights_detail = (f"строк: {cpi_weights_n}, кодов: {cpi_weights_codes}, "
+                                      f"годы: {cpi_weights_mn}–{cpi_weights_mx} — прогнать "
+                                      "make import STAT=rosstat_cpi_weights")
+            failed += not expect("витрина v_rosstat_cpi_weights непуста",
+                                 (cpi_weights_n or 0) > 0 and (cpi_weights_codes or 0) >= 400
+                                 and (cpi_weights_mx or 0) >= 2026, cpi_weights_detail)
+
+            cpi_weights_catalog = text(await session.call_tool("run_query", {"query":
+                "SELECT count() AS n FROM v_series_catalog WHERE source = 'rosstat' AND startsWith(series, 'cpi-weight:')"}))
+            cpi_weights_catalog_rows = result_rows(cpi_weights_catalog)
+            cpi_weights_catalog_n = cpi_weights_catalog_rows[0].get("n") if cpi_weights_catalog_rows else None
+            failed += not expect("каталог rosstat_cpi_weights непуст", (cpi_weights_catalog_n or 0) >= 500,
+                                 f"рядов cpi-weight: {cpi_weights_catalog_n}, want >= 500 — "
+                                 "прогнать make import STAT=rosstat_cpi_weights")
+
             # Сырые таблицы контура агенту не выданы — как macro_series и
             # cbr_households_b_mes: витрина — единственное место, где агент читает ряды
             # (единицы и привязка даты различаются между рядами и описаны в v_series_catalog).
@@ -1234,7 +1269,8 @@ async def check(params, server_log):
                                  ("rosstat_bi_cpi_weekly", "недельный агрегат ИПЦ из BI"),
                                  ("rosstat_ppi_ved", "ИЦП по ВЭД"),
                                  ("rosstat_ppi_product", "ИЦП по товарам/ОКПД2"),
-                                 ("rosstat_ppi_weights", "веса ИЦП по ВЭД")):
+                                 ("rosstat_ppi_weights", "веса ИЦП по ВЭД"),
+                                 ("rosstat_cpi_weights", "веса ИПЦ (товары и группы)")):
                 raw = text(await session.call_tool("run_query", {"query": f"SELECT count() FROM {table}"}))
                 denied = "ACCESS_DENIED" in raw or "Not enough privileges" in raw
                 failed += not expect(f"сырая {table} закрыта ({label})", denied,

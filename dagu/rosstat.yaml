@@ -108,3 +108,14 @@ steps:
       limit: 3
       interval_sec: 300
 
+  # Двенадцатый шаг — структура потребительских расходов для расчёта ИПЦ (веса ИПЦ):
+  # две книги (товары и группы) обновляются раз в год (апрель), поэтому будничный
+  # прогон — HEAD-префлайт по обеим и no-op. Шаг в хвосте цепочки.
+  - id: rosstat_cpi_weights
+    run: "$ROSSTAT_IMPORT_BIN"
+    env:
+      - CLICKHOUSE_IMPORT_STAT=rosstat_cpi_weights
+    retry_policy:
+      limit: 3
+      interval_sec: 300
+
