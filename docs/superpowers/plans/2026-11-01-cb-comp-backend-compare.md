@@ -44,11 +44,11 @@
 1. `run()`: `en.prepare` один раз; для каждой пары — `lb.fit_predict(..., regressor=backend)`; `lb.aggregate_predictions`; `combo3_<backend>` через `hc.bs_predict`/`hc.combine_mean` (OLS один раз).
 2. `evaluate()`: `w5b.compare_to_cb` (ratio/class), `v4.compare_pair` (Δ/CI/DM/MDE), `v4.mcs_included` по 4 моделям, RMSE на `T_LIVE`/all67.
 3. `decide()` — чистая функция по правилу спеки §6; возвращает `{backend: {decision, reasons}}`.
-4. Инварианты R-B1/R-B2/R-B3 (спека §7); при R-B1/R-B3 fail — `SystemExit`; R-B2 — finding.
+4. Инварианты R-B1/R-B2 (спека §7); при R-B1 fail — `SystemExit`; R-B2 — finding; R-B3 — внешняя проверка повтором прогона.
 5. Артефакты: `build/cb-comp-backend-compare[-<version>]/{result.json,predictions.csv,timings.csv,report.md}`; копии JSON/MD — `docs/research/`.
 6. Паспорт: `dc.log_run` на каждый run (5), experiment `cb_comp_88_groups`, `models=[live_cb_<backend>, combo3_<backend>]`, config/sample/metrics/artifacts по спеке §5; tags `stage=backtest`, `champion=catboost`, `challenger=<backend>`, `decision`.
 
-Проверка: `ML_LOG=0` прогон даёт те же файлы, что `ML_LOG=1` (сравнение sha256).
+Проверка: `ML_LOG=0` прогон даёт тот же `predictions.csv` (sha256); в `result.json` совпадают `per_model`/`pairs`, различаются только `timings`/`run_id`.
 
 ## 6. Тесты
 
@@ -79,7 +79,7 @@ make cb-comp-h1-bs-combo-test
 
 1. `make ch-status`, `make cb-comp-public-export` (если нет `public_panel.csv`/`sheet_map.csv`), `make mlflow-preflight` (при необходимости `make mlflow-up`).
 2. `ML_LOG=1 MLFLOW=1 make cb-comp-backend-compare` → 5 run'ов; зафиксировать `run_id` и URI.
-3. Повтор R-B3: `ML_LOG=1 MLFLOW=1 make cb-comp-backend-compare ARGS="--backend lightgbm --arm defaults"` → те же sha256 файлов, новый `run_id`.
+3. Повтор R-B3: `ML_LOG=1 MLFLOW=1 make cb-comp-backend-compare ARGS="--backend lightgbm --arm defaults --out build/cb-comp-backend-compare-repeat --no-evidence"` → тот же sha256 `predictions_lightgbm__defaults.csv`, те же `per_model`/`pairs` для lightgbm, новый `run_id`; канонический `result.json`/эвиденс не перезаписываются.
 4. Витрины (MCP `run_query`): `v_ml_runs`, `v_ml_leaderboard`, `v_ml_error_by_fold`; сверка RMSE с `result.json`.
 5. `make mlflow-export ARGS="--experiment cb_comp_88_groups --dry-run"`.
 

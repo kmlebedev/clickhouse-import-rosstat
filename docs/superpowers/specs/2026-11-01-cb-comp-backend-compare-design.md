@@ -118,7 +118,7 @@ Run'ы (5): `catboost/defaults`, `lightgbm/defaults`, `lightgbm/matched`, `xgboo
 |---|---|---|
 | **R-B1** | CatBoost-плечо через новый слой `regressor=` повторяет `lb.fit_predict` | агрегаты и fold-прогнозы совпадают побайтно (`predictions.csv` sha256); иначе стоп |
 | **R-B2** | Пины Task 3 (`1,193/1,013/1,076/1,062`) и Task 9 (`1,035/0,957/1,010/0,894`) | ±0,002 — ✅; дрейф 0,002–0,01 — finding в отчёт; >0,01 — finding + стоп до объяснения |
-| **R-B3** | Детерминизм | повтор `defaults`-плеча даёт те же sha256 `predictions.csv`/`result.json`, fold-значения и `sample_hash` при новом `run_id` |
+| **R-B3** | Детерминизм | повтор `defaults`-плеча даёт тот же `predictions.csv` (sha256) и те же блоки `per_model`/`pairs` в `result.json`; время, `run_id` и `mlog_status` не сравниваются |
 | **R-B4** | `month` как категория | train и predict используют один `CategoricalDtype(1…12)`; тест на dtype |
 
 R-B2 — сверка абсолютного уровня: смена версии CatBoost может сдвинуть пины. R-B1/R-B3 важнее: они гарантируют, что сравнение внутренне согласовано.
@@ -147,5 +147,7 @@ make cb-comp-public-export         # public_panel.csv / sheet_map.csv
 make cb-comp-groups-panel ARGS="--asof"   # build/cb-comp-groups/panel.csv (если нет)
 make mlflow-up                     # локальный dev-сервер, если не поднят
 ML_LOG=1 MLFLOW=1 make cb-comp-backend-compare
-ML_LOG=1 MLFLOW=1 make cb-comp-backend-compare ARGS="--backend lightgbm --arm defaults"   # повтор R-B3
+# повтор R-B3 (не перезаписывает канонический result.json/эвиденс):
+ML_LOG=1 MLFLOW=1 make cb-comp-backend-compare \
+  ARGS="--backend lightgbm --arm defaults --out build/cb-comp-backend-compare-repeat --no-evidence"
 ```
