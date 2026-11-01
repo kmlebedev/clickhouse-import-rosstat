@@ -74,3 +74,10 @@ make cpi-v4-h2o ARGS="--stage gate"
 - Селектор видит origin'ы после 2015-12 (тест).
 - Java вне 8–17 или H2O не поднимается — фиксируем и не обходим «временным» решением.
 - Gate не выполняется из-за отсутствующих ячеек → `incomplete`, а не подмена окна.
+
+## Результат 2026-11-01
+
+- Селектор: 78 origin'ов, GBM/DRF на двух seed'ах, `selection_stable=false`, заморожен DRF.
+- Refit: `S_L09` h1 −3,4 % к `v3_bottomup` (p=0,53), h3 +2,0 %, h6 без деградации; robustness `S_L13`/`S_W22` хуже (+5,9 %/+16,0 % h1).
+- Gate: **`iterate`**; повтор `S_L09` h1 — sha256 совпал.
+- Отчёт — `docs/research/2026-11-01-cpi-h2o-automl.md`; PR [#506](https://github.com/kmlebedev/clickhouse-import-rosstat/pull/506).
