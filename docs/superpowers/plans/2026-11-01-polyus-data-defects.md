@@ -21,9 +21,9 @@
    - Комментарий в issue #484 с решениями и ссылками.
 
 4. **Приёмка.**
-   - `make all`, `make docs-check`, `dagu validate dagu/financial.yaml dagu/dcf.yaml`.
-   - Dev: `make import STAT=databook_polyus` (8 484 строки), `make import STAT=dcf_mine_plans` (OLIMPIADA 926.5), `DCF_RUN_ID=<uuid> make import STAT=dcf_engine` (36 строк); NAV до/после в `v_dcf_assumptions`.
-   - Staging: TRUNCATE `databook_polyus` + reimport; `TITIMUKHTA` без **ненулевых** значений после 2020; `dcf_mine_plans` — 926.5; `dcf_engine` — 36 строк; `make mcp-check`.
+   - `make all`, `make docs-check`, `dagu validate dagu/financial.yaml` и `dagu validate dagu/dcf.yaml` — **по одному файлу**: dagu 2.18.2 не принимает два аргумента (`accepts 1 arg(s), received 2`).
+   - Dev: `make import STAT=databook_polyus` → `Imported 8833 rows` (сырые точки; `FINAL` = 8 484 из-за 349 внутриблочных дублей `KURANAKH`), `make import STAT=dcf_mine_plans` (OLIMPIADA 926.5), `DCF_RUN_ID=<uuid> make import STAT=dcf_engine` (36 строк); NAV до/после в `v_dcf_assumptions`.
+   - Staging: TRUNCATE `databook_polyus` + reimport; `Imported 8833 rows`, `SELECT count() FROM databook_polyus FINAL` = 8 484; `TITIMUKHTA` без **ненулевых** значений после 2020; `dcf_mine_plans` — 926.5; `dcf_engine` — 36 строк; `make mcp-check` — релевантные Полюсу/DCF проверки (`v_company_operating`, `v_dcf_assumptions`) проходят, а 4 несвязанных dev-FAIL (distillate_stocks, news bootstrap, каталог fedstat 1734/1727, `v_fedstat_ipc` 204101/204038) фиксируются как внешние к дифу, а не выдаются за успех.
    - Протокол — комментарием в PR.
 
 ## Порядок

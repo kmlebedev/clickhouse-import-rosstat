@@ -41,9 +41,10 @@ class TestReadRefined(unittest.TestCase):
         self.assertIn("'O''HARA'", om.output_sql("O'HARA", 2025))
 
     def test_metric_is_refined_not_dore(self):
-        # 2025: refined 242.2 против dore 230.8. Метрика обязана быть refined.
-        with unittest.mock.patch.object(om, "ch_query", return_value=[{"v": 242.2}]):
-            self.assertEqual(om.read_refined_output("VERNINSKOYE2", 2025), 242.2)
+        # Мутация «refined → dore» не должна проходить зелёной: числа метрик
+        # расходятся, и подмена вернула бы не тот факт.
+        with unittest.mock.patch.object(om, "ch_query", return_value=[{"v": 271.7}]):
+            self.assertEqual(om.read_refined_output("VERNINSKOYE2", 2025), 271.7)
         # ЛИТЕРАЛ, а не `om.REFINED_METRIC`: подстановка константы в проверку её
         # же значения — тавтология, и подмена метрики на `dore` прошла бы зелёной
         # (проверено мутацией). Тихо неверные числа от смены метрики — ровно тот
@@ -57,6 +58,17 @@ class TestReadRefined(unittest.TestCase):
         with unittest.mock.patch.object(om, "ch_query", return_value=[]):
             with self.assertRaises(om.OutputDataError):
                 om.read_refined_output("VERNINSKOYE2", 2100)
+
+    def test_year_is_exact_date_not_to_year(self):
+        # Годовое наблюдение датировано 1 января СЛЕДУЮЩЕГО года (FY2025 →
+        # 2026-01-01). `toYear(date) = 2025` вернул бы FY2024 — ровно тот
+        # сдвиг на год, который #484 исправляет в Go-сиде; здесь тот же
+        # предикат, поэтому запрос обязан адресовать год ТОЧНОЙ датой.
+        sql = om.output_sql("VERNINSKOYE2", 2025)
+        self.assertIn("date = makeDate(2025 + 1, 1, 1)", sql)
+        self.assertNotIn("toYear(date)", sql)
+        # И для другого года — та же форма: FY2024 читается 2025-01-01.
+        self.assertIn("date = makeDate(2024 + 1, 1, 1)", om.output_sql("VERNINSKOYE2", 2024))
 
     def test_implausible_year_raises(self):
         with self.assertRaises(om.OutputDataError):
@@ -112,16 +124,13 @@ class TestBuildRows(unittest.TestCase):
         with self.assertRaises(om.OutputDataError):
             om.build_rows({2025: 0.0, 2026: 271.7})
 
-    def test_rows_are_three_and_in_year_order(self):
-        rows = om.build_rows({2025: 242.2, 2026: 271.7})
-        self.assertEqual([r["year"] for r in rows], [2025, 2026, 2027])
-        self.assertTrue(all(r["asset"] == om.ASSET for r in rows))
-
-    def test_rows_are_five_and_before_the_profile(self):
+    def test_rows_are_five_in_year_order_and_before_the_profile(self):
         # Пять лет окна ОПР и ни одного года из горизонта Go-сида: пересечение
-        # означало бы перезапись проектного профиля целиком.
+        # означало бы перезапись проектного профиля целиком. Годы — по порядку,
+        # и все строки принадлежат целевому активу (Сухому Логу).
         rows = om.build_rows({2025: 242.2, 2026: 271.7})
         self.assertEqual([r["year"] for r in rows], [2025, 2026, 2027, 2028, 2029])
+        self.assertTrue(all(r["asset"] == om.ASSET for r in rows))
         self.assertFalse(set(r["year"] for r in rows) & om.GO_SEED_SUKHOI_LOG_YEARS)
 
     def test_all_estimated_years_share_one_rule(self):
@@ -149,8 +158,8 @@ class TestOverlap(unittest.TestCase):
 
     def test_accepts_years_before_go_seed_horizon(self):
         rows = om.build_rows({2025: 242.2, 2026: 271.7})
-        om.assert_no_overlap(rows, go_seed_years={2028, 2029})
-        self.assertEqual([r["year"] for r in rows], [2025, 2026, 2027])
+        om.assert_no_overlap(rows, go_seed_years={2030, 2031})
+        self.assertEqual([r["year"] for r in rows], [2025, 2026, 2027, 2028, 2029])
 
     def test_ignores_other_assets(self):
         # Проверка про Сухой Лог: чужой актив в списке не должен её задевать.
@@ -189,13 +198,13 @@ class TestEmit(unittest.TestCase):
     def setUp(self):
         self.rows = om.build_rows({2025: 242.2, 2026: 271.7})
 
-    def test_sql_has_single_insert_with_three_rows(self):
+    def test_sql_has_single_insert_with_five_rows(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "seed.sql"
             om.write_sql(path, self.rows)
             text = path.read_text(encoding="utf-8")
         self.assertEqual(text.count("INSERT INTO mine_plans"), 1)
-        self.assertEqual(text.count("('PLZL','Sukhoi Log',"), 3)
+        self.assertEqual(text.count("('PLZL','Sukhoi Log',"), 5)
 
     def test_sql_header_names_manual_apply(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -220,7 +229,7 @@ class TestEmit(unittest.TestCase):
             om.write_csv(path, self.rows)
             with path.open(encoding="utf-8") as handle:
                 table = list(csv.reader(handle))
-        self.assertEqual(len(table), 4)
+        self.assertEqual(len(table), len(self.rows) + 1)  # шапка + строка на год
         self.assertTrue(all(len(row) == len(table[0]) for row in table))
 
     def test_csv_grade_cell_is_empty_not_null_literal(self):
