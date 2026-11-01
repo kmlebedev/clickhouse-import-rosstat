@@ -22,6 +22,7 @@
 - `description` во frontmatter — ≤ 300 символов. Он грузится в контекст каждой сессии, даже когда скил не нужен.
 - Тело — ≤ 6 КБ (порядка 1,5 тыс. токенов). Стиль — императивные пункты без вступлений и пересказа документации. Шаблоны запросов — минимальные, без комментариев внутри SQL.
 - Ссылок на внешние документы для чтения нет: всё нужное — в самом скиле.
+- **Пересмотр 2026-11-01 (skill-creator):** ядро `SKILL.md` (≤ 6 КБ) — порядок работы, доступ, правила запросов, ловушки; шаблоны запросов и point-in-time вынесены в `references/templates.md` и `references/point-in-time.md`, агент читает их только по ссылке из ядра. Весь скил ≤ 10 КБ. В порядок работы добавлен поиск витрины по `source` через `system.tables.create_table_query`: имена витрин не совпадают с источниками (`domrf_mortgage` — в `v_bank_macro`).
 
 Frontmatter: `name: rosstat-sql`; `description` — когда применять: любой SQL к `rosstat-staging` (поиск ряда, последнее значение, динамика, г/г, срез «что было известно на дату»).
 
@@ -60,8 +61,8 @@ Frontmatter: `name: rosstat-sql`; `description` — когда применят�
 ### 2.3 Тесты нового репо
 
 - `test_no_component_fields` → `test_components`: `agents`, `commands`, `hooks` запрещены везде; `skills` — только `"./skills/"` и только в Codex и Kimi.
-- Новый `test_skill`: в `skills/` ровно один каталог `rosstat-sql` с `SKILL.md`; frontmatter разбирается, `name == "rosstat-sql"`, `description` непустой и ≤ 300 символов; размер `SKILL.md` ≤ 6144 байт; в теле есть правило отвечать по-русски (`Russian`); в SQL-блоках скила все таблицы после `FROM`/`JOIN` — `v_*`, `system.*` или табличная функция `v_point_in_time_asof(...)`; секретов нет (литеральные `Bearer`, `password=`).
-- Allowlist — плюс `skills/rosstat-sql/SKILL.md`; общий бюджет размера репозитория остаётся 64 КБ.
+- Новый `test_skill`: в `skills/` ровно один каталог `rosstat-sql` с `SKILL.md`; frontmatter разбирается, `name == "rosstat-sql"`, `description` непустой и ≤ 300 символов; размер `SKILL.md` ≤ 6144 байт, всего скила с `references/` ≤ 10240; `SKILL.md` ссылается на каждый файл `references/`; проверки SQL и секретов — по всем файлам скила; в теле есть правило отвечать по-русски (`Russian`); в SQL-блоках скила все таблицы после `FROM`/`JOIN` — `v_*`, `system.*` или табличная функция `v_point_in_time_asof(...)`; секретов нет (литеральные `Bearer`, `password=`).
+- Allowlist — плюс `skills/rosstat-sql/SKILL.md` и два файла `references/`; общий бюджет размера репозитория остаётся 64 КБ.
 
 ### 2.4 Этот репозиторий
 
