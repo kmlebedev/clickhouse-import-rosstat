@@ -2,7 +2,7 @@
 
 Артефакты деплоя на хост `palmshell` (Ubuntu 24.04, x86_64, вход `root`). Разворачивает четыре
 компонента: бинарник `clickhouse-import-rosstat`, планировщик `dagu`, MCP-сервер
-`mcp-clickhouse` (HTTPS `:8443`, read-only) и MLflow (SQLite + локальные артефакты). ClickHouse на хосте
+`mcp-clickhouse` (HTTPS `:8443`, read-only, Google OAuth + email allowlist) и MLflow (SQLite + локальные артефакты). ClickHouse на хосте
 **не трогается**; у Grafana — только
 файл провижининга датасорса для дашбордов `gold-thesis` и `key-rate-publications` (раздел
 [«Grafana на staging»](#grafana-на-staging-датасорс-провижининг-и-деплой-дашбордов)),
@@ -20,6 +20,7 @@
 | `/root/.config/dagu/base.yaml` | base DAG dagu: `env` шагов и SMTP-уведомления (копия `dagu-base.yaml` из этого каталога) |
 | `/etc/systemd/system/mcp-clickhouse.service` | юнит MCP (копия из этого каталога) |
 | `/usr/local/lib/clickhouse-import-rosstat/mcp_clickhouse_tls.py` | запускальщик MCP с TLS (копия из этого каталога) |
+| `/usr/local/lib/clickhouse-import-rosstat/rosstat_mcp_auth.py` | Google OAuth provider с allowlist (копия из этого каталога) |
 | `/etc/letsencrypt/live/mcp.selfinvesting.ru/` | сертификат публичного MCP (`make deploy-staging-mcp-cert`) |
 | `/etc/systemd/system/mlflow.service` | юнит MLflow (копия из этого каталога) |
 | `/var/lib/mlflow/` | SQLite `mlflow.db` и артефакты MLflow (бэкап — см. «MLflow на staging») |
@@ -40,7 +41,8 @@ ssh palmshell 'install -m 600 /dev/null /etc/clickhouse-import-rosstat.env'
 # (включая GOST_APP_ID — токен gtn.access.appid портала Росстандарта: без него падает часовой шаг
 #  gost_vehicle_safety_certificate из dagu/craw.yaml; режимные GOST_MODE/GOST_FROM/GOST_TO/
 #  GOST_SETTLE_DAYS здесь не хранят — их задаёт сам DAG)
-# токен: openssl rand -hex 32 — ОБЯЗАТЕЛЕН, без него mcp-clickhouse не стартует
+# OAuth: FASTMCP_SERVER_AUTH_GOOGLE_CLIENT_ID/… + ROSSTAT_MCP_ALLOWED_GOOGLE_EMAILS;
+# static bearer CLICKHOUSE_MCP_AUTH_TOKEN удалён — OAuth и токен взаимоисключающие
 # SMTP_HOST/SMTP_PORT/SMTP_USER/SMTP_PASSWORD/MAIL_FROM/MAIL_TO — уведомления dagu;
 # MAIL_TO — шлюз CMC (email→SMS), иначе deploy-staging-preflight упадёт
 
@@ -148,21 +150,41 @@ ssh -N -L 8123:127.0.0.1:8123 palmshell &
 CLICKHOUSE_PASSWORD=<пароль kimi_reader> make mcp-check MCP_CHECK_HOST=127.0.0.1 MCP_CHECK_PORT=8123
 ```
 
-Публичный MCP — `https://mcp.selfinvesting.ru:8443/mcp`. Первый запуск:
+Публичный MCP — `https://mcp.selfinvesting.ru:8443/mcp`. Авторизация — Google OAuth;
+доступ только для адресов из `ROSSTAT_MCP_ALLOWED_GOOGLE_EMAILS` (allowlist, fail closed).
+
+Первый запуск:
 
 ```bash
-# 1. на роутере: внешние :80 и :8443 → хост (:80 нужен и для продления сертификата)
-# 2. сертификат Let's Encrypt (certbot standalone, certbot.timer, deploy-hook перезапускает MCP)
+# 1. Google Cloud: APIs & Services → Credentials → OAuth client ID (Web application).
+#    Authorized redirect URI: https://mcp.selfinvesting.ru:8443/auth/callback
+#    OAuth consent screen: External; scopes openid, email, profile.
+# 2. В /etc/clickhouse-import-rosstat.env (600) вписать OAuth-блок:
+#    FASTMCP_SERVER_AUTH=rosstat_mcp_auth.RosstatGoogleProvider
+#    FASTMCP_SERVER_AUTH_GOOGLE_CLIENT_ID=...
+#    FASTMCP_SERVER_AUTH_GOOGLE_CLIENT_SECRET=...
+#    FASTMCP_SERVER_AUTH_GOOGLE_BASE_URL=https://mcp.selfinvesting.ru:8443
+#    FASTMCP_SERVER_AUTH_GOOGLE_REQUIRED_SCOPES=openid,email,profile
+#    FASTMCP_SERVER_AUTH_GOOGLE_JWT_SIGNING_KEY=<openssl rand -hex 32>
+#    ROSSTAT_MCP_ALLOWED_GOOGLE_EMAILS=user@example.com,second@example.com
+#    CLICKHOUSE_MCP_ALLOWED_ORIGINS=https://mcp.selfinvesting.ru:8443
+# 3. на роутере: внешние :80 и :8443 → хост (:80 нужен и для продления сертификата)
+# 4. сертификат Let's Encrypt (certbot standalone, certbot.timer, deploy-hook перезапускает MCP)
 make deploy-staging-mcp-cert MCP_CERT_EMAIL=<почта для уведомлений LE>
-# 3. в /etc/clickhouse-import-rosstat.env — CLICKHOUSE_MCP_ALLOWED_HOSTS из env.example
+# 5. юнит, провайдер и env-проверки; затем restart
 make deploy-staging-mcp && ssh palmshell 'systemctl restart mcp-clickhouse'
 make deploy-staging-smoke
 ```
 
-Smoke-проверки внутри `deploy-staging`: наличие бинарей и DAG-файлов, непустой токен (до
-включения сервисов), затем `dagu` отвечает, MCP `/health` = 200 по HTTPS с проверкой сертификата и имени
-(`curl --resolve mcp.selfinvesting.ru:8443:127.0.0.1`), MCP **без токена → 401**,
-MCP с токеном отвечает, MLflow `/health` = 200.
+Smoke-проверки внутри `deploy-staging`: наличие бинарей и DAG-файлов, непустые OAuth-переменные
+(до включения сервисов), затем `dagu` отвечает, MCP `/health` = 200 по HTTPS с проверкой сертификата и имени
+(`curl --resolve mcp.selfinvesting.ru:8443:127.0.0.1`), MCP **без токена → 401** и
+`WWW-Authenticate` содержит `resource_metadata`, оба `/.well-known/oauth-*` = 200, MLflow `/health` = 200.
+
+Полный Google-вход smoke **не** автоматизирует: его проверяют в клиенте (Kimi Code: `/mcp` или
+`/mcp-config login <server>`) либо вручную по authorization URL из `WWW-Authenticate`. Успешный вход
+даёт `run_query`; аккаунт не из allowlist получает отказ. OAuth-сессии FastMCP хранит в зашифрованном
+файле в data dir; при смене `FASTMCP_SERVER_AUTH_GOOGLE_JWT_SIGNING_KEY` пользователи входят заново.
 
 ## MLflow на staging
 
@@ -312,6 +334,9 @@ ssh palmshell 'journalctl -u mlflow -n 50 --no-pager'
 ssh palmshell 'mv /root/.local/bin/dagu.bak /root/.local/bin/dagu && systemctl restart dagu'
 
 # откат mcp-clickhouse: вернуть прежний MCP_VERSION в Makefile и повторить make deploy-staging-mcp
+# откат OAuth: вернуть static bearer (CLICKHOUSE_MCP_AUTH_TOKEN) и юнит без UnsetEnvironment/
+# PYTHONPATH; убрать FASTMCP_SERVER_AUTH* из env; make deploy-staging-mcp + restart.
+# Внимание: 0.4.x плагины снова начнут работать, 0.5.0 — нет.
 
 # откат mlflow: бэкап (см. «MLflow на staging»), вернуть прежнюю версию в юните и Makefile,
 # повторить make deploy-staging-mlflow; откат схемы SQLite не автоматизирован
