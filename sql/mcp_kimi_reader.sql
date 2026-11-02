@@ -138,3 +138,10 @@ GRANT SELECT ON default.v_domrf_price_index TO kimi_reader;
 -- не выданы — только витрины с комментариями единиц и оговоркой про FORTS.
 GRANT SELECT ON default.v_transaq_net_flows TO kimi_reader;
 GRANT SELECT ON default.v_transaq_net_flows_daily TO kimi_reader;
+
+-- Средняя за отчётный месяц цена нефти сорта «Юралс» Минэкономразвития
+-- (пункт key-rate/phase-2-urals, issue #509): ряд macro_series
+-- (source='minec', series='urals_avg_price', 2018-01 … 2026-10, пропуск
+-- 2018-06/07 в источнике). Сырая macro_series агенту не выдана — только
+-- витрина с комментариями таблицы и колонок.
+GRANT SELECT ON default.v_minec_macro TO kimi_reader;
