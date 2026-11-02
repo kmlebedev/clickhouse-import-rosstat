@@ -1744,6 +1744,53 @@ async def check(params, server_log):
             failed += not expect("сырая fao_food_price_Indices_monthly закрыта", fao_denied,
                                  "отказ ClickHouse 497 (ожидаемо)" if fao_denied else fao_raw[:200])
 
+            # Ряд Urals Минэка (пункт key-rate/phase-2-urals, issue #509): витрина
+            # v_minec_macro читается агентом и НЕПУСТА — 104 месячных точки 2018-01 … 2026-10
+            # (в источнике нет 2018-06/07: это разрыв ряда, а не нули), каталог описывает
+            # ряд одним ключом source='minec', spot-значение октября 2026 — 101.46.
+            # Сырая macro_series закрыта проверкой выше (та же таблица, другой source),
+            # отдельная проверка не нужна.
+            minec_view = text(await session.call_tool("run_query", {"query":
+                "SELECT count() AS n, toString(min(date)) AS min_dt, toString(max(date)) AS max_dt "
+                "FROM v_minec_macro"}))
+            minec_view_rows = result_rows(minec_view)
+            if minec_view_rows is None:
+                minec_view_detail = f"витрина не читается: {minec_view[:200]}"
+            else:
+                minec_view_detail = (f"точек: {minec_view_rows[0].get('n')}, "
+                                     f"{minec_view_rows[0].get('min_dt')} … {minec_view_rows[0].get('max_dt')}")
+            minec_view_ok = (
+                bool(minec_view_rows)
+                and minec_view_rows[0].get("n") >= 104
+                and str(minec_view_rows[0].get("min_dt")) == "2018-01-01"
+                and str(minec_view_rows[0].get("max_dt")) >= "2026-10-01"
+            )
+            failed += not expect("витрина v_minec_macro: ≥104 точек, 2018-01 … ≥2026-10",
+                                 minec_view_ok, minec_view_detail)
+
+            minec_spot = text(await session.call_tool("run_query", {"query":
+                "SELECT toString(value) AS v FROM v_minec_macro "
+                "WHERE series = 'urals_avg_price' AND date = '2026-10-01'"}))
+            minec_spot_rows = result_rows(minec_spot)
+            minec_spot_ok = False
+            minec_spot_detail = f"ответ не распознан: {minec_spot[:200]}"
+            if minec_spot_rows is not None:
+                minec_spot_value = minec_spot_rows[0].get("v") if minec_spot_rows else None
+                minec_spot_detail = f"2026-10: {minec_spot_value} (want 101.46)"
+                try:
+                    minec_spot_ok = minec_spot_value is not None and abs(float(minec_spot_value) - 101.46) < 1e-9
+                except (TypeError, ValueError):
+                    minec_spot_ok = False
+            failed += not expect("v_minec_macro: значение 2026-10 = 101.46", minec_spot_ok,
+                                 minec_spot_detail)
+
+            minec_catalog = text(await session.call_tool("run_query", {"query":
+                "SELECT count() AS n FROM v_series_catalog WHERE source = 'minec'"}))
+            minec_catalog_rows = result_rows(minec_catalog)
+            minec_catalog_n = minec_catalog_rows[0].get("n") if minec_catalog_rows else None
+            failed += not expect("каталог source='minec' полон", minec_catalog_n == 1,
+                                 f"рядов: {minec_catalog_n} (want 1)")
+
             # Контур потребительских расходов Сбера (фаза 2 роадмапа «починка пустых рядов»,
             # импортёры sber_consumper_spending_index и sber_izmenenie_trat): общая витрина
             # v_bank_sber_spending читается агентом и НЕПУСТА, каталог описывает её ряды двумя
