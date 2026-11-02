@@ -3,6 +3,7 @@ package wgc
 import (
 	"context"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 
@@ -14,6 +15,13 @@ import (
 )
 
 const (
+	// wgcRequireDataEnv — флаг DAG: "1" требует обе выгрузки ЦБ до разбора. Шаг
+	// wgc_cb_reserves задаёт его в dagu/wgc.yaml, поэтому отсутствие файла на staging —
+	// красный прогон, а не warn + 0: зелёный DAG без данных маскировал неполный источник
+	// (#507). Ручной `make import` без флага сохраняет прежнее поведение — локальная
+	// разработка живёт без выгрузок.
+	wgcRequireDataEnv = "WGC_REQUIRE_DATA"
+
 	// cbChangesMask, cbHoldingsMask — маски двух выгрузок ЦБ в папке данных: имена WGC
 	// содержат месяц прописью (Oct2026 лексикографически больше Nov2026), поэтому файл
 	// выбирается по mtime (findLatestFile), а маска отделяет эти выгрузки от ETF.
@@ -48,8 +56,11 @@ func selectCbFiles(dir string) (changesPath, holdingsPath string, err error) {
 // Import разбирает выгрузки и пишет точки одним батчем. Ни одной выгрузки нет — warn + 0
 // строк: до первого скачивания это не поломка (урок dcf_engine), и соединение не
 // трогается вовсе. Частичный набор — тоже норма (warn): нет changes — только уровни, нет
-// holdings — только дельты. Битый файл или ноль точек — ошибка (fail-fast, урок eia):
-// тихий ноль оставил бы dagu зелёным, а ряды — без обновления.
+// holdings — только дельты. Исключение — прогон DAG с WGC_REQUIRE_DATA=1: обе выгрузки
+// обязательны, и отсутствие хотя бы одной — ошибка до разбора и до PrepareBatch (витрина
+// v_cb_gold_dynamics показывает и дельты, и уровень; зелёный прогон с одной выгрузкой
+// оставил бы половину колонок NULL). Битый файл или ноль точек — ошибка (fail-fast, урок
+// eia): тихий ноль оставил бы dagu зелёным, а ряды — без обновления.
 func (s *cbReservesStat) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
 	dir := s.dir
 	if dir == "" {
@@ -59,6 +70,23 @@ func (s *cbReservesStat) Import(ctx context.Context, conn driver.Conn) (count in
 	changesPath, holdingsPath, err := selectCbFiles(dir)
 	if err != nil {
 		return 0, fmt.Errorf("%s: поиск выгрузок в %s: %w", s.Name(), dir, err)
+	}
+
+	// Флаг DAG требует обе выгрузки. Ошибка наступает до разбора и до любого обращения к
+	// соединению: в сообщении каталог и перечень отсутствующих масок, чтобы на staging было
+	// видно, какие файлы не доехали.
+	if os.Getenv(wgcRequireDataEnv) == "1" {
+		var missing []string
+		if changesPath == "" {
+			missing = append(missing, cbChangesMask)
+		}
+		if holdingsPath == "" {
+			missing = append(missing, cbHoldingsMask)
+		}
+		if len(missing) > 0 {
+			return 0, fmt.Errorf("%s: %s=1, но в %s нет выгрузок: %s; положите файлы и повторите",
+				s.Name(), wgcRequireDataEnv, dir, strings.Join(missing, ", "))
+		}
 	}
 
 	if changesPath == "" && holdingsPath == "" {

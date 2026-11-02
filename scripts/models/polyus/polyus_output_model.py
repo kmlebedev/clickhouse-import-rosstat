@@ -66,9 +66,12 @@ OPR_YEARS = (2025, 2026, 2027)
 
 # Метрика выпуска. Для ОПР-переработки берётся АФФИНИРОВАННОЕ золото (`refined`),
 # а не `Total Dore gold output`: слиток — это то, что Полюс показывает в
-# производственных результатах Вернинского, и на групповом уровне сумма
-# сходится именно по `refined` (2025: 2790.6 против consolidated 2790.6,
-# тогда как `dore` даёт 2779.2). Разница 11.4 koz в 2025 — это ровно ОПР-выпуск.
+# производственных результатах Вернинского, и его групповая сумма совпадает с
+# консолидированной строкой той же метрики (FY2024: refined 2790.6 = consolidated
+# refined 2790.6; FY2025: refined 2529.3 = consolidated refined). `dore` тоже
+# сходится со своим consolidated (FY2024: 2935.8; FY2025: 2557.6), поэтому решает
+# не сходимость, а смысл: выручка — слиток. 11.4 koz — разница `dore`/`refined`
+# ТОЛЬКО у Вернинского FY2024 (242.2 − 230.8), а не групповой разрыв выпуска.
 REFINED_METRIC = "Total refined gold output"
 
 # TCC-прокси для ОПР-выпуска, USD/унц. Дословно как у Сухого Лога в Go-сиде
@@ -174,14 +177,19 @@ GO_SEED_SUKHOI_LOG_YEARS = go_seed_years()
 def output_sql(asset: str, year: int) -> str:
     """SQL для годового выпуска актива по метрике `REFINED_METRIC`, тыс. унц.
 
-    Предикат — тот же, что у `aisc.production_sql` (и, через
-    него, у `dcf/mine_plans_import.go`), с одной заменой метрики: один и тот
-    же факт не должен читаться двумя источниками двумя разными способами.
+    Год адресуется ТОЧНОЙ датой, как в `dcf/mine_plans_import.go` после #484:
+    годовое наблюдение в `databook_polyus` датировано 1 января СЛЕДУЮЩЕГО года
+    (FY2024 → 2025-01-01, FY2025 → 2026-01-01) по конвенции «первое число
+    месяца, следующего за концом периода». Поэтому `toYear(date) = 2025`
+    вернул бы FY2024, а `makeDate(year + 1, 1, 1)` читает ровно отчётный год.
+    У `aisc.production_sql` предикат остаётся `toYear(date)` — это
+    ИСТОРИЧЕСКИЙ предикат исполненного AISC-сида (follow-up), а не образец для
+    нового кода.
 
         SELECT argMax(value, date) AS v
         FROM databook_polyus FINAL
         WHERE table = '<ASSET>' AND name = '<REFINED_METRIC>'
-          AND data = 'ANNUAL' AND toYear(date) = <YEAR>
+          AND data = 'ANNUAL' AND date = makeDate(<YEAR> + 1, 1, 1)
         FORMAT JSON
 
     `FINAL` обязателен: `databook_polyus` — `ReplacingMergeTree` по
@@ -208,7 +216,7 @@ def output_sql(asset: str, year: int) -> str:
         f"WHERE table = {_quote(asset)}\n"
         f"  AND name = {_quote(REFINED_METRIC)}\n"
         "  AND data = 'ANNUAL'\n"
-        f"  AND toYear(date) = {year}\n"
+        f"  AND date = makeDate({year} + 1, 1, 1)\n"
         "FORMAT JSON"
     )
 
