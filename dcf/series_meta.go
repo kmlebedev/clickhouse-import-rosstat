@@ -39,7 +39,8 @@ const (
 		"за 2025 год (https://polyus.com/upload/iblock/d6b/godovoy_obzor_pao_polyus_za_2025_god.pdf) " +
 		"и презентацию «Ключевые проекты роста» (декабрь 2024, " +
 		"https://polyus.com/upload/iblock/f13/klyuchevye_proekty_rosta.pdf); per-asset факт добычи — " +
-		"databook_polyus (метрика 'Total Dore gold output', data='ANNUAL'), операционный датапак Полюса"
+		"databook_polyus (метрика 'Total refined gold output', data='ANNUAL', год — точной датой " +
+		"date = makeDate(year + 1, 1, 1) (FY2024 → 2025-01-01)), операционный датапак Полюса"
 
 	// minePlansSeriesUnit — единицы колонок строки mine_plans. Названы ВСЕ три, а не
 	// «разные»: у одного ряда (актива) единица меняется от колонки к колонке, и

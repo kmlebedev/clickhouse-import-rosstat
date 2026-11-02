@@ -1,0 +1,152 @@
+{
+  "repeat_2010": {
+    "gate": {
+      "challenger_run": "453bfef3-3582-46e9-b72f-b3a58cb15b5b",
+      "champion_run": "1bba8483-c367-452b-ab5b-76a330a81720",
+      "decision": "iterate",
+      "experiment": "cb_comp_88_groups",
+      "gate": {
+        "bootstrap": true,
+        "dm": true,
+        "mcs": false,
+        "robustness": true
+      },
+      "generated_at": "2026-11-01T09:05:58.522739+00:00",
+      "git_sha": "ec1d17bf39b90999f9686de6ac6fd980ce18b480",
+      "mcs": null,
+      "mode": "backtest",
+      "model": "combo3",
+      "primary": {
+        "bootstrap_high": 0.0,
+        "bootstrap_low": 0.0,
+        "bootstrap_p": 1.0,
+        "challenger_better": false,
+        "dm_p": 1.0,
+        "dm_stat": 0.0,
+        "folds": 54,
+        "note": "",
+        "promote": false,
+        "rmse_challenger": 0.16432658972448905,
+        "rmse_champion": 0.16432658972448905,
+        "significant_worse": false,
+        "window": "h1"
+      },
+      "primary_window": "h1",
+      "reason": "no_improvement",
+      "robustness": [
+        {
+          "bootstrap_high": 0.0,
+          "bootstrap_low": 0.0,
+          "bootstrap_p": 1.0,
+          "challenger_better": false,
+          "dm_p": 1.0,
+          "dm_stat": 0.0,
+          "folds": 54,
+          "note": "",
+          "promote": false,
+          "rmse_challenger": 0.4481471254010454,
+          "rmse_champion": 0.4481471254010454,
+          "significant_worse": false,
+          "window": "h3"
+        },
+        {
+          "bootstrap_high": 0.0,
+          "bootstrap_low": 0.0,
+          "bootstrap_p": 1.0,
+          "challenger_better": false,
+          "dm_p": 1.0,
+          "dm_stat": 0.0,
+          "folds": 54,
+          "note": "",
+          "promote": false,
+          "rmse_challenger": 0.868518498367878,
+          "rmse_champion": 0.868518498367878,
+          "significant_worse": false,
+          "window": "h6"
+        }
+      ],
+      "robustness_windows": [
+        "h3",
+        "h6"
+      ],
+      "schema_version": 1,
+      "unit": "pp"
+    },
+    "note": "одинаковый конфиг @2010 на staging-прогонах: проверка проводки, не промоушен"
+  },
+  "versions_2010_vs_2009": {
+    "gate": {
+      "challenger_run": "e885eaea-a528-42c5-9ae1-63b3be914832",
+      "champion_run": "1bba8483-c367-452b-ab5b-76a330a81720",
+      "decision": "iterate",
+      "experiment": "cb_comp_88_groups",
+      "gate": {
+        "bootstrap": true,
+        "dm": true,
+        "mcs": false,
+        "robustness": true
+      },
+      "generated_at": "2026-11-01T09:06:01.335516+00:00",
+      "git_sha": "ec1d17bf39b90999f9686de6ac6fd980ce18b480",
+      "mcs": null,
+      "mode": "backtest",
+      "model": "combo3",
+      "primary": {
+        "bootstrap_high": 0.003903185032234441,
+        "bootstrap_low": -0.0019811043177584975,
+        "bootstrap_p": 0.565,
+        "challenger_better": false,
+        "dm_p": 0.5592503012498945,
+        "dm_stat": 0.5876687299987621,
+        "folds": 54,
+        "note": "",
+        "promote": false,
+        "rmse_challenger": 0.16523960261042756,
+        "rmse_champion": 0.16432658972448905,
+        "significant_worse": false,
+        "window": "h1"
+      },
+      "primary_window": "h1",
+      "reason": "no_improvement",
+      "robustness": [
+        {
+          "bootstrap_high": 0.008515381982947323,
+          "bootstrap_low": -0.008441787599320905,
+          "bootstrap_p": 0.923,
+          "challenger_better": false,
+          "dm_p": 0.9199940985077906,
+          "dm_stat": 0.1009208645941869,
+          "folds": 54,
+          "note": "",
+          "promote": false,
+          "rmse_challenger": 0.4486189038385114,
+          "rmse_champion": 0.4481471254010454,
+          "significant_worse": false,
+          "window": "h3"
+        },
+        {
+          "bootstrap_high": 0.017385218768121935,
+          "bootstrap_low": -0.01487519268810511,
+          "bootstrap_p": 0.929,
+          "challenger_better": false,
+          "dm_p": 0.9357467707336691,
+          "dm_stat": 0.08100036345996728,
+          "folds": 54,
+          "note": "",
+          "promote": false,
+          "rmse_challenger": 0.8691873337223189,
+          "rmse_champion": 0.868518498367878,
+          "significant_worse": false,
+          "window": "h6"
+        }
+      ],
+      "robustness_windows": [
+        "h3",
+        "h6"
+      ],
+      "schema_version": 1,
+      "unit": "pp"
+    },
+    "note": "combo3 @2010 (champion) против @2009 (challenger), staging-прогоны; не промоушен"
+  }
+}
