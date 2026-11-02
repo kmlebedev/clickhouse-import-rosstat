@@ -266,10 +266,18 @@ class ReferenceWindowTest(unittest.TestCase):
         self.assertEqual(g.DEFAULT_VERSION, "2010")
         self.assertEqual(g.VERSION_PRESETS["2010"]["panel_start"], date(2010, 1, 1))
         self.assertEqual(g.VERSION_PRESETS["2010"]["fit_start"], date(2010, 1, 1))
+        self.assertEqual(g.VERSION_PRESETS["2010"]["leaf_fallback_start"], date(2010, 1, 1))
         self.assertEqual(g.VERSION_PRESETS["2009"]["panel_start"], date(2009, 1, 1))
         self.assertEqual(g.VERSION_PRESETS["2009"]["fit_start"], date(2008, 12, 1))
+        self.assertEqual(g.VERSION_PRESETS["2009"]["leaf_fallback_start"], date(2008, 12, 1))
         self.assertEqual(g.MAPPING_START, date(2010, 1, 1))
         self.assertEqual(g.LEAF_FALLBACK_START, date(2010, 1, 1))
+
+    def test_early_leaf_weights_snapshot(self):
+        early = g.load_early_leaf_weights()
+        self.assertEqual(set(early), {2008, 2009})
+        self.assertAlmostEqual(sum(early[2009][c] for c in ("1707", "1711", "1712", "1714", "1717", "1718")), 1.106)
+        self.assertAlmostEqual(sum(early[2009][c] for c in ("1701", "1702", "1715", "1716")), 1.105)
 
     def test_fst_reference_converts_log_to_pct(self):
         cpi = pd.DataFrame({
@@ -482,6 +490,18 @@ class FitRoutingTest(unittest.TestCase):
         out, sources = g.group_nsa(group, {"leaf": {m: 1.0 for m in months}}, {2010: {"111": 1.0}}, months)
         self.assertNotIn(date(2009, 1, 1), out)
         self.assertEqual(sources.get(date(2010, 1, 1)), "leaves")
+
+    def test_group_nsa_early_public_weights(self):
+        group = g.GroupMap(code="1710", name="Шоколад", method="aggregated",
+                           leaves_by_year={2010: {"1714": "leaf"}})
+        months = [date(2008, 12, 1), date(2009, 1, 1)]
+        product = {"leaf": {m: 0.5 for m in g.month_grid(date(2008, 1, 1), date(2009, 1, 1))}}
+        early = {2008: {"1714": 0.14}, 2009: {"1714": 0.142}}
+        out, sources = g.group_nsa(group, product, {2016: {"1714": 0.1}}, months,
+                                   fallback_first=date(2008, 12, 1), early_weights=early)
+        self.assertAlmostEqual(out[date(2008, 12, 1)], 0.5)
+        self.assertAlmostEqual(out[date(2009, 1, 1)], 0.5)
+        self.assertEqual(sources[date(2008, 12, 1)], "leaves")
 
     def test_select_spec_reports_window_and_tie(self):
         months = g.month_grid(date(2009, 1, 1), date(2019, 6, 1))
