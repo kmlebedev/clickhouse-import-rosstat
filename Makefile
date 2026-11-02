@@ -103,7 +103,7 @@ DAGU_VERSION     ?= v2.18.2
 MKDOCS_VERSION ?= 9.7.7
 MKDOCS := uv run --with mkdocs-material==$(MKDOCS_VERSION) --python 3.12 mkdocs
 
-.PHONY: all lint fmt vet test build run deps clean info ch-up ch-down ch-status ch-sql mlflow-up mlflow-down mlflow-status mlflow-export mlflow-backfill mlflow-backfill-test mlflow-preflight mlflow-register mlflow-promote mlflow-models ml-gate ml-gate-test ml-live-check ml-live-check-test dev-check env-check import mp-llm-eval archive-registry archive-list archive-restore mcp-run mcp-user mcp-check build-ingest run-ingest deploy-staging deploy-staging-binary deploy-staging-dagu deploy-staging-mcp deploy-staging-mlflow deploy-staging-preflight deploy-staging-smoke upgrade-staging mcp-user-staging staging-precheck grafana-build grafana-validate grafana-up grafana-down grafana-deploy-test grafana-deploy-staging grafana-provision-staging grafana-check grafana-test-token grafana-provision-alerting-staging key-rate-model key-rate-cbr-rule key-rate-cbr-rule-test key-rate-scenario-fan key-rate-scenario-fan-test key-rate-scenario-fan-v2 key-rate-scenario-fan-v2-test key-rate-scenario-fan-v3 key-rate-scenario-fan-v3-test key-rate-cpi-v3-experiment key-rate-cpi-v3-experiment-test cpi-live3-horizons cpi-live3-horizons-test shock-classifier shock-classifier-test key-rate-llm-forecast key-rate-forecast-log cpi-nowcast cpi-monthly cpi-monthly-v3 cpi-monthly-v3-test cpi-monthly-v3-public cpi-monthly-v3-public-test cpi-monthly-industry cpi-monthly-industry-test cpi-public-audit cpi-public-audit-test cpi-weekly-panel cpi-weekly-panel-test weekly-core-proxy weekly-core-proxy-test cpi-weekly-aggregate cpi-weekly-aggregate-test cpi-v4-leaderboard cpi-v4-leaderboard-test cpi-v4-grid cpi-v4-grid-test cpi-v4-h2o cpi-v4-h2o-test cpi-core-nnls cpi-core-nnls-test cpi-v4-h2 cpi-v4-h2-test cpi-v4-core cpi-v4-core-test cpi-sa-reconciliation cpi-sa-reconciliation-test cpi-asof-test cpi-weekly-sa-asof cpi-weekly-sa-asof-test cpi-two-stage-targets-test cpi-two-stage-folds cpi-two-stage-folds-test cpi-two-stage-s1 cpi-two-stage-s1-test cb-comp-data-reconcile cb-comp-data-reconcile-test cpi-two-stage-cb-comp cpi-two-stage-cb-comp-test cpi-two-stage-w2 cpi-two-stage-w2-test weekly-core-components weekly-core-components-test cpi-pipeline-stage1 cpi-pipeline-stage1-test cpi-pipeline-stage2 cpi-pipeline-stage2-test cpi-pipeline-sa-test publication-calendar-test cb-comp-parity cb-comp-parity-test cb-comp-live-bottomup cb-comp-live-bottomup-test cb-comp-live-en cb-comp-live-en-test cb-comp-h1-bs-combo cb-comp-h1-bs-combo-test cb-comp-h1-weekly cb-comp-h1-weekly-test cb-comp-h1-weekly-ex cb-comp-h1-weekly-ex-test cb-comp-h1-shadow-robustness cb-comp-h1-shadow-forecast cb-comp-h1-shadow-test cb-comp-h1-shadow-mlflow cb-comp-h1-shadow-mlflow-test cb-comp-h3-h6-var cb-comp-h3-h6-var-test cb-comp-tlive-target cb-comp-tlive-target-test cb-comp-88-live-gate cb-comp-88-live-gate-test cb-comp-per-code-review cb-comp-per-code-review-test cb-comp-per-code-review-books cb-comp-per-code-review-x13 cb-comp-groups-panel cb-comp-groups-panel-test cb-comp-live cb-comp-live-test cb-comp-live-compare cb-comp-proxy ppi-sa-weights-panel ppi-sa-weights-panel-test ppi-sa-parity ppi-sa-parity-test ppi-sa-text-anchors ppi-sa-text-anchors-test ppi-sa-industry ppi-sa-industry-test ppi-monthly-forecast ppi-monthly-forecast-test edisclosure-login edisclosure-collect docs-check docs-build docs-serve cb-comp-per-code-reconstruction cb-comp-per-code-reconstruction-test
+.PHONY: all lint fmt vet test build run deps clean info ch-up ch-down ch-status ch-sql mlflow-up mlflow-down mlflow-status mlflow-export mlflow-backfill mlflow-backfill-test mlflow-preflight mlflow-register mlflow-promote mlflow-models ml-gate ml-gate-test ml-live-check ml-live-check-test dev-check env-check import mp-llm-eval archive-registry archive-list archive-restore mcp-run mcp-user mcp-check mcp-auth-test build-ingest run-ingest deploy-staging deploy-staging-binary deploy-staging-dagu deploy-staging-mcp deploy-staging-mlflow deploy-staging-preflight deploy-staging-smoke upgrade-staging mcp-user-staging staging-precheck grafana-build grafana-validate grafana-up grafana-down grafana-deploy-test grafana-deploy-staging grafana-provision-staging grafana-check grafana-test-token grafana-provision-alerting-staging key-rate-model key-rate-cbr-rule key-rate-cbr-rule-test key-rate-scenario-fan key-rate-scenario-fan-test key-rate-scenario-fan-v2 key-rate-scenario-fan-v2-test key-rate-scenario-fan-v3 key-rate-scenario-fan-v3-test key-rate-cpi-v3-experiment key-rate-cpi-v3-experiment-test cpi-live3-horizons cpi-live3-horizons-test shock-classifier shock-classifier-test key-rate-llm-forecast key-rate-forecast-log cpi-nowcast cpi-monthly cpi-monthly-v3 cpi-monthly-v3-test cpi-monthly-v3-public cpi-monthly-v3-public-test cpi-monthly-industry cpi-monthly-industry-test cpi-public-audit cpi-public-audit-test cpi-weekly-panel cpi-weekly-panel-test weekly-core-proxy weekly-core-proxy-test cpi-weekly-aggregate cpi-weekly-aggregate-test cpi-v4-leaderboard cpi-v4-leaderboard-test cpi-v4-grid cpi-v4-grid-test cpi-v4-h2o cpi-v4-h2o-test cpi-core-nnls cpi-core-nnls-test cpi-v4-h2 cpi-v4-h2-test cpi-v4-core cpi-v4-core-test cpi-sa-reconciliation cpi-sa-reconciliation-test cpi-asof-test cpi-weekly-sa-asof cpi-weekly-sa-asof-test cpi-two-stage-targets-test cpi-two-stage-folds cpi-two-stage-folds-test cpi-two-stage-s1 cpi-two-stage-s1-test cb-comp-data-reconcile cb-comp-data-reconcile-test cpi-two-stage-cb-comp cpi-two-stage-cb-comp-test cpi-two-stage-w2 cpi-two-stage-w2-test weekly-core-components weekly-core-components-test cpi-pipeline-stage1 cpi-pipeline-stage1-test cpi-pipeline-stage2 cpi-pipeline-stage2-test cpi-pipeline-sa-test publication-calendar-test cb-comp-parity cb-comp-parity-test cb-comp-live-bottomup cb-comp-live-bottomup-test cb-comp-live-en cb-comp-live-en-test cb-comp-h1-bs-combo cb-comp-h1-bs-combo-test cb-comp-h1-weekly cb-comp-h1-weekly-test cb-comp-h1-weekly-ex cb-comp-h1-weekly-ex-test cb-comp-h1-shadow-robustness cb-comp-h1-shadow-forecast cb-comp-h1-shadow-test cb-comp-h1-shadow-mlflow cb-comp-h1-shadow-mlflow-test cb-comp-h3-h6-var cb-comp-h3-h6-var-test cb-comp-tlive-target cb-comp-tlive-target-test cb-comp-88-live-gate cb-comp-88-live-gate-test cb-comp-per-code-review cb-comp-per-code-review-test cb-comp-per-code-review-books cb-comp-per-code-review-x13 cb-comp-groups-panel cb-comp-groups-panel-test cb-comp-live cb-comp-live-test cb-comp-live-compare cb-comp-proxy ppi-sa-weights-panel ppi-sa-weights-panel-test ppi-sa-parity ppi-sa-parity-test ppi-sa-text-anchors ppi-sa-text-anchors-test ppi-sa-industry ppi-sa-industry-test ppi-monthly-forecast ppi-monthly-forecast-test edisclosure-login edisclosure-collect docs-check docs-build docs-serve cb-comp-per-code-reconstruction cb-comp-per-code-reconstruction-test
 
 all: lint test build build-ingest
 
@@ -1105,6 +1105,10 @@ mcp-check:
 	CLICKHOUSE_USER=$(MCP_USER) CLICKHOUSE_DATABASE=default MCP_VERSION=$(MCP_VERSION) \
 	uv run --with mcp-clickhouse==$(MCP_VERSION) --with mcp --python $(MCP_PY) python scripts/mcp_check.py
 
+# Офлайн-тесты Google OAuth allowlist-провайдера (без сети и без ClickHouse).
+mcp-auth-test:
+	uv run --with mcp-clickhouse==$(MCP_VERSION) --python $(MCP_PY) python deploy/staging/rosstat_mcp_auth_test.py -v
+
 # Проверки перед деплоем: env-файл на хосте существует, ClickHouse отвечает.
 # Секреты не читаются и не печатаются: проверяется только наличие файла.
 staging-precheck:
@@ -1188,14 +1192,25 @@ deploy-staging-dagu: staging-precheck
 	ssh $(STAGING_HOST) 'systemctl daemon-reload'
 	@$(MAKE) deploy-staging-dagu-base --no-print-directory
 
-# mcp-clickhouse: юнит + прогрев кэша uv (пакет разрешается при старте сервиса).
+# mcp-clickhouse: юнит, OAuth allowlist-провайдер + прогрев кэша uv.
 # Отдельного «скачивания» нет: uv разрешает пакет по пину MCP_VERSION.
 deploy-staging-mcp: staging-precheck
 	ssh $(STAGING_HOST) 'install -d -m 755 $(STAGING_MCP_LIB_DIR)'
 	scp deploy/staging/mcp_clickhouse_tls.py $(STAGING_HOST):$(STAGING_MCP_LIB_DIR)/mcp_clickhouse_tls.py
+	scp deploy/staging/rosstat_mcp_auth.py $(STAGING_HOST):$(STAGING_MCP_LIB_DIR)/rosstat_mcp_auth.py
 	scp deploy/staging/mcp-clickhouse.service $(STAGING_HOST):/etc/systemd/system/mcp-clickhouse.service
 	@ssh $(STAGING_HOST) 'test -f /etc/letsencrypt/live/$(MCP_PUBLIC_HOST)/fullchain.pem && echo "OK   сертификат $(MCP_PUBLIC_HOST) на месте"' || { echo "FAIL нет сертификата $(MCP_PUBLIC_HOST): make deploy-staging-mcp-cert"; exit 1; }
 	@ssh $(STAGING_HOST) 'grep -q "^CLICKHOUSE_MCP_ALLOWED_HOSTS=.*$(MCP_PUBLIC_HOST):$(MCP_PUBLIC_PORT)" $(STAGING_ENV_FILE) && echo "OK   CLICKHOUSE_MCP_ALLOWED_HOSTS содержит $(MCP_PUBLIC_HOST):$(MCP_PUBLIC_PORT)"' || { echo "FAIL в $(STAGING_ENV_FILE) нет $(MCP_PUBLIC_HOST):$(MCP_PUBLIC_PORT) в CLICKHOUSE_MCP_ALLOWED_HOSTS (см. env.example)"; exit 1; }
+	@ssh $(STAGING_HOST) 'set -a; . $(STAGING_ENV_FILE); set +a; \
+		missing=""; \
+		for v in FASTMCP_SERVER_AUTH FASTMCP_SERVER_AUTH_GOOGLE_CLIENT_ID FASTMCP_SERVER_AUTH_GOOGLE_CLIENT_SECRET FASTMCP_SERVER_AUTH_GOOGLE_BASE_URL FASTMCP_SERVER_AUTH_GOOGLE_JWT_SIGNING_KEY ROSSTAT_MCP_ALLOWED_GOOGLE_EMAILS CLICKHOUSE_MCP_ALLOWED_ORIGINS; do \
+			eval "val=\$$v"; [ -n "$$val" ] || missing="$$missing $$v"; \
+		done; \
+		[ -z "$$missing" ] && echo "OK   OAuth-переменные заданы" || { echo "FAIL не заданы:$$missing — mcp-clickhouse не стартует в OAuth-режиме"; exit 1; }'
+	@ssh $(STAGING_HOST) 'set -a; . $(STAGING_ENV_FILE); set +a; \
+		[ "$$FASTMCP_SERVER_AUTH" = "rosstat_mcp_auth.RosstatGoogleProvider" ] && echo "OK   FASTMCP_SERVER_AUTH = RosstatGoogleProvider" || { echo "FAIL FASTMCP_SERVER_AUTH должен быть rosstat_mcp_auth.RosstatGoogleProvider"; exit 1; }'
+	@ssh $(STAGING_HOST) 'set -a; . $(STAGING_ENV_FILE); set +a; \
+		[ -z "$$CLICKHOUSE_MCP_AUTH_TOKEN" ] && echo "OK   legacy CLICKHOUSE_MCP_AUTH_TOKEN не задан" || { echo "FAIL CLICKHOUSE_MCP_AUTH_TOKEN всё ещё задан — OAuth и static bearer взаимоисключающие"; exit 1; }'
 	ssh $(STAGING_HOST) 'systemctl daemon-reload'
 	@echo "прогрев кэша uv (скачивание mcp-clickhouse==$(MCP_VERSION))..."
 	@ssh $(STAGING_HOST) '$(STAGING_BIN_DIR)/uv tool run --from mcp-clickhouse==$(MCP_VERSION) python -c "pass" >/dev/null 2>&1 || true'
@@ -1275,15 +1290,23 @@ deploy-staging: deploy-staging-binary deploy-staging-dagu deploy-staging-data de
 		echo "После исправления повторите: make deploy-staging"; exit 1; }
 	@echo "Готово. Далее: make mcp-user-staging (если kimi_reader ещё не создан)."
 
-# Проверки ДО включения сервисов: бинарь исполняем, DAG-файлы на месте, токен непуст.
+# Проверки ДО включения сервисов: бинарь исполняем, DAG-файлы на месте, OAuth-переменные непусты.
 # Сервисы ещё не запущены, поэтому их проверяет deploy-staging-smoke.
-# Токен проверяется на непустоту; значение не печатается.
+# Значения переменных не печатаются: проверяется только непустота.
 deploy-staging-preflight:
 	@ssh $(STAGING_HOST) 'test -x $(STAGING_BIN_DIR)/clickhouse-import-rosstat && echo "OK   бинарь импортёра исполняем"' || { echo "FAIL бинарь отсутствует или не исполняем"; exit 1; }
 	@ssh $(STAGING_HOST) 'test -x $(STAGING_BIN_DIR)/dagu && echo "OK   dagu исполняем"' || { echo "FAIL dagu отсутствует или не исполняем"; exit 1; }
 	@ssh $(STAGING_HOST) 'test -f /root/dagu/cbr.yaml && echo "OK   DAG-файлы на месте"' || { echo "FAIL /root/dagu/cbr.yaml отсутствует"; exit 1; }
 	@ssh $(STAGING_HOST) 'set -a; . $(STAGING_ENV_FILE); set +a; \
-		test -n "$$CLICKHOUSE_MCP_AUTH_TOKEN" && echo "OK   CLICKHOUSE_MCP_AUTH_TOKEN задан" || { echo "FAIL CLICKHOUSE_MCP_AUTH_TOKEN пуст — mcp-clickhouse не стартует в HTTP-режиме"; exit 1; }'
+		missing=""; \
+		for v in FASTMCP_SERVER_AUTH FASTMCP_SERVER_AUTH_GOOGLE_CLIENT_ID FASTMCP_SERVER_AUTH_GOOGLE_CLIENT_SECRET FASTMCP_SERVER_AUTH_GOOGLE_BASE_URL FASTMCP_SERVER_AUTH_GOOGLE_JWT_SIGNING_KEY ROSSTAT_MCP_ALLOWED_GOOGLE_EMAILS CLICKHOUSE_MCP_ALLOWED_ORIGINS; do \
+			eval "val=\$$v"; [ -n "$$val" ] || missing="$$missing $$v"; \
+		done; \
+		[ -z "$$missing" ] && echo "OK   OAuth-переменные заданы" || { echo "FAIL не заданы:$$missing — mcp-clickhouse не стартует в OAuth-режиме"; exit 1; }'
+	@ssh $(STAGING_HOST) 'set -a; . $(STAGING_ENV_FILE); set +a; \
+		[ "$$FASTMCP_SERVER_AUTH" = "rosstat_mcp_auth.RosstatGoogleProvider" ] && echo "OK   FASTMCP_SERVER_AUTH = RosstatGoogleProvider" || { echo "FAIL FASTMCP_SERVER_AUTH должен быть rosstat_mcp_auth.RosstatGoogleProvider"; exit 1; }'
+	@ssh $(STAGING_HOST) 'set -a; . $(STAGING_ENV_FILE); set +a; \
+		[ -z "$$CLICKHOUSE_MCP_AUTH_TOKEN" ] && echo "OK   legacy CLICKHOUSE_MCP_AUTH_TOKEN не задан" || { echo "FAIL CLICKHOUSE_MCP_AUTH_TOKEN всё ещё задан — OAuth и static bearer взаимоисключающие"; exit 1; }'
 	@ssh $(STAGING_HOST) 'grep -q "ROSSTAT_IMPORT_BIN" /root/.config/dagu/base.yaml && echo "OK   base.yaml задаёт ROSSTAT_IMPORT_BIN"' || { echo "FAIL base.yaml не задаёт ROSSTAT_IMPORT_BIN — шаги dagu выполнят пустую команду"; exit 1; }
 	@ssh $(STAGING_HOST) 'test -f /root/dagu/certs/russian_trusted_root_ca_pem.crt && test -f /root/dagu/certs/litessl_rsa_ca_2025.pem && echo "OK   сертификаты РФ и LiteSSL на месте"' || { echo "FAIL нет сертификатов в /root/dagu/certs — rosstat.gov.ru/sberindex.ru упадут на x509"; exit 1; }
 	@ssh $(STAGING_HOST) 'set -a; . $(STAGING_ENV_FILE); set +a; \
@@ -1322,14 +1345,19 @@ deploy-staging-smoke:
 		echo "  Частая причина на первом развёртывании: пользователь kimi_reader ещё не создан."; \
 		echo "  Проверьте: systemctl status mcp-clickhouse; journalctl -u mcp-clickhouse -n 50"; \
 		echo "  Создать пользователя: make mcp-user-staging"; exit 1; }
-	@echo "--- smoke: MCP требует токен ---"
+	@echo "--- smoke: MCP требует OAuth ---"
 	@ssh $(STAGING_HOST) 'set -a; . $(STAGING_ENV_FILE); set +a; \
-		code=$$(curl -s -o /dev/null -w "%{http_code}" $(MCP_SMOKE_CURL) -X POST $(MCP_PUBLIC_URL)/mcp -H "Content-Type: application/json" -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\"}"); \
-		[ "$$code" = "401" ] && echo "OK   без токена → 401" || { echo "FAIL без токена получен $$code, ожидался 401"; exit 1; }'
-	@echo "--- smoke: MCP с токеном ---"
-	@ssh $(STAGING_HOST) 'set -a; . $(STAGING_ENV_FILE); set +a; \
-		body=$$(curl -s -m 10 $(MCP_SMOKE_CURL) -X POST $(MCP_PUBLIC_URL)/mcp -H "Content-Type: application/json" -H "Authorization: Bearer $$CLICKHOUSE_MCP_AUTH_TOKEN" -H "Accept: application/json, text/event-stream" -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}"); \
-		echo "$$body" | grep -q "Missing session ID" && echo "OK   MCP отвечает с токеном" || { echo "FAIL MCP с токеном ответил: $$body"; exit 1; }'
+		headers=$$(mktemp); \
+		code=$$(curl -sS -D "$$headers" -o /dev/null -w "%{http_code}" $(MCP_SMOKE_CURL) -X POST $(MCP_PUBLIC_URL)/mcp -H "Content-Type: application/json" -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\"}"); \
+		[ "$$code" = "401" ] && echo "OK   без токена → 401" || { echo "FAIL без токена получен $$code, ожидался 401"; rm -f "$$headers"; exit 1; }; \
+		grep -qi "^www-authenticate:.*resource_metadata" "$$headers" && echo "OK   WWW-Authenticate указывает resource_metadata" || { echo "FAIL в WWW-Authenticate нет resource_metadata"; cat "$$headers"; rm -f "$$headers"; exit 1; }; \
+		rm -f "$$headers"'
+	@echo "--- smoke: OAuth metadata ---"
+	@ssh $(STAGING_HOST) 'for p in .well-known/oauth-protected-resource .well-known/oauth-authorization-server; do \
+		code=$$(curl -s -o /dev/null -w "%{http_code}" $(MCP_SMOKE_CURL) "$(MCP_PUBLIC_URL)/$$p"); \
+		[ "$$code" = "200" ] && echo "OK   $$p = 200" || { echo "FAIL $$p = $$code"; exit 1; }; \
+	done'
+	@echo "NOTE полный OAuth-вход проверяется вручную в браузере (Google allowlist)"
 	@echo "--- smoke: mlflow /health ---"
 	@ssh $(STAGING_HOST) 'systemctl is-active --quiet mlflow || { \
 		echo "FAIL mlflow не запущен: systemctl status mlflow; journalctl -u mlflow -n 50"; exit 1; }; \
