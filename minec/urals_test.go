@@ -199,8 +199,8 @@ func TestMinecCollectRejectsEmptyFirstPage(t *testing.T) {
 	}
 }
 
-// TestMinecCollectDuplicateMonth — один месяц двумя разными ссылками: источник
-// противоречит сам себе, писать точку наугад нельзя.
+// TestMinecCollectDuplicateMonth — один месяц двумя разными ссылками: берётся
+// первая ссылка листинга, ряд не блокируется, точка месяца одна.
 func TestMinecCollectDuplicateMonth(t *testing.T) {
 	dup := bytes.Replace(
 		readFixture(t, "materials_p1.html"),
@@ -210,13 +210,20 @@ func TestMinecCollectDuplicateMonth(t *testing.T) {
 	)
 	pages := testPageSet(t, map[int]string{1: "materials_p1.html"})
 	pages[minecPageURL(testListingURL, 2)] = dup
+	pages[minecPageURL(testListingURL, 3)] = readFixture(t, "materials_end.html")
 	installPages(t, pages)
-	_, err := minecCollect(testListingURL, mustMonth(t, 2026, time.January))
-	if err == nil {
-		t.Fatal("дубль месяца с разными ссылками разобран без ошибки")
+	points, err := minecCollect(testListingURL, mustMonth(t, 2026, time.January))
+	if err != nil {
+		t.Fatalf("дубль месяца заблокировал импорт: %v", err)
 	}
-	if !strings.Contains(err.Error(), "встречается дважды") {
-		t.Errorf("ошибка не называет дубль: %v", err)
+	months := make(map[time.Time]int)
+	for _, p := range points {
+		months[p.date]++
+	}
+	for m, n := range months {
+		if n != 1 {
+			t.Errorf("месяц %s записан %d раз", m.Format("2006-01"), n)
+		}
 	}
 }
 

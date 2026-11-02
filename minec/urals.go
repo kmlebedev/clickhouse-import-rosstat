@@ -149,7 +149,7 @@ func minecCollect(listingURL string, start time.Time) ([]minecPoint, error) {
 	seen := make(map[time.Time]string)
 	reachedEnd := false
 	for page := 1; page <= minecMaxPages; page++ {
-		body, err := minecGetPage(minecPageURL(listingURL, page))
+		body, err := minecFetch(minecPageURL(listingURL, page))
 		if err != nil {
 			return nil, fmt.Errorf("%s: листинг, страница %d: %w", minecImporterName, page, err)
 		}
@@ -176,7 +176,9 @@ func minecCollect(listingURL string, start time.Time) ([]minecPoint, error) {
 			}
 			if prev, ok := seen[link.month]; ok {
 				if prev != link.href {
-					return nil, fmt.Errorf("%s: месяц %s встречается дважды: %s и %s", minecImporterName, link.month.Format("2006-01"), prev, link.href)
+					// Исправленная публикация месяца под другим слагом не должна
+					// блокировать ряд: берём первую (более свежую) ссылку листинга.
+					log.Warnf("%s: месяц %s встречается дважды: %s и %s; берётся первая", minecImporterName, link.month.Format("2006-01"), prev, link.href)
 				}
 				continue
 			}
@@ -190,7 +192,6 @@ func minecCollect(listingURL string, start time.Time) ([]minecPoint, error) {
 		if !oldest.IsZero() && oldest.Before(start) {
 			break
 		}
-		minecSleep()
 	}
 	if start.IsZero() && !reachedEnd {
 		// Бэкфилл упёрся в cap, не дойдя до пустой страницы: это не «нет данных»,
@@ -208,8 +209,7 @@ func minecFetchArticle(listingURL string, link minecLink) (minecPoint, error) {
 	if err != nil {
 		return minecPoint{}, err
 	}
-	minecSleep()
-	body, err := minecGetPage(articleURL)
+	body, err := minecFetch(articleURL)
 	if err != nil {
 		return minecPoint{}, fmt.Errorf("%s: статья %s: %w", minecImporterName, articleURL, err)
 	}
@@ -274,9 +274,11 @@ func minecPageURL(listingURL string, page int) string {
 	return fmt.Sprintf("%s%spage=%d", listingURL, sep, page)
 }
 
-// minecSleep — пауза между запросами; вынесена, чтобы тест мог её отключить.
-func minecSleep() {
+// minecFetch — единственная точка исходящих запросов: пауза перед каждым,
+// чтобы бэкфилл не забивал источник; тест отключает её через minecPagePause.
+func minecFetch(url string) ([]byte, error) {
 	if minecPagePause > 0 {
 		time.Sleep(minecPagePause)
 	}
+	return minecGetPage(url)
 }

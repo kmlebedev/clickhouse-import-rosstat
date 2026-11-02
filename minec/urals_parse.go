@@ -29,16 +29,20 @@ const (
 	minecLinkSelector    = `a[href*="` + minecSectionPath + `"][title]`
 	minecTitleSelector   = "header.e-title.e-title_main"
 	minecContentSelector = "section.e-material__content"
+	// minecMaxPrice — верхняя граница разумной цены, долл. за баррель: значение
+	// выше — сбой разбора, а не рынок.
+	minecMaxPrice = 1000.0
 )
 
 var (
 	// minecTitleMonthRe — «за октябрь 2026 года»; регистр и «ё» нормализуются
 	// до применения.
-	minecTitleMonthRe = regexp.MustCompile(`за\s+([а-я]+)\s+(\d{4})`)
-	// minecPriceRe — «101,46 долл. США за баррель». Разряды с пробелом/NBSP
-	// допускаются на случай будущих значений в тысячах, порядок «долл. США за
-	// баррель» закреплён 104 живыми страницами 2018–2026.
-	minecPriceRe = regexp.MustCompile(`(\d{1,3}(?:[ \x{00a0}\x{202f}]\d{3})*,\d+)\s*долл\.\s*США\s+за\s+баррель`)
+	minecTitleMonthRe = regexp.MustCompile(`(?:^|\s)за\s+([а-я]+)\s+(\d{4})`)
+	// minecPriceRe — «101,46 долл. США за баррель». Левая граница — не цифра: без
+	// неё «1101,46» читалось бы как «101,46». Разрядов тысяч нет: цена нефти в
+	// долларах за баррель — двух-трёхзначное число (minecMaxPrice страхует выше).
+	// Порядок «долл. США за баррель» закреплён 104 живыми страницами 2018–2026.
+	minecPriceRe = regexp.MustCompile(`(?:^|\D)(\d{1,3},\d+)\s*долл\.\s*США\s+за\s+баррель`)
 )
 
 // minecMonths — русские месяцы в формах, которые встречаются в заголовках
@@ -165,7 +169,7 @@ func minecParsePrice(raw string) (float64, error) {
 	if err != nil {
 		return 0, fmt.Errorf("значение %q не число: %w", raw, err)
 	}
-	if price <= 0 || math.IsNaN(price) || math.IsInf(price, 0) {
+	if price <= 0 || price > minecMaxPrice || math.IsNaN(price) || math.IsInf(price, 0) {
 		return 0, fmt.Errorf("значение %q вне допустимого диапазона", raw)
 	}
 	return price, nil

@@ -195,14 +195,12 @@ func TestMinecParseTitleMonth(t *testing.T) {
 	}
 }
 
-// TestMinecParsePrice — десятичная запятая и разделители разрядов; NaN и
-// отрицательное значение — ошибка.
+// TestMinecParsePrice — десятичная запятая; нулевое, отрицательное и выше
+// minecMaxPrice значение — ошибка.
 func TestMinecParsePrice(t *testing.T) {
 	checks := map[string]float64{
-		"101,46":        101.46,
-		"1 234,56":      1234.56,
-		"1\u00a0234,56": 1234.56,
-		"40,95":         40.95,
+		"101,46": 101.46,
+		"40,95":  40.95,
 	}
 	for raw, want := range checks {
 		got, err := minecParsePrice(raw)
@@ -214,10 +212,33 @@ func TestMinecParsePrice(t *testing.T) {
 			t.Errorf("%q: %v, ожидалось %v", raw, got, want)
 		}
 	}
-	for _, raw := range []string{"0,00", "-1,00", "abc"} {
+	for _, raw := range []string{"0,00", "-1,00", "abc", "1234,56"} {
 		if _, err := minecParsePrice(raw); err == nil {
 			t.Errorf("%q: ошибки нет", raw)
 		}
+	}
+}
+
+// TestMinecPriceRegexBoundary — левая граница цены: число слева не «съедается»
+// в неверную цену, а четырёхзначное значение не матчится вовсе.
+func TestMinecPriceRegexBoundary(t *testing.T) {
+	cases := map[string]string{
+		"в 2026 101,46 долл. США за баррель":   "101,46",
+		"составила 64,14 долл. США за баррель": "64,14",
+		"1101,46 долл. США за баррель":         "",
+	}
+	for text, want := range cases {
+		m := minecPriceRe.FindStringSubmatch(text)
+		got := ""
+		if m != nil {
+			got = m[1]
+		}
+		if got != want {
+			t.Errorf("%q: цена %q, ожидалась %q", text, got, want)
+		}
+	}
+	if m := minecTitleMonthRe.FindStringSubmatch("база данных 2024"); m != nil {
+		t.Errorf("«за» внутри слова принято за предлог: %v", m)
 	}
 }
 
