@@ -225,7 +225,7 @@ make mlflow-down
 
 ### Подключение как плагин LLM-клиента
 
-LLM-плагин [`rosstat-mcp`](https://github.com/kmlebedev/rosstat-mcp) живёт в отдельном репозитории и даёт read-only MCP: сервер `rosstat-staging` — `https://mcp.selfinvesting.ru:8443/mcp` (витрины `v_*` staging, включая point-in-time слой) — и один скил `rosstat-sql`: как найти ряд и писать оптимальные запросы ClickHouse к этим витринам (с версии 0.4.0, `infra/5.11`). Ролевые скилы [`.kimi-code/skills/`](.kimi-code/skills/) — для сессий, работающих в этом репозитории, и плагином не публикуются.
+LLM-плагин [`rosstat-mcp`](https://github.com/kmlebedev/rosstat-mcp) живёт в отдельном репозитории и даёт read-only MCP: сервер `rosstat-staging` — `https://mcp.selfinvesting.ru:8443/mcp` (витрины `v_*` staging, включая point-in-time слой) — и один скил `rosstat-sql`: как найти ряд и писать оптимальные запросы ClickHouse к этим витринам (с версии 0.4.0, `infra/5.11`; с 0.5.0 — Google OAuth + allowlist). Ролевые скилы [`.kimi-code/skills/`](.kimi-code/skills/) — для сессий, работающих в этом репозитории, и плагином не публикуются.
 
 | Клиент | Установка |
 |---|---|
@@ -235,7 +235,7 @@ LLM-плагин [`rosstat-mcp`](https://github.com/kmlebedev/rosstat-mcp) жи�
 | Qwen Code | `qwen extensions install kmlebedev/rosstat-mcp` |
 | Cursor | `/add-plugin https://github.com/kmlebedev/rosstat-mcp` |
 
-Токен выдаёт владелец; положите его в переменную окружения `ROSSTAT_MCP_TOKEN` до запуска клиента (в Cursor — в переменную плагина `ROSSTAT_MCP_TOKEN`). Старый плагин `clickhouse-import-rosstat` (скилы + MCP, установка всего репозитория) больше не публикуется — удаление и миграция описаны в README плагина. Локальный dev-доступ к ClickHouse по-прежнему даёт [`.kimi-code/mcp.json`](.kimi-code/mcp.json) (сервер `clickhouse`, stdio).
+Доступ выдаётся по Google-аккаунту: владелец добавляет email в `ROSSTAT_MCP_ALLOWED_GOOGLE_EMAILS`, плагин 0.5.0+ входит через Google OAuth (Kimi Code 2.2.0+; остальным клиентам нужна поддержка OAuth); токен `ROSSTAT_MCP_TOKEN` и старые версии плагина больше не работают (cutover на `:8443`). Старый плагин `clickhouse-import-rosstat` (скилы + MCP, установка всего репозитория) больше не публикуется — удаление и миграция описаны в README плагина. Локальный dev-доступ к ClickHouse по-прежнему даёт [`.kimi-code/mcp.json`](.kimi-code/mcp.json) (сервер `clickhouse`, stdio).
 
 Полный набор целей, Python-тесты, зависимости и CI — [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
