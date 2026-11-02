@@ -32,7 +32,7 @@
 ### T4. Обход и запись (`minec/urals.go`)
 
 - `minecStartMonth(ctx, conn)`: `max(date)` по `source='minec'`; env `MINEC_URALS_FROM` (YYYY-MM) переопределяет; пустая таблица → нулевая дата.
-- `minecCollect(ctx, listingURL, start)`: страницы `?page=N` (cap 60, пауза 300 мс, `util.GetFileBytesChecked`), стоп по пустой странице (`page > 1`) и по минимальному месяцу < `start`; пропуск старых ссылок; дубль месяца — ошибка; GET статьи → `minecParseArticle` → сверка месяца с листингом.
+- `minecCollect(ctx, listingURL, start)`: страницы `?page=N` (cap 60, пауза 300 мс перед каждым запросом, `util.GetFileBytesChecked`), стоп по пустой странице (`page > 1`) и по минимальному месяцу < `start`; пропуск старых ссылок; дубль месяца — предупреждение, берётся первая ссылка; GET статьи → `minecParseArticle` → сверка месяца с листингом.
 - `minecInsert(ctx, conn, points)`: один `PrepareBatch`, `Append` с проверкой, `Abort` на ошибке, `Send`.
 - `minecUralsCraw` собирает шаги, логирует `Imported %d rows of %s`; пустая дельта — `log.Infof` и `0`, без ошибки.
 
@@ -46,7 +46,7 @@
 ### T6. Тесты
 
 - `urals_parse_test.go`: листинг (4 карточки, 2 Urals, месяцы), статья вместо листинга — ошибка, три эры статьи (spot 68.60 / 64.14 / 101.46), негатив offshore, контракт каталога.
-- `urals_test.go`: `httptest` для `minecCollect` (пагинация, стоп, гейт, счётчик запросов, дубль месяца — ошибка), `appendRecorder` для `minecInsert`, `minecStartMonth` на фейковом conn (env/месяц+1).
+- `urals_test.go`: `httptest` для `minecCollect` (пагинация, стоп, гейт, счётчик запросов, дубль месяца — предупреждение, берётся первая ссылка), `appendRecorder` для `minecInsert`, `minecStartMonth` на фейковом conn (env/месяц+1).
 - `importers_test.go`: энфорсер §8.3 (префикс, литерал таблицы `macro_series`, `Name() != table`, уникальность, регистрация, dagu-регулярка в обе стороны, отсутствие publication-объявления).
 
 ### T7. Расписание и документация

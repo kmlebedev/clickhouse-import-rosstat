@@ -1761,11 +1761,11 @@ async def check(params, server_log):
                                      f"{minec_view_rows[0].get('min_dt')} … {minec_view_rows[0].get('max_dt')}")
             minec_view_ok = (
                 bool(minec_view_rows)
-                and minec_view_rows[0].get("n") == 104
+                and minec_view_rows[0].get("n") >= 104
                 and str(minec_view_rows[0].get("min_dt")) == "2018-01-01"
                 and str(minec_view_rows[0].get("max_dt")) >= "2026-10-01"
             )
-            failed += not expect("витрина v_minec_macro: 104 точки 2018-01 … 2026-10",
+            failed += not expect("витрина v_minec_macro: ≥104 точек, 2018-01 … ≥2026-10",
                                  minec_view_ok, minec_view_detail)
 
             minec_spot = text(await session.call_tool("run_query", {"query":
