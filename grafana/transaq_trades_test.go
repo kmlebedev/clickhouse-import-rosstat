@@ -59,7 +59,7 @@ type ttPanelContract struct {
 	id        uint32
 	view      string
 	filter    string
-	board     string
+	kind      string
 	limit     bool
 	interval  bool
 	format    int
@@ -72,11 +72,11 @@ type ttPanelContract struct {
 func TestTransaqTradesSQLContract(t *testing.T) {
 	board := builtTransaqTrades(t)
 	cases := []ttPanelContract{
-		{1, "v_transaq_net_flows_daily", "$__dateFilter(date)", "TQBR", true, false, queryFormatTable, queryTypeTable},
-		{2, "v_transaq_net_flows_daily", "$__dateFilter(date)", "TQBR", true, false, queryFormatTable, queryTypeTable},
-		{3, "v_transaq_net_flows", "$__timeFilter(minute)", "TQBR", false, true, queryFormatTimeseries, queryTypeTimeseries},
-		{4, "v_transaq_net_flows", "$__timeFilter(minute)", "TQBR", false, true, queryFormatTimeseries, queryTypeTimeseries},
-		{5, "v_transaq_net_flows", "$__timeFilter(minute)", "TQOB", false, true, queryFormatTimeseries, queryTypeTimeseries},
+		{1, "v_transaq_net_flows_daily", "$__dateFilter(date)", "share", true, false, queryFormatTable, queryTypeTable},
+		{2, "v_transaq_net_flows_daily", "$__dateFilter(date)", "share", true, false, queryFormatTable, queryTypeTable},
+		{3, "v_transaq_net_flows", "$__timeFilter(minute)", "share", false, true, queryFormatTimeseries, queryTypeTimeseries},
+		{4, "v_transaq_net_flows", "$__timeFilter(minute)", "share", false, true, queryFormatTimeseries, queryTypeTimeseries},
+		{5, "v_transaq_net_flows", "$__timeFilter(minute)", "ofz", false, true, queryFormatTimeseries, queryTypeTimeseries},
 	}
 	for _, tc := range cases {
 		panel := panelByID(t, board, tc.id)
@@ -93,8 +93,13 @@ func TestTransaqTradesSQLContract(t *testing.T) {
 		if got := strings.Count(query.RawSql, tc.filter); got != 1 {
 			t.Fatalf("панель %d: %q встречается %d раз, ожидался 1:\n%s", tc.id, tc.filter, got, query.RawSql)
 		}
-		if !strings.Contains(query.RawSql, "board = '"+tc.board+"'") {
-			t.Fatalf("панель %d: нет фильтра режима торгов %s:\n%s", tc.id, tc.board, query.RawSql)
+		// Фонды денежного рынка торгуются на TQBR: фильтр по board смешал бы их с
+		// акциями IMOEX (ofz-market/1.7 спека §6).
+		if !strings.Contains(query.RawSql, "instrument_kind = '"+tc.kind+"'") {
+			t.Fatalf("панель %d: нет фильтра типа инструмента %s:\n%s", tc.id, tc.kind, query.RawSql)
+		}
+		if strings.Contains(query.RawSql, "board =") {
+			t.Fatalf("панель %d: фильтр по board вместо instrument_kind:\n%s", tc.id, query.RawSql)
 		}
 		if tc.limit {
 			if !strings.Contains(query.RawSql, "LIMIT 10") {

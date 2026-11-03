@@ -27,7 +27,7 @@ const (
     sec_code AS "Инструмент",
     sum(net_value_rub) AS "Нетто покупок, ₽"
 FROM v_transaq_net_flows_daily
-WHERE board = 'TQBR'
+WHERE instrument_kind = 'share'
   AND $__dateFilter(date)
 GROUP BY sec_code
 HAVING sum(net_value_rub) > 0
@@ -39,7 +39,7 @@ LIMIT 10
     sec_code AS "Инструмент",
     -sum(net_value_rub) AS "Нетто продаж, ₽"
 FROM v_transaq_net_flows_daily
-WHERE board = 'TQBR'
+WHERE instrument_kind = 'share'
   AND $__dateFilter(date)
 GROUP BY sec_code
 HAVING sum(net_value_rub) < 0
@@ -53,7 +53,7 @@ LIMIT 10
     $__timeInterval(minute) AS time,
     sum(net_value_rub) AS "Нетто, ₽"
 FROM v_transaq_net_flows
-WHERE board = 'TQBR'
+WHERE instrument_kind = 'share'
   AND $__timeFilter(minute)
 GROUP BY time
 ORDER BY time
@@ -64,7 +64,7 @@ ORDER BY time
     sum(buy_value_rub) AS "Покупки, ₽",
     -sum(sell_value_rub) AS "Продажи, ₽"
 FROM v_transaq_net_flows
-WHERE board = 'TQBR'
+WHERE instrument_kind = 'share'
   AND $__timeFilter(minute)
 GROUP BY time
 ORDER BY time
@@ -75,7 +75,7 @@ ORDER BY time
     sum(buy_value_rub) AS "Покупки, ₽",
     -sum(sell_value_rub) AS "Продажи, ₽"
 FROM v_transaq_net_flows
-WHERE board = 'TQOB'
+WHERE instrument_kind = 'ofz'
   AND $__timeFilter(minute)
 GROUP BY time
 ORDER BY time
@@ -146,8 +146,9 @@ func ttBargaugeDefaults(builder *bargauge.PanelBuilder) *bargauge.PanelBuilder {
 		Decimals(0)
 }
 
-// ttNetBuysPanel — панель 1: top-10 нетто покупок в режиме TQBR за выбранный период. Значение —
-// оценка рублей через lotsize, а не биржевой оборот; ETF (TQTF) в TQBR не попадают.
+// ttNetBuysPanel — панель 1: top-10 нетто покупок акций IMOEX за выбранный период. Значение —
+// оценка рублей через lotsize, а не биржевой оборот. Фильтр — instrument_kind = 'share': фонды
+// денежного рынка тоже торгуются на TQBR и с оборотом в миллиарды заняли бы топ (ofz-market/1.7).
 func ttNetBuysPanel() *bargauge.PanelBuilder {
 	return ttBargaugeDefaults(bargauge.NewPanelBuilder()).
 		Id(1).
@@ -156,14 +157,15 @@ func ttNetBuysPanel() *bargauge.PanelBuilder {
 		Height(9).
 		WithTarget(tableQuery("A", ttNetBuysSQL)).
 		Description("Сумма нетто-объёма (оценка покупок минус продаж) по коду бумаги за выбранный период; " +
-			"режим торгов TQBR — акции IMOEX. Топ-10 по величине нетто покупок. Рублёвая оценка — " +
+			"только акции IMOEX (instrument_kind = 'share'; фонды денежного рынка и фьючерсы не входят). " +
+			"Топ-10 по величине нетто покупок. Рублёвая оценка — " +
 			"Σ цена × лоты × lotsize из снимка transaq_securities, а не биржевой оборот: сделки без " +
-			"lotsize в сумму не входят, ETF (TQTF) в TQBR не попадают. Только фактические сделки " +
+			"lotsize в сумму не входят. Только фактические сделки " +
 			"ленты: разрыв сессии не догоняется, провал может означать пропуск данных, а не рынок. " +
 			"Это аналитика, а не сигнал и не рекомендация.")
 }
 
-// ttNetSellsPanel — панель 2: top-10 нетто продаж в TQBR. Знак снят намеренно: бар показывает
+// ttNetSellsPanel — панель 2: top-10 нетто продаж акций IMOEX. Знак снят намеренно: бар показывает
 // величину перевеса продавцов, а не отрицательное число.
 func ttNetSellsPanel() *bargauge.PanelBuilder {
 	return ttBargaugeDefaults(bargauge.NewPanelBuilder()).
@@ -173,7 +175,7 @@ func ttNetSellsPanel() *bargauge.PanelBuilder {
 		Height(9).
 		WithTarget(tableQuery("A", ttNetSellsSQL)).
 		Description("Сумма нетто-объёма (продажи минус покупки) по коду бумаги за выбранный период; " +
-			"режим торгов TQBR — акции IMOEX. Топ-10 по величине перевеса продавцов; значения " +
+			"только акции IMOEX (instrument_kind = 'share'). Топ-10 по величине перевеса продавцов; значения " +
 			"показаны положительными, знак минуса снят намеренно. Рублёвая оценка — Σ цена × лоты × " +
 			"lotsize из снимка transaq_securities: сделки без lotsize в сумму не входят. Только " +
 			"фактические сделки ленты, разрывы не догоняются. Это аналитика, а не сигнал и не рекомендация.")
@@ -208,8 +210,8 @@ func ttImoexVolumesPanel() *timeseries.PanelBuilder {
 			"оценка по сделкам, попавшим в ленту Transaq: разрывы не догоняются, нули не подставляются.")
 }
 
-// ttOfzVolumesPanel — панель 5: то же для режима TQOB. Заменяет ETF-панель источника: подписка
-// стенда собирает IMOEX + ОФЗ, а TQTF в ленте нет — ETF-панель была бы всегда пустой.
+// ttOfzVolumesPanel — панель 5: то же для ОФЗ (instrument_kind = 'ofz', режим TQOB). Заменяет
+// ETF-панель источника; фонды денежного рынка в ленте с ofz-market/1.7, их панель — отдельный пункт.
 func ttOfzVolumesPanel() *timeseries.PanelBuilder {
 	return ttPanelDefaults(timeseries.NewPanelBuilder()).
 		Id(5).
