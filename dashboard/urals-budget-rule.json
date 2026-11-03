@@ -1,0 +1,437 @@
+{
+  "apiVersion": "dashboard.grafana.app/v1beta1",
+  "kind": "Dashboard",
+  "metadata": {
+    "name": "urals-budget-rule"
+  },
+  "spec": {
+    "uid": "urals-budget-rule",
+    "title": "Urals: реальная цена и бюджетное правило",
+    "tags": [
+      "infra",
+      "urals",
+      "budget"
+    ],
+    "timezone": "browser",
+    "editable": true,
+    "graphTooltip": 0,
+    "time": {
+      "from": "2018-01-01",
+      "to": "now"
+    },
+    "fiscalYearStartMonth": 0,
+    "refresh": "1h",
+    "schemaVersion": 42,
+    "panels": [
+      {
+        "type": "row",
+        "collapsed": false,
+        "title": "Реальная цена Urals и бюджетное правило",
+        "gridPos": {
+          "h": 1,
+          "w": 24,
+          "x": 0,
+          "y": 0
+        },
+        "id": 21,
+        "panels": []
+      },
+      {
+        "type": "volkovlabs-echarts-panel",
+        "id": 1,
+        "pluginVersion": "7.2.5",
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "WITH\n    ipc AS (\n        SELECT toDate32(date) AS date,\n               exp(sum(log(value / 100)) OVER (ORDER BY date)) AS level\n        FROM v_fedstat_ipc\n        WHERE series = 'ipc31074/Все товары и услуги'\n          AND (region = 'Российская Федерация' OR date \u003e= '2023-01-01')\n    ),\n    base AS (SELECT argMax(level, date) AS level FROM ipc),\n    usd AS (\n        SELECT toDate32(toStartOfMonth(date)) AS month, avg(value) AS usd_avg\n        FROM v_cbr_macro\n        WHERE series = 'cbr_currency_usd'\n        GROUP BY month\n    ),\n    monthly AS (\n        SELECT u.date AS date, u.value AS urals, d.usd_avg AS usd_avg, i.level AS ipc_level\n        FROM v_minec_macro AS u\n        INNER JOIN usd AS d ON d.month = u.date\n        LEFT JOIN ipc AS i ON i.date = u.date\n        WHERE u.series = 'urals_avg_price'\n    ),\n    filled AS (\n        SELECT date, urals, usd_avg,\n               anyLast(ipc_level) OVER (ORDER BY date ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS level_used,\n               toUInt8(ipc_level IS NULL) AS is_estimate\n        FROM monthly\n    ),\n    seasonal AS (\n        SELECT toMonth(date) AS month,\n               round(avg(urals * usd_avg * (SELECT level FROM base) / level_used), 0) AS seasonal_norm\n        FROM filled\n        WHERE toYear(date) BETWEEN 2018 AND 2022\n        GROUP BY month\n    )\nSELECT\n    f.date AS \"Месяц\",\n    toYear(f.date) AS \"Год\",\n    toMonth(f.date) AS \"Месяц года\",\n    round(f.urals * f.usd_avg * (SELECT level FROM base) / f.level_used, 0) AS \"Реальная цена, ₽/барр.\",\n    s.seasonal_norm AS \"Сезонная норма 2018–2022, ₽/барр.\",\n    f.is_estimate AS \"Оценка\"\nFROM filled AS f\nINNER JOIN seasonal AS s ON s.month = toMonth(f.date)\nWHERE $__dateFilter(f.date)\nORDER BY f.date\nSETTINGS join_use_nulls = 1\n",
+            "editorType": "sql",
+            "format": 1,
+            "queryType": "table",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "Urals в постоянных рублях (база — последний опубликованный ИПЦ)",
+        "description": "Urals в постоянных рублях (база — последний опубликованный ИПЦ): real = Urals $/барр. × средний курс ЦБ за месяц × уровень ИПЦ базы ÷ уровень месяца. Источники: v_minec_macro (urals_avg_price, месячное зерно), v_cbr_macro (cbr_currency_usd, среднее по дням месяца), v_fedstat_ipc (ipc31074/Все товары и услуги, накопленный уровень). Ось X — 12 календарных месяцев: синяя линия — сезонная норма 2018–2022, линии 2023–2026 — годы ряда. Последний месяц без опубликованного ИПЦ — оценка по дефлятору предыдущего: строка исключена из линий годов и нарисована полым маркером. 2018-06/07 в источнике отсутствуют — точек нет (пропуск ≠ ноль). Когда Росстат опубликует ИПЦ за очередной месяц, база сдвинется и весь ряд пересчитается. На 2026-11-03 — октябрь 2026: база — сентябрь 2026, октябрь — оценка по дефлятору сентября (ИПЦ за октябрь ещё не опубликован). Значения — ₽/барр. в постоянных рублях.",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 10,
+          "w": 12,
+          "x": 0,
+          "y": 1
+        },
+        "repeatDirection": "h",
+        "options": {
+          "editorMode": "code",
+          "getOption": "const s = context.panel.data.series[0];\nif (!s) { return {}; }\nfunction column(name) {\n  const f = s.fields.find(function (x) { return x.name === name; });\n  if (!f) { return null; }\n  // plain array не имеет .buffer и остаётся как есть; Grafana Vector отдаёт значения в .buffer —\n  // fallback покрывает обе формы (паттерн живого экспорта Business Charts).\n  return f.values \u0026\u0026 f.values.buffer ? f.values.buffer : f.values;\n}\nconst years = column('Год');\nconst months = column('Месяц года');\nconst real = column('Реальная цена, ₽/барр.');\nconst seasonal = column('Сезонная норма 2018–2022, ₽/барр.');\nconst estimate = column('Оценка');\nif (!years || !months || !real || !seasonal || !estimate) { return {}; }\nconst ruMonths = ['Янв', 'Фев', 'Мар', 'Апр', 'Май', 'Июн', 'Июл', 'Авг', 'Сен', 'Окт', 'Ноя', 'Дек'];\nconst norm = new Array(12).fill(null);\nconst lines = {\n  2023: new Array(12).fill(null),\n  2024: new Array(12).fill(null),\n  2025: new Array(12).fill(null),\n  2026: new Array(12).fill(null)\n};\nconst estimates = [];\nfor (let i = 0; i \u003c months.length; i++) {\n  const m = Number(months[i]) - 1;\n  if (m \u003c 0 || m \u003e 11) { continue; }\n  if (norm[m] === null \u0026\u0026 seasonal[i] !== null) { norm[m] = seasonal[i]; }\n  if (Number(estimate[i]) === 1) {\n    estimates.push({ value: [m, real[i]], year: Number(years[i]), month: m + 1 });\n    continue;\n  }\n  const y = Number(years[i]);\n  if (lines[y] \u0026\u0026 lines[y][m] === null) { lines[y][m] = real[i]; }\n}\nconst series = [{\n  name: 'Сезонная норма 2018–2022',\n  type: 'line',\n  data: norm,\n  connectNulls: false,\n  lineStyle: { type: 'dashed', width: 2 },\n  itemStyle: { color: '#1c7ed6' }\n}];\nfor (const y of [2023, 2024, 2025, 2026]) {\n  if (!lines[y] || lines[y].every(function (v) { return v === null; })) { continue; }\n  series.push({\n    name: String(y),\n    type: 'line',\n    data: lines[y],\n    connectNulls: false\n  });\n}\nseries.push({\n  name: 'Оценка',\n  type: 'scatter',\n  symbol: 'emptyCircle',\n  symbolSize: 14,\n  data: estimates,\n  itemStyle: { color: '#e8590c', borderWidth: 2 },\n  label: { show: true, position: 'top', formatter: function (p) { return String(p.data.value[1]); } }\n});\nreturn {\n  tooltip: {\n    trigger: 'axis',\n    formatter: function (ps) {\n      if (!ps.length) { return ''; }\n      const rows = [];\n      for (const p of ps) {\n        if (p.data === null || p.data === undefined) { continue; }\n        let year = p.seriesName;\n        let month = ruMonths[p.dataIndex];\n        let value = p.data;\n        // items scatter-серии — объекты {value, year, month}; items линий — числа.\n        if (p.data \u0026\u0026 p.data.value) {\n          year = String(p.data.year);\n          month = ruMonths[p.data.month - 1];\n          value = p.data.value[1];\n        }\n        if (value === null || value === undefined) { continue; }\n        rows.push(year + ' ' + month + ': \u003cb\u003e' + Number(value).toFixed(0) + '\u003c/b\u003e ₽/барр.');\n      }\n      return rows.join('\u003cbr/\u003e');\n    }\n  },\n  legend: { bottom: 0 },\n  grid: { left: 64, right: 24, top: 24, bottom: 64 },\n  xAxis: { type: 'category', data: ruMonths },\n  yAxis: { type: 'value', name: '₽/барр.' },\n  series: series\n};",
+          "renderer": "canvas"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "currencyRUB"
+          },
+          "overrides": []
+        }
+      },
+      {
+        "type": "volkovlabs-echarts-panel",
+        "id": 2,
+        "pluginVersion": "7.2.5",
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "-- $59 — цена отсечения бюджетного правила Минфина для Urals (действует до 2027;\n-- The Bell, mn.ru; снижение до $50 обсуждается только с 2027). Это параметр правила,\n-- а не ряд витрины: в v_series_catalog его нет.\nSELECT\n    date AS \"Месяц\",\n    value AS \"Urals, $/барр.\",\n    least(value, 59) AS \"В бюджет (≤ $59)\",\n    greatest(value - 59, 0) AS \"В ФНБ (\u003e $59)\"\nFROM v_minec_macro\nWHERE series = 'urals_avg_price'\n  AND $__dateFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 1,
+            "queryType": "table",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "Бюджетное правило: цена отсечения $59",
+        "description": "Бюджетное правило Минфина: Urals $/барр. по месяцам с 2018 (v_minec_macro, series = 'urals_avg_price'). $59 — цена отсечения бюджетного правила для Urals (действует до 2027; The Bell, mn.ru; снижение до $50 обсуждается только с 2027): это параметр правила, а не ряд витрины — в каталоге рядов его нет. Stacked area: часть цены до $59 уходит в бюджет, превышение — в ФНБ; горизонтальная markLine $59 — граница правила. Подпись последней точки — цена последнего месяца. Разрывы линий не соединяются. Значения — $/барр.",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 10,
+          "w": 12,
+          "x": 12,
+          "y": 1
+        },
+        "repeatDirection": "h",
+        "options": {
+          "editorMode": "code",
+          "getOption": "const s = context.panel.data.series[0];\nif (!s) { return {}; }\nfunction field(name) {\n  return s.fields.find(function (x) { return x.name === name; });\n}\nfunction values(f) {\n  // plain array не имеет .buffer и остаётся как есть; Grafana Vector отдаёт значения в .buffer —\n  // fallback покрывает обе формы (паттерн живого экспорта Business Charts).\n  return f \u0026\u0026 f.values \u0026\u0026 f.values.buffer ? f.values.buffer : f.values;\n}\nconst timeField = field('Месяц');\nconst uralsField = field('Urals, $/барр.');\nconst budgetField = field('В бюджет (≤ $59)');\nconst fundField = field('В ФНБ (\u003e $59)');\nif (!timeField || !uralsField || !budgetField || !fundField) { return {}; }\nconst times = values(timeField);\nconst urals = values(uralsField);\nconst toBudget = values(budgetField);\nconst toFund = values(fundField);\n// $59 — цена отсечения бюджетного правила Минфина для Urals (действует до 2027; The Bell, mn.ru;\n// снижение до $50 обсуждается только с 2027). Это параметр правила, а не ряд витрины.\nconst BUDGET_RULE_CUTOFF = 59;\nconst price = [];\nconst budget = [];\nconst fund = [];\nfor (let i = 0; i \u003c times.length; i++) {\n  if (times[i] === null || urals[i] === null) { continue; }\n  price.push([times[i], urals[i]]);\n  budget.push([times[i], toBudget[i]]);\n  fund.push([times[i], toFund[i]]);\n}\nreturn {\n  tooltip: {\n    trigger: 'axis',\n    formatter: function (ps) {\n      if (!ps.length) { return ''; }\n      const rows = [new Date(ps[0].axisValue).toISOString().slice(0, 7)];\n      for (const p of ps) {\n        if (p.data === null || p.data === undefined) { continue; }\n        rows.push(p.seriesName + ': \u003cb\u003e' + Number(p.data[1]).toFixed(2) + '\u003c/b\u003e $/барр.');\n      }\n      return rows.join('\u003cbr/\u003e');\n    }\n  },\n  legend: { bottom: 0 },\n  grid: { left: 64, right: 72, top: 24, bottom: 56 },\n  xAxis: { type: 'time' },\n  yAxis: { type: 'value', name: '$/барр.' },\n  series: [\n    {\n      name: uralsField.name,\n      type: 'line',\n      data: price,\n      connectNulls: false,\n      itemStyle: { color: '#1c7ed6' },\n      endLabel: {\n        show: true,\n        formatter: function (p) { return Number(p.value[1]).toFixed(2); }\n      },\n      markLine: {\n        symbol: 'none',\n        silent: true,\n        lineStyle: { type: 'dashed', color: '#e03131', width: 2 },\n        label: {\n          formatter: 'Бюджетное правило: $' + BUDGET_RULE_CUTOFF,\n          position: 'insideEndTop'\n        },\n        data: [{ yAxis: BUDGET_RULE_CUTOFF }]\n      }\n    },\n    {\n      name: budgetField.name,\n      type: 'line',\n      stack: 'rule',\n      data: budget,\n      connectNulls: false,\n      areaStyle: { opacity: 0.25 },\n      lineStyle: { width: 0 },\n      itemStyle: { color: '#40c057' }\n    },\n    {\n      name: fundField.name,\n      type: 'line',\n      stack: 'rule',\n      data: fund,\n      connectNulls: false,\n      areaStyle: { opacity: 0.25 },\n      lineStyle: { width: 0 },\n      itemStyle: { color: '#fab005' }\n    }\n  ]\n};",
+          "renderer": "canvas"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "currencyUSD"
+          },
+          "overrides": []
+        }
+      },
+      {
+        "type": "row",
+        "collapsed": false,
+        "title": "Последний опубликованный месяц и нефтегазовые доходы",
+        "gridPos": {
+          "h": 1,
+          "w": 24,
+          "x": 0,
+          "y": 11
+        },
+        "id": 22,
+        "panels": []
+      },
+      {
+        "type": "stat",
+        "id": 3,
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT round(argMax(value, date), 2) AS \"Urals, $/барр.\"\nFROM v_minec_macro\nWHERE series = 'urals_avg_price'\n",
+            "editorType": "sql",
+            "format": 1,
+            "queryType": "table",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "Urals, $/барр. — последний опубликованный месяц",
+        "description": "Снимок последнего опубликованного месяца: средняя цена Urals, $/барр. (v_minec_macro, series = 'urals_avg_price'; argMax по date — последний месяц). Зерно — месяц; значения — доллары за баррель. Диапазон дашборда панель не учитывает: снимок последнего месяца не должен зависеть от окна. На 2026-11-03 — октябрь 2026.",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 4,
+          "w": 6,
+          "x": 0,
+          "y": 12
+        },
+        "repeatDirection": "h",
+        "options": {
+          "graphMode": "area",
+          "colorMode": "value",
+          "justifyMode": "auto",
+          "textMode": "auto",
+          "wideLayout": true,
+          "showPercentChange": false,
+          "reduceOptions": {
+            "values": false,
+            "calcs": [
+              "lastNotNull"
+            ]
+          },
+          "percentChangeColorMode": "standard",
+          "orientation": ""
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "currencyUSD"
+          },
+          "overrides": []
+        }
+      },
+      {
+        "type": "stat",
+        "id": 4,
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT round(avg(value), 2) AS \"Курс, ₽/$\"\nFROM v_cbr_macro\nWHERE series = 'cbr_currency_usd'\n  AND toStartOfMonth(date) = (SELECT max(toDate(date)) FROM v_minec_macro WHERE series = 'urals_avg_price')\n",
+            "editorType": "sql",
+            "format": 1,
+            "queryType": "table",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "Курс ЦБ, ₽/$ — последний опубликованный месяц",
+        "description": "Средний за последний опубликованный месяц Urals курс ЦБ (v_cbr_macro, series = 'cbr_currency_usd': дневной ряд, среднее по дням месяца через toStartOfMonth/avg). Месяц берётся тот же, что у последнего Urals (максимум даты в v_minec_macro), а не последний опубликованный курс: ряды выходят в разные даты, и снимок обязан относиться к одному месяцу. Значения — ₽ за 1 USD (не сумма), поэтому единица short; снимок без фильтра диапазона. На 2026-11-03 — октябрь 2026.",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 4,
+          "w": 6,
+          "x": 6,
+          "y": 12
+        },
+        "repeatDirection": "h",
+        "options": {
+          "graphMode": "area",
+          "colorMode": "value",
+          "justifyMode": "auto",
+          "textMode": "auto",
+          "wideLayout": true,
+          "showPercentChange": false,
+          "reduceOptions": {
+            "values": false,
+            "calcs": [
+              "lastNotNull"
+            ]
+          },
+          "percentChangeColorMode": "standard",
+          "orientation": ""
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "decimals": 2
+          },
+          "overrides": []
+        }
+      },
+      {
+        "type": "stat",
+        "id": 5,
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "WITH\n    ipc AS (\n        SELECT toDate32(date) AS date,\n               exp(sum(log(value / 100)) OVER (ORDER BY date)) AS level\n        FROM v_fedstat_ipc\n        WHERE series = 'ipc31074/Все товары и услуги'\n          AND (region = 'Российская Федерация' OR date \u003e= '2023-01-01')\n    ),\n    base AS (SELECT argMax(level, date) AS level FROM ipc),\n    usd AS (\n        SELECT toDate32(toStartOfMonth(date)) AS month, avg(value) AS usd_avg\n        FROM v_cbr_macro\n        WHERE series = 'cbr_currency_usd'\n        GROUP BY month\n    ),\n    monthly AS (\n        SELECT u.date AS date, u.value AS urals, d.usd_avg AS usd_avg, i.level AS ipc_level\n        FROM v_minec_macro AS u\n        INNER JOIN usd AS d ON d.month = u.date\n        LEFT JOIN ipc AS i ON i.date = u.date\n        WHERE u.series = 'urals_avg_price'\n    ),\n    filled AS (\n        SELECT date, urals, usd_avg,\n               anyLast(ipc_level) OVER (ORDER BY date ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS level_used\n        FROM monthly\n    ),\n    cur AS (SELECT max(date) AS date FROM filled)\nSELECT\n    round(anyIf(urals * usd_avg, date = (SELECT date FROM cur)), 0) AS \"₽/барр.\",\n    round(100 * (anyIf(urals * usd_avg, date = (SELECT date FROM cur)) /\n                 anyIf(urals * usd_avg, date = addYears((SELECT date FROM cur), -1)) - 1), 1) AS \"г/г номинально, %\",\n    round(100 * (anyIf(urals * usd_avg * (SELECT level FROM base) / level_used, date = (SELECT date FROM cur)) /\n                 anyIf(urals * usd_avg * (SELECT level FROM base) / level_used, date = addYears((SELECT date FROM cur), -1)) - 1), 1) AS \"г/г реально, %\"\nFROM filled\nSETTINGS join_use_nulls = 1\n",
+            "editorType": "sql",
+            "format": 1,
+            "queryType": "table",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "Urals в рублях, ₽/барр. — последний опубликованный месяц",
+        "description": "Urals в рублях за последний опубликованный месяц: цена $/барр. × средний курс ЦБ месяца, плюс два темпа г/г — номинальный и реальный (в постоянных рублях базы — последнего опубликованного ИПЦ; месяц без свежего ИПЦ считается по дефлятору предыдущего). Источники: v_minec_macro (urals_avg_price), v_cbr_macro (cbr_currency_usd), v_fedstat_ipc (ipc31074/Все товары и услуги). Зерно — месяц; колонки «₽/барр.» и два г/г темпа приходят одной строкой, подписи — из алиасов SQL. Проценты — override'ом по имени поля, иначе темп печатался бы числом без знака %. Снимок последнего месяца, без фильтра диапазона. На 2026-11-03 — октябрь 2026: база — сентябрь 2026, октябрь считается по дефлятору сентября.",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 4,
+          "w": 6,
+          "x": 12,
+          "y": 12
+        },
+        "repeatDirection": "h",
+        "options": {
+          "graphMode": "area",
+          "colorMode": "value",
+          "justifyMode": "auto",
+          "textMode": "auto",
+          "wideLayout": true,
+          "showPercentChange": false,
+          "reduceOptions": {
+            "values": false,
+            "calcs": [
+              "lastNotNull"
+            ]
+          },
+          "percentChangeColorMode": "standard",
+          "orientation": ""
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "none"
+          },
+          "overrides": [
+            {
+              "matcher": {
+                "id": "byName",
+                "options": "г/г номинально, %"
+              },
+              "properties": [
+                {
+                  "id": "unit",
+                  "value": "percent"
+                }
+              ]
+            },
+            {
+              "matcher": {
+                "id": "byName",
+                "options": "г/г реально, %"
+              },
+              "properties": [
+                {
+                  "id": "unit",
+                  "value": "percent"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "type": "stat",
+        "id": 6,
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT\n    round(sumIf(value, toYear(date) = 2026), 0) AS \"Янв–сен 2026, млрд ₽\",\n    round(100 * (sumIf(value, toYear(date) = 2026) / sumIf(value, toYear(date) = 2025) - 1), 1) AS \"г/г, %\"\nFROM v_minfin_budget\nWHERE source = 'minfin_oil_gas'\n  AND series = 'Нефтегазовые доходы, всего'\n  AND toMonth(date) \u003c= 9\n  AND toYear(date) IN (2025, 2026)\n",
+            "editorType": "sql",
+            "format": 1,
+            "queryType": "table",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "Нефтегазовые доходы, млрд ₽ — янв–сен 2026",
+        "description": "Нефтегазовые доходы федерального бюджета, млрд ₽: сумма января–сентября 2026 (v_minfin_budget, source = 'minfin_oil_gas', series = 'Нефтегазовые доходы, всего') и темп г/г к тому же периоду 2025. Зерно — месяц, на панели — сумма за 9 месяцев; значения ЗА период, не накопленным итогом. Сравнение фиксировано на янв–сен 2026 и окном дашборда не меняется. Темп — override'ом percent по имени поля (иначе печатался бы числом без знака %).",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 4,
+          "w": 6,
+          "x": 18,
+          "y": 12
+        },
+        "repeatDirection": "h",
+        "options": {
+          "graphMode": "area",
+          "colorMode": "value",
+          "justifyMode": "auto",
+          "textMode": "auto",
+          "wideLayout": true,
+          "showPercentChange": false,
+          "reduceOptions": {
+            "values": false,
+            "calcs": [
+              "lastNotNull"
+            ]
+          },
+          "percentChangeColorMode": "standard",
+          "orientation": ""
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "none"
+          },
+          "overrides": [
+            {
+              "matcher": {
+                "id": "byName",
+                "options": "г/г, %"
+              },
+              "properties": [
+                {
+                  "id": "unit",
+                  "value": "percent"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "type": "barchart",
+        "id": 7,
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT\n    toMonth(date) AS \"Месяц\",\n    round(sumIf(value, toYear(date) = 2025), 1) AS \"2025\",\n    nullIf(round(sumIf(value, toYear(date) = 2026), 1), 0) AS \"2026\"\nFROM v_minfin_budget\nWHERE source = 'minfin_oil_gas'\n  AND series = 'Нефтегазовые доходы, всего'\n  AND toYear(date) IN (2025, 2026)\n  AND $__dateFilter(date)\nGROUP BY \"Месяц\"\nORDER BY \"Месяц\"\n",
+            "editorType": "sql",
+            "format": 1,
+            "queryType": "table",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "Нефтегазовые доходы федерального бюджета по месяцам, млрд ₽",
+        "description": "Нефтегазовые доходы федерального бюджета по месяцам, млрд ₽: 2025 и 2026 (v_minfin_budget, source = 'minfin_oil_gas', series = 'Нефтегазовые доходы, всего'), пивот по годам делает SQL. Ось X — месяцы 1–12. Значения за месяц, не накопленным итогом. NULL после сентября 2026 — публикация ещё не вышла: пустые месяцы не рисуются нулевыми барами (пропуск ≠ ноль), честный ноль дохода отличить от пропуска в источнике нельзя. На 2026-11-03 — последний опубликованный месяц сентябрь 2026 (октябрь–декабрь 2026 ещё не вышли).",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 24,
+          "x": 0,
+          "y": 16
+        },
+        "repeatDirection": "h",
+        "options": {
+          "xField": "Месяц",
+          "orientation": "auto",
+          "barRadius": 0,
+          "xTickLabelRotation": 0,
+          "xTickLabelMaxLength": 0,
+          "xTickLabelSpacing": 0,
+          "stacking": "none",
+          "showValue": "auto",
+          "barWidth": 0.97,
+          "groupWidth": 0.7,
+          "legend": {
+            "displayMode": "list",
+            "placement": "bottom",
+            "showLegend": true,
+            "calcs": []
+          },
+          "tooltip": {
+            "mode": "",
+            "sort": ""
+          },
+          "fullHighlight": false
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "none",
+            "custom": {
+              "lineWidth": 1,
+              "fillOpacity": 80,
+              "gradientMode": "none"
+            }
+          },
+          "overrides": []
+        }
+      }
+    ],
+    "templating": {},
+    "annotations": {}
+  }
+}
