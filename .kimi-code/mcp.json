@@ -15,6 +15,16 @@
         "CLICKHOUSE_DATABASE": "default",
         "CLICKHOUSE_MCP_SERVER_TRANSPORT": "stdio"
       }
+    },
+    "grafana": {
+      "command": "bash",
+      "args": [
+        "-c",
+        "set -a; . \"$HOME/.config/rosstat/env\"; set +a; MCP_TOKEN=\"${GRAFANA_MCP_TOKEN:-${GRAFANA_TEST_TOKEN:-}}\"; : \"${MCP_TOKEN:?GRAFANA_MCP_TOKEN или GRAFANA_TEST_TOKEN не задан в ~/.config/rosstat/env}\"; export GRAFANA_SERVICE_ACCOUNT_TOKEN=\"$MCP_TOKEN\"; exec uv tool run --python 3.12 --from mcp-grafana==2.2.0 mcp-grafana --disable-write --usage-stats=disabled"
+      ],
+      "env": {
+        "GRAFANA_URL": "http://localhost:3000"
+      }
     }
   }
 }
