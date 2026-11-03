@@ -375,6 +375,7 @@ func cbrAllSeriesMeta() [][]util.SeriesMeta {
 		cbrBankIntRateSeriesMeta,
 		cbrIntRateLoansSeriesMeta,
 		cbrIntRateLoansIndSeriesMeta,
+		cbrMortgageRateSeriesMeta,
 		cbrIndicatorsCpdSeriesMeta,
 		cbrInflExpSeriesMeta,
 		cbrLoansToIndSeriesMeta,
