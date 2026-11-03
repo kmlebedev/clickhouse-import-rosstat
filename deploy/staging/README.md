@@ -1,8 +1,10 @@
 # Деплой на staging (Фаза 1)
 
-Артефакты деплоя на хост `palmshell` (Ubuntu 24.04, x86_64, вход `root`). Разворачивает четыре
-компонента: бинарник `clickhouse-import-rosstat`, планировщик `dagu`, MCP-сервер
-`mcp-clickhouse` (HTTPS `:8443`, read-only, Google OAuth + email allowlist) и MLflow (SQLite + локальные артефакты). ClickHouse на хосте
+Артефакты деплоя на хост `palmshell` (Ubuntu 24.04, x86_64, вход `root`). Разворачивает пять
+компонентов: бинарник `clickhouse-import-rosstat`, планировщик `dagu`, MCP-сервер
+`mcp-clickhouse` (HTTPS `:8443`, read-only, Google OAuth + email allowlist), MCP-сервер
+`mcp-grafana` (loopback `127.0.0.1:8000`, read-only, Admin-токен) и MLflow (SQLite + локальные
+артефакты). ClickHouse на хосте
 **не трогается**; у Grafana — только
 файл провижининга датасорса для дашбордов `gold-thesis` и `key-rate-publications` (раздел
 [«Grafana на staging»](#grafana-на-staging-датасорс-провижининг-и-деплой-дашбордов)),
@@ -21,6 +23,8 @@
 | `/etc/systemd/system/mcp-clickhouse.service` | юнит MCP (копия из этого каталога) |
 | `/usr/local/lib/clickhouse-import-rosstat/mcp_clickhouse_tls.py` | запускальщик MCP с TLS (копия из этого каталога) |
 | `/usr/local/lib/clickhouse-import-rosstat/rosstat_mcp_auth.py` | Google OAuth provider с allowlist (копия из этого каталога) |
+| `/etc/systemd/system/mcp-grafana.service` | юнит Grafana MCP (копия из этого каталога) |
+| `/usr/local/lib/clickhouse-import-rosstat/mcp_grafana_launch.sh` | обёртка mcp-grafana: Admin-токен + loopback-запуск (копия из этого каталога) |
 | `/etc/letsencrypt/live/mcp.selfinvesting.ru/` | сертификат публичного MCP (`make deploy-staging-mcp-cert`) |
 | `/etc/systemd/system/mlflow.service` | юнит MLflow (копия из этого каталога) |
 | `/var/lib/mlflow/` | SQLite `mlflow.db` и артефакты MLflow (бэкап — см. «MLflow на staging») |
@@ -45,6 +49,8 @@ ssh palmshell 'install -m 600 /dev/null /etc/clickhouse-import-rosstat.env'
 # static bearer CLICKHOUSE_MCP_AUTH_TOKEN удалён — OAuth и токен взаимоисключающие
 # SMTP_HOST/SMTP_PORT/SMTP_USER/SMTP_PASSWORD/MAIL_FROM/MAIL_TO — уведомления dagu;
 # MAIL_TO — шлюз CMC (email→SMS), иначе deploy-staging-preflight упадёт
+# GRAFANA_MCP_TOKEN — Admin-токен mcp-grafana-admin (Viewer/Editor не видят gcx-дашборды, см. «Grafana MCP на staging»);
+# без него deploy-staging-preflight падает
 
 # 2. Поставить poppler-utils на staging-хост: pdftotext нужен PDF-импортёрам
 #    cbr_mt_forecast и polyus_financial_metrics; no-op-прогоны утилиту не вызывают
@@ -56,7 +62,7 @@ ssh palmshell 'apt install -y poppler-utils'
 ssh palmshell 'apt install -y r-base r-base-dev'
 ssh palmshell 'Rscript -e "install.packages(\"seasonal\", repos=\"https://cloud.r-project.org\")"'
 
-# 4. Развернуть
+# 4. Развернуть (make deploy — алиас: единственный стенд проекта — staging)
 make deploy-staging
 
 # 5. Создать пользователя kimi_reader (если ещё нет)
@@ -177,9 +183,10 @@ make deploy-staging-smoke
 ```
 
 Smoke-проверки внутри `deploy-staging`: наличие бинарей и DAG-файлов, непустые OAuth-переменные
-(до включения сервисов), затем `dagu` отвечает, MCP `/health` = 200 по HTTPS с проверкой сертификата и имени
+и `GRAFANA_MCP_TOKEN` (до включения сервисов), затем `dagu` отвечает, MCP `/health` = 200 по HTTPS с проверкой сертификата и имени
 (`curl --resolve mcp.selfinvesting.ru:8443:127.0.0.1`), MCP **без токена → 401** и
-`WWW-Authenticate` содержит `resource_metadata`, оба `/.well-known/oauth-*` = 200, MLflow `/health` = 200.
+`WWW-Authenticate` содержит `resource_metadata`, оба `/.well-known/oauth-*` = 200,
+`mcp-grafana /healthz` = 200 на loopback, MLflow `/health` = 200.
 
 Полный Google-вход smoke **не** автоматизирует: его проверяют в клиенте (Kimi Code: `/mcp` или
 `/mcp-config login <server>`) либо вручную по authorization URL из `WWW-Authenticate`. Успешный вход
@@ -323,11 +330,93 @@ Grafana и systemd на хосте цель **не трогает**: тольк�
 (`gold-thesis`, `key-rate-publications`, `finance-polyus`, `transaq-trades`) `OK   дашборд виден` и непустые точки по первым панелям,
 затем `gcx dashboards list` показывает все дашборды из `DASHBOARDS` (существующие на staging не затронуты).
 
+## Grafana MCP на staging
+
+`mcp-grafana` даёт агенту read-only доступ к Grafana: поиск и чтение дашбордов, datasources,
+alert rules, аннотации. Сервис слушает **только loopback** `127.0.0.1:8000`; наружу порт
+не публикуется, поэтому TLS и reverse proxy не нужны. Доступ — через ssh-туннель, как у самой
+Grafana (`:3001`).
+
+- Юнит: `deploy/staging/mcp-grafana.service`; обёртка:
+  `/usr/local/lib/clickhouse-import-rosstat/mcp_grafana_launch.sh`.
+- Версия: `GRAFANA_MCP_VERSION` в `Makefile` (сейчас `2.2.0`); она же в `Environment=` юнита.
+  `make deploy-staging-mcp-grafana` падает при расхождении.
+- Host-проверка: юнит разрешает `127.0.0.1:8000`, `localhost:8000` и туннельные
+  `127.0.0.1:8001`, `localhost:8001` (`GRAFANA_MCP_ALLOWED_HOSTS`); при смене порта
+  туннеля обновите юнит и `GRAFANA_MCP_TUNNEL_PORT` в Makefile.
+- Токен: **Admin**-токен отдельного сервис-аккаунта `mcp-grafana-admin`, в env-файле хоста —
+  `GRAFANA_MCP_TOKEN`. `--disable-write` оставляет MCP read-only. Viewer/Editor не подходят:
+  на Grafana 13 дашборды, залитые через `gcx`/k8s API, видны только Admin (Viewer/Editor — 403;
+  проверено на 13.2.3). Токен деплоя дашбордов (`GRAFANA_STAGING_TOKEN`) может остаться Editor.
+- Обёртка выставляет `GRAFANA_SERVICE_ACCOUNT_TOKEN`: `mcp-grafana` читает это имя,
+  а в env-файле токен лежит как `GRAFANA_MCP_TOKEN`.
+- Анонимная телеметрия `mcp-grafana` отключена (`--usage-stats=disabled`).
+
+Одноразово — создать в Grafana staging (через туннель `:3001`) сервис-аккаунт
+`mcp-grafana-admin` роли **Admin** и вписать его токен в `/etc/clickhouse-import-rosstat.env`:
+
+```
+GRAFANA_MCP_TOKEN=<Admin-токен mcp-grafana-admin>
+```
+
+Деплой (входит в `make deploy-staging` / `make deploy`):
+
+```bash
+make deploy-staging-mcp-grafana    # юнит + обёртка + проверки + прогрев кэша uv
+make deploy-staging                # включит mcp-grafana вместе с остальными сервисами
+```
+
+Проверка:
+
+```bash
+# 1. healthz на хосте (loopback)
+ssh palmshell 'systemctl is-active mcp-grafana && curl -sf http://127.0.0.1:8000/healthz'
+
+# 2. tool-level smoke с ноутбука через туннель
+ssh -N -L 8001:127.0.0.1:8000 palmshell &
+make grafana-mcp-check GRAFANA_MCP_URL=http://localhost:8001/mcp
+```
+
+Ожидается `ПРОВЕРКА ПРОЙДЕНА`: read-only инструменты, `update_dashboard` отключён,
+`list_datasources` видит `ch-rosstat`, `search_dashboards` находит `gold-thesis`,
+`get_dashboard_summary` читает сводку. Дашборды должны быть задеплоены
+(`make grafana-deploy-staging`): MCP читает их из Grafana, а не из репозитория.
+
+Если smoke падает на `search_dashboards` (`{"dashboards":[],"total":0}`) и
+`get_dashboard_summary` (`403 Forbidden`), токен не Admin. На Grafana 13 дашборды, залитые
+через `gcx`/k8s API, видны только роли **Admin** (Viewer/Editor → 403; проверено на 13.2.3).
+Исправление: сервис-аккаунт Admin (или смена роли существующего на Admin), его токен —
+в `GRAFANA_MCP_TOKEN` на хосте, затем `ssh palmshell 'systemctl restart mcp-grafana'`.
+`--disable-write` по-прежнему запрещает запись через MCP.
+
+Клиент Kimi (опционально, только при поднятом туннеле) — добавить в
+`~/.kimi-code/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "grafana-staging": {
+      "url": "http://localhost:8001/mcp"
+    }
+  }
+}
+```
+
+Логи и откат:
+
+```bash
+ssh palmshell 'journalctl -u mcp-grafana -n 50 --no-pager'
+# откат версии: вернуть прежний GRAFANA_MCP_VERSION в Makefile и юните,
+# make deploy-staging-mcp-grafana && ssh palmshell 'systemctl restart mcp-grafana'
+# полное отключение: ssh palmshell 'systemctl disable --now mcp-grafana'
+```
+
 ## Отладка и откат
 
 ```bash
 ssh palmshell 'journalctl -u dagu -n 50 --no-pager'
 ssh palmshell 'journalctl -u mcp-clickhouse -n 50 --no-pager'
+ssh palmshell 'journalctl -u mcp-grafana -n 50 --no-pager'
 ssh palmshell 'journalctl -u mlflow -n 50 --no-pager'
 
 # откат dagu на предыдущую версию
@@ -338,6 +427,10 @@ ssh palmshell 'mv /root/.local/bin/dagu.bak /root/.local/bin/dagu && systemctl r
 # PYTHONPATH; убрать FASTMCP_SERVER_AUTH* из env; make deploy-staging-mcp + restart.
 # Внимание: 0.4.x плагины снова начнут работать, 0.5.0 — нет.
 
+# откат mcp-grafana: вернуть прежний GRAFANA_MCP_VERSION в Makefile и юните,
+# make deploy-staging-mcp-grafana && ssh palmshell 'systemctl restart mcp-grafana'
+# полное отключение: ssh palmshell 'systemctl disable --now mcp-grafana'
+
 # откат mlflow: бэкап (см. «MLflow на staging»), вернуть прежнюю версию в юните и Makefile,
 # повторить make deploy-staging-mlflow; откат схемы SQLite не автоматизирован
 ```
@@ -345,5 +438,7 @@ ssh palmshell 'mv /root/.local/bin/dagu.bak /root/.local/bin/dagu && systemctl r
 ## Что осознанно не делается
 
 Юнит `clickhouse-import-rosstat.service` не создаётся: импортёр — короткоживущий процесс,
-его запускают DAG'и. Наружу опубликован только MCP (HTTPS `:8443`, TLS в самом
-`mcp-clickhouse`, без reverse proxy); dagu, MLflow и Grafana слушают только `127.0.0.1`.
+его запускают DAG'и. Наружу опубликован только MCP ClickHouse (HTTPS `:8443`, TLS в самом
+`mcp-clickhouse`, без reverse proxy); `mcp-grafana`, dagu, MLflow и Grafana слушают только
+`127.0.0.1`. У Grafana MCP нет TLS-листенера, поэтому публичного HTTPS-эндпоинта нет:
+доступ к нему — только через ssh-туннель.

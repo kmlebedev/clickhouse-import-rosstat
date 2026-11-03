@@ -39,6 +39,8 @@ grafana/ (Go, grafana-foundation-sdk) --make grafana-build--> dashboard/<uid>.js
 | `GRAFANA_TEST_TOKEN` | токен сервис-аккаунта **Editor** на тест-стенде: `make grafana-deploy-test`, `make grafana-check` (в `gcx` уходит как `GRAFANA_TOKEN` — make-цели подставляют его сами; при ручных вызовах `gcx` подставляйте явно, см. «Цикл разработки и деплой») |
 | `GRAFANA_STAGING_URL` | адрес staging, по умолчанию `http://localhost:3001` — **только через ssh-туннель** |
 | `GRAFANA_STAGING_TOKEN` | токен сервис-аккаунта **Editor** на staging: `make grafana-deploy-staging` |
+| `GRAFANA_MCP_TOKEN` | **Admin**-токен для read-only MCP: gcx-дашборды видны только Admin (Viewer/Editor → 403). Локально — `GRAFANA_TEST_TOKEN`, если его аккаунт Admin; на staging — отдельный Admin-токен `mcp-grafana-admin`. MCP остаётся read-only благодаря `--disable-write` |
+| `GRAFANA_MCP_URL` | streamable HTTP URL Grafana MCP для `make grafana-mcp-check`; пусто — stdio к локальному стенду; staging — `http://localhost:8001/mcp` через туннель |
 | `GRAFANA_ORG_ID` | org-id инстанса для `gcx` (on-prem без него отвергается), по умолчанию `1` |
 
 Значения — только в `~/.config/rosstat/env`; `make env-check` печатает «задан/не задан» без значений. Версии: `gcx` 1.5.0 (`brew install gcx`), локальный стенд — Grafana 13.2.3 + плагин `grafana-clickhouse-datasource` 4.3.2 (ставится `make grafana-up`), staging — Grafana 13.1.1.
@@ -48,8 +50,29 @@ grafana/ (Go, grafana-foundation-sdk) --make grafana-build--> dashboard/<uid>.js
 1. `brew install gcx`.
 2. Локальный стенд: `make grafana-up` → войти `admin/admin` (первый запуск) → **Administration → Users and access → Service accounts** → аккаунт с ролью **Editor** → **Add service account token** → значение в `~/.config/rosstat/env` как `GRAFANA_TEST_TOKEN`; то же одной командой — `make grafana-test-token` (создаёт аккаунт `dashboards-cd` роли Editor и печатает строку для env-файла).
 3. Staging: то же в UI staging (через туннель) → токен как `GRAFANA_STAGING_TOKEN`.
+4. Grafana MCP требует **Admin**-токен: gcx-дашборды видны только Admin (Viewer/Editor → 403 на Grafana 13). Локально подходит `GRAFANA_TEST_TOKEN`, если его аккаунт Admin; на staging создать `mcp-grafana-admin` роли Admin и положить его токен в `/etc/clickhouse-import-rosstat.env` как `GRAFANA_MCP_TOKEN`.
 
 Токены не попадают в репозиторий, CI и логи (`gcx` получает их из окружения, а не аргументом командной строки).
+
+### MCP-сервер Grafana (read-only)
+
+`mcp-grafana` даёт агенту читать Grafana через MCP: `search_dashboards`,
+`get_dashboard_summary`, `list_datasources`, `alerting_rules_read`, аннотации. Требует
+**Admin**-токен: на Grafana 13 дашборды, залитые через `gcx`/k8s API, видны только Admin
+(Viewer/Editor → 403; проверено на 13.2.3). `--disable-write` убирает write-инструменты.
+
+- Локально: если `GRAFANA_TEST_TOKEN` — Admin, отдельный токен не нужен — `.kimi-code/mcp.json`
+  берёт его, когда `GRAFANA_MCP_TOKEN` не задан. Иначе создайте Admin-токен и задайте
+  `GRAFANA_MCP_TOKEN`. Сервер `grafana` уже объявлен там
+  (stdio, `uv tool run --from mcp-grafana==2.2.0 mcp-grafana --disable-write --usage-stats=disabled`).
+- Проверка: `make grafana-mcp-check` (нужны `make grafana-up` и задеплоенные дашборды
+  `make grafana-deploy-test`); ожидается `ПРОВЕРКА ПРОЙДЕНА`.
+- Staging: сервис `mcp-grafana` на `127.0.0.1:8000`, наружу не публикуется; в
+  `/etc/clickhouse-import-rosstat.env` на хосте `GRAFANA_MCP_TOKEN` = Admin-токен `mcp-grafana-admin`.
+  Туннель `ssh -N -L 8001:127.0.0.1:8000 palmshell`, затем
+  `make grafana-mcp-check GRAFANA_MCP_URL=http://localhost:8001/mcp`.
+  Клиент Kimi (опционально) — `"grafana-staging": {"url": "http://localhost:8001/mcp"}`.
+- Подробности деплоя и отката — `deploy/staging/README.md`, «Grafana MCP на staging».
 
 ### Цикл разработки и деплой
 
