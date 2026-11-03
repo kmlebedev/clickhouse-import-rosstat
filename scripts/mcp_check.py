@@ -1681,6 +1681,15 @@ async def check(params, server_log):
             failed += not expect("витрина v_transaq_net_flows читается", net_flows_rows is not None,
                                  net_flows_detail)
 
+            # instrument_kind (пункт ofz-market/1.7, issue #520) отделяет фонды на TQBR
+            # от акций и фьючерсы FUT; колонка обязана читаться в обеих витринах.
+            for view in ("v_transaq_net_flows", "v_transaq_net_flows_daily"):
+                kinds = text(await session.call_tool("run_query", {"query":
+                    f"SELECT groupArray(kind) AS kinds FROM (SELECT DISTINCT instrument_kind AS kind FROM {view} ORDER BY kind)"}))
+                kinds_rows = result_rows(kinds)
+                failed += not expect(f"instrument_kind читается в {view}", kinds_rows is not None,
+                                     f"типы: {kinds_rows[0].get('kinds')}" if kinds_rows else kinds[:200])
+
             net_flows_daily = text(await session.call_tool("run_query", {"query":
                 "SELECT count() AS n, countIf(gap_suspected = 1) AS gaps FROM v_transaq_net_flows_daily"}))
             net_flows_daily_rows = result_rows(net_flows_daily)

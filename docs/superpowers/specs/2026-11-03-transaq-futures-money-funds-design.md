@@ -4,7 +4,7 @@
 **Пункт:** `ofz-market/1.7` (issue #520)
 **Роадмап:** [ROADMAP_OFZ_MARKET.md](../../ROADMAP_OFZ_MARKET.md)
 **Зависит от:** `ofz-market/1.5` (импортёр и витрины `v_transaq_net_flows*`), `ofz-market/1.6` (дашборд `transaq-trades`)
-**Статус:** спека готова; реализация не начата
+**Статус:** реализация в ветке `feat/ofz-market-1.7`; экспортёр — PR kmlebedev/transaq-clickhouse-exporter#10; живая приёмка ждёт деплоя
 
 ## 1. Цель и границы
 
