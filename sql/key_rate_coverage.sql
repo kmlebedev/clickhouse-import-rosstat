@@ -24,6 +24,11 @@ SELECT * FROM (
     
     UNION ALL SELECT 'cbr_int_rate_loans', name, count(), min(date), max(date) FROM cbr_int_rate_loans FINAL GROUP BY name
     
+    -- Ставки по кредитам физическим лицам в рублях по срокам и группам (Всего/Автокредиты):
+    -- 16 рядов, дата точки — предпоследний день отчётного месяца (конвенция контура).
+    -- Пропуски у краткосрочных автокредитов — свойство источника, а не сбой импорта.
+    UNION ALL SELECT 'cbr_int_rate_loans_ind', name, count(), min(date), max(date) FROM cbr_int_rate_loans_ind FINAL GROUP BY name
+
     UNION ALL SELECT 'cbr_m2', name, count(), min(date), max(date) FROM cbr_m2 FINAL GROUP BY name
     
     UNION ALL SELECT 'cbr_credit_m2x', name, count(), min(date), max(date) FROM cbr_credit_m2x FINAL GROUP BY name

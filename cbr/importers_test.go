@@ -64,6 +64,7 @@ var expectedPublicationCountPoints = map[string]string{
 	"cbr_loans_to_individuals":  "SELECT count() FROM cbr_loans_to_individuals FINAL",
 	"cbr_bank_int_rate":         "SELECT count() FROM cbr_bank_int_rate FINAL",
 	"cbr_int_rate_loans":        "SELECT count() FROM cbr_int_rate_loans FINAL",
+	"cbr_int_rate_loans_ind":    "SELECT count() FROM cbr_int_rate_loans_ind FINAL",
 	"cbr_indicators_cpd":        "SELECT count() FROM cbr_indicators_cpd FINAL",
 	"cbr_infl_exp":              "SELECT count() FROM cbr_infl_exp FINAL",
 	"cbr_infl_exp_op":           "SELECT count() FROM cbr_infl_exp FINAL",
@@ -131,7 +132,7 @@ func TestDaguStatsIgnoreComments(t *testing.T) {
 //     шаг контура резюме обсуждений (cbr_mp_summary: пропавший шаг оставил бы
 //     витрины v_cbr_mp_summary* пустыми при всех зелёных тестах);
 //   - (д) точка контроля публикации (префлайт) объявлена ровно у ожидаемых двадцати
-//     импортёров и запросом из expectedPublicationCountPoints: колонка countPoints
+//     одного импортёра и запросом из expectedPublicationCountPoints: колонка countPoints
 //     реестра сверяется с объявлением самого импортёра (метод Publication()
 //     встроенного util.ClickHouseImport), а у импортёров вне ожидаемого набора
 //     объявления нет вовсе — забытое объявление молча выключило бы префлайт, а
