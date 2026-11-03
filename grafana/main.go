@@ -1,9 +1,10 @@
 // Command grafana генерирует артефакты Grafana как код.
 //
 // Каждый дашборд контура (gold-thesis — §4 золотого роадмапа, key-rate-publications — публикации
-// ключевой ставки, finance-polyus — финансы и прогноз Полюса, transaq-trades — лента сделок MOEX)
-// собирается в K8s-стиль манифест, который деплоится `gcx resources push` (make grafana-deploy-test
-// / -staging). Файл артефакта — <out-dir>/<uid>.json:
+// ключевой ставки, finance-polyus — финансы и прогноз Полюса, transaq-trades — лента сделок MOEX,
+// urals-budget-rule — реальная цена Urals и бюджетное правило) собирается в K8s-стиль манифест,
+// который деплоится `gcx resources push` (make grafana-deploy-test / -staging). Файл артефакта —
+// <out-dir>/<uid>.json:
 //
 //	cd grafana && go run .                                     # все дашборды в ../dashboard
 //	cd grafana && go run . -dashboard key-rate-publications    # только один дашборд
@@ -22,7 +23,7 @@ import (
 )
 
 func main() {
-	which := flag.String("dashboard", "all", "какой дашборд собрать: uid (gold-thesis, key-rate-publications, finance-polyus, transaq-trades) или all")
+	which := flag.String("dashboard", "all", "какой дашборд собрать: uid (gold-thesis, key-rate-publications, finance-polyus, transaq-trades, urals-budget-rule) или all")
 	outDir := flag.String("out-dir", "../dashboard", "каталог артефактов: в него пишется <uid>.json")
 	flag.Parse()
 
@@ -36,6 +37,7 @@ func main() {
 		{KeyRatePublicationsUID, NewKeyRatePublications},
 		{FinancePolyusUID, NewFinancePolyus},
 		{TransaqTradesUID, NewTransaqTrades},
+		{UralsBudgetRuleUID, NewUralsBudgetRule},
 	}
 
 	selected := dashboards
