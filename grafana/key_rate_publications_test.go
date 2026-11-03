@@ -37,14 +37,14 @@ func builtKeyRatePublications(t *testing.T) dashboard.Dashboard {
 	return d
 }
 
-// TestKeyRatePublicationsHasThirtyThreePanels фиксирует состав дашборда: ряды 21 (панели 1–5 и 36 —
-// недельные цены на полной истории), 22 (панели 6–10 и 35 — кредиты банков, опережающий срез М2),
-// 23 (панели 11–14 и 25–28 — долговой контур ОФЗ), 24 (панели 15–19), 34 (панели 29–33 — внешние
-// условия, сбережения, разрыв выпуска, автономные факторы) и 40 (панели 37–39 — ИЦП, ФАО, средние
-// цены) — 33 панели, полный контракт спеки §3.
-func TestKeyRatePublicationsHasThirtyThreePanels(t *testing.T) {
-	if panels := panelsOf(builtKeyRatePublications(t)); len(panels) != 33 {
-		t.Fatalf("панелей %d, ожидалось 33", len(panels))
+// TestKeyRatePublicationsPanelCount фиксирует состав дашборда: ряды 21 (панели 1–5, 41 — теплокарта
+// недельного ИПЦ, и 36 — недельные цены на полной истории), 22 (панели 6–10 и 35 — кредиты банков,
+// опережающий срез М2), 23 (панели 11–14 и 25–28 — долговой контур ОФЗ), 24 (панели 15–19),
+// 34 (панели 29–33 — внешние условия, сбережения, разрыв выпуска, автономные факторы) и
+// 40 (панели 37–39 — ИЦП, ФАО, средние цены) — 34 панели, полный контракт спеки §3.
+func TestKeyRatePublicationsPanelCount(t *testing.T) {
+	if panels := panelsOf(builtKeyRatePublications(t)); len(panels) != 34 {
+		t.Fatalf("панелей %d, ожидалось 34", len(panels))
 	}
 }
 
@@ -113,6 +113,54 @@ func TestKeyRateAllTimeseriesUseTimeFilter(t *testing.T) {
 				t.Fatalf("график %q (%s): запрос без $__timeFilter: %s", panelTitle(p), query.RefId, query.RawSql)
 			}
 		}
+	}
+}
+
+// TestKeyRateWeeklyCpiHeatmapPanel — панель 41 (infra/5.14): custom-панель Business Charts
+// (типизированного билдера SDK нет — echarts.go), формат options подтверждён живым экспортом
+// плагина 7.2.5 с dev-стенда. Данные — только из таргета (в JS нет ни витрин, ни литеральных
+// значений), фильтр диапазона — в SQL ($__dateFilter по Date-колонке), LIMIT на графике нет.
+func TestKeyRateWeeklyCpiHeatmapPanel(t *testing.T) {
+	p := panelByID(t, builtKeyRatePublications(t), 41)
+	if p.Type != EChartsPanelType {
+		t.Fatalf("панель 41: тип %q, ожидался %q", p.Type, EChartsPanelType)
+	}
+	if p.PluginVersion == nil || *p.PluginVersion != EChartsPluginVersion {
+		t.Fatalf("панель 41: pluginVersion %v, ожидался %s", p.PluginVersion, EChartsPluginVersion)
+	}
+	raw, err := json.Marshal(p.Options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var opts echartsPanelOptions
+	if err := json.Unmarshal(raw, &opts); err != nil {
+		t.Fatalf("панель 41: options не разбираются: %v (%s)", err, raw)
+	}
+	if opts.EditorMode != "code" || opts.Renderer != "canvas" {
+		t.Fatalf("панель 41: editorMode=%q renderer=%q, ожидалось code/canvas", opts.EditorMode, opts.Renderer)
+	}
+	if !strings.Contains(opts.GetOption, "context.panel.data") {
+		t.Fatal("панель 41: getOption не читает data frames запроса")
+	}
+	for _, banned := range []string{"v_rosstat_macro", "$__dateFilter"} {
+		if strings.Contains(opts.GetOption, banned) {
+			t.Fatalf("панель 41: getOption содержит %q — данные и SQL живут в таргете", banned)
+		}
+	}
+	if len(p.Targets) != 1 {
+		t.Fatalf("панель 41: таргетов %d, ожидался 1", len(p.Targets))
+	}
+	query, ok := chQuery(p.Targets[0])
+	if !ok {
+		t.Fatal("панель 41: таргет не является запросом ClickHouse")
+	}
+	for _, want := range []string{"FROM v_rosstat_macro", "$__dateFilter(date)", krWeeklyAggregateSeries} {
+		if !strings.Contains(query.RawSql, want) {
+			t.Fatalf("панель 41: запрос без %q: %s", want, query.RawSql)
+		}
+	}
+	if strings.Contains(strings.ToUpper(query.RawSql), "LIMIT") {
+		t.Fatalf("панель 41: LIMIT на графике запрещён: %s", query.RawSql)
 	}
 }
 
@@ -692,27 +740,28 @@ func TestKeyRateSignalRowUsesTableQueries(t *testing.T) {
 }
 
 // TestKeyRateSpecConventions фиксирует конвенции спеки §4/§7 одним проходом: id панелей
-// 1..19, 25..33 и 35–39 без пропусков и повторов, непустой Description у каждой, ширина 24 у
-// панелей 5, 10, 33 и 35 и 12 у остальных, FINAL в панельных запросах не пишется (FINAL уже внутри
-// витрин, спека §2), а LIMIT — только у таблиц 12/16/17/18/19: на timeseries это анти-паттерн §6.
+// 1..19, 25..33, 35–39 и 41 (теплокарта недельного ИПЦ, infra/5.14) без пропусков и повторов,
+// непустой Description у каждой, ширина 24 у панелей 5, 10, 33, 35 и 41 и 12 у остальных,
+// FINAL в панельных запросах не пишется (FINAL уже внутри витрин, спека §2), а LIMIT — только
+// у таблиц 12/16/17/18/19: на timeseries это анти-паттерн §6.
 func TestKeyRateSpecConventions(t *testing.T) {
 	tablePanels := map[uint32]bool{12: true, 16: true, 17: true, 18: true, 19: true}
-	seen := make(map[uint32]bool, 33)
+	seen := make(map[uint32]bool, 34)
 	for _, p := range panelsOf(builtKeyRatePublications(t)) {
 		if p.Id == nil {
 			t.Fatalf("панель %q: не задан id", panelTitle(p))
 		}
 		id := *p.Id
-		allowed := (id >= 1 && id <= 19) || (id >= 25 && id <= 33) || (id >= 35 && id <= 39)
+		allowed := (id >= 1 && id <= 19) || (id >= 25 && id <= 33) || (id >= 35 && id <= 39) || id == 41
 		if !allowed || seen[id] {
-			t.Fatalf("панель %q: id %d вне 1..19/25..33/35..39 или повторяется", panelTitle(p), id)
+			t.Fatalf("панель %q: id %d вне 1..19/25..33/35..39/41 или повторяется", panelTitle(p), id)
 		}
 		seen[id] = true
 		if p.Description == nil || strings.TrimSpace(*p.Description) == "" {
 			t.Fatalf("панель %d: пустой Description (спека §4 — описание у каждой панели)", id)
 		}
 		wantSpan := uint32(12)
-		if id == 5 || id == 10 || id == 33 || id == 35 {
+		if id == 5 || id == 10 || id == 33 || id == 35 || id == 41 {
 			wantSpan = 24
 		}
 		if p.GridPos == nil || p.GridPos.W != wantSpan {
@@ -731,8 +780,8 @@ func TestKeyRateSpecConventions(t *testing.T) {
 			}
 		}
 	}
-	if len(seen) != 33 {
-		t.Fatalf("панелей %d, ожидалось 33 (id 1..19, 25..33 и 35..39 без пропусков)", len(seen))
+	if len(seen) != 34 {
+		t.Fatalf("панелей %d, ожидалось 34 (id 1..19, 25..33, 35..39 и 41 без пропусков)", len(seen))
 	}
 }
 
