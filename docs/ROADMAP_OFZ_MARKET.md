@@ -217,6 +217,34 @@ Research — [2026-10-30-transaq-net-flows-source.md](research/2026-10-30-transa
 
 Спека — [2026-10-31-grafana-transaq-trades-design.md](superpowers/specs/2026-10-31-grafana-transaq-trades-design.md); план — [2026-10-31-grafana-transaq-trades.md](superpowers/plans/2026-10-31-grafana-transaq-trades.md).
 
+### `ofz-market/1.7` — Индексные фьючерсы и фонды денежного рынка в нетто-потоках Transaq
+
+| Поле | Значение |
+|---|---|
+| Приоритет | P1 |
+| Зависит от | `ofz-market/1.5` (витрины `v_transaq_net_flows*`), `ofz-market/1.6` (дашборд `transaq-trades`) |
+| Issue | [#520](https://github.com/kmlebedev/clickhouse-import-rosstat/issues/520) |
+| Статус | ⏳ In Progress — спека и план |
+
+**Цель.** Нетто-поток покупок/продаж по самым ликвидным индексным фьючерсам FORTS (MIX — два ближайших квартальных, IMOEXF, RTS, MXI) и фондам денежного рынка (AKMM, SBMM, LQDT) в тех же витринах `v_transaq_net_flows`/`v_transaq_net_flows_daily`.
+
+**Состав:**
+
+- подписка экспортёра: доска `FUT` и коды в генераторе вселенной `transaq-clickhouse-exporter` (`cmd/universe`, два ближайших квартальных контракта на актив — ролл без логики дат);
+- рублёвая оценка FORTS по стоимости пункта `point_cost × 10^decimals / 100` (сверена с MOEX ISS `STEPPRICE/MINSTEP`);
+- колонка `instrument_kind` (`share`/`ofz`/`fund`/`future`/`other`) в `transaq_net_flows` и обеих витринах — фонды на `TQBR` отделены от акций;
+- фильтры панелей `transaq-trades` по `instrument_kind`; новых панелей нет.
+
+**Критерий приёмки:**
+
+- `make all`, `make docs-check`, `make grafana-validate` зелёные; тесты формулы FORTS, `instrument_kind` и выбора контрактов;
+- живой торговый день: в `v_transaq_net_flows_daily` есть строки `future` (7 кодов) и `fund` (3 кода); дневная оценка рублей MXZ6/MMZ6/RIZ6 в пределах ±5 % от ISS VALTODAY; топ-10 IMOEX без фондов; повтор идемпотентен;
+- `make mcp-check` читает `instrument_kind` под `kimi_reader`; протокол — комментарием в PR.
+
+**Не делать:** не добавлять открытый интерес, базис и склейку контрактов; не подписывать валютные, товарные и фьючерсы на акции; не выдавать сигналы и рекомендации.
+
+Спека — [2026-11-03-transaq-futures-money-funds-design.md](superpowers/specs/2026-11-03-transaq-futures-money-funds-design.md); план — [2026-11-03-transaq-futures-money-funds.md](superpowers/plans/2026-11-03-transaq-futures-money-funds.md).
+
 ---
 
 ## 5. Данные и витрины
@@ -242,7 +270,7 @@ cbr_zcyc ────────────────────┼→ 1.1 
 transaq_securities_info ─────┘       ├→ внешний контур: аналитика выпусков, денежный поток
                                      │
 transaq_quotes/trades ───────────────┼→ 1.3
-                                     │     └→ 1.5 ─→ 1.6
+                                     │     └→ 1.5 ─→ 1.6 ─→ 1.7
 источники эмитентов ─────────────────┴→ 1.2
 ```
 
@@ -251,6 +279,7 @@ transaq_quotes/trades ───────────────┼→ 1.3
 - `1.3` — P1, после `1.1`, использует те же сырые данные.
 - `1.5` — P1, после `1.1`; читает ту же ленту `transaq_trades` и ждёт рыночную подписку аккаунта.
 - `1.6` — P1, после `1.5`; дашборд-как-код на его витринах `v_transaq_net_flows*` (данных не добавляет).
+- `1.7` — P1, после `1.6`; расширяет ленту `1.5` фьючерсами и фондами и меняет фильтры дашборда `1.6`.
 - `key-rate/phase-2-cbr-zcyc` (✅) и `key-rate/phase-2-ofz-debt-stress` (⏳) не дублируются: это входы, не пункты этого роадмапа.
 
 ---
@@ -289,5 +318,6 @@ transaq_quotes/trades ───────────────┼→ 1.3
 | `ofz-market/1.4` | ❌ |
 | `ofz-market/1.5` | 🔶 In Review: живая приёмка 2026-10-30 — `transaq_trades` 7 362 строки (TQBR 44 кода IMOEX + TQOB 39 ОФЗ), `transaq_net_flows` 263 бакета 10:53–10:56 МСК, контроль по лотам сходится (605 206 B / 518 637 S / 9 463 сделки), повтор заменяет бакеты (`loaded_at` растёт, дублей ключа нет), `mcp-check` — 4 проверки transaq зелёные |
 | `ofz-market/1.6` | 🔶 In Review: дашборд `transaq-trades` собран кодом (5 панелей в 2 рядах), артефакт `dashboard/transaq-trades.json`; приёмка — этим PR |
+| `ofz-market/1.7` | ⏳ In Progress: спека и план |
 
 Статус обновляется тем же PR, что и реализация. `✅` до мержа — `In Review`, не `Done`.
