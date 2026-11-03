@@ -37,6 +37,79 @@ const krWeeklyHistoryStart = "2022-01-10"
 // она отстаёт от товарного слоя на неделю.
 const krWeeklyAggregateSeries = "Индекс потребительских цен (недельная оценка)"
 
+// krWeeklyCpiHeatmapSQL — недельный агрегат ИПЦ для теплокарты панели 41 (infra/5.14): индекс
+// (100 = без изменения) по неделям. Фильтр — макрос плагина для Date-колонки (практика
+// «фильтр по сырой колонке»); алиасы — русские, JS панели читает поля по типу, а не по имени.
+const krWeeklyCpiHeatmapSQL = `SELECT date AS "Дата", value AS "Индекс"
+FROM v_rosstat_macro
+WHERE series = '` + krWeeklyAggregateSeries + `'
+  AND $__dateFilter(date)
+ORDER BY date
+`
+
+// krWeeklyCpiHeatmapJS — тело getOption панели 41 (формат плагина 7.2.5, echarts.go): блок
+// календаря на каждый год из данных, стек сверху вниз; ячейка — неделя, цвет — индекс.
+// Вид подтверждён прототипом на dev-стенде (план infra/5.14): без русских nameMap подписи
+// месяцев слипаются, без поколения блоков по годам ECharts либо жмёт все года в полосу,
+// либо раскладывает месяцы по осям. Русские подписи — массивом: сокращения 'ru' нет.
+const krWeeklyCpiHeatmapJS = `const s = context.panel.data.series[0];
+if (!s) { return {}; }
+const t = s.fields.find((f) => f.type === 'time');
+const v = s.fields.find((f) => f.type === 'number');
+if (!t || !v) { return {}; }
+const data = [];
+for (let i = 0; i < s.length; i++) {
+  const tv = t.values[i];
+  const vv = v.values[i];
+  if (tv != null && vv != null) { data.push([tv, vv]); }
+}
+if (!data.length) { return {}; }
+const vals = data.map((d) => d[1]);
+const vmin = Math.min.apply(null, vals);
+const vmax = Math.max.apply(null, vals);
+const y0 = new Date(data[0][0]).getFullYear();
+const y1 = new Date(data[data.length - 1][0]).getFullYear();
+const ruMonths = ['Янв', 'Фев', 'Мар', 'Апр', 'Май', 'Июн', 'Июл', 'Авг', 'Сен', 'Окт', 'Ноя', 'Дек'];
+const years = [];
+for (let y = y0; y <= y1; y++) { years.push(y); }
+const blockH = 122;
+const calendars = years.map(function (y, i) {
+  return {
+    range: String(y),
+    top: 66 + i * blockH,
+    left: 64, right: 24,
+    cellSize: [12, 12],
+    splitLine: { show: true, lineStyle: { color: '#e9ecef', width: 1 } },
+    itemStyle: { color: '#f1f3f5', borderColor: '#dee2e6', borderWidth: 1 },
+    dayLabel: { show: false },
+    monthLabel: { nameMap: ruMonths, fontSize: 10, color: '#868e96' },
+    yearLabel: { fontSize: 11, color: '#495057', margin: 14 }
+  };
+});
+const series = years.map(function (y, i) {
+  return {
+    type: 'heatmap',
+    coordinateSystem: 'calendar',
+    calendarIndex: i,
+    data: data.filter(function (d) { return new Date(d[0]).getFullYear() === y; })
+  };
+});
+return {
+  tooltip: {
+    formatter: function (p) {
+      const iso = new Date(p.data[0]).toISOString().slice(0, 10);
+      return iso + '<br/>Индекс: <b>' + p.data[1].toFixed(2) + '</b>';
+    }
+  },
+  visualMap: {
+    min: vmin, max: vmax, type: 'continuous', orient: 'horizontal', left: 'center', top: 8,
+    textStyle: { color: '#495057' },
+    inRange: { color: ['#1971c2', '#a9e34b', '#f08c00', '#e03131'] }
+  },
+  calendar: calendars,
+  series: series
+};`
+
 // krFedstatRegion — регион ценовой панели: 2008–2022 годы в источнике — «Российская Федерация»,
 // 2026 — «без учёта новых субъектов». В панель берём только первый: иначе линия получила бы
 // разрыв 2023–2025 и смену территориального определения.
@@ -654,6 +727,7 @@ func NewKeyRatePublications() *dashboard.DashboardBuilder {
 		WithPanel(krWeeklyAvg4Panel()).
 		WithPanel(krWeeklyRisersPanel()).
 		WithPanel(krInflationPanel()).
+		WithPanel(krWeeklyCpiHeatmapPanel()).
 		WithPanel(krExpectationsPanel()).
 		WithRow(dashboard.NewRowBuilder("Деньги, кредит, бюджет, труд").Id(firstKeyRateRowID + 1)).
 		WithPanel(krBankLoansPanel()).
@@ -783,6 +857,22 @@ func krExpectationsPanel() *timeseries.PanelBuilder {
 			{Id: "unit", Value: units.Short},
 			krFixedColorProp("text"),
 		})
+}
+
+// krWeeklyCpiHeatmapPanel — панель 41: недельный ИПЦ календарной теплокартой (Apache ECharts через
+// плагин Business Charts — механизм infra/5.14, echarts.go). Высота 20 показывает ~5 блоков лет:
+// больший диапазон дашборда урезает нижние годы — это оговорено в описании, подстановки нулей нет
+// (практика «пропуск ≠ ноль»: урезание — отображение, данные не искажаются).
+func krWeeklyCpiHeatmapPanel() *dashboard.PanelBuilder {
+	return echartsPanel(41,
+		"Недельный ИПЦ — теплокарта",
+		"Официальный недельный агрегат ИПЦ (v_rosstat_macro, series = '"+krWeeklyAggregateSeries+"'): "+
+			"индекс цен по неделям, 100 = без изменения. Календарная теплокарта Apache ECharts — "+
+			"год блоком, неделя ячейкой, цвет индексом. Один блок ≈ 120px высоты: при большем диапазоне "+
+			"дат нижние годы уходят за край панели — сузьте диапазон или увеличьте высоту панели.",
+		krWeeklyCpiHeatmapJS,
+		timeseriesQuery("A", krWeeklyCpiHeatmapSQL),
+	).Height(20).Span(24)
 }
 
 // krBankLoansPanel — панель 35: кредиты, выданные банками (Сбер, ВТБ), как опережающий срез
