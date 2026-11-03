@@ -17,7 +17,7 @@ whenToUse: When using superpowers:subagent-driven-development or executing-plans
 
 ## 2. Модель — только явным `model:`
 
-Пропущенный параметр молча наследует модель сессии. Ключ пиши ровно так, как он назван в пуле `[secondary_model.models]` файла `~/.kimi-code/config.toml`. На 2026-10-15 в пуле: `joingonka/zai-org/GLM-5.3-Flash`, `xiaomimimo/flash`, `deepseek/deepseek-flash`, `anthropic/haiku`.
+Пропущенный параметр молча наследует модель сессии. Ключ пиши ровно так, как он назван в пуле `[secondary_model.models]` файла `~/.kimi-code/config.toml`. На 2026-10-15 в пуле: `xiaomimimo/flash`, `deepseek/deepseek-flash`, `qwencloud/qwen3.8-flash`.
 
 Если ключа нет в пуле — диспатч падает с `Invalid model "…"`; не подменяй модель молча, скажи владельцу.
 
@@ -26,7 +26,7 @@ whenToUse: When using superpowers:subagent-driven-development or executing-plans
 | Имплементер Go-кода — мелко-единичные задачи (критерий ниже) | `joingonka/zai-org/GLM-5.3-Flash` |
 | Имплементер Go-кода — крупные задачи, и прочие задачи | `deepseek/deepseek-flash` |
 | Имплементер документации — мелкие механические правки `.md` по образцу | `xiaomimimo/flash` |
-| `task-reviewer` задачи и scoped re-review в fix-loop | `anthropic/haiku` |
+| `task-reviewer` задачи и scoped re-review в fix-loop | `qwencloud/qwen3.8-flash` |
 | Финальное ревью всей ветки (`superpowers:requesting-code-review`) | `deepseek/deepseek-flash` |
 | Fix-раунды 4–5 (эскалация по §Model Selection) | `deepseek/deepseek-flash` |
 

@@ -937,6 +937,141 @@ async def check(params, server_log):
             failed += not expect("сырая cbr_int_rate_loans закрыта", denied,
                                  "отказ ClickHouse 497 на cbr_int_rate_loans (ожидаемо)" if denied else raw[:200])
 
+            # Ставки по кредитам физическим лицам в рублях по срокам (импортёр
+            # cbr_int_rate_loans_ind, остаток 4.2 #8 роадмапа): ряды контура агент читает только
+            # через общую витрину v_cbr_macro (проверка выше), сырая таблица ему не выдана.
+            # Каталог обязан описывать все 16 рядов источника, и число сверяется точным
+            # равенством, а не «> 0»: 16 = 8 сроков кредита × 2 группы («Всего» и «Автокредиты»),
+            # имя ряда код собирает из группы и срока. Меньшее число значит ни разу не
+            # отработавший шаг cbr_int_rate_loans_ind (числа агент прочитает, а что измеряет ряд,
+            # в каких единицах и как привязана дата — нет), большее — ряд, которому в листе
+            # источника не соответствует колонка. Выборка по origin, а не по source: у source='cbr'
+            # лежат ряды всех импортёров ЦБ, а файл loans_ind.xlsx — источник ровно этого набора;
+            # знак «_» в LIKE экранирован (\_), а путь якорится каталогом int_rat: без якоря
+            # подстрока «loans_ind.xlsx» совпала бы с соседним файлом New_loans_ind.xlsx
+            # (импортёр cbr_new_loans_ind, регионы — тоже source='cbr').
+            ind_loans_catalog = text(await session.call_tool("run_query", {"query": "SELECT count() FROM v_series_catalog WHERE source = 'cbr' AND origin LIKE '%/int\\_rat/loans\\_ind.xlsx%'"}))
+            ind_loans_catalog_rows = result_rows(ind_loans_catalog)
+            ind_loans_catalog_n = ind_loans_catalog_rows[0].get("count()") if ind_loans_catalog_rows else None
+            if ind_loans_catalog_rows is None:
+                ind_loans_catalog_detail = f"каталог не читается: {ind_loans_catalog[:200]}"
+            elif ind_loans_catalog_n == 16:
+                ind_loans_catalog_detail = "рядов cbr_int_rate_loans_ind: 16 (8 сроков × 2 группы: Всего/Автокредиты)"
+            else:
+                ind_loans_catalog_detail = (f"рядов cbr_int_rate_loans_ind: {ind_loans_catalog_n}, want 16 (8 сроков "
+                                            "× 2 группы: Всего/Автокредиты) — прогнать make import STAT=cbr_int_rate_loans_ind "
+                                            "(каталог перепубликовывается прогоном)")
+            failed += not expect("каталог cbr_int_rate_loans_ind полон", ind_loans_catalog_n == 16, ind_loans_catalog_detail)
+
+            # Сырая cbr_int_rate_loans_ind агенту не выдана — как cbr_int_rate_loans и
+            # cbr_households_b_mes: витрина — единственное место, где агент читает ряды контура.
+            # Таблицу создаёт DDL-прогон импортёра, поэтому UNKNOWN_TABLE здесь — провал, а не
+            # успех: таблица обязана существовать и быть закрытой.
+            raw = text(await session.call_tool("run_query", {"query": "SELECT count() FROM cbr_int_rate_loans_ind"}))
+            denied = "ACCESS_DENIED" in raw or "Not enough privileges" in raw
+            failed += not expect("сырая cbr_int_rate_loans_ind закрыта", denied,
+                                 "отказ ClickHouse 497 на cbr_int_rate_loans_ind (ожидаемо)" if denied else raw[:200])
+
+            # Средневзвешенная ставка по ипотечным жилищным кредитам, предоставленным
+            # физлицам-резидентам в рублях, по РФ (импортёр cbr_mortgage_rate, остаток 4.2 #8
+            # роадмапа): один ряд, агент читает его через общую витрину v_cbr_macro (проверка
+            # выше), сырая таблица ему не выдана. Каталог обязан описывать ровно один ряд, и
+            # число сверяется точным равенством, а не «> 0»: ноль значит ни разу не отработавший
+            # шаг cbr_mortgage_rate, большее — дубль ряда или чужая запись под этим файлом.
+            # Выборка по origin, а не по source: у source='cbr' лежат ряды всех импортёров ЦБ, а
+            # Rates_housing.xlsx — источник ровно этого набора. Знак «_» в LIKE экранирован (\_),
+            # а путь якорится каталогом Mortgage и номером файла 02_08: имя Rates_housing
+            # уникально среди origin пакета (легаси-дубль 02_13_Rates_mortgage.xlsx в каталог не
+            # попадает), но якорь держит выборку от будущего файла вида New_Rates_housing.xlsx.
+            mortgage_catalog = text(await session.call_tool("run_query", {"query": "SELECT count() FROM v_series_catalog WHERE source = 'cbr' AND origin LIKE '%/Mortgage/02\\_08\\_Rates\\_housing.xlsx%'"}))
+            mortgage_catalog_rows = result_rows(mortgage_catalog)
+            mortgage_catalog_n = mortgage_catalog_rows[0].get("count()") if mortgage_catalog_rows else None
+            if mortgage_catalog_rows is None:
+                mortgage_catalog_detail = f"каталог не читается: {mortgage_catalog[:200]}"
+            elif mortgage_catalog_n == 1:
+                mortgage_catalog_detail = "рядов cbr_mortgage_rate: 1 (средневзвешенная ставка по жилищным кредитам, РФ)"
+            else:
+                mortgage_catalog_detail = (f"рядов cbr_mortgage_rate: {mortgage_catalog_n}, want 1 (средневзвешенная "
+                                           "ставка по жилищным кредитам, РФ) — прогнать make import "
+                                           "STAT=cbr_mortgage_rate (каталог перепубликовывается прогоном)")
+            failed += not expect("каталог cbr_mortgage_rate полон", mortgage_catalog_n == 1, mortgage_catalog_detail)
+
+            # Сырая cbr_mortgage_rate агенту не выдана — как cbr_int_rate_loans и
+            # cbr_int_rate_loans_ind: витрина — единственное место, где агент читает ряды
+            # контура. Таблицу создаёт DDL-прогон импортёра, поэтому UNKNOWN_TABLE здесь —
+            # провал, а не успех: таблица обязана существовать и быть закрытой.
+            raw = text(await session.call_tool("run_query", {"query": "SELECT count() FROM cbr_mortgage_rate"}))
+            denied = "ACCESS_DENIED" in raw or "Not enough privileges" in raw
+            failed += not expect("сырая cbr_mortgage_rate закрыта", denied,
+                                 "отказ ClickHouse 497 на cbr_mortgage_rate (ожидаемо)" if denied else raw[:200])
+
+            # Квартальный корпус среднерыночных значений ПСК кредитных организаций (импортёр
+            # cbr_psk, остаток 4.2 #8 роадмапа; спека §3.5 C): у источника своя витрина v_cbr_psk —
+            # законодательный кап (ч. 11 ст. 6 353-ФЗ) и широкая форма, в общую v_cbr_macro он не
+            # входит. Витрина читается агентом и НЕПУСТА: строки публикует шаг cbr_psk (48 выпусков
+            # трёх эр: 23 PDF + 13 XLS + 12 XLSX по ~20 категорий), поэтому пустая витрина означает
+            # ни разу не отработавший контур, а не отсутствие данных у источника. Ориентир ≥ 300
+            # строк — нижняя граница корпуса (живой прогон 2026-11-03: 746 строк по 47 выпускам до
+            # фикса; после фикса добавляются ранние и 2022/2023 выпуски); меньше — прогнать
+            # make import STAT=cbr_psk.
+            psk_view = text(await session.call_tool("run_query", {"query": "SELECT count() AS n FROM v_cbr_psk"}))
+            psk_view_rows = result_rows(psk_view)
+            psk_view_n = psk_view_rows[0].get("n") if psk_view_rows else None
+            if psk_view_rows is None:
+                psk_view_detail = (f"витрина не читается: {psk_view[:200]} — на пустой БД её создаёт "
+                                   "прогон импортёра (make import STAT=cbr_psk)")
+            elif (psk_view_n or 0) >= 300:
+                psk_view_detail = f"строк: {psk_view_n}"
+            else:
+                psk_view_detail = (f"строк: {psk_view_n}, ожидалось не меньше 300 (48 выпусков × ~20 категорий) — "
+                                   "прогнать make import STAT=cbr_psk (витрину пересоздаёт прогон импортёра)")
+            failed += not expect("витрина v_cbr_psk существует и непуста", (psk_view_n or 0) >= 300, psk_view_detail)
+
+            # Ипотечная «ПСК по 353-ФЗ»: укрупнённый код 6 — с 2022-03-31, детализированные
+            # 6.1.1/6.1.2 — с 2024-06-30 (16.08.2024); в XLSX 16.11.2023/15.02.2024/16.05.2024
+            # ещё укрупнённая таксономия 6/7/8. Код 6.1.1 в окне от его первого выпуска —
+            # проверка, что разбор не потерял ипотечные листья и витрина не устарела на эру.
+            psk_mortgage = text(await session.call_tool("run_query", {"query": "SELECT count() AS n FROM v_cbr_psk WHERE category_code = '6.1.1' AND date BETWEEN toDate('2024-06-30') AND toDate('2026-06-30')"}))
+            psk_mortgage_rows = result_rows(psk_mortgage)
+            psk_mortgage_n = psk_mortgage_rows[0].get("n") if psk_mortgage_rows else None
+            if psk_mortgage_rows is None:
+                psk_mortgage_detail = f"запрос не выполнен: {psk_mortgage[:200]}"
+            elif (psk_mortgage_n or 0) > 0:
+                psk_mortgage_detail = f"строк категории 6.1.1 за 2024-06-30…2026-06-30: {psk_mortgage_n}"
+            else:
+                psk_mortgage_detail = ("нет строк категории 6.1.1 за 2024-06-30…2026-06-30 — разбор потерял "
+                                       "ипотечные листья XLSX-эры или витрина устарела; прогнать make import STAT=cbr_psk")
+            failed += not expect("витрина v_cbr_psk содержит ипотечную категорию 6.1.1", (psk_mortgage_n or 0) > 0,
+                                 psk_mortgage_detail)
+
+            # Каталог: каждая категория корпуса получает ряд «ПСК <код>: <наименование>» (каталог
+            # динамический, набор кодов читается из таблицы). Кодов в объединении трёх таксономий
+            # больше 20 (XLSX-эра одна даёт 20), поэтому проверка снизу: меньше 20 значит каталог
+            # не опубликован или импорт отработал частично. Выборка по series, а не по origin: у
+            # source='cbr' лежат ряды всех импортёров ЦБ, а префикс «ПСК » — пространство имён ровно
+            # этого набора.
+            psk_catalog = text(await session.call_tool("run_query", {"query": "SELECT count() AS n FROM v_series_catalog WHERE source = 'cbr' AND series LIKE 'ПСК %'"}))
+            psk_catalog_rows = result_rows(psk_catalog)
+            psk_catalog_n = psk_catalog_rows[0].get("n") if psk_catalog_rows else None
+            if psk_catalog_rows is None:
+                psk_catalog_detail = f"каталог не читается: {psk_catalog[:200]}"
+            elif (psk_catalog_n or 0) >= 20:
+                psk_catalog_detail = f"рядов «ПСК …»: {psk_catalog_n}"
+            else:
+                psk_catalog_detail = (f"рядов «ПСК …»: {psk_catalog_n}, ожидалось не меньше 20 — прогнать "
+                                      "make import STAT=cbr_psk (каталог перепубликовывается прогоном)")
+            failed += not expect("каталог cbr_psk описывает категории", (psk_catalog_n or 0) >= 20, psk_catalog_detail)
+
+            # Сырая cbr_psk агенту не выдана — как cbr_int_rate_loans и cbr_mortgage_rate: витрина —
+            # единственное место, где агент читает корпус (семантика капа и привязка даты описаны в
+            # комментариях витрины и v_series_catalog). Таблицу создаёт DDL-прогон импортёра,
+            # поэтому UNKNOWN_TABLE здесь — провал, а не успех: таблица обязана существовать и быть
+            # закрытой.
+            raw = text(await session.call_tool("run_query", {"query": "SELECT count() FROM cbr_psk"}))
+            denied = "ACCESS_DENIED" in raw or "Not enough privileges" in raw
+            failed += not expect("сырая cbr_psk закрыта", denied,
+                                 "отказ ClickHouse 497 на cbr_psk (ожидаемо)" if denied else raw[:200])
+
             # Контур платёжного баланса ЦБ (пункт 4.2 №14 роадмапа — канал «внешние условия и
             # курс», импортёры cbr_bop_est и cbr_bop_standard): витрина v_cbr_bop читается агентом
             # и НЕПУСТА, каталог описывает оба набора целиком (51 и 34 ряда), а обе сырые таблицы —
