@@ -72,6 +72,7 @@
 - Dev-ClickHouse запускает пользователь (`make ch-up`). Ассистент не делает `make ch-up`/`ch-down` без явной просьбы.
 - Типовые цели: `make env-check`, `make ch-status`, `make import STAT=<имя>`, `make mcp-user`, `make mcp-check`, `make all`, `make docs-check`.
 - Пароль `kimi_reader` не печатать; агент читает только витрины `v_*`.
+- Grafana MCP — read-only: локально сервер `grafana` в `.kimi-code/mcp.json` (stdio, Admin-токен, `--disable-write`), на staging — loopback `mcp-grafana` на `127.0.0.1:8000` через ssh-туннель; smoke — `make grafana-mcp-check` (staging: `GRAFANA_MCP_URL=http://localhost:8001/mcp`).
 - SQL к ClickHouse — только через MCP `mcp__clickhouse__run_query`; GoLand MCP — по `go-engineer`.
 
 ## Стиль коммитов и PR

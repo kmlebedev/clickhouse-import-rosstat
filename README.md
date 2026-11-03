@@ -182,7 +182,10 @@ make mlflow-down
 | `make mlflow-register` / `make mlflow-promote` / `make mlflow-models` | реестр моделей и алиасы `challenger`/`champion` (аргументы — в `ARGS`) |
 | `make ml-gate` / `make ml-gate-test` | gate промоушена: DM-HLN, 95% бутстрап CI, robustness-окна, MCS при >2 кандидатах; артефакт `build/ml-gate/<run>.json`; live-режим `ARGS="--live --live-track cbr_rate:ordered_logit"` / офлайн-тесты |
 | `make ml-live-check` / `make ml-live-check-test` | проверка live-прогноза до публикации: production-строки на ближайшее заседание, `forecast_date < target_date`, непустой `data_version`; `ARGS="--require-llm --warn-only"` / офлайн-тесты |
-| `make mcp-check` | MCP end-to-end |
+| `make mcp-check` | MCP ClickHouse end-to-end (витрины, сырые таблицы закрыты) |
+| `make grafana-mcp-check` | MCP Grafana end-to-end (read-only инструменты, датасорс `ch-rosstat`, дашборд `gold-thesis`) |
+| `make deploy` | алиас `make deploy-staging`: единственный стенд проекта — staging |
+| `make deploy-staging` | деплой на staging: бинарник, `dagu`, `mcp-clickhouse`, `mcp-grafana`, `mlflow` |
 | `make cb-comp-parity` / `make cb-comp-parity-test` | паритет nowcast с CB_COMP (direct + bottom-up, архив авторов) / офлайн-тесты parity-скриптов |
 | `make cb-comp-groups-panel` / `make cb-comp-groups-panel-test` | Task 1 #421: live-панель 88 групп CB_COMP из ЕМИСС 31074 (`v_fedstat_ipc`) — маппинг, NSA, X-13 по группам (R `seasonal`), сборка против `TARGET_FULL` (гейт #190); `ARGS="--asof --jobs N"`; нужен локальный архив CB_COMP; в ClickHouse не пишет, артефакты `build/cb-comp-groups/` / офлайн-тесты без ClickHouse, R и архива |
 | `make cb-comp-live-bottomup` / `make cb-comp-live-bottomup-test` | Task 2 #422: live bottom-up по 88 группам на нашей панели (цель `T_LIVE`, МП по листам) — R0 (регрессия #252), G2, сравнение с CB_COMP «каждый на своей цели» и на `TARGET_FULL`; нужны артефакты `make cb-comp-groups-panel ARGS="--asof"` и `make cb-comp-public-export`; `ML_LOG=1` — паспорт в `ml_runs`/`ml_predictions` и MLflow (P0.5) / офлайн-тесты |
@@ -235,7 +238,7 @@ LLM-плагин [`rosstat-mcp`](https://github.com/kmlebedev/rosstat-mcp) жи�
 | Qwen Code | `qwen extensions install kmlebedev/rosstat-mcp` |
 | Cursor | `/add-plugin https://github.com/kmlebedev/rosstat-mcp` |
 
-Доступ выдаётся по Google-аккаунту: владелец добавляет email в `ROSSTAT_MCP_ALLOWED_GOOGLE_EMAILS`, плагин 0.5.0+ входит через Google OAuth (Kimi Code 2.2.0+; остальным клиентам нужна поддержка OAuth); токен `ROSSTAT_MCP_TOKEN` и старые версии плагина больше не работают (cutover на `:8443`). Старый плагин `clickhouse-import-rosstat` (скилы + MCP, установка всего репозитория) больше не публикуется — удаление и миграция описаны в README плагина. Локальный dev-доступ к ClickHouse по-прежнему даёт [`.kimi-code/mcp.json`](.kimi-code/mcp.json) (сервер `clickhouse`, stdio).
+Доступ выдаётся по Google-аккаунту: владелец добавляет email в `ROSSTAT_MCP_ALLOWED_GOOGLE_EMAILS`, плагин 0.5.0+ входит через Google OAuth (Kimi Code 2.2.0+; остальным клиентам нужна поддержка OAuth); токен `ROSSTAT_MCP_TOKEN` и старые версии плагина больше не работают (cutover на `:8443`). Старый плагин `clickhouse-import-rosstat` (скилы + MCP, установка всего репозитория) больше не публикуется — удаление и миграция описаны в README плагина. Локальный dev-доступ к ClickHouse по-прежнему даёт [`.kimi-code/mcp.json`](.kimi-code/mcp.json) (сервер `clickhouse`, stdio); там же сервер `grafana` — read-only `mcp-grafana`. На staging `mcp-grafana` слушает только `127.0.0.1:8000` и доступен через ssh-туннель (см. [deploy/staging/README.md](deploy/staging/README.md), «Grafana MCP на staging»).
 
 Полный набор целей, Python-тесты, зависимости и CI — [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
