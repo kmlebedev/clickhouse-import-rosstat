@@ -48,6 +48,20 @@ GRAFANA_TOKEN    ?= $(GRAFANA_TEST_TOKEN)
 # (конвенция та же, что у make mcp-check).
 GRAFANA_STAGING_URL ?= http://localhost:3001
 
+# Grafana MCP: локально — stdio (.kimi-code/mcp.json), на staging — loopback-сервис
+# mcp-grafana на 127.0.0.1:$(GRAFANA_MCP_PORT). Наружу порт не публикуется: доступ через
+# ssh-туннель (конвенция та же, что у Grafana :3001). Токен — Admin: gcx-дашборды не видны
+# ролям Viewer/Editor (403 на Grafana 13), а --disable-write оставляет MCP read-only.
+# Локально обычно подходит GRAFANA_TEST_TOKEN, если его сервис-аккаунт Admin.
+GRAFANA_MCP_VERSION   ?= 2.2.0
+GRAFANA_MCP_PORT      ?= 8000
+# Локальный порт ssh-туннеля к MCP; он же входит в --allowed-hosts юнита.
+GRAFANA_MCP_TUNNEL_PORT ?= 8001
+GRAFANA_MCP_TOKEN     ?= $(GRAFANA_TEST_TOKEN)
+# Пусто — stdio к $(GRAFANA_TEST_URL); URL вида http://localhost:8001/mcp — staging через туннель.
+GRAFANA_MCP_URL       ?=
+GRAFANA_MCP_CHECK_UID ?= gold-thesis
+
 MCP_USER     ?= kimi_reader
 MCP_PY       ?= 3.12
 MCP_VERSION  ?= 0.7.0
@@ -103,7 +117,7 @@ DAGU_VERSION     ?= v2.18.2
 MKDOCS_VERSION ?= 9.7.7
 MKDOCS := uv run --with mkdocs-material==$(MKDOCS_VERSION) --python 3.12 mkdocs
 
-.PHONY: all lint fmt vet test build run deps clean info ch-up ch-down ch-status ch-sql mlflow-up mlflow-down mlflow-status mlflow-export mlflow-backfill mlflow-backfill-test mlflow-preflight mlflow-register mlflow-promote mlflow-models ml-gate ml-gate-test ml-live-check ml-live-check-test dev-check env-check import mp-llm-eval archive-registry archive-list archive-restore mcp-run mcp-user mcp-check mcp-auth-test build-ingest run-ingest deploy-staging deploy-staging-binary deploy-staging-dagu deploy-staging-mcp deploy-staging-mlflow deploy-staging-preflight deploy-staging-smoke upgrade-staging mcp-user-staging staging-precheck grafana-build grafana-validate grafana-up grafana-down grafana-deploy-test grafana-deploy-staging grafana-provision-staging grafana-check grafana-test-token grafana-provision-alerting-staging key-rate-model key-rate-cbr-rule key-rate-cbr-rule-test key-rate-scenario-fan key-rate-scenario-fan-test key-rate-scenario-fan-v2 key-rate-scenario-fan-v2-test key-rate-scenario-fan-v3 key-rate-scenario-fan-v3-test key-rate-cpi-v3-experiment key-rate-cpi-v3-experiment-test cpi-live3-horizons cpi-live3-horizons-test shock-classifier shock-classifier-test key-rate-llm-forecast key-rate-forecast-log cpi-nowcast cpi-monthly cpi-monthly-v3 cpi-monthly-v3-test cpi-monthly-v3-public cpi-monthly-v3-public-test cpi-monthly-industry cpi-monthly-industry-test cpi-public-audit cpi-public-audit-test cpi-weekly-panel cpi-weekly-panel-test weekly-core-proxy weekly-core-proxy-test cpi-weekly-aggregate cpi-weekly-aggregate-test cpi-v4-leaderboard cpi-v4-leaderboard-test cpi-v4-grid cpi-v4-grid-test cpi-v4-h2o cpi-v4-h2o-test cpi-core-nnls cpi-core-nnls-test cpi-v4-h2 cpi-v4-h2-test cpi-v4-core cpi-v4-core-test cpi-sa-reconciliation cpi-sa-reconciliation-test cpi-asof-test cpi-weekly-sa-asof cpi-weekly-sa-asof-test cpi-two-stage-targets-test cpi-two-stage-folds cpi-two-stage-folds-test cpi-two-stage-s1 cpi-two-stage-s1-test cb-comp-data-reconcile cb-comp-data-reconcile-test cpi-two-stage-cb-comp cpi-two-stage-cb-comp-test cpi-two-stage-w2 cpi-two-stage-w2-test weekly-core-components weekly-core-components-test cpi-pipeline-stage1 cpi-pipeline-stage1-test cpi-pipeline-stage2 cpi-pipeline-stage2-test cpi-pipeline-sa-test publication-calendar-test cb-comp-parity cb-comp-parity-test cb-comp-live-bottomup cb-comp-live-bottomup-test cb-comp-live-en cb-comp-live-en-test cb-comp-h1-bs-combo cb-comp-h1-bs-combo-test cb-comp-h1-weekly cb-comp-h1-weekly-test cb-comp-h1-weekly-ex cb-comp-h1-weekly-ex-test cb-comp-h1-shadow-robustness cb-comp-h1-shadow-forecast cb-comp-h1-shadow-test cb-comp-h1-shadow-mlflow cb-comp-h1-shadow-mlflow-test cb-comp-h3-h6-var cb-comp-h3-h6-var-test cb-comp-tlive-target cb-comp-tlive-target-test cb-comp-88-live-gate cb-comp-88-live-gate-test cb-comp-per-code-review cb-comp-per-code-review-test cb-comp-per-code-review-books cb-comp-per-code-review-x13 cb-comp-groups-panel cb-comp-groups-panel-test cb-comp-live cb-comp-live-test cb-comp-live-compare cb-comp-proxy ppi-sa-weights-panel ppi-sa-weights-panel-test ppi-sa-parity ppi-sa-parity-test ppi-sa-text-anchors ppi-sa-text-anchors-test ppi-sa-industry ppi-sa-industry-test ppi-monthly-forecast ppi-monthly-forecast-test edisclosure-login edisclosure-collect docs-check docs-build docs-serve cb-comp-per-code-reconstruction cb-comp-per-code-reconstruction-test
+.PHONY: all lint fmt vet test build run deps clean info ch-up ch-down ch-status ch-sql mlflow-up mlflow-down mlflow-status mlflow-export mlflow-backfill mlflow-backfill-test mlflow-preflight mlflow-register mlflow-promote mlflow-models ml-gate ml-gate-test ml-live-check ml-live-check-test dev-check env-check import mp-llm-eval archive-registry archive-list archive-restore mcp-run mcp-user mcp-check mcp-auth-test grafana-mcp-run grafana-mcp-check build-ingest run-ingest deploy deploy-staging deploy-staging-binary deploy-staging-dagu deploy-staging-mcp deploy-staging-mcp-grafana deploy-staging-mlflow deploy-staging-preflight deploy-staging-smoke upgrade-staging mcp-user-staging staging-precheck grafana-build grafana-validate grafana-up grafana-down grafana-deploy-test grafana-deploy-staging grafana-provision-staging grafana-check grafana-test-token grafana-provision-alerting-staging key-rate-model key-rate-cbr-rule key-rate-cbr-rule-test key-rate-scenario-fan key-rate-scenario-fan-test key-rate-scenario-fan-v2 key-rate-scenario-fan-v2-test key-rate-scenario-fan-v3 key-rate-scenario-fan-v3-test key-rate-cpi-v3-experiment key-rate-cpi-v3-experiment-test cpi-live3-horizons cpi-live3-horizons-test shock-classifier shock-classifier-test key-rate-llm-forecast key-rate-forecast-log cpi-nowcast cpi-monthly cpi-monthly-v3 cpi-monthly-v3-test cpi-monthly-v3-public cpi-monthly-v3-public-test cpi-monthly-industry cpi-monthly-industry-test cpi-public-audit cpi-public-audit-test cpi-weekly-panel cpi-weekly-panel-test weekly-core-proxy weekly-core-proxy-test cpi-weekly-aggregate cpi-weekly-aggregate-test cpi-v4-leaderboard cpi-v4-leaderboard-test cpi-v4-grid cpi-v4-grid-test cpi-v4-h2o cpi-v4-h2o-test cpi-core-nnls cpi-core-nnls-test cpi-v4-h2 cpi-v4-h2-test cpi-v4-core cpi-v4-core-test cpi-sa-reconciliation cpi-sa-reconciliation-test cpi-asof-test cpi-weekly-sa-asof cpi-weekly-sa-asof-test cpi-two-stage-targets-test cpi-two-stage-folds cpi-two-stage-folds-test cpi-two-stage-s1 cpi-two-stage-s1-test cb-comp-data-reconcile cb-comp-data-reconcile-test cpi-two-stage-cb-comp cpi-two-stage-cb-comp-test cpi-two-stage-w2 cpi-two-stage-w2-test weekly-core-components weekly-core-components-test cpi-pipeline-stage1 cpi-pipeline-stage1-test cpi-pipeline-stage2 cpi-pipeline-stage2-test cpi-pipeline-sa-test publication-calendar-test cb-comp-parity cb-comp-parity-test cb-comp-live-bottomup cb-comp-live-bottomup-test cb-comp-live-en cb-comp-live-en-test cb-comp-h1-bs-combo cb-comp-h1-bs-combo-test cb-comp-h1-weekly cb-comp-h1-weekly-test cb-comp-h1-weekly-ex cb-comp-h1-weekly-ex-test cb-comp-h1-shadow-robustness cb-comp-h1-shadow-forecast cb-comp-h1-shadow-test cb-comp-h1-shadow-mlflow cb-comp-h1-shadow-mlflow-test cb-comp-h3-h6-var cb-comp-h3-h6-var-test cb-comp-tlive-target cb-comp-tlive-target-test cb-comp-88-live-gate cb-comp-88-live-gate-test cb-comp-per-code-review cb-comp-per-code-review-test cb-comp-per-code-review-books cb-comp-per-code-review-x13 cb-comp-groups-panel cb-comp-groups-panel-test cb-comp-live cb-comp-live-test cb-comp-live-compare cb-comp-proxy ppi-sa-weights-panel ppi-sa-weights-panel-test ppi-sa-parity ppi-sa-parity-test ppi-sa-text-anchors ppi-sa-text-anchors-test ppi-sa-industry ppi-sa-industry-test ppi-monthly-forecast ppi-monthly-forecast-test edisclosure-login edisclosure-collect docs-check docs-build docs-serve cb-comp-per-code-reconstruction cb-comp-per-code-reconstruction-test
 
 all: lint test build build-ingest
 
@@ -342,6 +356,7 @@ env-check:
 	@if [ -n "$$ARCHIVE_YANDEX_TOKEN" ]; then echo "OK   ARCHIVE_YANDEX_TOKEN задан"; else echo "НЕТ  ARCHIVE_YANDEX_TOKEN не задан (нужен при ARCHIVE_BACKEND=yandex)"; fi
 	@if [ -n "$$GRAFANA_TEST_TOKEN" ]; then echo "OK   GRAFANA_TEST_TOKEN задан"; else echo "НЕТ  GRAFANA_TEST_TOKEN не задан (нужен для make grafana-deploy-test: сервис-аккаунт Editor на $(GRAFANA_TEST_URL))"; fi
 	@if [ -n "$$GRAFANA_STAGING_TOKEN" ]; then echo "OK   GRAFANA_STAGING_TOKEN задан"; else echo "НЕТ  GRAFANA_STAGING_TOKEN не задан (нужен для make grafana-deploy-staging: сервис-аккаунт Editor на staging, доступ через туннель $(GRAFANA_STAGING_URL))"; fi
+	@if [ -n "$$GRAFANA_MCP_TOKEN" ]; then echo "OK   GRAFANA_MCP_TOKEN задан"; else echo "НЕТ  GRAFANA_MCP_TOKEN не задан (нужен для make grafana-mcp-check: Admin-токен; локально обычно GRAFANA_TEST_TOKEN, на staging — mcp-grafana-admin)"; fi
 
 # Локальный прогон одного импортёра или группы: make import STAT=bea / STAT=key_rate_sources
 # (нужны CLICKHOUSE_URL и ключи источников из $(ROSSTAT_ENV)).
@@ -1105,6 +1120,26 @@ mcp-check:
 	CLICKHOUSE_USER=$(MCP_USER) CLICKHOUSE_DATABASE=default MCP_VERSION=$(MCP_VERSION) \
 	uv run --with mcp-clickhouse==$(MCP_VERSION) --with mcp --python $(MCP_PY) python scripts/mcp_check.py
 
+# Grafana MCP: ручной stdio-запуск (аналог mcp-run) и end-to-end smoke.
+# Сервер стартует с --disable-write и не открывает порт; токен — тот же,
+# что у деплоя дашбордов (GRAFANA_TEST_TOKEN).
+grafana-mcp-run:
+	@test -n "$$GRAFANA_MCP_TOKEN" || { echo "задайте Admin-токен в GRAFANA_MCP_TOKEN (или GRAFANA_TEST_TOKEN, если он Admin)"; exit 1; }
+	@curl -sf -m 2 $(GRAFANA_TEST_URL)/api/health >/dev/null 2>&1 || { echo "Grafana на $(GRAFANA_TEST_URL) не отвечает: make grafana-up"; exit 1; }
+	GRAFANA_URL=$(GRAFANA_TEST_URL) GRAFANA_SERVICE_ACCOUNT_TOKEN="$$GRAFANA_MCP_TOKEN" \
+	uv tool run --python $(MCP_PY) --from mcp-grafana==$(GRAFANA_MCP_VERSION) mcp-grafana --disable-write --usage-stats=disabled
+
+# Smoke Grafana MCP. Без GRAFANA_MCP_URL — stdio к локальной Grafana; с URL — streamable HTTP
+# к staging через туннель (например, GRAFANA_MCP_URL=http://localhost:8001/mcp), токен не нужен.
+grafana-mcp-check:
+	@if [ -z "$(GRAFANA_MCP_URL)" ]; then \
+		test -n "$$GRAFANA_MCP_TOKEN" || { echo "задайте Admin-токен в GRAFANA_MCP_TOKEN (или GRAFANA_TEST_TOKEN, если он Admin)"; exit 1; }; \
+		curl -sf -m 2 $(GRAFANA_TEST_URL)/api/health >/dev/null 2>&1 || { echo "Grafana на $(GRAFANA_TEST_URL) не отвечает: make grafana-up"; exit 1; }; \
+	fi
+	GRAFANA_URL=$(GRAFANA_TEST_URL) GRAFANA_MCP_TOKEN="$$GRAFANA_MCP_TOKEN" GRAFANA_MCP_URL="$(GRAFANA_MCP_URL)" \
+	GRAFANA_MCP_VERSION=$(GRAFANA_MCP_VERSION) GRAFANA_MCP_CHECK_UID=$(GRAFANA_MCP_CHECK_UID) \
+	uv run --with mcp --python $(MCP_PY) python scripts/grafana_mcp_check.py
+
 # Офлайн-тесты Google OAuth allowlist-провайдера (без сети и без ClickHouse).
 mcp-auth-test:
 	uv run --with mcp-clickhouse==$(MCP_VERSION) --python $(MCP_PY) python deploy/staging/rosstat_mcp_auth_test.py -v
@@ -1215,6 +1250,28 @@ deploy-staging-mcp: staging-precheck
 	@echo "прогрев кэша uv (скачивание mcp-clickhouse==$(MCP_VERSION))..."
 	@ssh $(STAGING_HOST) '$(STAGING_BIN_DIR)/uv tool run --from mcp-clickhouse==$(MCP_VERSION) python -c "pass" >/dev/null 2>&1 || true'
 
+# Grafana MCP: loopback-юнит (127.0.0.1:$(GRAFANA_MCP_PORT)), обёртка с токеном и прогрев кэша uv.
+# Версия в юните обязана совпадать с GRAFANA_MCP_VERSION: расхождение — ошибка деплоя (grep ниже),
+# иначе сервис молча поднялся бы на другой версии, чем Makefile/инструкция отката.
+deploy-staging-mcp-grafana: staging-precheck
+	@grep -qF "GRAFANA_MCP_VERSION=$(GRAFANA_MCP_VERSION)" deploy/staging/mcp-grafana.service || { \
+		echo "deploy/staging/mcp-grafana.service: нет GRAFANA_MCP_VERSION=$(GRAFANA_MCP_VERSION)"; \
+		echo "обновите версию в юните (она обязана совпадать с GRAFANA_MCP_VERSION) и повторите"; exit 1; }
+	@grep -qF "GRAFANA_MCP_ADDRESS=127.0.0.1:$(GRAFANA_MCP_PORT)" deploy/staging/mcp-grafana.service || { \
+		echo "deploy/staging/mcp-grafana.service: адрес не 127.0.0.1:$(GRAFANA_MCP_PORT)"; exit 1; }
+	@grep -qE "GRAFANA_MCP_ALLOWED_HOSTS=.*:$(GRAFANA_MCP_TUNNEL_PORT)" deploy/staging/mcp-grafana.service || { \
+		echo "deploy/staging/mcp-grafana.service: в GRAFANA_MCP_ALLOWED_HOSTS нет :$(GRAFANA_MCP_TUNNEL_PORT) (порт туннеля)"; exit 1; }
+	@ssh $(STAGING_HOST) 'set -a; . $(STAGING_ENV_FILE); set +a; \
+		[ -n "$$GRAFANA_MCP_TOKEN" ] && echo "OK   GRAFANA_MCP_TOKEN задан" || { echo "FAIL в $(STAGING_ENV_FILE) не задан GRAFANA_MCP_TOKEN (Admin-токен mcp-grafana-admin, см. env.example)"; exit 1; }'
+	@ssh $(STAGING_HOST) 'curl -sf -m 3 http://127.0.0.1:3000/api/health >/dev/null && echo "OK   Grafana на 127.0.0.1:3000 отвечает"' || { echo "FAIL Grafana на $(STAGING_HOST):127.0.0.1:3000 не отвечает"; exit 1; }
+	ssh $(STAGING_HOST) 'install -d -m 755 $(STAGING_MCP_LIB_DIR)'
+	scp deploy/staging/mcp_grafana_launch.sh $(STAGING_HOST):$(STAGING_MCP_LIB_DIR)/mcp_grafana_launch.sh
+	ssh $(STAGING_HOST) 'chmod 755 $(STAGING_MCP_LIB_DIR)/mcp_grafana_launch.sh'
+	scp deploy/staging/mcp-grafana.service $(STAGING_HOST):/etc/systemd/system/mcp-grafana.service
+	ssh $(STAGING_HOST) 'systemctl daemon-reload'
+	@echo "прогрев кэша uv (скачивание mcp-grafana==$(GRAFANA_MCP_VERSION))..."
+	@ssh $(STAGING_HOST) '$(STAGING_BIN_DIR)/uv tool run --python $(MCP_PY) --from mcp-grafana==$(GRAFANA_MCP_VERSION) mcp-grafana --help >/dev/null 2>&1 || true'
+
 # MLflow: юнит + каталоги состояния + прогрев кэша uv. Версия в юните обязана совпадать
 # с MLFLOW_VERSION: расхождение — ошибка деплоя (grep ниже), иначе сервис молча
 # поднялся бы на другой версии, чем Makefile/бэкап-инструкция.
@@ -1268,12 +1325,15 @@ deploy-staging-data: staging-precheck
 		echo "WARN в wgc/data нет xlsx — выгрузки WGC не скопированы; DAG wgc с WGC_REQUIRE_DATA=1 упадёт, пока файлы не положены"; \
 	 fi
 
-# Полный деплой: бинарь → dagu → mcp → mlflow → DAG'и → проверка ДО включения → включение → smoke.
+# Алиас: единственный стенд проекта — staging (см. deploy/staging/README.md).
+deploy: deploy-staging
+
+# Полный деплой: бинарь → dagu → mcp-clickhouse → mcp-grafana → mlflow → DAG'и → проверка ДО включения → включение → smoke.
 #
 # Порядок критичен. Сервисы включаются последними: dagu после `enable --now` немедленно
 # начинает выполнять DAG'и по расписанию, поэтому сначала проверяется, что бинарь и
 # DAG-файлы на месте (deploy-staging-preflight), и только потом сервисы запускаются.
-deploy-staging: deploy-staging-binary deploy-staging-dagu deploy-staging-data deploy-staging-mcp deploy-staging-mlflow
+deploy-staging: deploy-staging-binary deploy-staging-dagu deploy-staging-data deploy-staging-mcp deploy-staging-mcp-grafana deploy-staging-mlflow
 	ssh $(STAGING_HOST) 'install -d -m 755 /root/dagu'
 	scp dagu/*.yaml $(STAGING_HOST):/root/dagu/
 	# scp копирует, но не удаляет: снятый с репозитория DAG остался бы на хосте и продолжил бы
@@ -1282,13 +1342,13 @@ deploy-staging: deploy-staging-binary deploy-staging-dagu deploy-staging-data de
 	# его в 09:47). Список пополнять при каждом удалении DAG из dagu/, иначе прунинг неполон.
 	ssh $(STAGING_HOST) 'rm -f /root/dagu/surveys.yaml'
 	@$(MAKE) deploy-staging-preflight --no-print-directory
-	ssh $(STAGING_HOST) 'systemctl enable --now dagu mcp-clickhouse mlflow'
+	ssh $(STAGING_HOST) 'systemctl enable --now dagu mcp-clickhouse mcp-grafana mlflow'
 	@$(MAKE) deploy-staging-smoke --no-print-directory || { \
 		echo ""; \
 		echo "Сервисы оставлены ВКЛЮЧЁННЫМИ, а dagu выполняет DAG-и по расписанию."; \
-		echo "Чтобы остановить: ssh $(STAGING_HOST) 'systemctl disable --now dagu mcp-clickhouse mlflow'"; \
+		echo "Чтобы остановить: ssh $(STAGING_HOST) 'systemctl disable --now dagu mcp-clickhouse mcp-grafana mlflow'"; \
 		echo "После исправления повторите: make deploy-staging"; exit 1; }
-	@echo "Готово. Далее: make mcp-user-staging (если kimi_reader ещё не создан)."
+	@echo "Готово. Далее: make mcp-user-staging (если kimi_reader ещё не создан); проверка Grafana MCP — make grafana-mcp-check (локально) или GRAFANA_MCP_URL=http://localhost:8001/mcp после туннеля."
 
 # Проверки ДО включения сервисов: бинарь исполняем, DAG-файлы на месте, OAuth-переменные непусты.
 # Сервисы ещё не запущены, поэтому их проверяет deploy-staging-smoke.
@@ -1307,6 +1367,10 @@ deploy-staging-preflight:
 		[ "$$FASTMCP_SERVER_AUTH" = "rosstat_mcp_auth.RosstatGoogleProvider" ] && echo "OK   FASTMCP_SERVER_AUTH = RosstatGoogleProvider" || { echo "FAIL FASTMCP_SERVER_AUTH должен быть rosstat_mcp_auth.RosstatGoogleProvider"; exit 1; }'
 	@ssh $(STAGING_HOST) 'set -a; . $(STAGING_ENV_FILE); set +a; \
 		[ -z "$$CLICKHOUSE_MCP_AUTH_TOKEN" ] && echo "OK   legacy CLICKHOUSE_MCP_AUTH_TOKEN не задан" || { echo "FAIL CLICKHOUSE_MCP_AUTH_TOKEN всё ещё задан — OAuth и static bearer взаимоисключающие"; exit 1; }'
+	@ssh $(STAGING_HOST) 'test -f /etc/systemd/system/mcp-grafana.service && echo "OK   юнит mcp-grafana на месте"' || { echo "FAIL /etc/systemd/system/mcp-grafana.service отсутствует"; exit 1; }
+	@ssh $(STAGING_HOST) 'set -a; . $(STAGING_ENV_FILE); set +a; \
+		[ -n "$$GRAFANA_MCP_TOKEN" ] && echo "OK   GRAFANA_MCP_TOKEN задан" || { echo "FAIL не задан GRAFANA_MCP_TOKEN — mcp-grafana не стартует"; exit 1; }'
+	@ssh $(STAGING_HOST) 'curl -sf -m 3 http://127.0.0.1:3000/api/health >/dev/null && echo "OK   Grafana отвечает"' || { echo "FAIL Grafana на $(STAGING_HOST):127.0.0.1:3000 не отвечает"; exit 1; }
 	@ssh $(STAGING_HOST) 'grep -q "ROSSTAT_IMPORT_BIN" /root/.config/dagu/base.yaml && echo "OK   base.yaml задаёт ROSSTAT_IMPORT_BIN"' || { echo "FAIL base.yaml не задаёт ROSSTAT_IMPORT_BIN — шаги dagu выполнят пустую команду"; exit 1; }
 	@ssh $(STAGING_HOST) 'test -f /root/dagu/certs/russian_trusted_root_ca_pem.crt && test -f /root/dagu/certs/litessl_rsa_ca_2025.pem && echo "OK   сертификаты РФ и LiteSSL на месте"' || { echo "FAIL нет сертификатов в /root/dagu/certs — rosstat.gov.ru/sberindex.ru упадут на x509"; exit 1; }
 	@ssh $(STAGING_HOST) 'set -a; . $(STAGING_ENV_FILE); set +a; \
@@ -1358,6 +1422,8 @@ deploy-staging-smoke:
 		[ "$$code" = "200" ] && echo "OK   $$p = 200" || { echo "FAIL $$p = $$code"; exit 1; }; \
 	done'
 	@echo "NOTE полный OAuth-вход проверяется вручную в браузере (Google allowlist)"
+	@echo "--- smoke: mcp-grafana /healthz ---"
+	@ssh $(STAGING_HOST) 'systemctl is-active --quiet mcp-grafana && curl -sf -m 5 -o /dev/null http://127.0.0.1:$(GRAFANA_MCP_PORT)/healthz && echo "OK   mcp-grafana /healthz = 200 (loopback :$(GRAFANA_MCP_PORT))"' || { echo "FAIL mcp-grafana: systemctl status mcp-grafana; journalctl -u mcp-grafana -n 50"; exit 1; }
 	@echo "--- smoke: mlflow /health ---"
 	@ssh $(STAGING_HOST) 'systemctl is-active --quiet mlflow || { \
 		echo "FAIL mlflow не запущен: systemctl status mlflow; journalctl -u mlflow -n 50"; exit 1; }; \
@@ -1380,7 +1446,7 @@ deploy-staging-notify-test: staging-precheck
 		echo "OK   тестовый DAG упал (код $$rc); проверьте письмо [DAGU palmshell] на MAIL_TO (CMC→SMS)"; \
 		rm -f /tmp/dagu-notify-test.log'
 
-# Обновление ТОЛЬКО dagu, mcp-clickhouse и mlflow до версий из репозитория.
+# Обновление ТОЛЬКО dagu, mcp-clickhouse, mcp-grafana и mlflow до версий из репозитория.
 # apt upgrade сюда НЕ входит: ClickHouse (данные) и Grafana обновляются вручную.
 #
 # ⚠️ MLflow: этот таргет только копирует юнит и перезапускает сервис. Обновление
@@ -1388,10 +1454,10 @@ deploy-staging-notify-test: staging-precheck
 # stop → `mlflow db upgrade` → start (deploy/staging/README.md, «MLflow на staging»):
 # новая версия на непромигрированной SQLite не поднимется, а `db upgrade` под живым
 # сервером трогает БД, которой владеет процесс (SQLite — один писатель).
-upgrade-staging: deploy-staging-dagu deploy-staging-mcp deploy-staging-mlflow
+upgrade-staging: deploy-staging-dagu deploy-staging-mcp deploy-staging-mcp-grafana deploy-staging-mlflow
 	@echo "⚠️  MLflow: смена версии — только stop → mlflow db upgrade → start (deploy/staging/README.md); upgrade-staging версию не мигрирует"
-	ssh $(STAGING_HOST) 'systemctl restart dagu mcp-clickhouse mlflow'
-	@echo "сервисы перезапущены на версиях: dagu $(DAGU_VERSION), mcp-clickhouse $(MCP_VERSION), mlflow $(MLFLOW_VERSION)"
+	ssh $(STAGING_HOST) 'systemctl restart dagu mcp-clickhouse mcp-grafana mlflow'
+	@echo "сервисы перезапущены на версиях: dagu $(DAGU_VERSION), mcp-clickhouse $(MCP_VERSION), mcp-grafana $(GRAFANA_MCP_VERSION), mlflow $(MLFLOW_VERSION)"
 	@$(MAKE) deploy-staging-smoke --no-print-directory
 
 # Создание kimi_reader на staging. Пароль исполнителя (default) и пароль создаваемого

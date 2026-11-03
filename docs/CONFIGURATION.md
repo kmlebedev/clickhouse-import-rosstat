@@ -48,7 +48,7 @@
 
 `DCF_RUN_ID` — переменная окружения **разового прогона** `dcf_engine`, а не строка конфигурации источника: UUID прогона, который уходит в `nav_by_asset.run_id` и связывает строки с записью `model_runs` (её создаёт ingest-endpoint). Передавайте её прямо в команде — `DCF_RUN_ID=$(uuidgen | tr A-Z a-z) make import STAT=dcf_engine`; в `~/.config/rosstat/env` её хранить не нужно. Без `DCF_RUN_ID` движок считает и печатает тело `POST /v1/model_run`, но не пишет ни строки (см. «Что импортируется»). Импортёр `dcf_mine_plans` переменных окружения не имеет (только `CLICKHOUSE_URL`).
 
-Переменные стендов Grafana (`GRAFANA_TEST_URL`/`GRAFANA_TEST_TOKEN`, `GRAFANA_STAGING_URL`/`GRAFANA_STAGING_TOKEN`, `GRAFANA_ORG_ID`) к импортёрам не относятся — они нужны целям `make grafana-*` (дашборды как код, деплой и smoke). Значения живут в том же `~/.config/rosstat/env`, `make env-check` печатает только «задан/не задан»; описание — в разделе «Grafana».
+Переменные стендов Grafana (`GRAFANA_TEST_URL`/`GRAFANA_TEST_TOKEN`, `GRAFANA_STAGING_URL`/`GRAFANA_STAGING_TOKEN`, `GRAFANA_ORG_ID`, `GRAFANA_MCP_TOKEN`) к импортёрам не относятся — они нужны целям `make grafana-*` и `make grafana-mcp-*` (дашборды как код, деплой, smoke и read-only MCP). Значения живут в том же `~/.config/rosstat/env`, `make env-check` печатает только «задан/не задан»; описание — в разделе «Grafana».
 
 ## Ключи и окружение
 
@@ -68,6 +68,7 @@ export CLICKHOUSE_PASSWORD=<kimi_reader-password>
 # export INGEST_RATE_PER_MIN=60
 # export GRAFANA_TEST_TOKEN=<токен сервис-аккаунта Editor локального стенда :3000>
 # export GRAFANA_STAGING_TOKEN=<токен сервис-аккаунта Editor на staging, доступ через туннель :3001>
+# export GRAFANA_MCP_TOKEN=<Admin-токен: локально GRAFANA_TEST_TOKEN, если его аккаунт Admin; на staging — mcp-grafana-admin>
 # export GRAFANA_ORG_ID=1
 ```
 
@@ -78,7 +79,7 @@ export CLICKHOUSE_PASSWORD=<kimi_reader-password>
 - в терминале: `set -a; . ~/.config/rosstat/env; set +a`;
 - проверка без вывода значений: `make env-check`;
 - локальный импорт одного источника: `make import STAT=bea` (собирает бинарник под macOS в `build/clickhouse-import-rosstat-native`);
-- Kimi Code: ключи для MCP задаются в `~/.kimi-code/mcp.json` (блок `env`), для остальных команд Kimi вызывает `make`, поэтому файл окружения подхватывается автоматически;
+- Kimi Code: ключи для MCP задаются в `.kimi-code/mcp.json` этого репозитория (проектный конфиг) или в `~/.kimi-code/mcp.json` (пользовательский, права `600`); для остальных команд Kimi вызывает `make`, поэтому файл окружения подхватывается автоматически;
 - Dagu (расписания): секреты описаны в `~/dagu-dev/base.yaml` через provider `file`, каждый ключ — отдельный файл `~/dagu-dev/secrets/<name>` (`600`). Для BEA: `bea_api_key`; для EIA: `eia_api_key`; при добавлении ключа нового импортёра — новый файл и строка в `secrets:`;
 - файлы `*.env`, `secrets/` и ключи в коде не коммитить; `CLICKHOUSE_PASSWORD` только в файле окружения (`~/.config/rosstat/env`), в `mcp.json` его нет.
 
@@ -105,6 +106,13 @@ MCP для Kimi (агент читает витрины `v_*`, без запис
         "CLICKHOUSE_DATABASE": "default",
         "CLICKHOUSE_MCP_SERVER_TRANSPORT": "stdio"
       }
+    },
+    "grafana": {
+      "command": "bash",
+      "args": ["-c", "set -a; . \"$HOME/.config/rosstat/env\"; set +a; MCP_TOKEN=\"${GRAFANA_MCP_TOKEN:-${GRAFANA_TEST_TOKEN:-}}\"; : \"${MCP_TOKEN:?GRAFANA_MCP_TOKEN или GRAFANA_TEST_TOKEN не задан}\"; export GRAFANA_SERVICE_ACCOUNT_TOKEN=\"$MCP_TOKEN\"; exec uv tool run --python 3.12 --from mcp-grafana==2.2.0 mcp-grafana --disable-write --usage-stats=disabled"],
+      "env": {
+        "GRAFANA_URL": "http://localhost:3000"
+      }
     }
   }
 }
@@ -112,6 +120,25 @@ MCP для Kimi (агент читает витрины `v_*`, без запис
 
 - проверить в Kimi командой `/mcp-config` в новой сессии: сервер `clickhouse` должен быть подключён;
 - новые ряды и витрины: см. AGENTS.md, правило 11. Legacy-таблицы `cbr_*`, `rosstat`, `minfin`, `gold_prices` агенту доступны через групповые витрины `v_cbr_macro`, `v_rosstat_macro`, `v_minfin_budget`, `v_gold_prices` (создаются, когда все таблицы группы импортированы), описания рядов — в `v_series_catalog`. Витрины фазы 3 (`v_gold_forecasts`, `v_gold_etf_flows`), wgc-контура (`v_cb_gold_dynamics`) и контура новостей (`v_news_events`, `v_news_flash`, `v_news_message_versions`, `v_news_tags`; сырые `news_events`, `news_message_version` и `news_annotation` агенту не выданы) выданы тем же грантом в `sql/mcp_kimi_reader.sql`, как и витрины контура ключевой ставки `v_cbr_survey` (мониторинг предприятий ЦБ), `v_cbr_mo_br` (макроэкономический опрос ЦБ — консенсус аналитиков), `v_cbr_mp_summary`/`v_cbr_mp_summary_blocks`/`v_cbr_mp_summary_channels` (резюме обсуждения ключевой ставки: шапка решения, дословный текст и разметка 11 каналов; сырые `cbr_mp_summary`, `cbr_mp_summary_block` и `cbr_mp_summary_channel`, `macro_series` и служебная `source_publications` агенту не выданы) и `v_cbr_bop` (платёжный баланс РФ двумя выгрузками ЦБ в одной long-форме: `source` — имя таблицы, единицы различаются, ноль — значение; сырые `cbr_bop_est` и `cbr_bop_standard` агенту **не выданы**: агент читает ряды только через витрину, а единицы, знак и привязку даты — в `v_series_catalog` по `(source, series)`), и `v_cbr_dip_bulletin` (приложения ДИП в long-форме с винтажными колонками: агент читает точку как «значение, каким его опубликовал выпуск `release` от `publication_date`», и один месяц лежит в ней столько раз, сколько выпусков его напечатало; сырая `cbr_dip_bulletin` агенту **не выдана**: доступ даёт только витрина, а каталог 8 рядов — в `v_series_catalog` по `(source, series)`), и point-in-time слой ДИП — витрины `v_point_in_time`/`v_point_in_time_asof`/`v_point_in_time_version` (нормализованный long-слой, параметризованный срез `as_of='YYYY-MM-DD'`, версия набора; сырая `cbr_dip_bulletin` по-прежнему **не выдана**), и `v_cbr_mt_forecast` (диапазоны среднесрочного прогноза ЦБ dedicated-колонками `meeting_date, release_date, url, indicator, year, lo, hi`: агент читает строку как «диапазон `lo`–`hi` прогноза на год `year`, каким его зафиксировал выпуск `release_date`», `lo = hi` — точечный прогноз; сырая `cbr_mt_forecast` агенту **не выдана**: доступ даёт только витрина, а каталог 16 рядов — в `v_series_catalog` по `(source, series)`); их чтение, каталоги `webbridge` (20 рядов), `wgc` (34 ряда), `cbr_survey` (381 ряд: 13 агрегатных + 368 отраслевых), `cbr_mo_br`, `cbr_bop_est` (51 ряд), `cbr_bop_standard` (34 ряда), `cbr_dip_bulletin` (8 рядов) и `cbr_mt_forecast` (16 рядов) и запрет сырых `gold_forecasts`, `news_events`, `news_message_version`, `news_annotation`, `cbr_bop_est`/`cbr_bop_standard`, `cbr_dip_bulletin`, `cbr_mt_forecast` и `cbr_mp_summary*`, а также PIT-слой (`v_point_in_time*`: непустота, строгая граница, ревизия, missing-series, версия набора) проверяет `make mcp-check`.
+
+### Grafana MCP
+
+Read-only MCP к Grafana (`mcp-grafana`): поиск и чтение дашбордов, datasources, alert rules,
+аннотации. Требует **Admin**-токен: на Grafana 13 дашборды, залитые через `gcx`/k8s API, видны
+только Admin (Viewer/Editor → 403; проверено на 13.2.3). `--disable-write` убирает write-инструменты.
+
+- локальный токен: если `GRAFANA_TEST_TOKEN` — Admin, отдельная настройка не нужна —
+  `.kimi-code/mcp.json` берёт его, когда `GRAFANA_MCP_TOKEN` не задан; иначе создайте
+  Admin-токен и задайте `GRAFANA_MCP_TOKEN`; нужен запущенный стенд `make grafana-up`;
+- локальная проверка: `make grafana-mcp-check` (stdio, как в `mcp.json`); ожидается
+  `ПРОВЕРКА ПРОЙДЕНА`;
+- staging: сервис `mcp-grafana` слушает только `127.0.0.1:8000`; в env-файле хоста
+  `GRAFANA_MCP_TOKEN` = Admin-токен `mcp-grafana-admin`; туннель
+  `ssh -N -L 8001:127.0.0.1:8000 palmshell`, проверка
+  `make grafana-mcp-check GRAFANA_MCP_URL=http://localhost:8001/mcp`. Подробности —
+  `deploy/staging/README.md`, «Grafana MCP на staging»;
+- `--disable-write` убирает `update_dashboard` и другие write-инструменты; SQL-инструменты
+  `mcp-grafana` по умолчанию выключены.
 
 ## MCP GoLand
 

@@ -1,0 +1,25 @@
+[Unit]
+Description=mcp-grafana (loopback streamable HTTP, read-only MCP для агентов)
+After=network-online.target grafana-server.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/lib/clickhouse-import-rosstat/mcp_grafana_launch.sh
+EnvironmentFile=/etc/clickhouse-import-rosstat.env
+Environment="GRAFANA_URL=http://127.0.0.1:3000"
+# Версия обязана совпадать с GRAFANA_MCP_VERSION в Makefile: deploy-staging-mcp-grafana
+# сверяет строку и падает при расхождении.
+Environment="GRAFANA_MCP_VERSION=2.2.0"
+# Только loopback: наружу порт не публикуется, доступ — через ssh-туннель.
+Environment="GRAFANA_MCP_ADDRESS=127.0.0.1:8000"
+# Host-проверка: через туннель клиент шлёт Host localhost:8001/127.0.0.1:8001,
+# а не только адрес самого сервера :8000.
+Environment="GRAFANA_MCP_ALLOWED_HOSTS=127.0.0.1:8000,localhost:8000,[::1]:8000,127.0.0.1:8001,localhost:8001,[::1]:8001"
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
