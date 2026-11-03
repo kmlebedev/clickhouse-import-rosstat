@@ -42,7 +42,7 @@ GF_PLUGINS   := $(GF_DIR)/plugins
 # уходит в окружение процесса gcx (make экспортирует переменные) и не светится в командной строке.
 # Список uid всех дашбордов контура — источник истины для деплоя и smoke: цели ниже идут по нему
 # циклом, поэтому новый дашборд добавляется здесь одной строкой (свои uid генератор grafana/ знает сам).
-DASHBOARDS       := gold-thesis key-rate-publications finance-polyus transaq-trades
+DASHBOARDS       := gold-thesis key-rate-publications finance-polyus transaq-trades urals-budget-rule
 GRAFANA_TEST_URL ?= http://localhost:3000
 GRAFANA_ORG_ID   ?= 1
 GRAFANA_TOKEN    ?= $(GRAFANA_TEST_TOKEN)
@@ -1495,10 +1495,10 @@ grafana-build:
 # с неверными кредами — 401 (exit 3); basic auth поддержан (GRAFANA_USER/GRAFANA_PASSWORD).
 # Офлайновая альтернатива в CI (тоже gcx, без секретов) — линтер по файлам артефактов:
 # `gcx dev lint run PATH...` принимает несколько путей и линтит их одним прогоном (на gcx 1.5.0 —
-# «4 files linted. No violations found.», exit 0):
+# «5 files linted. No violations found.», exit 0):
 #   gcx dev lint run --disable uneditable-dashboard --disable panel-title-description \
 #     dashboard/gold-thesis.json dashboard/key-rate-publications.json dashboard/finance-polyus.json \
-#     dashboard/transaq-trades.json
+#     dashboard/transaq-trades.json dashboard/urals-budget-rule.json
 grafana-validate:
 	cd grafana && go vet ./... && go test ./...
 	@go test ./views -run TestMLLiveAlertProvisioning
