@@ -191,9 +191,10 @@ func assertNoRawTables(t *testing.T, panelID uint32, sql string) {
 	}
 }
 
-// TestUralsBudgetRuleEChartsTargets: оба ECharts-таргета отдают ровно те колонки, по именам
-// которых читает JS (спека §4.2/§4.3), а П1 защищена от потери оконного anyLast и настройки
-// join_use_nulls: колонка «Оценка» (is_estimate) и SETTINGS join_use_nulls = 1 обязательны.
+// TestUralsBudgetRuleEChartsTargets: ECharts-таргеты П1/П2 и stat-снимок П5 отдают ровно те
+// колонки, по именам которых читает JS (спека §4.2/§4.3, снимок П5), а П1/П5 защищены от потери
+// оконного anyLast и настройки join_use_nulls: колонка «Оценка» (is_estimate, только П1) и
+// SETTINGS join_use_nulls = 1 обязательны — без настройки реальный темп П5 теряется.
 func TestUralsBudgetRuleEChartsTargets(t *testing.T) {
 	board := builtUralsBudgetRule(t)
 	cases := []struct {
@@ -219,6 +220,16 @@ func TestUralsBudgetRuleEChartsTargets(t *testing.T) {
 			2,
 			[]string{`"Месяц"`, `"Urals, $/барр."`, `"В бюджет (≤ $59)"`, `"В ФНБ (> $59)"`},
 			[]string{`least(value, 59)`, `greatest(value - 59, 0)`},
+		},
+		{
+			5,
+			[]string{`"₽/барр."`, `"г/г номинально, %"`, `"г/г реально, %"`},
+			[]string{
+				"SETTINGS join_use_nulls = 1",
+				"anyLast(ipc_level) OVER (ORDER BY date ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)",
+				"argMax(level, date) AS level",
+				"addYears((SELECT date FROM cur), -1)",
+			},
 		},
 	}
 	for _, tc := range cases {
@@ -257,7 +268,8 @@ func uralsBudgetEChartsOptions(t *testing.T, p *dashboard.Panel) echartsPanelOpt
 
 // TestUralsBudgetRuleEChartsJS: обе ECharts-панели читают данные только из data frames
 // (context.panel.data), литеральных данных и SQL в JS нет; цифры публикации (101.46, 8418, 6812)
-// в JS не вписываются — они приходят из SQL. Массивов данных в П1 нет: серии строятся из полей.
+// в JS не вписываются — они приходят из SQL. Массивов данных нет ни в одной серии: единственный
+// разрешённый литеральный массив — конфиг опорной линии markLine П2 ($59, не данные).
 func TestUralsBudgetRuleEChartsJS(t *testing.T) {
 	board := builtUralsBudgetRule(t)
 	banned := []string{
@@ -282,8 +294,11 @@ func TestUralsBudgetRuleEChartsJS(t *testing.T) {
 				t.Fatalf("панель %d: getOption содержит %q — данные и SQL живут в таргете", id, literal)
 			}
 		}
-		if id == 1 && strings.Contains(opts.GetOption, "data: [") {
-			t.Fatalf("панель %d: в getOption литеральный массив данных", id)
+		// markLine-конфиг П2 — не данные: вырезаем его и требуем, чтобы других литеральных
+		// массивов в data-полях не осталось ни у одной ECharts-панели.
+		withoutMarkLine := strings.ReplaceAll(opts.GetOption, "data: [{ yAxis: BUDGET_RULE_CUTOFF }]", "")
+		if strings.Contains(withoutMarkLine, "data: [") {
+			t.Fatalf("панель %d: в getOption литеральный массив данных:\n%s", id, opts.GetOption)
 		}
 	}
 }
@@ -351,6 +366,26 @@ func TestUralsBudgetRulePanel1Estimate(t *testing.T) {
 	if !(pushAt < continueAt && continueAt < lineAt) {
 		t.Fatalf("П1: оценочная строка попадает в линию года (порядок push=%d continue=%d line=%d)", pushAt, continueAt, lineAt)
 	}
+	// Tooltip оценочной точки: items scatter-серии — объекты {value, year, month}, а items линий —
+	// числа. Ветка обязана читать p.data.value[1]/p.data.month/p.data.year, иначе hover октября
+	// печатает «Оценка Янв: NaN ₽/барр.» (проверка Array.isArray здесь мертва для обеих форм).
+	tooltipBranch := "if (p.data && p.data.value) {"
+	branchAt := strings.Index(js, tooltipBranch)
+	if branchAt < 0 {
+		t.Fatalf("П1: tooltip не различает object-item оценочной точки:\n%s", js)
+	}
+	branch := js[branchAt:]
+	if end := strings.Index(branch, "}"); end >= 0 {
+		branch = branch[:end]
+	}
+	for _, want := range []string{"p.data.value[1]", "p.data.month - 1", "p.data.year"} {
+		if !strings.Contains(branch, want) {
+			t.Fatalf("П1: tooltip оценочной точки не читает %q:\n%s", want, branch)
+		}
+	}
+	if strings.Contains(js, "Array.isArray(p.data)") {
+		t.Fatalf("П1: tooltip проверяет Array.isArray(p.data) — items линий это числа, а оценки — объект:\n%s", js)
+	}
 }
 
 // TestUralsBudgetRuleUnits: единицы панелей по спеке §3.5; П5/П6 несут и рубли, и проценты —
@@ -380,6 +415,9 @@ func TestUralsBudgetRuleUnits(t *testing.T) {
 	assertUnitOverride(t, panelByID(t, board, 5), "г/г номинально, %", units.Percent)
 	assertUnitOverride(t, panelByID(t, board, 5), "г/г реально, %", units.Percent)
 	assertUnitOverride(t, panelByID(t, board, 6), "г/г, %", units.Percent)
+	if defaults := panelByID(t, board, 4).FieldConfig.Defaults; defaults.Decimals == nil || *defaults.Decimals != 2 {
+		t.Fatal("панель 4: decimals не 2 — SQL уже округляет курс до 2 знаков, иначе stat печатает 82.9700")
+	}
 	if got := len(panelByID(t, board, 5).FieldConfig.Overrides); got != 2 {
 		t.Fatalf("панель 5: override'ов %d, ожидалось 2 (два г/г темпа)", got)
 	}

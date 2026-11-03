@@ -201,6 +201,8 @@ if (!s) { return {}; }
 function column(name) {
   const f = s.fields.find(function (x) { return x.name === name; });
   if (!f) { return null; }
+  // plain array не имеет .buffer и остаётся как есть; Grafana Vector отдаёт значения в .buffer —
+  // fallback покрывает обе формы (паттерн живого экспорта Business Charts).
   return f.values && f.values.buffer ? f.values.buffer : f.values;
 }
 const years = column('Год');
@@ -266,10 +268,11 @@ return {
         let year = p.seriesName;
         let month = ruMonths[p.dataIndex];
         let value = p.data;
-        if (Array.isArray(p.data)) {
+        // items scatter-серии — объекты {value, year, month}; items линий — числа.
+        if (p.data && p.data.value) {
           year = String(p.data.year);
           month = ruMonths[p.data.month - 1];
-          value = p.data[1];
+          value = p.data.value[1];
         }
         if (value === null || value === undefined) { continue; }
         rows.push(year + ' ' + month + ': <b>' + Number(value).toFixed(0) + '</b> ₽/барр.');
@@ -295,6 +298,8 @@ function field(name) {
   return s.fields.find(function (x) { return x.name === name; });
 }
 function values(f) {
+  // plain array не имеет .buffer и остаётся как есть; Grafana Vector отдаёт значения в .buffer —
+  // fallback покрывает обе формы (паттерн живого экспорта Business Charts).
   return f && f.values && f.values.buffer ? f.values.buffer : f.values;
 }
 const timeField = field('Месяц');
@@ -479,7 +484,7 @@ func uralsBudgetFxPanel() *stat.PanelBuilder {
 		Span(6).
 		Height(uralsBudgetStatHeight).
 		Unit(units.Short).
-		Decimals(4).
+		Decimals(2).
 		WithTarget(tableQuery("A", uralsBudgetFxSQL))
 }
 
