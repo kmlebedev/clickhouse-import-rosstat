@@ -303,6 +303,7 @@ func TestUralsBudgetRulePanel2BudgetRule(t *testing.T) {
 		"endLabel",
 		"stack: 'rule'",
 		"connectNulls: false",
+		"axisValue",
 		"Минфин",
 		"2027",
 	} {

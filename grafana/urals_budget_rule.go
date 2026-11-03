@@ -323,7 +323,7 @@ return {
     trigger: 'axis',
     formatter: function (ps) {
       if (!ps.length) { return ''; }
-      const rows = [];
+      const rows = [new Date(ps[0].axisValue).toISOString().slice(0, 7)];
       for (const p of ps) {
         if (p.data === null || p.data === undefined) { continue; }
         rows.push(p.seriesName + ': <b>' + Number(p.data[1]).toFixed(2) + '</b> $/барр.');
