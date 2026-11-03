@@ -32,7 +32,7 @@ const (
 //
 // П1 и П5 делят дефлятор ИПЦ: накопленный уровень (`exp(sum(log(value / 100)) OVER …)`), база —
 // последний опубликованный уровень (`argMax`). SETTINGS join_use_nulls = 1 обязателен: без него
-// LEFT JOIN подставляет 0 вместо NULL, и оконный anyLast уносит нулевой дефлятор в октябрь.
+// LEFT JOIN подставляет 0 вместо NULL, и оконный anyLast уносит нулевой дефлятор в последний месяц.
 
 // uralsBudgetRealPriceSQL — П1: реальная цена Urals в постоянных рублях по месяцам 2018–2026.
 // $__dateFilter стоит в финальном SELECT на сырой date: окно дашборда не должно менять сезонную
@@ -121,8 +121,8 @@ WHERE series = 'cbr_currency_usd'
 `
 
 // uralsBudgetRealSnapshotSQL — П5: Urals в рублях за последний месяц и два г/г темпа (номинальный
-// и реальный). Дефлятор — тот же, что в П1: октябрь считается по уровню сентября (октябрьский
-// ИПЦ ещё не опубликован). SETTINGS join_use_nulls = 1 обязателен — без него LEFT JOIN дал бы
+// и реальный). Дефлятор — тот же, что в П1: месяц без свежего ИПЦ считается по уровню предыдущего
+// (ИПЦ публикуется с лагом). SETTINGS join_use_nulls = 1 обязателен — без него LEFT JOIN дал бы
 // нулевой дефлятор и реальный темп потерялся бы.
 const uralsBudgetRealSnapshotSQL = `WITH
     ipc AS (
@@ -193,7 +193,7 @@ ORDER BY "Месяц"
 // uralsBudgetRealPriceJS — тело getOption панели 1 (формат плагина 7.2.5, echarts.go): данные
 // только из data frames таргета, литеральных рядов нет. Ось X — 12 календарных месяцев (подписи —
 // презентационный массив, не данные); синяя линия — сезонная норма 2018–2022; линии 2023–2026 —
-// пивот (Год, Месяц года). Строки с "Оценка" = 1 (октябрь 2026) в линии годов НЕ входят: они
+// пивот (Год, Месяц года). Строки с "Оценка" = 1 (месяц без свежего ИПЦ) в линии годов НЕ входят: они
 // рисуются отдельной scatter-серией полым маркером (symbol emptyCircle) с подписью значения.
 // Линии не соединяют пропуски (connectNulls: false): 2018-06/07 в источнике отсутствуют.
 const uralsBudgetRealPriceJS = `const s = context.panel.data.series[0];
@@ -397,7 +397,9 @@ func uralsBudgetStatDefaults(builder *stat.PanelBuilder) *stat.PanelBuilder {
 // NewUralsBudgetRule собирает дашборд «Urals: реальная цена и бюджетное правило» (спека §3–§4):
 // 7 панелей в 2 рядах. Ряд 21 «Реальная цена Urals и бюджетное правило» — два ECharts-графика во
 // всю ширину: реальная цена в постоянных рублях (П1) и бюджетное правило $59 (П2). Ряд 22
-// «Октябрь 2026 и нефтегазовые доходы» — четыре stat-снимка (П3–П6) и месячный бар доходов (П7).
+// «Последний опубликованный месяц и нефтегазовые доходы» — четыре stat-снимка (П3–П6) и месячный
+// бар доходов (П7). Заголовки рядов и панелей нейтральные (rolling): SQL берёт последний
+// опубликованный месяц, а конкретика «на 2026-11-03 — октябрь 2026» живёт в Description.
 // Окно дашборда — с 2018-01-01: график публикации начинается с 2018. Порядок вызовов
 // WithRow/WithPanel задаёт нумерацию и место в сетке; ширины и высоты — Span/Height панелей.
 func NewUralsBudgetRule() *dashboard.DashboardBuilder {
@@ -410,7 +412,7 @@ func NewUralsBudgetRule() *dashboard.DashboardBuilder {
 		WithRow(dashboard.NewRowBuilder("Реальная цена Urals и бюджетное правило").Id(firstUralsBudgetRuleRowID)).
 		WithPanel(uralsBudgetRealPricePanel()).
 		WithPanel(uralsBudgetRulePanel()).
-		WithRow(dashboard.NewRowBuilder("Октябрь 2026 и нефтегазовые доходы").Id(secondUralsBudgetRuleRowID)).
+		WithRow(dashboard.NewRowBuilder("Последний опубликованный месяц и нефтегазовые доходы").Id(secondUralsBudgetRuleRowID)).
 		WithPanel(uralsBudgetSpotPanel()).
 		WithPanel(uralsBudgetFxPanel()).
 		WithPanel(uralsBudgetRealSnapshotPanel()).
@@ -419,20 +421,22 @@ func NewUralsBudgetRule() *dashboard.DashboardBuilder {
 }
 
 // uralsBudgetRealPricePanel — панель 1: Urals в постоянных рублях, сезонная норма и линии годов.
-// Октябрь-2026 — оценка по дефлятору сентября (ИПЦ за октябрь ещё не опубликован); она исключена
+// Последний месяц без опубликованного ИПЦ — оценка по дефлятору предыдущего; она исключена
 // из линий годов и рисуется полым маркером (см. uralsBudgetRealPriceJS).
 func uralsBudgetRealPricePanel() *dashboard.PanelBuilder {
 	return echartsPanel(1,
-		"Urals в постоянных рублях (база — сентябрь 2026)",
-		"Urals в постоянных рублях (база — последний опубликованный ИПЦ, сейчас сентябрь 2026): "+
+		"Urals в постоянных рублях (база — последний опубликованный ИПЦ)",
+		"Urals в постоянных рублях (база — последний опубликованный ИПЦ): "+
 			"real = Urals $/барр. × средний курс ЦБ за месяц × уровень ИПЦ базы ÷ уровень месяца. "+
 			"Источники: v_minec_macro (urals_avg_price, месячное зерно), v_cbr_macro "+
 			"(cbr_currency_usd, среднее по дням месяца), v_fedstat_ipc (ipc31074/Все товары и услуги, "+
 			"накопленный уровень). Ось X — 12 календарных месяцев: синяя линия — сезонная норма "+
-			"2018–2022, линии 2023–2026 — годы ряда. Октябрь 2026 — оценка по дефлятору сентября "+
-			"(ИПЦ за октябрь ещё не опубликован): строка исключена из линий годов и нарисована полым "+
+			"2018–2022, линии 2023–2026 — годы ряда. Последний месяц без опубликованного ИПЦ — "+
+			"оценка по дефлятору предыдущего: строка исключена из линий годов и нарисована полым "+
 			"маркером. 2018-06/07 в источнике отсутствуют — точек нет (пропуск ≠ ноль). Когда Росстат "+
-			"опубликует ИПЦ за октябрь, база сдвинется и весь ряд пересчитается в рубли октября. "+
+			"опубликует ИПЦ за очередной месяц, база сдвинется и весь ряд пересчитается. "+
+			"На 2026-11-03 — октябрь 2026: база — сентябрь 2026, октябрь — оценка по дефлятору "+
+			"сентября (ИПЦ за октябрь ещё не опубликован). "+
 			"Значения — ₽/барр. в постоянных рублях.",
 		uralsBudgetRealPriceJS,
 		tableQuery("A", uralsBudgetRealPriceSQL),
@@ -459,11 +463,12 @@ func uralsBudgetRulePanel() *dashboard.PanelBuilder {
 func uralsBudgetSpotPanel() *stat.PanelBuilder {
 	return uralsBudgetStatDefaults(stat.NewPanelBuilder()).
 		Id(3).
-		Title("Urals, $/барр. — октябрь 2026").
+		Title("Urals, $/барр. — последний опубликованный месяц").
 		Description("Снимок последнего опубликованного месяца: средняя цена Urals, $/барр. " +
-			"(v_minec_macro, series = 'urals_avg_price'; argMax по date — последний месяц, сейчас " +
-			"октябрь 2026). Зерно — месяц; значения — доллары за баррель. Диапазон дашборда панель " +
-			"не учитывает: снимок последнего месяца не должен зависеть от окна.").
+			"(v_minec_macro, series = 'urals_avg_price'; argMax по date — последний месяц). Зерно — " +
+			"месяц; значения — доллары за баррель. Диапазон дашборда панель не учитывает: снимок " +
+			"последнего месяца не должен зависеть от окна. " +
+			"На 2026-11-03 — октябрь 2026.").
 		Span(6).
 		Height(uralsBudgetStatHeight).
 		Unit(units.Dollars).
@@ -474,13 +479,13 @@ func uralsBudgetSpotPanel() *stat.PanelBuilder {
 func uralsBudgetFxPanel() *stat.PanelBuilder {
 	return uralsBudgetStatDefaults(stat.NewPanelBuilder()).
 		Id(4).
-		Title("Курс ЦБ, ₽/$ — октябрь 2026").
+		Title("Курс ЦБ, ₽/$ — последний опубликованный месяц").
 		Description("Средний за последний опубликованный месяц Urals курс ЦБ (v_cbr_macro, series = " +
 			"'cbr_currency_usd': дневной ряд, среднее по дням месяца через toStartOfMonth/avg). Месяц " +
 			"берётся тот же, что у последнего Urals (максимум даты в v_minec_macro), а не последний " +
 			"опубликованный курс: ряды выходят в разные даты, и снимок обязан относиться к одному " +
 			"месяцу. Значения — ₽ за 1 USD (не сумма), поэтому единица short; снимок без фильтра " +
-			"диапазона.").
+			"диапазона. На 2026-11-03 — октябрь 2026.").
 		Span(6).
 		Height(uralsBudgetStatHeight).
 		Unit(units.Short).
@@ -489,28 +494,31 @@ func uralsBudgetFxPanel() *stat.PanelBuilder {
 }
 
 // uralsBudgetRealSnapshotPanel — панель 5: Urals в рублях за последний месяц и два г/г темпа.
-// Панельная единица — рубли, у процентных колонок — override percent по имени поля.
+// Панельная единица — plain number (units.Number): currencyRUB SI-скейлит ≥1000 («₽8.42K»),
+// а единица уже стоит в заголовке «₽/барр.»; у процентных колонок — override percent по имени поля.
 func uralsBudgetRealSnapshotPanel() *stat.PanelBuilder {
 	return uralsBudgetStatDefaults(stat.NewPanelBuilder()).
 		Id(5).
-		Title("Urals в рублях, ₽/барр. — октябрь 2026").
+		Title("Urals в рублях, ₽/барр. — последний опубликованный месяц").
 		Description("Urals в рублях за последний опубликованный месяц: цена $/барр. × средний курс ЦБ "+
-			"месяца, плюс два темпа г/г — номинальный и реальный (в постоянных рублях базы, сейчас "+
-			"сентябрь 2026; октябрь считается по дефлятору сентября). Источники: v_minec_macro "+
-			"(urals_avg_price), v_cbr_macro (cbr_currency_usd), v_fedstat_ipc "+
+			"месяца, плюс два темпа г/г — номинальный и реальный (в постоянных рублях базы — последнего "+
+			"опубликованного ИПЦ; месяц без свежего ИПЦ считается по дефлятору предыдущего). Источники: "+
+			"v_minec_macro (urals_avg_price), v_cbr_macro (cbr_currency_usd), v_fedstat_ipc "+
 			"(ipc31074/Все товары и услуги). Зерно — месяц; колонки «₽/барр.» и два г/г темпа приходят "+
 			"одной строкой, подписи — из алиасов SQL. Проценты — override'ом по имени поля, иначе темп "+
-			"печатался бы в рублях. Снимок последнего месяца, без фильтра диапазона.").
+			"печатался бы числом без знака %. Снимок последнего месяца, без фильтра диапазона. "+
+			"На 2026-11-03 — октябрь 2026: база — сентябрь 2026, октябрь считается по дефлятору сентября.").
 		Span(6).
 		Height(uralsBudgetStatHeight).
-		Unit(units.Rubles).
+		Unit(units.Number).
 		OverrideByName("г/г номинально, %", []dashboard.DynamicConfigValue{{Id: "unit", Value: units.Percent}}).
 		OverrideByName("г/г реально, %", []dashboard.DynamicConfigValue{{Id: "unit", Value: units.Percent}}).
 		WithTarget(tableQuery("A", uralsBudgetRealSnapshotSQL))
 }
 
 // uralsBudgetOilGasYtdPanel — панель 6: нефтегазовые доходы января–сентября 2026 и темп г/г.
-// Панельная единица — рубли (млрд ₽), у колонки темпа — override percent.
+// Панельная единица — plain number (units.Number): currencyRUB SI-скейлит ≥1000 («₽5.47K»), а
+// «млрд ₽» уже стоит в заголовке; у колонки темпа — override percent.
 func uralsBudgetOilGasYtdPanel() *stat.PanelBuilder {
 	return uralsBudgetStatDefaults(stat.NewPanelBuilder()).
 		Id(6).
@@ -519,16 +527,18 @@ func uralsBudgetOilGasYtdPanel() *stat.PanelBuilder {
 			"(v_minfin_budget, source = 'minfin_oil_gas', series = 'Нефтегазовые доходы, всего') и темп "+
 			"г/г к тому же периоду 2025. Зерно — месяц, на панели — сумма за 9 месяцев; значения ЗА "+
 			"период, не накопленным итогом. Сравнение фиксировано на янв–сен 2026 и окном дашборда не "+
-			"меняется. Темп — override'ом percent по имени поля (иначе печатался бы в рублях).").
+			"меняется. Темп — override'ом percent по имени поля (иначе печатался бы числом без знака %).").
 		Span(6).
 		Height(uralsBudgetStatHeight).
-		Unit(units.Rubles).
+		Unit(units.Number).
 		OverrideByName("г/г, %", []dashboard.DynamicConfigValue{{Id: "unit", Value: units.Percent}}).
 		WithTarget(tableQuery("A", uralsBudgetOilGasYtdSQL))
 }
 
-// uralsBudgetOilGasMonthsPanel — панель 7: доходы по месяцам, 2025 vs 2026. NULL после сентября
-// 2026 — публикация ещё не вышла; нулевыми барами пропуск не подменяется.
+// uralsBudgetOilGasMonthsPanel — панель 7: доходы по месяцам, 2025 vs 2026. NULL после последнего
+// опубликованного месяца 2026 — публикация ещё не вышла; нулевыми барами пропуск не подменяется.
+// Легенда снизу обязательна: без неё два ряда 2025/2026 не различить. Единица — plain number
+// (units.Number): currencyRUB SI-скейлит ≥1000 («₽1.08K»), а «млрд ₽» уже стоит в заголовке.
 func uralsBudgetOilGasMonthsPanel() *barchart.PanelBuilder {
 	return barchart.NewPanelBuilder().
 		Id(7).
@@ -537,11 +547,14 @@ func uralsBudgetOilGasMonthsPanel() *barchart.PanelBuilder {
 			"(v_minfin_budget, source = 'minfin_oil_gas', series = 'Нефтегазовые доходы, всего'), пивот " +
 			"по годам делает SQL. Ось X — месяцы 1–12. Значения за месяц, не накопленным итогом. NULL " +
 			"после сентября 2026 — публикация ещё не вышла: пустые месяцы не рисуются нулевыми барами " +
-			"(пропуск ≠ ноль), честный ноль дохода отличить от пропуска в источнике нельзя.").
+			"(пропуск ≠ ноль), честный ноль дохода отличить от пропуска в источнике нельзя. " +
+			"На 2026-11-03 — последний опубликованный месяц сентябрь 2026 (октябрь–декабрь 2026 ещё " +
+			"не вышли).").
 		Span(spanFull).
 		Height(uralsBudgetBarHeight).
 		Datasource(datasourceRef()).
 		XField("Месяц").
-		Unit(units.Rubles).
+		Unit(units.Number).
+		Legend(common.NewVizLegendOptionsBuilder().ShowLegend(true).Placement(common.LegendPlacementBottom)).
 		WithTarget(tableQuery("A", uralsBudgetOilGasMonthsSQL))
 }
