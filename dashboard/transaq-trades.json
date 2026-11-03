@@ -42,7 +42,7 @@
         "targets": [
           {
             "refId": "A",
-            "rawSql": "SELECT\n    sec_code AS \"Инструмент\",\n    sum(net_value_rub) AS \"Нетто покупок, ₽\"\nFROM v_transaq_net_flows_daily\nWHERE board = 'TQBR'\n  AND $__dateFilter(date)\nGROUP BY sec_code\nHAVING sum(net_value_rub) \u003e 0\nORDER BY \"Нетто покупок, ₽\" DESC\nLIMIT 10\n",
+            "rawSql": "SELECT\n    sec_code AS \"Инструмент\",\n    sum(net_value_rub) AS \"Нетто покупок, ₽\"\nFROM v_transaq_net_flows_daily\nWHERE instrument_kind = 'share'\n  AND $__dateFilter(date)\nGROUP BY sec_code\nHAVING sum(net_value_rub) \u003e 0\nORDER BY \"Нетто покупок, ₽\" DESC\nLIMIT 10\n",
             "editorType": "sql",
             "format": 1,
             "queryType": "table",
@@ -50,7 +50,7 @@
           }
         ],
         "title": "Нетто покупки в IMOEX, ₽",
-        "description": "Сумма нетто-объёма (оценка покупок минус продаж) по коду бумаги за выбранный период; режим торгов TQBR — акции IMOEX. Топ-10 по величине нетто покупок. Рублёвая оценка — Σ цена × лоты × lotsize из снимка transaq_securities, а не биржевой оборот: сделки без lotsize в сумму не входят, ETF (TQTF) в TQBR не попадают. Только фактические сделки ленты: разрыв сессии не догоняется, провал может означать пропуск данных, а не рынок. Это аналитика, а не сигнал и не рекомендация.",
+        "description": "Сумма нетто-объёма (оценка покупок минус продаж) по коду бумаги за выбранный период; только акции IMOEX (instrument_kind = 'share'; фонды денежного рынка и фьючерсы не входят). Топ-10 по величине нетто покупок. Рублёвая оценка — Σ цена × лоты × lotsize из снимка transaq_securities, а не биржевой оборот: сделки без lotsize в сумму не входят. Только фактические сделки ленты: разрыв сессии не догоняется, провал может означать пропуск данных, а не рынок. Это аналитика, а не сигнал и не рекомендация.",
         "transparent": false,
         "datasource": {
           "type": "grafana-clickhouse-datasource",
@@ -98,7 +98,7 @@
         "targets": [
           {
             "refId": "A",
-            "rawSql": "SELECT\n    sec_code AS \"Инструмент\",\n    -sum(net_value_rub) AS \"Нетто продаж, ₽\"\nFROM v_transaq_net_flows_daily\nWHERE board = 'TQBR'\n  AND $__dateFilter(date)\nGROUP BY sec_code\nHAVING sum(net_value_rub) \u003c 0\nORDER BY \"Нетто продаж, ₽\" DESC\nLIMIT 10\n",
+            "rawSql": "SELECT\n    sec_code AS \"Инструмент\",\n    -sum(net_value_rub) AS \"Нетто продаж, ₽\"\nFROM v_transaq_net_flows_daily\nWHERE instrument_kind = 'share'\n  AND $__dateFilter(date)\nGROUP BY sec_code\nHAVING sum(net_value_rub) \u003c 0\nORDER BY \"Нетто продаж, ₽\" DESC\nLIMIT 10\n",
             "editorType": "sql",
             "format": 1,
             "queryType": "table",
@@ -106,7 +106,7 @@
           }
         ],
         "title": "Нетто продажи в IMOEX, ₽",
-        "description": "Сумма нетто-объёма (продажи минус покупки) по коду бумаги за выбранный период; режим торгов TQBR — акции IMOEX. Топ-10 по величине перевеса продавцов; значения показаны положительными, знак минуса снят намеренно. Рублёвая оценка — Σ цена × лоты × lotsize из снимка transaq_securities: сделки без lotsize в сумму не входят. Только фактические сделки ленты, разрывы не догоняются. Это аналитика, а не сигнал и не рекомендация.",
+        "description": "Сумма нетто-объёма (продажи минус покупки) по коду бумаги за выбранный период; только акции IMOEX (instrument_kind = 'share'). Топ-10 по величине перевеса продавцов; значения показаны положительными, знак минуса снят намеренно. Рублёвая оценка — Σ цена × лоты × lotsize из снимка transaq_securities: сделки без lotsize в сумму не входят. Только фактические сделки ленты, разрывы не догоняются. Это аналитика, а не сигнал и не рекомендация.",
         "transparent": false,
         "datasource": {
           "type": "grafana-clickhouse-datasource",
@@ -167,7 +167,7 @@
         "targets": [
           {
             "refId": "A",
-            "rawSql": "SELECT\n    $__timeInterval(minute) AS time,\n    sum(net_value_rub) AS \"Нетто, ₽\"\nFROM v_transaq_net_flows\nWHERE board = 'TQBR'\n  AND $__timeFilter(minute)\nGROUP BY time\nORDER BY time\n",
+            "rawSql": "SELECT\n    $__timeInterval(minute) AS time,\n    sum(net_value_rub) AS \"Нетто, ₽\"\nFROM v_transaq_net_flows\nWHERE instrument_kind = 'share'\n  AND $__timeFilter(minute)\nGROUP BY time\nORDER BY time\n",
             "editorType": "sql",
             "format": 0,
             "queryType": "timeseries",
@@ -228,7 +228,7 @@
         "targets": [
           {
             "refId": "A",
-            "rawSql": "SELECT\n    $__timeInterval(minute) AS time,\n    sum(buy_value_rub) AS \"Покупки, ₽\",\n    -sum(sell_value_rub) AS \"Продажи, ₽\"\nFROM v_transaq_net_flows\nWHERE board = 'TQBR'\n  AND $__timeFilter(minute)\nGROUP BY time\nORDER BY time\n",
+            "rawSql": "SELECT\n    $__timeInterval(minute) AS time,\n    sum(buy_value_rub) AS \"Покупки, ₽\",\n    -sum(sell_value_rub) AS \"Продажи, ₽\"\nFROM v_transaq_net_flows\nWHERE instrument_kind = 'share'\n  AND $__timeFilter(minute)\nGROUP BY time\nORDER BY time\n",
             "editorType": "sql",
             "format": 0,
             "queryType": "timeseries",
@@ -289,7 +289,7 @@
         "targets": [
           {
             "refId": "A",
-            "rawSql": "SELECT\n    $__timeInterval(minute) AS time,\n    sum(buy_value_rub) AS \"Покупки, ₽\",\n    -sum(sell_value_rub) AS \"Продажи, ₽\"\nFROM v_transaq_net_flows\nWHERE board = 'TQOB'\n  AND $__timeFilter(minute)\nGROUP BY time\nORDER BY time\n",
+            "rawSql": "SELECT\n    $__timeInterval(minute) AS time,\n    sum(buy_value_rub) AS \"Покупки, ₽\",\n    -sum(sell_value_rub) AS \"Продажи, ₽\"\nFROM v_transaq_net_flows\nWHERE instrument_kind = 'ofz'\n  AND $__timeFilter(minute)\nGROUP BY time\nORDER BY time\n",
             "editorType": "sql",
             "format": 0,
             "queryType": "timeseries",
