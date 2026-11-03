@@ -65,7 +65,7 @@ WITH
         WHERE series = 'ipc31074/Все товары и услуги'
           AND (region = 'Российская Федерация' OR date >= '2023-01-01')
     ),
-    base AS (SELECT level FROM ipc ORDER BY date DESC LIMIT 1),
+    base AS (SELECT argMax(level, date) AS level FROM ipc),
     usd AS (
         SELECT toDate32(toStartOfMonth(date)) AS month, avg(value) AS usd_avg
         FROM v_cbr_macro
@@ -126,12 +126,13 @@ const s = context.panel.data.series[0];
 // 1) категории X — 12 календарных месяцев (подписи месяцев — массив Presentational, не данные);
 // 2) сезонная норма — одна точка на месяц из колонки seasonal (дедуп по месяцу);
 // 3) линии 2023, 2024, 2025, 2026 — пивот (Год, Месяц года) → [месяц, значение];
-// 4) строки с "Оценка" === 1 — отдельная scatter-серия: symbol 'emptyCircle', label со значением;
+//    строки с "Оценка" === 1 (октябрь-2026) в линии годов НЕ входят;
+// 4) строки с "Оценка" === 1 — только отдельная scatter-серия: symbol 'emptyCircle', label со значением;
 // 5) tooltip: год, месяц, значение; линии не соединяют пропуски (connectNulls: false).
 return { ... };
 ```
 
-Инварианты: нет массивов данных, вписанных в JS; нет сырых таблиц (только `v_*` в таргете); timezone не конвертируется (отображение — `Timezone(browser)`); цифры публикации (`101.46`, `8418`, `6812` и т. п.) в JS не вписываются — они приходят из SQL.
+Инварианты: нет массивов данных, вписанных в JS; нет сырых таблиц (только `v_*` в таргете); timezone не конвертируется (отображение — `Timezone(browser)`); цифры публикации (`101.46`, `8418`, `6812` и т. п.) в JS не вписываются — они приходят из SQL; строки с `Оценка = 1` из линий годов исключаются и рисуются только полым маркером-оценкой.
 
 ### 4.3. П2 — Бюджетное правило: цена отсечения $59
 
@@ -205,7 +206,7 @@ WITH
         WHERE series = 'ipc31074/Все товары и услуги'
           AND (region = 'Российская Федерация' OR date >= '2023-01-01')
     ),
-    base AS (SELECT level FROM ipc ORDER BY date DESC LIMIT 1),
+    base AS (SELECT argMax(level, date) AS level FROM ipc),
     usd AS (
         SELECT toDate32(toStartOfMonth(date)) AS month, avg(value) AS usd_avg
         FROM v_cbr_macro
@@ -286,6 +287,7 @@ ORDER BY "Месяц"
 4. **Единицы:** единицы панелей по §3.5; П2 — `units.Dollars`; П3 — `units.Dollars`; П4 — `units.Short`; П1/П7 — `units.Rubles`; у П5/П6 панельная единица `units.Rubles` и override `units.Percent` на процентных полях (проверяется по имени поля).
 5. **Детерминизм:** две сборки подряд дают побайтно одинаковый `dashboard/urals-budget-rule.json`; `make grafana-build` с пустым диффом.
 6. **Негативные проверки:** `make grafana-validate` зелёный (правила 5.14 не ломаются); повторная сборка не меняет остальные артефакты.
+7. **Оценка октября:** SQL П1 содержит колонку `Оценка` (`is_estimate`) и `SETTINGS join_use_nulls = 1`; JS П1 исключает строки с `Оценка = 1` из линий годов и рисует их только полым маркером; живая проверка (runbook §7) — строка `2026-10-01` с `Оценка = 1` и `8 418 ₽/барр.` (защита от потери оконного `anyLast` и настройки `join_use_nulls`).
 
 ## 5. Проверка публикации
 
@@ -317,7 +319,7 @@ ORDER BY "Месяц"
 1. `make grafana-up` — плагин `volkovlabs-echarts-panel` ставится автоматически (механизм 5.14); после установки dev-стенд перезапускается владельцем (общий ресурс).
 2. `make grafana-build` — появляется `dashboard/urals-budget-rule.json`; повторный прогон — пустой дифф (детерминизм).
 3. `make grafana-validate` — правила контура (`FROM v_*`, уникальные id, датасорс) зелёные.
-4. Живые SQL всех семи таргетов через MCP `mcp__clickhouse__run_query` под `kimi_reader` (Windows — в §4; `$__dateFilter` заменяется явными границами, как при написании спеки).
+4. Живые SQL всех семи таргетов через MCP `mcp__clickhouse__run_query` под `kimi_reader` (ожидаемые числа — в §4; `$__dateFilter` заменяется явными границами, как при написании спеки).
 5. `make grafana-deploy-test` + `make grafana-check` — дашборд виден на тест-стенде, панели не пустые, ECharts рендерится (canvas).
 6. `make all`, `make docs-check` — зелёные.
 7. Протокол живой приёмки — комментарием в PR (§16.1 п. 8 `IMPORTER_PACKAGE_STANDARD.md`); staging-установка плагина — действие владельца, записывается в протокол как «не проверено» до его выполнения.
