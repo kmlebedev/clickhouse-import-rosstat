@@ -184,6 +184,9 @@ func TestFnsReportingMonth(t *testing.T) {
 		{"1nm150926reg.zip", "", false, false},
 		{"readme_reg.zip", "", false, false},
 		{"1nm011326reg.zip", "", false, false},
+		// Дата из будущего — испорченная ссылка, а не отчёт: приняв её, гейт
+		// отсёк бы все настоящие месяцы стартом max(date)+1.
+		{"1nm010199reg.zip", "", false, false},
 	}
 	for _, tc := range cases {
 		month, revision, ok := fnsReportingMonth(tc.name)
