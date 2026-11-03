@@ -115,6 +115,7 @@ func TestTransaqNetFlowsDdlPinsCanonicalKey(t *testing.T) {
 		"minute DateTime('Europe/Moscow')",
 		"sec_code LowCardinality(String)",
 		"board LowCardinality(String)",
+		"instrument_kind LowCardinality(String) DEFAULT ''",
 		"buy_lots UInt64",
 		"sell_lots UInt64",
 		"buy_value_rub Float64",
@@ -131,6 +132,37 @@ func TestTransaqNetFlowsDdlPinsCanonicalKey(t *testing.T) {
 	}
 	if !strings.Contains(transaqNetFlowsDdl, "CREATE TABLE IF NOT EXISTS %s") {
 		t.Error("DDL обязан быть в шаблоне с подстановкой имени: литерал без подстановки даёт мусор в имени таблицы")
+	}
+	// Колонка встаёт после board и в новой таблице, и в мигрированной: иначе
+	// порядок Append расходится с порядком колонок одной из них.
+	if strings.Index(transaqNetFlowsDdl, "instrument_kind") < strings.Index(transaqNetFlowsDdl, "board LowCardinality") {
+		t.Error("instrument_kind в DDL обязан идти сразу после board")
+	}
+	for _, want := range []string{"ALTER TABLE %s ADD COLUMN IF NOT EXISTS instrument_kind LowCardinality(String) DEFAULT ''", "AFTER board"} {
+		if !strings.Contains(transaqNetFlowsMigrateInstrumentKind, want) {
+			t.Errorf("миграция instrument_kind обязана содержать %q", want)
+		}
+	}
+}
+
+// Рублёвая оценка FORTS — по стоимости пункта (спека ofz-market/1.7 §4), а
+// instrument_kind отделяет фонды на TQBR от акций (§5).
+func TestReadNetFlowBucketsQueryFortsAndKinds(t *testing.T) {
+	for _, want := range []string{
+		"toFloat64(l.point_cost) * pow(10, l.decimals) / 100",
+		"d.board = 'FUT'",
+		"endsWith(l.shortname, ' ETF')",
+		"'future'", "'ofz'", "'fund'", "'share'", "'other'",
+		"any(instrument_kind) AS instrument_kind",
+	} {
+		if !strings.Contains(readNetFlowBucketsQuery, want) {
+			t.Errorf("запрос агрегации обязан содержать %q", want)
+		}
+	}
+	// Классификация по board из ленты, а не из каталога: сделка без строки в
+	// transaq_securities (LEFT JOIN даёт '') всё равно получает тип.
+	if strings.Contains(readNetFlowBucketsQuery, "l.board = 'FUT'") {
+		t.Error("тип инструмента берётся из d.board, а не из каталога")
 	}
 }
 
@@ -171,19 +203,35 @@ func TestTransaqNetFlowsViews(t *testing.T) {
 		}
 	}
 
+	for _, sql := range []string{transaqNetFlowsView.Select, transaqNetFlowsDailyView.Select} {
+		if !strings.Contains(sql, instrumentKindExpr) {
+			t.Errorf("витрина обязана выводить instrument_kind с fallback по board для строк до ofz-market/1.7: %s", sql)
+		}
+	}
+	for _, want := range []string{"board = 'TQOB', 'ofz'", "board = 'FUT', 'future'", "instrument_kind = ''"} {
+		if !strings.Contains(instrumentKindExpr, want) {
+			t.Errorf("fallback instrument_kind обязан содержать %q", want)
+		}
+	}
+	for _, comment := range []string{transaqNetFlowsView.Comment, transaqNetFlowsView.Columns["buy_value_rub"]} {
+		if strings.Contains(comment, "не равно денежному обороту") {
+			t.Errorf("устаревшая оговорка про FORTS: оценка FUT теперь по стоимости пункта: %q", comment)
+		}
+	}
+
 	for column := range transaqNetFlowsView.Columns {
 		if strings.TrimSpace(transaqNetFlowsView.Columns[column]) == "" {
 			t.Errorf("колонка %s витрины %s без комментария", column, transaqNetFlowsView.Name)
 		}
 	}
-	for _, column := range []string{"minute", "sec_code", "board", "buy_lots", "sell_lots",
+	for _, column := range []string{"minute", "sec_code", "board", "instrument_kind", "buy_lots", "sell_lots",
 		"net_lots", "buy_value_rub", "sell_value_rub", "net_value_rub", "trade_count",
 		"gap_suspected", "loaded_at"} {
 		if _, ok := transaqNetFlowsView.Columns[column]; !ok {
 			t.Errorf("в комментариях %s нет колонки %q", transaqNetFlowsView.Name, column)
 		}
 	}
-	for _, column := range []string{"date", "sec_code", "board", "buy_lots", "sell_lots",
+	for _, column := range []string{"date", "sec_code", "board", "instrument_kind", "buy_lots", "sell_lots",
 		"net_lots", "buy_value_rub", "sell_value_rub", "net_value_rub", "trade_count",
 		"minutes_with_trades", "gap_suspected", "first_trade", "last_trade"} {
 		if _, ok := transaqNetFlowsDailyView.Columns[column]; !ok {
@@ -203,11 +251,13 @@ type fakeConn struct {
 	batch       *fakeBatch
 	prepares    int
 	execs       int
+	execQueries []string
 	queryArgLen []int
 }
 
-func (c *fakeConn) Exec(context.Context, string, ...any) error {
+func (c *fakeConn) Exec(_ context.Context, query string, _ ...any) error {
 	c.execs++
+	c.execQueries = append(c.execQueries, query)
 	return nil
 }
 
@@ -239,7 +289,7 @@ func (c *fakeConn) Query(_ context.Context, query string, args ...any) (driver.R
 	c.queryArgLen = append(c.queryArgLen, len(args))
 	rows := make([][]any, 0, len(c.buckets))
 	for _, bucket := range c.buckets {
-		rows = append(rows, []any{bucket.Minute, bucket.SecCode, bucket.Board, bucket.BuyLots,
+		rows = append(rows, []any{bucket.Minute, bucket.SecCode, bucket.Board, bucket.InstrumentKind, bucket.BuyLots,
 			bucket.SellLots, bucket.BuyValueRub, bucket.SellValueRub, bucket.TradeCount, bucket.GapSuspected})
 	}
 	return &fakeRows{data: rows}, nil
@@ -357,6 +407,15 @@ func TestImportNoOpOnEmptyLenta(t *testing.T) {
 	if conn.prepares != 0 {
 		t.Fatalf("при пустой ленте батч не должен открываться: prepares = %d", conn.prepares)
 	}
+	migrated := false
+	for _, query := range conn.execQueries {
+		if strings.Contains(query, "ADD COLUMN IF NOT EXISTS instrument_kind") {
+			migrated = true
+		}
+	}
+	if !migrated {
+		t.Fatal("миграция instrument_kind обязана выполняться и на no-op прогоне: витрины читают колонку")
+	}
 }
 
 // Нет сделок новее окна пересчёта — no-op, а не полный пересчёт и не ошибка.
@@ -388,7 +447,7 @@ func TestImportWritesBuckets(t *testing.T) {
 		lentaTo:    minute.Add(3 * time.Minute),
 		batch:      &fakeBatch{},
 		buckets: []netFlowRow{{
-			Minute: minute, SecCode: "SBER", Board: "TQBR",
+			Minute: minute, SecCode: "SBER", Board: "TQBR", InstrumentKind: "share",
 			BuyLots: 110, SellLots: 40, BuyValueRub: 110000, SellValueRub: 40000,
 			TradeCount: 3, GapSuspected: 0,
 		}},
@@ -404,10 +463,10 @@ func TestImportWritesBuckets(t *testing.T) {
 		t.Fatalf("sends = %d, appended = %d; ожидался один батч с одной строкой", conn.batch.sends, len(conn.batch.appended))
 	}
 	row := conn.batch.appended[0]
-	if row[1] != "SBER" || row[2] != "TQBR" || row[3].(uint64) != 110 || row[4].(uint64) != 40 {
+	if row[1] != "SBER" || row[2] != "TQBR" || row[3] != "share" || row[4].(uint64) != 110 || row[5].(uint64) != 40 {
 		t.Fatalf("первая строка батча собрана неверно: %+v", row)
 	}
-	if row[5].(float64) != 110000 || row[7].(uint32) != 3 {
+	if row[6].(float64) != 110000 || row[8].(uint32) != 3 {
 		t.Fatalf("рублёвый объём или число сделок потерялись: %+v", row)
 	}
 	for _, argLen := range conn.queryArgLen {
