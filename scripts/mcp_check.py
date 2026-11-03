@@ -972,6 +972,39 @@ async def check(params, server_log):
             failed += not expect("сырая cbr_int_rate_loans_ind закрыта", denied,
                                  "отказ ClickHouse 497 на cbr_int_rate_loans_ind (ожидаемо)" if denied else raw[:200])
 
+            # Средневзвешенная ставка по ипотечным жилищным кредитам, предоставленным
+            # физлицам-резидентам в рублях, по РФ (импортёр cbr_mortgage_rate, остаток 4.2 #8
+            # роадмапа): один ряд, агент читает его через общую витрину v_cbr_macro (проверка
+            # выше), сырая таблица ему не выдана. Каталог обязан описывать ровно один ряд, и
+            # число сверяется точным равенством, а не «> 0»: ноль значит ни разу не отработавший
+            # шаг cbr_mortgage_rate, большее — дубль ряда или чужая запись под этим файлом.
+            # Выборка по origin, а не по source: у source='cbr' лежат ряды всех импортёров ЦБ, а
+            # Rates_housing.xlsx — источник ровно этого набора. Знак «_» в LIKE экранирован (\_),
+            # а путь якорится каталогом Mortgage и номером файла 02_08: имя Rates_housing
+            # уникально среди origin пакета (легаси-дубль 02_13_Rates_mortgage.xlsx в каталог не
+            # попадает), но якорь держит выборку от будущего файла вида New_Rates_housing.xlsx.
+            mortgage_catalog = text(await session.call_tool("run_query", {"query": "SELECT count() FROM v_series_catalog WHERE source = 'cbr' AND origin LIKE '%/Mortgage/02\\_08\\_Rates\\_housing.xlsx%'"}))
+            mortgage_catalog_rows = result_rows(mortgage_catalog)
+            mortgage_catalog_n = mortgage_catalog_rows[0].get("count()") if mortgage_catalog_rows else None
+            if mortgage_catalog_rows is None:
+                mortgage_catalog_detail = f"каталог не читается: {mortgage_catalog[:200]}"
+            elif mortgage_catalog_n == 1:
+                mortgage_catalog_detail = "рядов cbr_mortgage_rate: 1 (средневзвешенная ставка по жилищным кредитам, РФ)"
+            else:
+                mortgage_catalog_detail = (f"рядов cbr_mortgage_rate: {mortgage_catalog_n}, want 1 (средневзвешенная "
+                                           "ставка по жилищным кредитам, РФ) — прогнать make import "
+                                           "STAT=cbr_mortgage_rate (каталог перепубликовывается прогоном)")
+            failed += not expect("каталог cbr_mortgage_rate полон", mortgage_catalog_n == 1, mortgage_catalog_detail)
+
+            # Сырая cbr_mortgage_rate агенту не выдана — как cbr_int_rate_loans и
+            # cbr_int_rate_loans_ind: витрина — единственное место, где агент читает ряды
+            # контура. Таблицу создаёт DDL-прогон импортёра, поэтому UNKNOWN_TABLE здесь —
+            # провал, а не успех: таблица обязана существовать и быть закрытой.
+            raw = text(await session.call_tool("run_query", {"query": "SELECT count() FROM cbr_mortgage_rate"}))
+            denied = "ACCESS_DENIED" in raw or "Not enough privileges" in raw
+            failed += not expect("сырая cbr_mortgage_rate закрыта", denied,
+                                 "отказ ClickHouse 497 на cbr_mortgage_rate (ожидаемо)" if denied else raw[:200])
+
             # Контур платёжного баланса ЦБ (пункт 4.2 №14 роадмапа — канал «внешние условия и
             # курс», импортёры cbr_bop_est и cbr_bop_standard): витрина v_cbr_bop читается агентом
             # и НЕПУСТА, каталог описывает оба набора целиком (51 и 34 ряда), а обе сырые таблицы —

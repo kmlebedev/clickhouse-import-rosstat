@@ -84,6 +84,7 @@ var cbrImporters = []cbrImporter{
 	{cbrBankIntRateImporter, "cbr_bank_int_rate", "SELECT count() FROM cbr_bank_int_rate FINAL"},
 	{cbrIntRateLoansImporter, "cbr_int_rate_loans", "SELECT count() FROM cbr_int_rate_loans FINAL"},
 	{cbrIntRateLoansIndImporter, "cbr_int_rate_loans_ind", "SELECT count() FROM cbr_int_rate_loans_ind FINAL"},
+	{cbrMortgageRateImporter, "cbr_mortgage_rate", "SELECT count() FROM cbr_mortgage_rate FINAL"},
 	{cbrCreditM2xImporter, "cbr_credit_m2x", "SELECT count() FROM cbr_credit_m2x FINAL"},
 	{cbrIndicatorsCpdImporter, "cbr_indicators_cpd", "SELECT count() FROM cbr_indicators_cpd FINAL"},
 	{cbrRuoniaImporter, "cbr_ruania", ""},

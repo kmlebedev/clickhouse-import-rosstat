@@ -29,6 +29,12 @@ SELECT * FROM (
     -- Пропуски у краткосрочных автокредитов — свойство источника, а не сбой импорта.
     UNION ALL SELECT 'cbr_int_rate_loans_ind', name, count(), min(date), max(date) FROM cbr_int_rate_loans_ind FINAL GROUP BY name
 
+    -- Средневзвешенная ставка по ипотечным жилищным кредитам, предоставленным физлицам-резидентам
+    -- в рублях, по РФ (импортёр cbr_mortgage_rate): один ряд; дата точки — предпоследний день
+    -- отчётного месяца (конвенция контура). Источник — 02_08_Rates_housing.xlsx, лист
+    -- «ставка в рублях», строка «РОССИЙСКАЯ ФЕДЕРАЦИЯ»; пропусков у ряда РФ на снимке нет.
+    UNION ALL SELECT 'cbr_mortgage_rate', name, count(), min(date), max(date) FROM cbr_mortgage_rate FINAL GROUP BY name
+
     UNION ALL SELECT 'cbr_m2', name, count(), min(date), max(date) FROM cbr_m2 FINAL GROUP BY name
     
     UNION ALL SELECT 'cbr_credit_m2x', name, count(), min(date), max(date) FROM cbr_credit_m2x FINAL GROUP BY name
