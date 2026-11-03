@@ -79,9 +79,9 @@ func TestFnsParseTerritoryArchives(t *testing.T) {
 				t.Fatalf("форма строк нарушена: %v", rec.err)
 			}
 			// 47 объявленных рядов × 94 территории: в этих архивах пустых ячеек нет.
-			if len(rec.rows) != len(fnsSeriesRows)*fnsTerritoryCount {
+			if len(rec.rows) != len(fnsSeriesRows)*fnsTerritoriesInArchive {
 				t.Errorf("точек %d, ожидалось %d (%d рядов × %d территорий)",
-					len(rec.rows), len(fnsSeriesRows)*fnsTerritoryCount, len(fnsSeriesRows), fnsTerritoryCount)
+					len(rec.rows), len(fnsSeriesRows)*fnsTerritoriesInArchive, len(fnsSeriesRows), fnsTerritoriesInArchive)
 			}
 			for _, row := range rec.rows {
 				if !row.date.Equal(month) {
@@ -101,8 +101,8 @@ func TestFnsParseTerritoryArchives(t *testing.T) {
 				}
 			}
 			regions := rec.regionSet()
-			if len(regions) != fnsTerritoryCount {
-				t.Errorf("территорий %d, ожидалось %d", len(regions), fnsTerritoryCount)
+			if len(regions) != fnsTerritoriesInArchive {
+				t.Errorf("территорий %d, ожидалось %d", len(regions), fnsTerritoriesInArchive)
 			}
 			counts := map[string]int{}
 			for _, kind := range regions {
@@ -239,7 +239,9 @@ func TestFnsResolveTerritory(t *testing.T) {
 // TestFnsParseNumber — пустая ячейка, прочерк и литеральный X не точки; разделители
 // разрядов и десятичная запятая разбираются; мусор даёт ошибку.
 func TestFnsParseNumber(t *testing.T) {
-	for _, raw := range []string{"", "  ", "-", "—", "X", "x"} {
+	// Маркер «нет данных» источник пишет и кириллицей, и латиницей: оба начертания
+	// обязаны остаться без точки, иначе «х» превратится в ошибку разбора.
+	for _, raw := range []string{"", "  ", "-", "—", "X", "x", "Х", "х"} {
 		if value, has, err := fnsParseNumber(raw); err != nil || has {
 			t.Errorf("%q: has=%v value=%v err=%v, ожидалось отсутствие точки", raw, has, value, err)
 		}
@@ -328,6 +330,87 @@ func TestFnsCollectPointsFailFastOnMissingColumn(t *testing.T) {
 	}
 	if _, err := fnsCollectPoints(book, time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)); err == nil {
 		t.Fatal("книга без объявленных колонок разобрана успешно — потеря ряда прошла бы молча")
+	}
+}
+
+// TestFnsParseRevisionWithExtraRows — ревизия отчёта за декабрь 2023 года
+// (1nm010124ut_reg.zip): в листе появились четыре новых субъекта отдельными
+// строками без значений, строка-группировка «Юго-Западные субъекты» и строка
+// «МИ ФНС России по управлению долгом» со значениями по всем 47 рядам. Без
+// объявленного исключения эти 51 точка попали бы в региональный разрез как
+// территории (или задвоили бы итог), а незнакомые строки уронили бы прогон.
+func TestFnsParseRevisionWithExtraRows(t *testing.T) {
+	month, revision, ok := fnsReportingMonth("1nm010124ut_reg.zip")
+	if !ok || !revision {
+		t.Fatalf("имя ревизии не распознано: ok=%v revision=%v", ok, revision)
+	}
+	if got := month.Format("2006-01"); got != "2023-12" {
+		t.Fatalf("отчётный месяц %s, ожидался 2023-12", got)
+	}
+	rec := newFnsRecorder()
+	if err := fnsParseBudgetRevenue(fnsFixture(t, "1nm010124ut_reg.zip"), rec, month); err != nil {
+		t.Fatalf("разбор ревизии: %v", err)
+	}
+	if rec.err != nil {
+		t.Fatalf("форма строк нарушена: %v", rec.err)
+	}
+	if len(rec.rows) != len(fnsSeriesRows)*fnsTerritoriesInArchive {
+		t.Errorf("точек %d, ожидалось %d: группы и администратор не должны давать точек",
+			len(rec.rows), len(fnsSeriesRows)*fnsTerritoriesInArchive)
+	}
+	for _, row := range rec.rows {
+		switch row.region {
+		case "Юго-Западные субъекты", "МИ ФНС России по управлению долгом":
+			t.Errorf("исключённая строка попала в точки: %s / %s", row.region, row.series)
+		}
+	}
+	if got := rec.index()["Российская Федерация|admin_revenues_total"].value; got != 36182868968 {
+		t.Errorf("РФ admin_revenues_total 2023-12 = %v, ожидалось 36182868968", got)
+	}
+	for _, name := range []string{"Донецкая Народная Республика", "Луганская Народная Республика",
+		"Запорожская область", "Херсонская область"} {
+		region, kind, err := fnsResolveTerritory(name)
+		if err != nil || region != name || kind != fnsKindSubject {
+			t.Errorf("%q: разрешено в %q/%v, ошибка %v, ожидался субъект того же имени", name, region, kind, err)
+		}
+	}
+}
+
+// TestFnsTerritoryTablesAreNormalized — таблицы написаний нормализуются тем же
+// правилом, что разбор применяет к ячейке: алиас обязан вести на канон из списка,
+// его нормализованный ключ не должен совпадать с каноническим написанием (тогда
+// таблица избыточна), а исключённая строка не должна пересекаться с территориями и
+// обязана оставаться неразрешимой — иначе проверка исключений не сработает.
+func TestFnsTerritoryTablesAreNormalized(t *testing.T) {
+	for spelling, canonical := range fnsTerritoryAliasSpellings {
+		key := fnsNormalizeTerritory(spelling)
+		if got, ok := fnsTerritoryAliases[key]; !ok || got != canonical {
+			t.Errorf("алиас %q: ключ %q не найден или ведёт в %q", spelling, key, got)
+		}
+		if _, isCanonical := fnsTerritoryByNorm[key]; isCanonical {
+			t.Errorf("алиас %q совпадает с каноническим написанием: таблица избыточна", spelling)
+		}
+		if _, excluded := fnsTerritoryExcluded[key]; excluded {
+			t.Errorf("алиас %q числится и в списке исключений", spelling)
+		}
+		if region, _, err := fnsResolveTerritory(spelling); err != nil || region != canonical {
+			t.Errorf("алиас %q: разрешено %q, ошибка %v", spelling, region, err)
+		}
+		if _, kind, err := fnsResolveTerritory(canonical); err != nil || kind != fnsKindSubject {
+			t.Errorf("канон алиаса %q: класс %q, ошибка %v — города и АО обязаны оставаться субъектами", canonical, kind, err)
+		}
+	}
+	for spelling, reason := range fnsTerritoryExcludedSpellings {
+		key := fnsNormalizeTerritory(spelling)
+		if got, ok := fnsTerritoryExcluded[key]; !ok || got != reason {
+			t.Errorf("исключение %q: ключ %q не найден", spelling, key)
+		}
+		if _, isCanonical := fnsTerritoryByNorm[key]; isCanonical {
+			t.Errorf("исключённая строка %q пересекается с канонической территорией", spelling)
+		}
+		if _, _, err := fnsResolveTerritory(spelling); err == nil {
+			t.Errorf("%q разрешается как территория: без срабатывания исключения в разрез попал бы не субъект", spelling)
+		}
 	}
 }
 

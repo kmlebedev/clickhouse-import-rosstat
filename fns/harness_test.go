@@ -7,6 +7,12 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
+// fnsTerritoriesInArchive — число территорий, дающих точки в архиве 2020/2026:
+// РФ + 8 округов + 85 субъектов. В ревизии декабря 2023 года список длиннее на
+// четыре новых субъекта, но значений в тех строках нет, поэтому точек всё равно
+// столько же.
+const fnsTerritoriesInArchive = 94
+
 // fnsRow — строка таблицы в том виде, в каком её передаёт разбор: колонки DDL
 // (date, region, region_kind, series, value).
 type fnsRow struct {
@@ -88,7 +94,7 @@ func (r *appendRecorder) seriesSet() map[string]int {
 // regionSet — множество территорий с классами: проверяет, что канонизация собрала
 // 94 территории и что написания разных лет свелись к одному имени.
 func (r *appendRecorder) regionSet() map[string]string {
-	regions := make(map[string]string, fnsTerritoryCount)
+	regions := make(map[string]string, fnsTerritoriesInArchive)
 	for _, row := range r.rows {
 		regions[row.region] = row.kind
 	}
