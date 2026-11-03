@@ -11,7 +11,7 @@ var cbrMacroView = util.View{
 	Name: "v_cbr_macro",
 	Tables: []string{
 		"cbr_key_rate", "cbr_currency_usd", "cbr_gold", "cbr_ruania", "cbr_m2", "cbr_credit_m2x",
-		"cbr_bank_int_rate", "cbr_int_rate_loans", "cbr_indicators_cpd", "cbr_infl_exp",
+		"cbr_bank_int_rate", "cbr_int_rate_loans", "cbr_int_rate_loans_ind", "cbr_indicators_cpd", "cbr_infl_exp",
 		"cbr_loans_to_individuals", "cbr_loans_to_corporations", "cbr_households_b_mes",
 	},
 	Select: `SELECT 'cbr' AS source, 'cbr_key_rate' AS series, date, toFloat64(rate) AS value FROM cbr_key_rate FINAL
@@ -28,16 +28,17 @@ UNION ALL SELECT 'cbr', toString(name), date, toFloat64(balance) FROM cbr_m2 FIN
 UNION ALL SELECT 'cbr', toString(name), date, toFloat64(value) FROM cbr_credit_m2x FINAL
 UNION ALL SELECT 'cbr', toString(name), date, toFloat64(rate) FROM cbr_bank_int_rate FINAL
 UNION ALL SELECT 'cbr', toString(name), date, toFloat64(rate) FROM cbr_int_rate_loans FINAL
+UNION ALL SELECT 'cbr', toString(name), date, toFloat64(rate) FROM cbr_int_rate_loans_ind FINAL
 UNION ALL SELECT 'cbr', toString(name), date, toFloat64(value) FROM cbr_indicators_cpd FINAL
 UNION ALL SELECT 'cbr', toString(name), date, toFloat64(value) FROM cbr_infl_exp FINAL
 UNION ALL SELECT 'cbr', toString(name), date, toFloat64(balance) FROM cbr_loans_to_individuals FINAL
 UNION ALL SELECT 'cbr', toString(name), date, toFloat64(balance) FROM cbr_loans_to_corporations FINAL
 UNION ALL SELECT 'cbr', toString(name), date, toFloat64(balance) FROM cbr_households_b_mes FINAL`,
-	Comment: "Макроряды ЦБ РФ: ключевая ставка, курс USD, учётная цена золота, RUONIA, М2 SA, кредиты физлицам и юрлицам, ставки по вкладам и кредитам, ИПЦ (темпы), инфляционные ожидания, балансы домашних хозяйств. Платёжного баланса здесь нет: его ряды живут в отдельной витрине v_cbr_bop (source cbr_bop_est и cbr_bop_standard, свои единицы и виды периода) — внешние условия и курс по платёжному балансу искать там. Перед расчётом читать v_series_catalog по (source, series): единицы и привязка даты различаются между рядами",
+	Comment: "Макроряды ЦБ РФ: ключевая ставка, курс USD, учётная цена золота, RUONIA, М2 SA, кредиты физлицам и юрлицам, ставки по вкладам, кредитам юрлицам и кредитам физлицам по срокам, ИПЦ (темпы), инфляционные ожидания, балансы домашних хозяйств. Платёжного баланса здесь нет: его ряды живут в отдельной витрине v_cbr_bop (source cbr_bop_est и cbr_bop_standard, свои единицы и виды периода) — внешние условия и курс по платёжному балансу искать там. Перед расчётом читать v_series_catalog по (source, series): единицы и привязка даты различаются между рядами",
 	Columns: map[string]string{
 		"source": "Импортёр-источник: всегда cbr",
-		"series": "Название ряда; совпадает с series в v_series_catalog. У кредитов физлицам по регионам, кредитов юрлицам по видам деятельности (ОКВЭД), ставок по вкладам, ИПЦ, инфляционных ожиданий и балансов домохозяйств название — текст исходной таблицы ЦБ (строка региона или вида деятельности, заголовок колонки срока); у ставок по кредитам юрлицам имя — комбинация двух ячеек источника, группы заёмщиков («Всего»/«СМП») и срока кредита, которую собирает код (стандарт §6.8)",
-		"date":   "Дата наблюдения (Date). Сдвиги даты различаются по рядам: кредиты — на месяц вперёд, инфляционные ожидания — 14-е число, ставки по вкладам и кредитам — предпоследний день месяца; см. description в v_series_catalog",
+		"series": "Название ряда; совпадает с series в v_series_catalog. У кредитов физлицам по регионам, кредитов юрлицам по видам деятельности (ОКВЭД), ставок по вкладам, ИПЦ, инфляционных ожиданий и балансов домохозяйств название — текст исходной таблицы ЦБ (строка региона или вида деятельности, заголовок колонки срока); у ставок по кредитам юрлицам имя — комбинация двух ячеек источника, группы заёмщиков («Всего»/«СМП») и срока кредита, которую собирает код (стандарт §6.8); у ставок по кредитам физлицам — тоже комбинация двух ячеек, группы («Всего (кредиты физлицам)»/«Автокредиты»; префикс отличает их от одноимённых рядов кредитов юрлицам) и срока кредита",
+		"date":   "Дата наблюдения (Date). Сдвиги даты различаются по рядам: кредиты — на месяц вперёд, инфляционные ожидания — 14-е число, ставки по вкладам и кредитам юрлицам и физлицам — предпоследний день месяца (единая конвенция контура); см. description в v_series_catalog",
 		"value":  "Значение ряда (Float64). Единицы зависят от ряда: % годовых, руб. за USD, руб./грамм, млрд руб., млн руб., % к предыдущему месяцу — см. unit в v_series_catalog",
 	},
 }

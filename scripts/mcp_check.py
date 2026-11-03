@@ -937,6 +937,41 @@ async def check(params, server_log):
             failed += not expect("сырая cbr_int_rate_loans закрыта", denied,
                                  "отказ ClickHouse 497 на cbr_int_rate_loans (ожидаемо)" if denied else raw[:200])
 
+            # Ставки по кредитам физическим лицам в рублях по срокам (импортёр
+            # cbr_int_rate_loans_ind, остаток 4.2 #8 роадмапа): ряды контура агент читает только
+            # через общую витрину v_cbr_macro (проверка выше), сырая таблица ему не выдана.
+            # Каталог обязан описывать все 16 рядов источника, и число сверяется точным
+            # равенством, а не «> 0»: 16 = 8 сроков кредита × 2 группы («Всего» и «Автокредиты»),
+            # имя ряда код собирает из группы и срока. Меньшее число значит ни разу не
+            # отработавший шаг cbr_int_rate_loans_ind (числа агент прочитает, а что измеряет ряд,
+            # в каких единицах и как привязана дата — нет), большее — ряд, которому в листе
+            # источника не соответствует колонка. Выборка по origin, а не по source: у source='cbr'
+            # лежат ряды всех импортёров ЦБ, а файл loans_ind.xlsx — источник ровно этого набора;
+            # знак «_» в LIKE экранирован (\_), а путь якорится каталогом int_rat: без якоря
+            # подстрока «loans_ind.xlsx» совпала бы с соседним файлом New_loans_ind.xlsx
+            # (импортёр cbr_new_loans_ind, регионы — тоже source='cbr').
+            ind_loans_catalog = text(await session.call_tool("run_query", {"query": "SELECT count() FROM v_series_catalog WHERE source = 'cbr' AND origin LIKE '%/int\\_rat/loans\\_ind.xlsx%'"}))
+            ind_loans_catalog_rows = result_rows(ind_loans_catalog)
+            ind_loans_catalog_n = ind_loans_catalog_rows[0].get("count()") if ind_loans_catalog_rows else None
+            if ind_loans_catalog_rows is None:
+                ind_loans_catalog_detail = f"каталог не читается: {ind_loans_catalog[:200]}"
+            elif ind_loans_catalog_n == 16:
+                ind_loans_catalog_detail = "рядов cbr_int_rate_loans_ind: 16 (8 сроков × 2 группы: Всего/Автокредиты)"
+            else:
+                ind_loans_catalog_detail = (f"рядов cbr_int_rate_loans_ind: {ind_loans_catalog_n}, want 16 (8 сроков "
+                                            "× 2 группы: Всего/Автокредиты) — прогнать make import STAT=cbr_int_rate_loans_ind "
+                                            "(каталог перепубликовывается прогоном)")
+            failed += not expect("каталог cbr_int_rate_loans_ind полон", ind_loans_catalog_n == 16, ind_loans_catalog_detail)
+
+            # Сырая cbr_int_rate_loans_ind агенту не выдана — как cbr_int_rate_loans и
+            # cbr_households_b_mes: витрина — единственное место, где агент читает ряды контура.
+            # Таблицу создаёт DDL-прогон импортёра, поэтому UNKNOWN_TABLE здесь — провал, а не
+            # успех: таблица обязана существовать и быть закрытой.
+            raw = text(await session.call_tool("run_query", {"query": "SELECT count() FROM cbr_int_rate_loans_ind"}))
+            denied = "ACCESS_DENIED" in raw or "Not enough privileges" in raw
+            failed += not expect("сырая cbr_int_rate_loans_ind закрыта", denied,
+                                 "отказ ClickHouse 497 на cbr_int_rate_loans_ind (ожидаемо)" if denied else raw[:200])
+
             # Контур платёжного баланса ЦБ (пункт 4.2 №14 роадмапа — канал «внешние условия и
             # курс», импортёры cbr_bop_est и cbr_bop_standard): витрина v_cbr_bop читается агентом
             # и НЕПУСТА, каталог описывает оба набора целиком (51 и 34 ряда), а обе сырые таблицы —
