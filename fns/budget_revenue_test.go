@@ -318,7 +318,7 @@ func TestFnsTransportIsUtil(t *testing.T) {
 	var agent string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		agent = r.Header.Get("User-Agent")
-		fmt.Fprint(w, `<html><body><a href="16619097/">2026</a></body></html>`)
+		_, _ = fmt.Fprint(w, `<html><body><a href="16619097/">2026</a></body></html>`)
 	}))
 	defer server.Close()
 	if _, err := util.GetPage(server.URL + fnsFormsPath); err != nil {

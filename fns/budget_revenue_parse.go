@@ -25,9 +25,13 @@ const (
 	// fnsHeaderScan — за сколько верхних строк искать якорь: шапка всегда в начале
 	// листа, ниже идут только строки территорий.
 	fnsHeaderScan = 20
-	// fnsTerritoryCount — 1 РФ + 8 федеральных округов + 85 субъектов. Столько строк
-	// обязан отдать каждый разбираемый лист: меньше — книга не та (стандарт §6.4).
-	fnsTerritoryCount = 94
+	// fnsFederalDistrictCount — федеральных округов в листе всегда восемь.
+	fnsFederalDistrictCount = 8
+	// fnsSubjectCountMin — нижняя граница субъектов: 85 в списках 2020–2026 годов;
+	// ревизия за декабрь 2023 года добавляет четыре новых субъекта отдельными
+	// строками (без значений), поэтому верхняя граница не проверяется, а нижняя —
+	// обязательна: пропавший субъект означал бы смену структуры книги (§6.4).
+	fnsSubjectCountMin = 85
 	// fnsSubtotalLabel — служебная строка между РФ и округами, территорией не является.
 	fnsSubtotalLabel = "в том числе:"
 	// fnsRfCanonical — каноническое имя агрегата: источник пишет его капсом, а в базе
@@ -249,26 +253,56 @@ var fnsTerritoryNames = []string{
 	"Забайкальский край",
 	"Еврейская автономная область",
 	"Чукотский автономный округ",
+	// Четыре новых субъекта: отдельными строками они появляются только в ревизии
+	// отчёта за декабрь 2023 года, и значений в них там нет («х»). Объявлены, чтобы
+	// эта публикация разбиралась без ошибки, а не чтобы дать точки: точек у неё ноль.
+	"Донецкая Народная Республика",
+	"Луганская Народная Республика",
+	"Запорожская область",
+	"Херсонская область",
 }
 
-// fnsTerritoryAliases — написания тех же территорий в архивах других лет. Ключ —
-// нормализованное написание (fnsNormalizeTerritory). «ямалоhенецкийао» — с латинской
-// h: именно так напечатано «Ямало-Hенецкий АО» в архиве 2020 года, и это не ошибка
-// нормализации, а особенность источника. Парные написания 2020 года наблюдены
-// живым разбором архивов 2020 и 2026.
-var fnsTerritoryAliases = map[string]string{
-	"городмосква":           "г. Москва",
-	"москва":                "г. Москва",
-	"городсанктпетербург":   "г. Санкт-Петербург",
-	"санктпетербург":        "г. Санкт-Петербург",
-	"городсевастополь":      "г. Севастополь",
-	"севастополь":           "г. Севастополь",
-	"ненецкийао":            "Ненецкий автономный округ",
-	"чукотскийао":           "Чукотский автономный округ",
-	"хантымансийскийаоюгра": "Ханты-Мансийский автономный округ - Югра",
-	"ямалоhенецкийао":       "Ямало-Ненецкий автономный округ",
-	"ямалоненецкийао":       "Ямало-Ненецкий автономный округ",
+// fnsTerritoryAliasSpellings — написания тех же территорий в архивах других лет
+// (наблюдение по всем 70 архивам 2020–2026). Ключ — точное написание источника, а
+// сопоставляется нормализованное: hand-набранного ключа нет, и опечатка в нём
+// перестала быть молча живучей (тест TestFnsTerritoryTablesAreNormalized это ловит).
+// «Ямало-Hенецкий АО» — с латинской h: именно так напечатано это название в архиве
+// 2020 года.
+var fnsTerritoryAliasSpellings = map[string]string{
+	"город Москва":               "г. Москва",
+	"город Санкт-Петербург":      "г. Санкт-Петербург",
+	"город Севастополь":          "г. Севастополь",
+	"Ненецкий АО":                "Ненецкий автономный округ",
+	"Чукотский АО":               "Чукотский автономный округ",
+	"Ханты-Мансийский АО - Югра": "Ханты-Мансийский автономный округ - Югра",
+	"Ямало-Hенецкий АО":          "Ямало-Ненецкий автономный округ",
+	"Ямало-Ненецкий АО":          "Ямало-Ненецкий автономный округ",
 }
+
+// fnsTerritoryExcludedSpellings — строки листа, которые территорией не являются и
+// точек не дают: замечены только в ревизии декабря 2023 года. «Юго-Западные
+// субъекты» — группировка части субъектов (её сложение с субъектами задвоило бы
+// итог), «МИ ФНС России по управлению долгом» — администратор поступлений: его
+// значения есть по всем 47 рядам, и как «субъект» он исказил бы любой региональный
+// разрез.
+var fnsTerritoryExcludedSpellings = map[string]string{
+	"ЮГО-ЗАПАДНЫЕ СУБЪЕКТЫ":              "группировка субъектов, не территория",
+	"МИ ФНС РОССИИ ПО УПРАВЛЕНИЮ ДОЛГОМ": "администратор поступлений, не территория",
+}
+
+// fnsNormalizeKeys — таблица «нормализованное написание → значение».
+func fnsNormalizeKeys(source map[string]string) map[string]string {
+	normalized := make(map[string]string, len(source))
+	for spelling, value := range source {
+		normalized[fnsNormalizeTerritory(spelling)] = value
+	}
+	return normalized
+}
+
+var (
+	fnsTerritoryAliases  = fnsNormalizeKeys(fnsTerritoryAliasSpellings)
+	fnsTerritoryExcluded = fnsNormalizeKeys(fnsTerritoryExcludedSpellings)
+)
 
 // fnsNormalizeTerritory сводит название к сопоставимому виду: нижний регистр,
 // «ё» → «е», без пробелов, дефисов, точек, скобок и прочей пунктуации. Латиница
@@ -345,12 +379,14 @@ type fnsPoint struct {
 // обычные, неразрывные и узкие пробелы внутри числа.
 var fnsNumberReplacer = strings.NewReplacer(" ", "", "\u00a0", "", "\u202f", "", "\t", "")
 
-// fnsParseNumber разбирает сырое значение ячейки. Пустая ячейка, «-» и «X» — не
-// точка (стандарт §6.7): у источника это отсутствие данных, а не ноль.
+// fnsParseNumber разбирает сырое значение ячейки. Пустая ячейка, «-», «—» и
+// «х» — не точка (стандарт §6.7): у источника это отсутствие данных, а не ноль.
+// Маркер пишется и кириллицей, и латиницей (в архиве декабря 2023 года —
+// «х» U+0445), поэтому сравниваются оба начертания.
 func fnsParseNumber(raw string) (value float64, has bool, err error) {
 	trimmed := strings.TrimSpace(raw)
 	switch trimmed {
-	case "", "-", "—", "x", "X":
+	case "", "-", "—", "x", "X", "х", "Х":
 		return 0, false, nil
 	}
 	parsed, err := strconv.ParseFloat(strings.ReplaceAll(fnsNumberReplacer.Replace(trimmed), ",", "."), 64)
@@ -531,7 +567,7 @@ func fnsCollectSheetPoints(xf *excelize.File, sheet string, month time.Time, cla
 	}
 
 	var points []fnsPoint
-	territories := 0
+	kinds := map[string]int{}
 	for i := anchor + 1; i < len(rows); i++ {
 		row := rows[i]
 		if len(row) == 0 {
@@ -541,11 +577,15 @@ func fnsCollectSheetPoints(xf *excelize.File, sheet string, month time.Time, cla
 		if raw == "" || strings.EqualFold(raw, fnsSubtotalLabel) {
 			continue
 		}
+		if reason, excluded := fnsTerritoryExcluded[fnsNormalizeTerritory(raw)]; excluded {
+			log.Debugf("%s: лист «%s»: строка %q пропущена — %s", fnsImporterName, sheet, raw, reason)
+			continue
+		}
 		region, kind, err := fnsResolveTerritory(raw)
 		if err != nil {
 			return nil, err
 		}
-		territories++
+		kinds[kind]++
 		for _, column := range columns {
 			if column.index >= len(row) {
 				continue
@@ -566,8 +606,11 @@ func fnsCollectSheetPoints(xf *excelize.File, sheet string, month time.Time, cla
 			})
 		}
 	}
-	if territories != fnsTerritoryCount {
-		return nil, fmt.Errorf("территорий %d, ожидалось %d — структура книги изменилась", territories, fnsTerritoryCount)
+	if kinds[fnsKindRF] != 1 || kinds[fnsKindFederalDistrict] != fnsFederalDistrictCount ||
+		kinds[fnsKindSubject] < fnsSubjectCountMin {
+		return nil, fmt.Errorf("территорий rf=%d federal_district=%d subject=%d, ожидалось rf=1, federal_district=%d, subject≥%d — структура книги изменилась",
+			kinds[fnsKindRF], kinds[fnsKindFederalDistrict], kinds[fnsKindSubject],
+			fnsFederalDistrictCount, fnsSubjectCountMin)
 	}
 	return points, nil
 }
