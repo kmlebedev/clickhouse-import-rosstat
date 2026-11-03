@@ -23,6 +23,7 @@ import (
 	_ "github.com/kmlebedev/clickhouse-import-rosstat/fao"
 	_ "github.com/kmlebedev/clickhouse-import-rosstat/fedstat"
 	_ "github.com/kmlebedev/clickhouse-import-rosstat/financial"
+	_ "github.com/kmlebedev/clickhouse-import-rosstat/fns"
 	_ "github.com/kmlebedev/clickhouse-import-rosstat/forecast"
 	_ "github.com/kmlebedev/clickhouse-import-rosstat/fred"
 	_ "github.com/kmlebedev/clickhouse-import-rosstat/gold"
