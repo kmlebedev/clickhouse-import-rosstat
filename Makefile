@@ -26,6 +26,10 @@ GF_DIR       ?= $(HOME)/grafana-dev
 GF_PORT      ?= 3000
 # Версия плагина: формат запроса дашборда подтверждён живым экспортом 4.3.2 (grafana/clickhouse.go).
 GRAFANA_PLUGIN_VERSION ?= 4.3.2
+# Business Charts (Volkov Labs) для ECharts-панелей (infra/5.14): формат options подтверждён
+# живым экспортом 7.2.5 (grafana/echarts.go); плагин загружается при старте — после установки
+# dev-стенд перезапускается.
+GRAFANA_ECHARTS_PLUGIN_VERSION ?= 7.2.5
 GF_PID       := $(GF_DIR)/grafana.pid
 GF_LOG       := $(GF_DIR)/grafana.log
 GF_PLUGINS   := $(GF_DIR)/plugins
@@ -1515,6 +1519,10 @@ grafana-up:
 		if [ ! -d "$(GF_PLUGINS)/grafana-clickhouse-datasource" ]; then \
 			"$(GF_BIN)" cli --homepath "$(GF_HOMEPATH)" --pluginsDir "$(GF_PLUGINS)" \
 				plugins install grafana-clickhouse-datasource $(GRAFANA_PLUGIN_VERSION) || exit 1; \
+		fi; \
+		if [ ! -d "$(GF_PLUGINS)/volkovlabs-echarts-panel" ]; then \
+			"$(GF_BIN)" cli --homepath "$(GF_HOMEPATH)" --pluginsDir "$(GF_PLUGINS)" \
+				plugins install volkovlabs-echarts-panel $(GRAFANA_ECHARTS_PLUGIN_VERSION) || exit 1; \
 		fi; \
 		mkdir -p "$(GF_DIR)/data" "$(GF_DIR)/logs"; \
 		nohup env GF_PATHS_DATA="$(GF_DIR)/data" GF_PATHS_LOGS="$(GF_DIR)/logs" GF_PATHS_PLUGINS="$(GF_PLUGINS)" \
