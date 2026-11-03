@@ -7,18 +7,20 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/grafana/grafana-foundation-sdk/go/common"
 	"github.com/grafana/grafana-foundation-sdk/go/dashboard"
 	"github.com/grafana/grafana-foundation-sdk/go/units"
 )
 
 // uralsBudgetRulePanelTitles — состав панелей в порядке следования (он же порядок id 1..7):
-// два ECharts-графика, четыре stat-снимка и месячный бар (спека §3.4).
+// два ECharts-графика, четыре stat-снимка и месячный бар (спека §3.4). Заголовки rolling-панелей
+// нейтральные: SQL берёт последний опубликованный месяц, конкретика as-of — в описаниях.
 var uralsBudgetRulePanelTitles = []string{
-	"Urals в постоянных рублях (база — сентябрь 2026)",
+	"Urals в постоянных рублях (база — последний опубликованный ИПЦ)",
 	"Бюджетное правило: цена отсечения $59",
-	"Urals, $/барр. — октябрь 2026",
-	"Курс ЦБ, ₽/$ — октябрь 2026",
-	"Urals в рублях, ₽/барр. — октябрь 2026",
+	"Urals, $/барр. — последний опубликованный месяц",
+	"Курс ЦБ, ₽/$ — последний опубликованный месяц",
+	"Urals в рублях, ₽/барр. — последний опубликованный месяц",
 	"Нефтегазовые доходы, млрд ₽ — янв–сен 2026",
 	"Нефтегазовые доходы федерального бюджета по месяцам, млрд ₽",
 }
@@ -91,7 +93,7 @@ func TestUralsBudgetRuleRows(t *testing.T) {
 		titles = append(titles, optionalString(entry.RowPanel.Title))
 		ids = append(ids, entry.RowPanel.Id)
 	}
-	want := []string{"Реальная цена Urals и бюджетное правило", "Октябрь 2026 и нефтегазовые доходы"}
+	want := []string{"Реальная цена Urals и бюджетное правило", "Последний опубликованный месяц и нефтегазовые доходы"}
 	wantIDs := []uint32{21, 22}
 	if len(titles) != len(want) {
 		t.Fatalf("рядов %d, ожидалось %d: %v", len(titles), len(want), titles)
@@ -120,7 +122,7 @@ func TestUralsBudgetRuleValidateUID(t *testing.T) {
 
 // uralsBudgetRuleTargetContract — ожидаемый контракт таргета панели: витрины, которые он читает,
 // наличие $__dateFilter и его выражение. Stat-снимки П3–П6 фильтра диапазона не несут: окно
-// дашборда не должно менять «октябрь 2026» (спека §4.1).
+// дашборда не должно менять снимок последнего опубликованного месяца (спека §4.1).
 type uralsBudgetRuleTargetContract struct {
 	id      uint32
 	views   []string
@@ -191,11 +193,11 @@ func assertNoRawTables(t *testing.T, panelID uint32, sql string) {
 	}
 }
 
-// TestUralsBudgetRuleEChartsTargets: ECharts-таргеты П1/П2 и stat-снимок П5 отдают ровно те
+// TestUralsBudgetRuleColumnContract: ECharts-таргеты П1/П2 и stat-снимок П5 отдают ровно те
 // колонки, по именам которых читает JS (спека §4.2/§4.3, снимок П5), а П1/П5 защищены от потери
 // оконного anyLast и настройки join_use_nulls: колонка «Оценка» (is_estimate, только П1) и
 // SETTINGS join_use_nulls = 1 обязательны — без настройки реальный темп П5 теряется.
-func TestUralsBudgetRuleEChartsTargets(t *testing.T) {
+func TestUralsBudgetRuleColumnContract(t *testing.T) {
 	board := builtUralsBudgetRule(t)
 	cases := []struct {
 		id      uint32
@@ -246,6 +248,57 @@ func TestUralsBudgetRuleEChartsTargets(t *testing.T) {
 		for _, want := range tc.sql {
 			if !strings.Contains(query.RawSql, want) {
 				t.Fatalf("панель %d: в SQL нет %q:\n%s", tc.id, want, query.RawSql)
+			}
+		}
+	}
+}
+
+// TestUralsBudgetRuleJSColumnAliases — перекрёстная проверка JS ↔ SQL по алиасам колонок П1/П2.
+// Направление SQL → JS: каждый ожидаемый алиас контракта обязан встречаться в getOption (JS читает
+// поле по имени через column(...)/field(...)). Направление JS → SQL: каждая ссылка на поле в JS
+// обязана быть алиасом таргета. Дрейф имени (правка SQL без JS или наоборот) иначе не виден: JS
+// молча возвращает {} и панель рисуется пустой, а не падает.
+func TestUralsBudgetRuleJSColumnAliases(t *testing.T) {
+	board := builtUralsBudgetRule(t)
+	cases := []struct {
+		id      uint32
+		aliases []string
+	}{
+		{
+			1,
+			[]string{
+				"Год", "Месяц года", "Реальная цена, ₽/барр.",
+				"Сезонная норма 2018–2022, ₽/барр.", "Оценка",
+			},
+		},
+		{
+			2,
+			[]string{"Месяц", "Urals, $/барр.", "В бюджет (≤ $59)", "В ФНБ (> $59)"},
+		},
+	}
+	fieldRef := regexp.MustCompile(`(?:column|field)\('([^']+)'\)`)
+	for _, tc := range cases {
+		panel := panelByID(t, board, tc.id)
+		query, ok := chQuery(panel.Targets[0])
+		if !ok {
+			t.Fatalf("панель %d: таргет не является запросом ClickHouse", tc.id)
+		}
+		js := uralsBudgetEChartsOptions(t, panel).GetOption
+		refs := fieldRef.FindAllStringSubmatch(js, -1)
+		if len(refs) == 0 {
+			t.Fatalf("панель %d: getOption не читает ни одного поля по имени:\n%s", tc.id, js)
+		}
+		for _, alias := range tc.aliases {
+			if !strings.Contains(query.RawSql, `"`+alias+`"`) {
+				t.Fatalf("панель %d: в SQL нет алиаса %q:\n%s", tc.id, alias, query.RawSql)
+			}
+			if !strings.Contains(js, "'"+alias+"'") {
+				t.Fatalf("панель %d: getOption не читает алиас %q — панель молча вернёт {}:\n%s", tc.id, alias, js)
+			}
+		}
+		for _, ref := range refs {
+			if !strings.Contains(query.RawSql, `"`+ref[1]+`"`) {
+				t.Fatalf("панель %d: getOption читает поле %q, которого нет в SQL — панель молча вернёт {}:\n%s", tc.id, ref[1], query.RawSql)
 			}
 		}
 	}
@@ -334,9 +387,10 @@ func TestUralsBudgetRulePanel2BudgetRule(t *testing.T) {
 	}
 }
 
-// TestUralsBudgetRulePanel1Estimate: строки с «Оценка» = 1 (октябрь 2026) в линии годов НЕ входят:
-// ветка оценки делает continue до записи в lines, а сама строка уходит отдельной scatter-серией
-// с полым маркером (symbol emptyCircle). Это защита от потери оконного anyLast и join_use_nulls.
+// TestUralsBudgetRulePanel1Estimate: строки с «Оценка» = 1 (месяц без свежего ИПЦ) в линии годов
+// НЕ входят: ветка оценки делает continue до записи в lines, а сама строка уходит отдельной
+// scatter-серией с полым маркером (symbol emptyCircle). Это защита от потери оконного anyLast
+// и join_use_nulls.
 func TestUralsBudgetRulePanel1Estimate(t *testing.T) {
 	panel := panelByID(t, builtUralsBudgetRule(t), 1)
 	js := uralsBudgetEChartsOptions(t, panel).GetOption
@@ -388,10 +442,11 @@ func TestUralsBudgetRulePanel1Estimate(t *testing.T) {
 	}
 }
 
-// TestUralsBudgetRuleUnits: единицы панелей по спеке §3.5; П5/П6 несут и рубли, и проценты —
-// панельная единица Rubles, у процентных колонок override percent по имени поля (иначе темп
-// печатался бы в рублях). Override сверяется по имени алиаса SQL: matcher byName сопоставляется
-// с именем поля, которое даёт алиас.
+// TestUralsBudgetRuleUnits: единицы панелей по спеке §3.5. П5/П6/П7 — plain number (units.Number):
+// currencyRUB SI-скейлит ≥1000 («₽8.42K»/«₽5.47K»), а единица уже стоит в заголовке («₽/барр.»,
+// «млрд ₽»); П5/П6 несут ещё и проценты — у процентных колонок override percent по имени поля
+// (иначе темп печатался бы как число без знака %). Override сверяется по имени алиаса SQL:
+// matcher byName сопоставляется с именем поля, которое даёт алиас.
 func TestUralsBudgetRuleUnits(t *testing.T) {
 	board := builtUralsBudgetRule(t)
 	want := map[uint32]string{
@@ -399,9 +454,9 @@ func TestUralsBudgetRuleUnits(t *testing.T) {
 		2: units.Dollars,
 		3: units.Dollars,
 		4: units.Short,
-		5: units.Rubles,
-		6: units.Rubles,
-		7: units.Rubles,
+		5: units.Number,
+		6: units.Number,
+		7: units.Number,
 	}
 	for id, unit := range want {
 		panel := panelByID(t, board, id)
@@ -426,8 +481,30 @@ func TestUralsBudgetRuleUnits(t *testing.T) {
 	}
 }
 
-// assertUnitOverride требует override unit по имени поля: у П5/П6 панельная единица — рубли,
-// и без override процентные колонки печатались бы в рублях.
+// TestUralsBudgetRulePanel7Legend: П7 сравнивает 2025 и 2026 — без легенды два ряда не различить,
+// а дефолт barchart-панели — showLegend false. Легенда включается явно и ставится снизу.
+func TestUralsBudgetRulePanel7Legend(t *testing.T) {
+	panel := panelByID(t, builtUralsBudgetRule(t), 7)
+	raw, err := json.Marshal(panel.Options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var opts struct {
+		Legend common.VizLegendOptions `json:"legend"`
+	}
+	if err := json.Unmarshal(raw, &opts); err != nil {
+		t.Fatalf("П7: options не разбираются: %v (%s)", err, raw)
+	}
+	if !opts.Legend.ShowLegend {
+		t.Fatalf("П7: легенда выключена — два ряда 2025/2026 не различить (%s)", raw)
+	}
+	if got := opts.Legend.Placement; got != common.LegendPlacementBottom {
+		t.Fatalf("П7: размещение легенды %q, ожидалось %q", got, common.LegendPlacementBottom)
+	}
+}
+
+// assertUnitOverride требует override unit по имени поля: у П5/П6 панельная единица — plain
+// number, и без override процентные колонки печатались бы числами без знака %.
 func assertUnitOverride(t *testing.T, p *dashboard.Panel, fieldName, wantUnit string) {
 	t.Helper()
 	for _, override := range p.FieldConfig.Overrides {
