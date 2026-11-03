@@ -99,6 +99,19 @@ steps:
       limit: 3
       interval_sec: 300
 
+  # Квартальный корпус среднерыночных значений ПСК кредитных организаций (пункт 4.2 №8,
+  # issue #119): лента страницы /statistics/bank_sector/psk/ из 48 выпусков трёх форматов
+  # (PDF/XLS/XLSX). Гейт по source_publications — в обычный день 0 строк без скачивания.
+  # Шаг сразу после розничных ставок контура (порядок = порядок реестра cbr/importers.go);
+  # сбой разбора ленты не лишает данных проверенные шаги выше.
+  - id: cbr_psk
+    run: "$ROSSTAT_IMPORT_BIN"
+    env:
+      - CLICKHOUSE_IMPORT_STAT=cbr_psk
+    retry_policy:
+      limit: 3
+      interval_sec: 300
+
   - id: cbr_credit_m2x
     run: "$ROSSTAT_IMPORT_BIN"
     env:

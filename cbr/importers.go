@@ -85,6 +85,13 @@ var cbrImporters = []cbrImporter{
 	{cbrIntRateLoansImporter, "cbr_int_rate_loans", "SELECT count() FROM cbr_int_rate_loans FINAL"},
 	{cbrIntRateLoansIndImporter, "cbr_int_rate_loans_ind", "SELECT count() FROM cbr_int_rate_loans_ind FINAL"},
 	{cbrMortgageRateImporter, "cbr_mortgage_rate", "SELECT count() FROM cbr_mortgage_rate FINAL"},
+	// cbr_psk — квартальный корпус среднерыночных значений ПСК кредитных организаций: артефакт —
+	// лента из 48 выпусков трёх форматов (PDF/XLS/XLSX), поэтому префлайта нет: чек известной
+	// версии по счёту всей таблицы не сошёлся бы ни разу. No-op держит гейт по ленте страницы:
+	// известность выпуска — имя файла в source_publications (source='cbr_psk'), известные выпуски
+	// не скачиваются. Производные (витрина v_cbr_psk и динамический каталог) публикует собственный
+	// Import() на каждом прогоне, включая no-op.
+	{cbrPskImporter, "cbr_psk", ""},
 	{cbrCreditM2xImporter, "cbr_credit_m2x", "SELECT count() FROM cbr_credit_m2x FINAL"},
 	{cbrIndicatorsCpdImporter, "cbr_indicators_cpd", "SELECT count() FROM cbr_indicators_cpd FINAL"},
 	{cbrRuoniaImporter, "cbr_ruania", ""},
