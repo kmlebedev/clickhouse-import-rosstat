@@ -1027,18 +1027,19 @@ async def check(params, server_log):
                                    "прогнать make import STAT=cbr_psk (витрину пересоздаёт прогон импортёра)")
             failed += not expect("витрина v_cbr_psk существует и непуста", (psk_view_n or 0) >= 300, psk_view_detail)
 
-            # Ипотечная «ПСК по 353-ФЗ» — коды 6.1.1/6.1.2 с 2023-11 (таксономия XLSX-эры). Код
-            # 6.1.1 в окне новой таксономии — проверка, что разбор не потерял ипотечные листья и
-            # витрина не устарела на эру: без него останется только старая таксономия 1–4/5.
-            psk_mortgage = text(await session.call_tool("run_query", {"query": "SELECT count() AS n FROM v_cbr_psk WHERE category_code = '6.1.1' AND date BETWEEN toDate('2023-11-30') AND toDate('2026-06-30')"}))
+            # Ипотечная «ПСК по 353-ФЗ»: укрупнённый код 6 — с 2022-03-31, детализированные
+            # 6.1.1/6.1.2 — с 2024-06-30 (16.08.2024); в XLSX 16.11.2023/15.02.2024/16.05.2024
+            # ещё укрупнённая таксономия 6/7/8. Код 6.1.1 в окне от его первого выпуска —
+            # проверка, что разбор не потерял ипотечные листья и витрина не устарела на эру.
+            psk_mortgage = text(await session.call_tool("run_query", {"query": "SELECT count() AS n FROM v_cbr_psk WHERE category_code = '6.1.1' AND date BETWEEN toDate('2024-06-30') AND toDate('2026-06-30')"}))
             psk_mortgage_rows = result_rows(psk_mortgage)
             psk_mortgage_n = psk_mortgage_rows[0].get("n") if psk_mortgage_rows else None
             if psk_mortgage_rows is None:
                 psk_mortgage_detail = f"запрос не выполнен: {psk_mortgage[:200]}"
             elif (psk_mortgage_n or 0) > 0:
-                psk_mortgage_detail = f"строк категории 6.1.1 за 2023-11-30…2026-06-30: {psk_mortgage_n}"
+                psk_mortgage_detail = f"строк категории 6.1.1 за 2024-06-30…2026-06-30: {psk_mortgage_n}"
             else:
-                psk_mortgage_detail = ("нет строк категории 6.1.1 за 2023-11-30…2026-06-30 — разбор потерял "
+                psk_mortgage_detail = ("нет строк категории 6.1.1 за 2024-06-30…2026-06-30 — разбор потерял "
                                        "ипотечные листья XLSX-эры или витрина устарела; прогнать make import STAT=cbr_psk")
             failed += not expect("витрина v_cbr_psk содержит ипотечную категорию 6.1.1", (psk_mortgage_n or 0) > 0,
                                  psk_mortgage_detail)

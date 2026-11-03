@@ -274,7 +274,8 @@ func TestCbrPskParsePDFBrokenText(t *testing.T) {
 	if _, _, err = cbrPskParsePDFText(text); !errors.Is(err, errCbrPskUnreadablePDF) {
 		t.Fatalf("cbrPskParsePDFText = %v, ожидался сентинел errCbrPskUnreadablePDF", err)
 	}
-	release := cbrPskRelease{ID: "10400", FileName: "13022015_ko.pdf", Ext: "pdf"}
+	release := cbrPskRelease{ID: "10400", FileName: "13022015_ko.pdf", Ext: "pdf",
+		Published: time.Date(2015, time.February, 13, 0, 0, 0, 0, time.UTC)}
 	if _, _, err = cbrPskParseRelease(context.Background(), body, release); !errors.Is(err, errCbrPskUnreadablePDF) {
 		t.Errorf("cbrPskParseRelease = %v, ожидался сентинел errCbrPskUnreadablePDF", err)
 	}
@@ -358,10 +359,11 @@ func TestCbrPskParseXls2023CleanCodes(t *testing.T) {
 // (ключ — имя файла, fingerprint пустой допустим: cbrPskKnownReleases читает DISTINCT name).
 func TestCbrPskSkipUnreadableSavesVersion(t *testing.T) {
 	release := cbrPskRelease{
-		ID:       "10400",
-		FileName: "13022015_ko.pdf",
-		Ext:      "pdf",
-		URL:      cbrUrl + "/Collection/Collection/File/10400/13022015_ko.pdf",
+		ID:        "10400",
+		FileName:  "13022015_ko.pdf",
+		Ext:       "pdf",
+		Published: time.Date(2015, time.February, 13, 0, 0, 0, 0, time.UTC),
+		URL:       cbrUrl + "/Collection/Collection/File/10400/13022015_ko.pdf",
 	}
 	batch := &pskFakeBatch{}
 	conn := &pskFakeConn{batch: batch}
@@ -507,8 +509,8 @@ func TestCbrPskPeriodEnd(t *testing.T) {
 	}
 	for _, broken := range []string{
 		"без заголовка периода",
-		"за период с 1 июля по 31 сен 2018 г.",  // сокращённый месяц
-		"за период с 1 июля по 31 июня 2018 г.", // несуществующая дата
+		"за период с 1 июля по 31 сенто 2018 г.", // неизвестный месяц
+		"за период с 1 июля по 31 июня 2018 г.",  // несуществующая дата
 		"за период с 1 июля по 30 сентября 1899 г.",
 	} {
 		if date, err := cbrPskPeriodEnd(broken); err == nil {
@@ -593,7 +595,7 @@ func TestCbrPskParseXlsxFailFast(t *testing.T) {
 			sheet: cbrPskSheet,
 			rows: [][]any{
 				{"СРЕДНЕРЫНОЧНЫЕ ЗНАЧЕНИЯ"},
-				{"за период с 1 июля по 31 сен 2018 г."},
+				{"за период с 1 июля по 31 сенто 2018 г."},
 				header, numbers,
 				{"1.1", "автомобили", "12.5", "16.8"},
 			},
@@ -724,6 +726,21 @@ func TestCbrPskParseReleasesEdges(t *testing.T) {
 	}
 	if len(releases) != 1 || releases[0].ID != "1" {
 		t.Fatalf("выпуски = %+v, ожидался один ko-выпуск id 1: дубли схлопываются, mfo/kpk отбрасываются", releases)
+	}
+
+	uppercase := []byte(`<a href="/Collection/Collection/File/1/01012020_ko.XLSX">a</a>`)
+	releases, err = cbrPskParseReleases(uppercase)
+	if err != nil {
+		t.Fatalf("cbrPskParseReleases (верхний регистр расширения): %v", err)
+	}
+	if len(releases) != 1 || releases[0].Ext != "xlsx" || releases[0].FileName != "01012020_ko.XLSX" {
+		t.Fatalf("выпуск = %+v, ожидался xlsx с именем файла в регистре источника 01012020_ko.XLSX", releases)
+	}
+
+	unknown := []byte(`<a href="/Collection/Collection/File/1/01012020_ko.zip">a</a>`)
+	if _, err := cbrPskParseReleases(unknown); err == nil ||
+		!strings.Contains(err.Error(), "01012020_ko.zip") || !strings.Contains(err.Error(), "неизвестное расширение") {
+		t.Errorf("cbrPskParseReleases (.zip) = %v, ожидалась ошибка с именем файла и незнакомым расширением", err)
 	}
 
 	if _, err := cbrPskParseReleases([]byte(`<html>нет ссылок</html>`)); err == nil {
@@ -894,10 +911,11 @@ func TestCbrPskCatalogMeta(t *testing.T) {
 	}
 }
 
-// TestAfterCbrPskPublishesCatalog — публикация производных (спека §3.5 C): после прогона
-// v_cbr_psk пересоздаётся, а каталог получает по ряду на каждый код из таблицы — ипотечные
-// категории 6.1.x входят в набор наравне с остальными. Проверяется на фейковом соединении:
-// витрина — CreateView с комментариями, каталог — batch v_series_catalog.
+// TestAfterCbrPskPublishesCatalog — публикация производных (спека §3.5 C): сначала каталог
+// (series_catalog), затем витрина v_cbr_psk — стандарт §10.2 «каталог → витрина». Каталог
+// получает по ряду на каждый код из таблицы, ипотечные категории 6.1.x входят наравне с
+// остальными. Проверяется на фейковом соединении: каталог — batch v_series_catalog, витрина —
+// CreateView с комментариями.
 func TestAfterCbrPskPublishesCatalog(t *testing.T) {
 	rows := &pskFakeRows{values: [][]any{
 		{"1.1", "автомобили с пробегом от 0 до 1000 км"},
@@ -917,13 +935,26 @@ func TestAfterCbrPskPublishesCatalog(t *testing.T) {
 		t.Error("строки каталога не закрыты: соединение течёт на каждом прогоне")
 	}
 	created := false
-	for _, query := range conn.execs {
+	catalogIdx, viewIdx := -1, -1
+	for i, query := range conn.execs {
+		if strings.Contains(query, "INSERT INTO series_catalog") && catalogIdx < 0 {
+			catalogIdx = i
+		}
 		if strings.Contains(query, "CREATE OR REPLACE VIEW v_cbr_psk") {
 			created = true
+			if viewIdx < 0 {
+				viewIdx = i
+			}
 		}
 	}
 	if !created {
 		t.Errorf("витрина v_cbr_psk не создана: execs = %v", conn.execs)
+	}
+	// Стандарт §10.2: каталог публикуется до витрины — агент, прочитавший витрину, обязан найти в
+	// каталоге описание каждой её категории.
+	if catalogIdx < 0 || viewIdx < 0 || catalogIdx > viewIdx {
+		t.Errorf("порядок производных: INSERT INTO series_catalog (индекс %d) должен идти до CREATE VIEW v_cbr_psk (индекс %d): %v",
+			catalogIdx, viewIdx, conn.execs)
 	}
 	if len(batch.rows) != len(rows.values) {
 		t.Fatalf("в каталог записано %d рядов, ожидалось %d (по одному на код)", len(batch.rows), len(rows.values))

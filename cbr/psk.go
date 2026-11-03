@@ -125,8 +125,13 @@ const cbrPskAlterMaxNullable = "ALTER TABLE %s MODIFY COLUMN psk_max Nullable(Fl
 var (
 	// cbrPskReleaseRe — ссылка на файл выпуска ko в ленте: и актуальные файлы, и версионные списки
 	// (data-versions-item) лежат в одном HTML, поэтому regex видит полный корпус. Тип зашит в
-	// шаблон: mfo/kpk/skpk/lomb не совпадают вовсе (спека §2.3, §6).
-	cbrPskReleaseRe = regexp.MustCompile(`href="(/Collection/Collection/File/(\d+)/(\d{8})_ko\.(xlsx|xls|pdf))"`)
+	// шаблон: mfo/kpk/skpk/lomb не совпадают вовсе (спека §2.3, §6). Расширение ловится любое
+	// (регистронезависимо): незнакомое — ошибка ленты в cbrPskParseReleases, а не молчаливый
+	// пропуск выпуска.
+	cbrPskReleaseRe = regexp.MustCompile(`(?i)href="(/Collection/Collection/File/(\d+)/(\d{8})_ko\.([a-z0-9]+))"`)
+
+	// cbrPskKnownExts — расширения, которые умеет разбирать импортёр (ключи cbrPskParseRelease).
+	cbrPskKnownExts = map[string]bool{"pdf": true, "xls": true, "xlsx": true}
 
 	// cbrPskReleaseLayout — формат даты публикации в имени файла: DDMMYYYY (14.08.2026 —
 	// 14082026). Дата публикации — атрибут выпуска и порядок первого прогона; дата точки — конец
@@ -144,8 +149,8 @@ var (
 
 	// cbrPskPeriodEndRe — конец периода из заголовка выпуска: «за период с 1 июля по 30 сентября
 	// 2018 г.», «за период с «01» апреля 2026 г. по «30» июня 2026 г.». Кавычки снимаются до
-	// разбора, поэтому шаблон общий для всех трёх эр; месяц — в родительном падеже (свой словарь,
-	// util.MonthsToNum — для именительного).
+	// разбора, поэтому шаблон общий для всех трёх эр; месяц — в родительном падеже и берётся из
+	// util.MonthsToNum: словарь месяцев один на пакет (как у ставок A/B).
 	cbrPskPeriodEndRe = regexp.MustCompile(`за\s+период\s+с\s+.*?\s+по\s+(\d{1,2})\s+([а-яё]+)\s+(\d{4})`)
 
 	// cbrPskPDFRowRe — строка таблицы PDF: код в начале строки и остаток (наименование и значения).
@@ -169,16 +174,6 @@ var (
 		"\t", " ", "\f", " ",
 		"\u00ad", "",
 	)
-
-	// cbrPskMonthsGenitive — месяцы в родительном падеже: так их печатает заголовок периода во всех
-	// трёх эрах («по 30 сентября 2018 г.»). Словарь свой, а не util.MonthsToNum: тот обслуживает
-	// именительный падеж меток «Январь 2014» и не должен обрастать формами ради одного заголовка.
-	cbrPskMonthsGenitive = map[string]time.Month{
-		"января": time.January, "февраля": time.February, "марта": time.March,
-		"апреля": time.April, "мая": time.May, "июня": time.June,
-		"июля": time.July, "августа": time.August, "сентября": time.September,
-		"октября": time.October, "ноября": time.November, "декабря": time.December,
-	}
 
 	// cbrPskPeriodQuoteReplacer — кавычки заголовка периода (ёлочки XLSX-эры, типографские
 	// двойные PDF) снимаются до разбора: шаблон периода один на все эры.
@@ -243,8 +238,9 @@ type cbrPskPoint struct {
 
 // cbrPskParseReleases разбирает ленту выпусков ko со страницы ПСК: regex по всему HTML (актуальные
 // файлы и версионные списки), дедупликация по <id>, фильтр типа ko зашит в шаблон ссылки. Ошибки —
-// fail-fast (стандарт §6.4): ни одной ko-ссылки (источник сломан или подменён); дата в имени файла
-// не разбирается; один id встретился с разными путями/датами (структура ленты изменилась).
+// fail-fast (стандарт §6.4): ни одной ko-ссылки (источник сломан или подменён); расширение файла вне
+// {pdf, xls, xlsx} (разбор не знает, что это за выпуск, и молча пропускать его нельзя); дата в имени
+// файла не разбирается; один id встретился с разными путями/датами (структура ленты изменилась).
 // Порядок результата — хронологический (старые → новые): первый прогон наполняет историю
 // детерминированным префиксом, а порядок не зависит от порядка страницы. Сеть не трогается —
 // страница скачана вызывающим, разбор чистый и тестируется на HTML-байтах.
@@ -258,7 +254,15 @@ func cbrPskParseReleases(page []byte) ([]cbrPskRelease, error) {
 	names := make(map[string]string, len(matches))
 	releases := make([]cbrPskRelease, 0, len(matches))
 	for _, match := range matches {
-		path, id, dateText, ext := string(match[1]), string(match[2]), string(match[3]), strings.ToLower(string(match[4]))
+		path, id, dateText, rawExt := string(match[1]), string(match[2]), string(match[3]), string(match[4])
+		ext := strings.ToLower(rawExt)
+		// Имя файла сохраняет регистр источника (basename URL — ключ версии шаблона), а разбор
+		// выбирается по нижнему регистру расширения: ссылка .XLSX обязана читаться как xlsx.
+		fileName := fmt.Sprintf("%s_ko.%s", dateText, rawExt)
+		if !cbrPskKnownExts[ext] {
+			return nil, fmt.Errorf("%s: лента %s: файл %s: неизвестное расширение %q (ожидались pdf, xls, xlsx) — разбор не знает, что это за выпуск",
+				cbrPskTable, cbrPskPageURL, fileName, rawExt)
+		}
 		published, err := time.Parse(cbrPskReleaseLayout, dateText)
 		if err != nil {
 			return nil, fmt.Errorf("%s: лента %s: дата публикации %q в ссылке %s: %w",
@@ -266,7 +270,7 @@ func cbrPskParseReleases(page []byte) ([]cbrPskRelease, error) {
 		}
 		release := cbrPskRelease{
 			ID:        id,
-			FileName:  fmt.Sprintf("%s_ko.%s", dateText, ext),
+			FileName:  fileName,
 			Ext:       ext,
 			Published: published,
 			URL:       cbrUrl + path,
@@ -360,7 +364,7 @@ func cbrPskPeriodEnd(text string) (time.Time, error) {
 	if err != nil {
 		return time.Time{}, fmt.Errorf("день %q в заголовке периода %q: %w", match[1], text, err)
 	}
-	month, ok := cbrPskMonthsGenitive[match[2]]
+	month, ok := util.MonthsToNum[match[2]]
 	if !ok {
 		return time.Time{}, fmt.Errorf("неизвестный месяц %q в заголовке периода %q", match[2], text)
 	}
@@ -964,8 +968,8 @@ func cbrPskSeriesMeta(code, category string) util.SeriesMeta {
 			"Это не фактическая ставка по выданным кредитам, а установленный законом предел: по ч. 11 ст. 6 Федерального закона № 353-ФЗ ПСК по договору не может превышать среднерыночное значение более чем на одну треть. "+
 			"Значение применяется в следующем календарном квартале после периода расчёта; дата точки — конец квартала расчёта (сопоставлять по toStartOfQuarter(date)). "+
 			"Предельное значение (psk_max в v_cbr_psk) — NULL в выпусках, где оно не публиковалось (PDF-эра 2014), а не ноль. "+
-			"Код категории менял смысл между редакциями таксономии (1–4 в PDF-эре 2014–2018, 1–5 с 2019, 1–8 с 2023: в XLS 2023 — укрупнённые 6–8, в XLSX с 2023-11 — 6.1.1/6.1.2, 7.1.x, 8.x): сверяйте наименование категории, а не только код. "+
-			"Ипотека — коды 6.1.1/6.1.2 с 2023-11; в XLS-выпусках 2023 года она представлена укрупнёнными 6–8.", code, category),
+			"Код категории менял смысл между редакциями таксономии (1–4 в PDF-эре 2014–2018, 1–5 с 2019; укрупнённый ипотечный код 6 — с 2022-03-31, детализированные 6.1.1/6.1.2 — с 2024-06-30, 8.1–8.3 — с 2026-03-31): сверяйте наименование категории, а не только код. "+
+			"Ипотека по ПСК: укрупнённый код 6 — с 2022-03-31 (16052022_ko.xls), детализированные 6.1.1/6.1.2 — с 2024-06-30 (16082024_ko.xlsx); в XLSX 16112023, 15022024, 16052024 ещё старая укрупнённая таксономия.", code, category),
 	}
 }
 

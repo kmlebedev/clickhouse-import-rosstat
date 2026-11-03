@@ -143,7 +143,7 @@ func intRateLoansIndSheetWithData() [][]string {
 }
 
 // TestCbrIntRateLoansIndNames — имена рядов кода совпадают со списком спеки §3.1 дословно: и
-// префиксы групп («Всего: », «Автокредиты: »), и тексты сроков, и их порядок.
+// префиксы групп («Всего (кредиты физлицам): », «Автокредиты: »), и тексты сроков, и их порядок.
 func TestCbrIntRateLoansIndNames(t *testing.T) {
 	if len(cbrIntRateLoansIndNames) != len(intRateLoansIndWantNames) {
 		t.Fatalf("имён рядов %d, want %d", len(cbrIntRateLoansIndNames), len(intRateLoansIndWantNames))
@@ -565,8 +565,8 @@ func TestCbrIntRateLoansIndAppendErrorNamesRow(t *testing.T) {
 
 // TestCbrIntRateLoansIndOriginNamesGroupAndTerm: origin называет группу и срок раздельно и не
 // укладывает составное имя ряда в кавычки целиком (правило 11 AGENTS.md): агент MCP обязан
-// видеть, что «Всего: от 1 года до 3 лет» — это группа плюс срок, а не одна ячейка источника.
-// Формат сверяется подстроками, а не равенством: текст origin может уточняться.
+// видеть, что «Всего (кредиты физлицам): от 1 года до 3 лет» — это группа плюс срок, а не одна
+// ячейка источника. Формат сверяется подстроками, а не равенством: текст origin может уточняться.
 func TestCbrIntRateLoansIndOriginNamesGroupAndTerm(t *testing.T) {
 	if len(cbrIntRateLoansIndSeriesMeta) != len(cbrIntRateLoansIndNames) {
 		t.Fatalf("записей каталога %d, want %d", len(cbrIntRateLoansIndSeriesMeta), len(cbrIntRateLoansIndNames))
