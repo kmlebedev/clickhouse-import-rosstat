@@ -219,7 +219,7 @@ func TestFnsCollectArtifactsSkipsKnownMonths(t *testing.T) {
 	for _, month := range []string{"2026-01", "2026-02", "2026-03", "2026-04", "2026-05", "2026-06", "2026-07"} {
 		known[month] = true
 	}
-	artifacts, err := fnsCollectArtifacts(server.URL+fnsFormsPath, start, known)
+	artifacts, err := fnsCollectArtifacts(server.URL+fnsFormsPath, fnsGatePlan{start: start, known: known})
 	if err != nil {
 		t.Fatalf("сбор артефактов: %v", err)
 	}
@@ -258,7 +258,7 @@ func TestFnsCollectArtifactsPrefersRevision(t *testing.T) {
 	if err != nil {
 		t.Fatalf("разбор старта: %v", err)
 	}
-	artifacts, err := fnsCollectArtifacts(server.URL+fnsFormsPath, start, map[string]bool{})
+	artifacts, err := fnsCollectArtifacts(server.URL+fnsFormsPath, fnsGatePlan{start: start, known: map[string]bool{}})
 	if err != nil {
 		t.Fatalf("сбор артефактов: %v", err)
 	}
@@ -326,5 +326,79 @@ func TestFnsTransportIsUtil(t *testing.T) {
 	}
 	if !strings.Contains(agent, "Mozilla/5.0") {
 		t.Errorf("User-Agent %q — не браузерный", agent)
+	}
+}
+
+// TestFnsCollectArtifactsForceIsRepairPath — ремонт по FNS_1NM_FROM обязан
+// перечитывать известные месяцы: иначе «путь ремонта» остаётся обещанием, потому
+// что ревизия уже импортированного месяца обычным прогоном не видна (месячен
+// известнен гейту).
+func TestFnsCollectArtifactsForceIsRepairPath(t *testing.T) {
+	server, _ := fnsTestServer(t, nil)
+	start, err := fnsParseMonth("2026-01")
+	if err != nil {
+		t.Fatalf("разбор старта: %v", err)
+	}
+	known := map[string]bool{}
+	for _, month := range []string{"2026-01", "2026-02", "2026-03", "2026-04", "2026-05", "2026-06", "2026-07", "2026-08"} {
+		known[month] = true
+	}
+	quiet, err := fnsCollectArtifacts(server.URL+fnsFormsPath, fnsGatePlan{start: start, known: known})
+	if err != nil {
+		t.Fatalf("обычный сбор: %v", err)
+	}
+	if len(quiet) != 0 {
+		t.Errorf("обычный прогон вернул %d артефактов, ожидался ноль: известные месяцы качать не нужно", len(quiet))
+	}
+	repaired, err := fnsCollectArtifacts(server.URL+fnsFormsPath, fnsGatePlan{start: start, known: known, force: true})
+	if err != nil {
+		t.Fatalf("сбор в режиме ремонта: %v", err)
+	}
+	if len(repaired) != 8 {
+		t.Errorf("в режиме ремонта артефактов %d, ожидалось 8 (все месяцы 2026 года перечитываются)", len(repaired))
+	}
+}
+
+// TestFnsCollectArtifactsFailsOnEmptyYearPage — страница завершившегося года без
+// единого архива territories значит, что источник переименовал файлы: молчаливый
+// ноль держал бы dagu зелёным при остановленном контуре, поэтому это ошибка.
+func TestFnsCollectArtifactsFailsOnEmptyYearPage(t *testing.T) {
+	// 2021-й год сервер отдаёт фикстурой, 2020-й — пустой страницей: стартовать
+	// нужно с 2020-го, чтобы первая же пустая страница завершившегося года была
+	// замечена.
+	server, _ := fnsTestServer(t, nil)
+	start, err := fnsParseMonth("2020-01")
+	if err != nil {
+		t.Fatalf("разбор старта: %v", err)
+	}
+	_, err = fnsCollectArtifacts(server.URL+fnsFormsPath, fnsGatePlan{start: start, known: map[string]bool{}})
+	if err == nil {
+		t.Fatal("пустая страница 2020 года принята как «новых месяцев нет» — контур молча перестал бы обновляться")
+	}
+	if !strings.Contains(err.Error(), "reg.zip") {
+		t.Errorf("текст ошибки не называет ожидаемый маркер архива: %v", err)
+	}
+}
+
+// TestFnsCollectArtifactsAllowsEmptyCurrentYear — страница текущего года без
+// архивов легитимна (годовой отчёт выходит в январе следующего года): прогон
+// обязан остаться нулевым, а не упасть.
+func TestFnsCollectArtifactsAllowsEmptyCurrentYear(t *testing.T) {
+	currentYear := time.Now().Year()
+	start, err := fnsParseMonth(fmt.Sprintf("%d-01", currentYear))
+	if err != nil {
+		t.Fatalf("разбор старта: %v", err)
+	}
+	// Страница текущего года (id 16619097) подменена пустой; годов раньше старта
+	// сервер не спрашивает.
+	server, _ := fnsTestServer(t, map[string][]byte{
+		fnsFormsPath + "16619097/": []byte("<html><body>отчётов этого года ещё нет</body></html>"),
+	})
+	artifacts, err := fnsCollectArtifacts(server.URL+fnsFormsPath, fnsGatePlan{start: start, known: map[string]bool{}})
+	if err != nil {
+		t.Fatalf("пустая страница текущего года дала ошибку: %v", err)
+	}
+	if len(artifacts) != 0 {
+		t.Errorf("артефактов %d, ожидался ноль", len(artifacts))
 	}
 }

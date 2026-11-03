@@ -43,7 +43,7 @@ SELECT region, count() FROM v_fedstat_ipp GROUP BY region;      -- оба зна
 SELECT source, series, count(), max(date) FROM v_minfin_budget GROUP BY source, series;
 SELECT source, series FROM v_series_catalog WHERE source LIKE 'minfin_debt%';
 SELECT count(), uniqExact(series), uniqExact(region), min(date), max(date) FROM v_fns_budget_revenue;
--- помесячные поступления РФ «всего» против Минфина (единицы: тыс. руб. / 1e6 = трлн руб.)
+-- помесячные поступления РФ «всего» против Минфина (единицы: тыс. руб. / 1e9 = трлн руб.)
 SELECT toYear(date) AS y, round(sum(value)/1e9,2) AS fns_trln FROM v_fns_budget_revenue_monthly
  WHERE series = 'admin_revenues_total' AND region = 'Российская Федерация' GROUP BY y ORDER BY y;
 ```

@@ -41,6 +41,10 @@ const (
 	// содержат внутренние файлы в legacy `.xls`, разбор которых здесь не реализуется
 	// (спека §2.4, решение владельца 2026-11-03).
 	fnsFirstMonth = "2020-01"
+	// fnsFirstYear — год fnsFirstMonth числом: страницы раньше него проверяются на
+	// «ни одного архива» не всегда (у до-2020 выпусков и имена, и внутренние файлы
+	// другие), а пустая страница завершившегося года позже — уже поломка обхода.
+	fnsFirstYear = 2020
 	// fnsSelectMonths — гейт инкремента: какие отчётные месяцы уже лежат в таблице.
 	// FINAL обязателен, иначе несмёрженные части ревизий дали бы «известный» месяц
 	// дважды (стандарт §9.2).
@@ -78,6 +82,10 @@ type fnsBudgetRevenue struct {
 	util.ClickHouseImport
 }
 
+// fnsNow — часы пакета: переменная, чтобы тест задал «сегодня» и проверил отказ
+// артефакта с датой из будущего (такой месяц иначе отрезал бы всё живое).
+var fnsNow = time.Now
+
 // fnsBudgetRevenueImporter — импортёр поступлений 1-НМ. Регистрация — реестром
 // пакета (fns/importers.go, стандарт §8.1), персональных init() в файлах импортёров
 // нет.
@@ -99,22 +107,30 @@ type fnsArtifact struct {
 // которых ещё нет в таблице → разбор каждого шаблоном → производные. Возвращает
 // число записанных точек; ноль — штатный повтор, а не ошибка.
 func (s *fnsBudgetRevenue) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
+	if util.ArchiveRestoreMode() {
+		// Restore не поддерживается и отказывает сразу, до обхода источника: у
+		// импортёра нет точки контроля публикации, значит нет и версий в архиве
+		// (стандарт §9.6). Иначе команда скачала бы страницы и упала бы на первом
+		// же архивном резолве.
+		return 0, fmt.Errorf("%s: восстановление из винтажного архива не поддержано: у импортёра нет точки контроля публикации (§9.3) и, значит, нет версий в архиве (§9.6) — чини повтором make import STAT=%s или ремонтом %s=YYYY-MM",
+			fnsImporterName, fnsImporterName, fnsFromEnv)
+	}
 	for _, stmt := range s.CreateTable {
 		if err = conn.Exec(ctx, fmt.Sprintf(stmt, s.TableName)); err != nil {
 			return count, fmt.Errorf("%s: DDL: %w", fnsImporterName, err)
 		}
 	}
-	start, known, err := fnsGate(ctx, conn)
+	plan, err := fnsGate(ctx, conn)
 	if err != nil {
 		return count, err
 	}
-	artifacts, err := fnsCollectArtifacts(s.DataUrl, start, known)
+	artifacts, err := fnsCollectArtifacts(s.DataUrl, plan)
 	if err != nil {
 		return count, err
 	}
 	if len(artifacts) == 0 {
-		log.Infof("%s: новых отчётных месяцев нет (старт %s, в таблице %d месяцев)",
-			fnsImporterName, fnsMonthLabel(start), len(known))
+		log.Infof("%s: новых отчётных месяцев нет (старт %s, в таблице %d месяцев, ремонт %v)",
+			fnsImporterName, fnsMonthLabel(plan.start), len(plan.known), plan.force)
 		// Производные публикуются и на пустой дельте: иначе первая пустая база не
 		// получит ни каталога, ни витрины, а повторный прогон их уже не создаст.
 		if err = afterFnsBudgetRevenue(ctx, conn); err != nil {
@@ -145,42 +161,54 @@ func (s *fnsBudgetRevenue) Import(ctx context.Context, conn driver.Conn) (count 
 	return count, nil
 }
 
-// fnsGate — с какого месяца импортировать и какие месяцы уже известны.
-// FNS_1NM_FROM переопределяет гейт (включительно) и остаётся единственным путём
-// ремонта: ревизия уже импортированного месяца гейтом не видна.
-func fnsGate(ctx context.Context, conn driver.Conn) (time.Time, map[string]bool, error) {
-	known := make(map[string]bool)
+// fnsGatePlan — план импорта по состоянию таблицы: стартовый месяц, множество уже
+// импортированных месяцев и признак ремонта.
+type fnsGatePlan struct {
+	start time.Time
+	known map[string]bool
+	// force — FNS_1NM_FROM задан: месяцы из окна перечитываются, даже уже лежа в
+	// таблице. Это и есть путь ремонта: ревизию источника (`ut`) обычный прогон не
+	// дожидается, потому что месяц для гейта уже «известен».
+	force bool
+}
+
+// fnsGate — план инкремента: с какого месяца импортировать и что уже импортировано.
+func fnsGate(ctx context.Context, conn driver.Conn) (fnsGatePlan, error) {
+	plan := fnsGatePlan{known: make(map[string]bool)}
 	var maxMonth time.Time
 	rows, err := conn.Query(ctx, fnsSelectMonths)
 	if err != nil {
-		return time.Time{}, nil, fmt.Errorf("%s: months: %w", fnsImporterName, err)
+		return plan, fmt.Errorf("%s: months: %w", fnsImporterName, err)
 	}
 	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var date time.Time
 		if err = rows.Scan(&date); err != nil {
-			return time.Time{}, nil, fmt.Errorf("%s: months scan: %w", fnsImporterName, err)
+			return plan, fmt.Errorf("%s: months scan: %w", fnsImporterName, err)
 		}
-		known[fnsMonthKey(date)] = true
+		plan.known[fnsMonthKey(date)] = true
 		if date.After(maxMonth) {
 			maxMonth = date
 		}
 	}
 	if err = rows.Err(); err != nil {
-		return time.Time{}, nil, fmt.Errorf("%s: months: %w", fnsImporterName, err)
+		return plan, fmt.Errorf("%s: months: %w", fnsImporterName, err)
 	}
-	start, err := fnsStartMonth(strings.TrimSpace(os.Getenv(fnsFromEnv)), known, maxMonth)
+	from := strings.TrimSpace(os.Getenv(fnsFromEnv))
+	plan.force = from != ""
+	start, err := fnsStartMonth(from, plan.known, maxMonth)
 	if err != nil {
-		return time.Time{}, nil, err
+		return plan, err
 	}
-	return start, known, nil
+	plan.start = start
+	return plan, nil
 }
 
 // fnsStartMonth — решение о старте импорта, отделённое от запроса к базе: с ним
-// выбор старта проверяется тестом без ClickHouse. FNS_1NM_FROM переопределяет гейт
-// (включительно) и остаётся единственным путём ремонта: ревизия уже импортированного
-// месяца гейтом не видна. Пустая таблица — старт с fnsFirstMonth, иначе следующий
-// месяц после последнего записанного.
+// выбор старта проверяется тестом без ClickHouse. FNS_1NM_FROM переопределяет старт
+// (включительно) и включает force — иначе ремонт был бы обещанием: ревизия уже
+// импортированного месяца обычным прогоном не видна. Пустая таблица — старт с
+// fnsFirstMonth, иначе следующий месяц после последнего записанного.
 func fnsStartMonth(from string, known map[string]bool, maxMonth time.Time) (time.Time, error) {
 	if from != "" {
 		start, err := fnsParseMonth(from)
@@ -196,8 +224,9 @@ func fnsStartMonth(from string, known map[string]bool, maxMonth time.Time) (time
 }
 
 // fnsCollectArtifacts — артефакты, которые надо импортировать: от стартового месяца,
-// пропуская уже известные, по одному архиву на месяц (ревизия важнее оригинала).
-func fnsCollectArtifacts(formsURL string, start time.Time, known map[string]bool) ([]fnsArtifact, error) {
+// в обычном режиме пропуская уже известные (в ремонтном — нет), по одному архиву на
+// месяц (ревизия важнее оригинала).
+func fnsCollectArtifacts(formsURL string, plan fnsGatePlan) ([]fnsArtifact, error) {
 	page, err := util.GetPage(formsURL)
 	if err != nil {
 		return nil, fmt.Errorf("%s: страница форм %s: %w", fnsImporterName, formsURL, err)
@@ -211,7 +240,7 @@ func fnsCollectArtifacts(formsURL string, start time.Time, known map[string]bool
 	for _, year := range years {
 		// Месячный отчёт лежит на странице года, к которому относится отчётный месяц,
 		// поэтому страниц раньше стартового года можно не спрашивать.
-		if year.year < start.Year() {
+		if year.year < plan.start.Year() {
 			continue
 		}
 		if visited >= fnsMaxYearPages {
@@ -222,8 +251,17 @@ func fnsCollectArtifacts(formsURL string, start time.Time, known map[string]bool
 		if err != nil {
 			return nil, fmt.Errorf("%s: страница %d года: %w", fnsImporterName, year.year, err)
 		}
-		for _, artifact := range fnsMonthlies(body, year.url) {
-			if artifact.month.Before(start) || known[fnsMonthKey(artifact.month)] {
+		monthlies := fnsMonthlies(body, year.url)
+		// Пустая страница завершенного года — не «данных нет», а сломанный обход:
+		// источник переименует архивы, и молчаливый ноль означал бы, что контур
+		// перестал обновляться при зелёном dagu. До fnsFirstYear имена файлов другие
+		// (внутренние файлы в legacy `.xls`), поэтому нижняя граница обязательна.
+		if len(monthlies) == 0 && year.year >= fnsFirstYear && year.year < fnsNow().Year() {
+			return nil, fmt.Errorf("%s: страница %d года (%s) не отдала ни одного архива %s — источник изменил имена или состав ссылок",
+				fnsImporterName, year.year, year.url, fnsRegZipMarker)
+		}
+		for _, artifact := range monthlies {
+			if artifact.month.Before(plan.start) || (!plan.force && plan.known[fnsMonthKey(artifact.month)]) {
 				continue
 			}
 			key := fnsMonthKey(artifact.month)
@@ -382,6 +420,12 @@ func fnsReportingMonth(name string) (month time.Time, revision bool, ok bool) {
 	}
 	asOf, err := fnsDate(year, mo, day)
 	if err != nil {
+		return time.Time{}, false, false
+	}
+	// Дата as-of не бывает дальше пары месяцев вперёд: имя с годом из будущего —
+	// не отчёт, а испорченная ссылка. Приняв её, гейт получил бы «известный месяц»
+	// в 2098 году и отсёк бы все настоящие месяцы стартом max(date)+1.
+	if asOf.After(fnsNow().AddDate(0, 2, 0)) {
 		return time.Time{}, false, false
 	}
 	revision = strings.Contains(strings.ToLower(name), "ut")
