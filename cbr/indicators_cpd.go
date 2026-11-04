@@ -27,9 +27,13 @@ const cbrIndicatorsCpdTable = "cbr_indicators_cpd"
 // FINAL обязателен — иначе count() считал бы несмёрженные части.
 const cbrIndicatorsCpdCountPoints = "SELECT count() FROM cbr_indicators_cpd FINAL"
 
-// indicatorsCpdLinkSelector — позиционный путь к ссылке на indicators_cpd.xlsx на
-// странице aipd; сохраняем как есть, состав детей страницы не менялся.
-const indicatorsCpdLinkSelector = ".container-fluid > div > div:nth-child(6) > div > div.body-2.document-regular_main > div > div > a.referenceable"
+// indicatorsCpdLinkSelector — ссылка на indicators_cpd.xlsx на странице aipd по имени
+// файла, а не по позиции блока: на снапшоте 2026-11-04 в начале .col-md-23 обнаружился
+// <script type='application/ld+json'>, позиционный div:nth-child(6) сместился на блок
+// est_infl.xlsx, и импортёр падал на чужом файле (sheet Лист1 does not exist). Имя файла
+// стабильно, id в URL меняется при обновлении — тот же приём селектора, что у
+// cbrCreditM2xLinkSelector (домен здесь хардкодом, у credit_m2x — константа cbrUrl).
+const indicatorsCpdLinkSelector = `a.referenceable[href$="indicators_cpd.xlsx"]`
 
 type indicatorsCpdStat struct {
 	util.ClickHouseImport
