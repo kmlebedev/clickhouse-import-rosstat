@@ -524,8 +524,8 @@ func appendVtbPoints(batch driver.Batch, points []vtbPoint) error {
 
 // vtbLink — отчётный файл МСФО со страницы результатов: абсолютный адрес, дата отчётности,
 // вынутая из имени файла, и семья файла (месячный rus-vtb-group-ifrs-as-of-* или квартальный
-// financial_data_supplement_*). Семья — часть списка, которую видят тесты и логи; разбор
-// книги диспетчеризуется по факту её листов (parseVtbBook), а не по этому полю.
+// financial_data_supplement_*). Семья — часть списка, которую сверяют тесты; разбор книги
+// диспетчеризуется по факту её листов (parseVtbBook), а не по этому полю.
 type vtbLink struct {
 	Url        string
 	Report     time.Time
@@ -566,7 +566,9 @@ var vtbSuppReportRe = regexp.MustCompile(`financial_data_supplement_(\d{2})(\d{2
 // vtbSuppReportDate — дата отчётности из имени супердополнения: последний день месяца ММ 20YY.
 // Месяц вне 01–12 и неразбираемые цифры — ошибка с именем файла: молча выпавший квартал выглядел
 // бы как его отсутствие у источника (§6.4). Последний день месяца существует при любом месяце
-// 01–12, отдельной проверки даты не требуется.
+// 01–12, отдельной проверки даты не требуется. Год «00» формально допустим (2000-й): семейство
+// именуется ММГГ, и файл с неоднозначным годом лучше разобрать по правилу 20YY, чем угадывать
+// век; старые .xls с годовым именем (<…>_2024_rus.xls) отбрасывает фильтр расширения до разбора.
 func vtbSuppReportDate(href string) (time.Time, error) {
 	m := vtbSuppReportRe.FindStringSubmatch(href)
 	if m == nil {
@@ -674,9 +676,11 @@ func vtbIfrsXlsLinks(page []byte) ([]vtbLink, error) {
 		return nil, fmt.Errorf("%s: страница %s: не найдено ни одной ссылки на rus-vtb-group-ifrs-as-of-*.xlsx или financial_data_supplement_*_rus.xlsx (селекторы %s, %s)",
 			vtbIfrsTable, vtbIfrsResultsUrl, vtbIfrsLinkSelector, vtbSuppLinkSelector)
 	}
-	// sort.SliceStable, а не sort.Slice: у двух отчётов с одной датой порядок страницы сохранится,
-	// и результат детерминирован без уникальности дат (у месячной и квартальной семей даты
-	// не пересекаются: месячные файлы за квартальные месяцы источник не выкладывает).
+	// sort.SliceStable, а не sort.Slice: у двух отчётов с одной датой отчётности порядок страницы
+	// сохранится, и результат детерминирован без уникальности дат (даты отчётности семей не
+	// пересекаются: месячные файлы за квартальные месяцы источник не выкладывает, — но точки
+	// пересекаются: остатки на 31.12 и предыдущий месяц приходят и в месячных файлах, и в
+	// супердополнении; там решает порядок вставки — свежее супердополнение идёт последним).
 	sort.SliceStable(links, func(i, j int) bool { return links[i].Report.Before(links[j].Report) })
 	return links, nil
 }
@@ -779,12 +783,36 @@ func (s *VtbIfrs) Import(ctx context.Context, conn driver.Conn) (count int64, er
 
 // vtbIfrsImportFunc — ImportFunc шаблона: книга из памяти → точки → батч. Ошибку разбора не
 // оборачивает: parseVtbBook уже называет таблицу, и второй префикс дал бы дубль в тексте ошибки.
+// Перед записью — warn по рядам, которых нет в каталоге (стандарт §6.6): сырьё импортируется, а
+// описание догоняется правкой, поэтому прогон не краснеет; иначе новый суффикс или подпись
+// источника уляжется в таблицу молча, и агент увидит ряд без описания (правило 11).
 func vtbIfrsImportFunc(xlsx *excelize.File, batch driver.Batch) error {
 	points, err := parseVtbBook(xlsx)
 	if err != nil {
 		return err
 	}
+	vtbWarnUndescribed(points)
 	return appendVtbPoints(batch, points)
+}
+
+// vtbWarnUndescribed — warn на каждый ряд разбора, которого нет в каталоге vtbSeriesMeta.
+// Набор описанных имён собирается на вызов: он маленький (132), а кеш разошёлся бы с правкой
+// каталога. Повторы схлопываются: один ряд — одно предупреждение на файл.
+func vtbWarnUndescribed(points []vtbPoint) {
+	described := make(map[string]bool, len(vtbSeriesMeta))
+	for _, m := range vtbSeriesMeta {
+		if m.Source == vtbIfrsTable {
+			described[m.Series] = true
+		}
+	}
+	warned := make(map[string]bool)
+	for _, p := range points {
+		if !described[p.Series] && !warned[p.Series] {
+			warned[p.Series] = true
+			log.Warnf("%s: ряд %q разобран, но не описан в каталоге — дописать описание в bank/series_meta.go",
+				vtbIfrsTable, p.Series)
+		}
+	}
 }
 
 // vtbImporter — импортёр rus_vtb_group_ifrs для шаблона и реестра: таблица, DDL в %s-форме,
