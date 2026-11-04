@@ -374,6 +374,8 @@ func cbrAllSeriesMeta() [][]util.SeriesMeta {
 		cbrCreditM2xSeriesMeta,
 		cbrBankIntRateSeriesMeta,
 		cbrIntRateLoansSeriesMeta,
+		cbrIntRateLoansIndSeriesMeta,
+		cbrMortgageRateSeriesMeta,
 		cbrIndicatorsCpdSeriesMeta,
 		cbrInflExpSeriesMeta,
 		cbrLoansToIndSeriesMeta,
@@ -424,6 +426,7 @@ func TestNamedListsCovered(t *testing.T) {
 		"cbr_credit_m2x":            cbrCreditM2xNames,
 		"cbr_bank_int_rate":         cbrBankIntRateNames,
 		"cbr_int_rate_loans":        cbrIntRateLoansNames,
+		"cbr_int_rate_loans_ind":    cbrIntRateLoansIndNames,
 		"cbr_loans_to_individuals":  cbrLoansToIndNames,
 		"cbr_loans_to_corporations": cbrLoansToCorpNames,
 	}

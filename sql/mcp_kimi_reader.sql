@@ -14,6 +14,11 @@ GRANT SELECT ON default.v_series_catalog TO kimi_reader;
 GRANT SELECT ON default.v_fred_macro TO kimi_reader;
 GRANT SELECT ON default.v_bls_macro TO kimi_reader;
 GRANT SELECT ON default.v_cbr_macro TO kimi_reader;
+-- Квартальный корпус среднерыночных значений ПСК кредитных организаций (пункт 4.2 №8,
+-- issue #119, импортёр cbr_psk): законодательный кап по ч. 11 ст. 6 353-ФЗ, своя семантика и
+-- широкая форма, поэтому отдельная витрина, а не v_cbr_macro. Сырая cbr_psk агенту не выдана —
+-- только витрина с комментариями таблицы и колонок.
+GRANT SELECT ON default.v_cbr_psk TO kimi_reader;
 GRANT SELECT ON default.v_rosstat_macro TO kimi_reader;
 -- ИЦП: сырые ряды по ВЭД, товарам/ОКПД2, веса и производный SA-слой (T5 #280).
 -- Сырые rosstat_ppi_ved/product/weights и ppi_sa агенту не выданы — только витрина.
@@ -145,3 +150,11 @@ GRANT SELECT ON default.v_transaq_net_flows_daily TO kimi_reader;
 -- 2018-06/07 в источнике). Сырая macro_series агенту не выдана — только
 -- витрина с комментариями таблицы и колонок.
 GRANT SELECT ON default.v_minec_macro TO kimi_reader;
+
+-- Поступления налогов и сборов по форме № 1-НМ (пункт rosstat/1.11, issue #498):
+-- вид налога × уровень бюджета × территория (РФ, 8 федеральных округов, 85 субъектов),
+-- месячно, тыс. руб. Накопленное с начала года отдаёт v_fns_budget_revenue, помесячное —
+-- v_fns_budget_revenue_monthly (разность накопленных; NULL там, где у источника нет
+-- предыдущего месяца). Сырая fns_budget_revenue агенту не выдана — только витрины.
+GRANT SELECT ON default.v_fns_budget_revenue TO kimi_reader;
+GRANT SELECT ON default.v_fns_budget_revenue_monthly TO kimi_reader;
