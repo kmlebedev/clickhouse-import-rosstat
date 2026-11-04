@@ -5,6 +5,7 @@ package transaq
 import (
 	"context"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
@@ -36,6 +37,7 @@ const transaqNetFlowsDdl = `CREATE TABLE IF NOT EXISTS %s (
     minute DateTime('Europe/Moscow'),
     sec_code LowCardinality(String),
     board LowCardinality(String),
+    instrument_kind LowCardinality(String) DEFAULT '',
     buy_lots UInt64,
     sell_lots UInt64,
     buy_value_rub Float64,
@@ -45,6 +47,12 @@ const transaqNetFlowsDdl = `CREATE TABLE IF NOT EXISTS %s (
     loaded_at DateTime('Europe/Moscow')
 ) ENGINE = ReplacingMergeTree(loaded_at)
 ORDER BY (sec_code, board, minute)`
+
+// transaqNetFlowsMigrateInstrumentKind догоняет таблицу, созданную до
+// ofz-market/1.7: ADD COLUMN IF NOT EXISTS идемпотентен, AFTER board держит
+// порядок колонок таким же, как в DDL, — от него зависит порядок Append.
+// Старые строки получают ”, витрины выводят тип по board.
+const transaqNetFlowsMigrateInstrumentKind = `ALTER TABLE %s ADD COLUMN IF NOT EXISTS instrument_kind LowCardinality(String) DEFAULT '' AFTER board`
 
 // readLentaBoundsQuery — границы доступной ленты и её размер: по размеру
 // решается только предупреждение о тяжёлом первом прогоне.
@@ -59,8 +67,14 @@ const readWatermarkQuery = `SELECT count(), max(minute) FROM transaq_net_flows`
 //
 // dedup — дубли до background merge: полный ключ сортировки transaq_trades с
 // полезной нагрузкой, любая версия строки пригодна.
-// securities_lots — lotsize из снимочного каталога; FINAL снимает версии, max
-// сводит несколько классов одного (seccode, board).
+// securities_meta — lotsize, point_cost, decimals и shortname из снимочного
+// каталога; FINAL снимает версии, max/any сводит несколько классов одного
+// (seccode, board).
+// unit_value — рублей на единицу цены одного лота: lotsize для бумаг, для FORTS
+// стоимость пункта point_cost × 10^decimals / 100 (сверено с MOEX ISS
+// STEPPRICE/MINSTEP, спека ofz-market/1.7 §4).
+// instrument_kind — по board ленты (сделка без строки каталога тоже получает
+// тип); фонды на TQBR отличаются от акций суффиксом " ETF" в shortname.
 // gap_suspected — эвристика разрыва: пауза больше 10 минут между соседними
 // сделками внутри 10:00–19:00 МСК помечает бакет, в котором торг возобновился.
 const readNetFlowBucketsQuery = `
@@ -70,8 +84,9 @@ WITH dedup AS (
     WHERE time >= ? AND time < ?
     GROUP BY secid, board, sec_code, trade_no, time, buy_sell, price, quantity
 ),
-securities_lots AS (
-    SELECT seccode, board, max(lotsize) AS lotsize
+securities_meta AS (
+    SELECT seccode, board, max(lotsize) AS lotsize, max(point_cost) AS point_cost,
+           max(decimals) AS decimals, any(shortname) AS shortname
     FROM transaq_securities FINAL
     GROUP BY seccode, board
 ),
@@ -82,18 +97,24 @@ priced AS (
            d.buy_sell AS buy_sell,
            toFloat64(d.price) AS price,
            toUInt64(d.quantity) AS lots,
-           if(l.lotsize = 0, 0, toFloat64(l.lotsize)) AS lotsize,
+           if(d.board = 'FUT', toFloat64(l.point_cost) * pow(10, l.decimals) / 100, toFloat64(l.lotsize)) AS unit_value,
+           multiIf(d.board = 'FUT', 'future',
+                   d.board = 'TQOB', 'ofz',
+                   d.board = 'TQBR' AND endsWith(l.shortname, ' ETF'), 'fund',
+                   d.board = 'TQBR', 'share',
+                   'other') AS instrument_kind,
            lagInFrame(d.time, 1, d.time) OVER (PARTITION BY d.sec_code, d.board ORDER BY d.time) AS prev_time
     FROM dedup AS d
-    LEFT JOIN securities_lots AS l ON l.seccode = d.sec_code AND l.board = d.board
+    LEFT JOIN securities_meta AS l ON l.seccode = d.sec_code AND l.board = d.board
 )
 SELECT toStartOfMinute(time) AS minute,
        toString(sec_code) AS sec_code,
        board,
+       any(instrument_kind) AS instrument_kind,
        toUInt64(sumIf(lots, buy_sell = 'B')) AS buy_lots,
        toUInt64(sumIf(lots, buy_sell = 'S')) AS sell_lots,
-       sumIf(price * lots * lotsize, buy_sell = 'B') AS buy_value_rub,
-       sumIf(price * lots * lotsize, buy_sell = 'S') AS sell_value_rub,
+       sumIf(price * lots * unit_value, buy_sell = 'B') AS buy_value_rub,
+       sumIf(price * lots * unit_value, buy_sell = 'S') AS sell_value_rub,
        toUInt32(count()) AS trade_count,
        toUInt8(max(multiIf(time - prev_time > 600 AND toHour(time) BETWEEN 10 AND 18, 1, 0))) AS gap_suspected
 FROM priced
@@ -114,15 +135,16 @@ type netFlowWindow struct {
 
 // netFlowRow — строка бакета до записи.
 type netFlowRow struct {
-	Minute       time.Time
-	SecCode      string
-	Board        string
-	BuyLots      uint64
-	SellLots     uint64
-	BuyValueRub  float64
-	SellValueRub float64
-	TradeCount   uint32
-	GapSuspected uint8
+	Minute         time.Time
+	SecCode        string
+	Board          string
+	InstrumentKind string
+	BuyLots        uint64
+	SellLots       uint64
+	BuyValueRub    float64
+	SellValueRub   float64
+	TradeCount     uint32
+	GapSuspected   uint8
 }
 
 // planNetFlowsWindows режет окно на полуинтервалы не длиннее chunk. Пустое окно
@@ -158,9 +180,44 @@ func netFlowsFrom(watermark, lentaMin time.Time, hasWatermark bool) time.Time {
 	return from
 }
 
+// transaqNetFlowsRecomputeEnv — разовый пересчёт бакетов с даты (YYYY-MM-DD) или
+// момента (YYYY-MM-DD HH:MM:SS) МСК: нужен после смены формулы или разметки,
+// когда штатное окно [watermark − 15 мин] старые бакеты не трогает. Новые версии
+// заменяют старые по ключу (sec_code, board, minute) через loaded_at.
+const transaqNetFlowsRecomputeEnv = "TRANSAQ_NET_FLOWS_RECOMPUTE_FROM"
+
+// netFlowsRecomputeFrom сдвигает начало окна назад до value, но не раньше ленты
+// и не позже штатного окна. Пустое value — штатный прогон.
+func netFlowsRecomputeFrom(value string, regular, lentaMin time.Time) (time.Time, error) {
+	if value == "" {
+		return regular, nil
+	}
+	layout := time.DateTime
+	if len(value) == len(time.DateOnly) {
+		layout = time.DateOnly
+	}
+	// Разбор в зоне ленты: она приходит из драйвера как Europe/Moscow и уходит
+	// обратно параметром запроса; FixedZone "MSK" сервер не распознаёт.
+	from, err := time.ParseInLocation(layout, value, lentaMin.Location())
+	if err != nil {
+		return time.Time{}, fmt.Errorf("%s: %s=%q: ожидается YYYY-MM-DD или YYYY-MM-DD HH:MM:SS МСК: %w",
+			transaqNetFlowsTable, transaqNetFlowsRecomputeEnv, value, err)
+	}
+	if from.Before(lentaMin) {
+		from = lentaMin
+	}
+	if from.After(regular) {
+		return regular, nil
+	}
+	return from, nil
+}
+
 func (s *transaqNetFlows) Import(ctx context.Context, conn driver.Conn) (int64, error) {
 	if err := conn.Exec(ctx, fmt.Sprintf(transaqNetFlowsDdl, transaqNetFlowsTable)); err != nil {
 		return 0, fmt.Errorf("%s: create table: %w", transaqNetFlowsTable, err)
+	}
+	if err := conn.Exec(ctx, fmt.Sprintf(transaqNetFlowsMigrateInstrumentKind, transaqNetFlowsTable)); err != nil {
+		return 0, fmt.Errorf("%s: add column instrument_kind: %w", transaqNetFlowsTable, err)
 	}
 
 	lentaCount, lentaMin, lentaMax, err := readLentaBounds(ctx, conn)
@@ -181,7 +238,15 @@ func (s *transaqNetFlows) Import(ctx context.Context, conn driver.Conn) (int64, 
 	if err != nil {
 		return 0, err
 	}
-	from := netFlowsFrom(watermark, lentaMin, hasWatermark)
+	regular := netFlowsFrom(watermark, lentaMin, hasWatermark)
+	from, err := netFlowsRecomputeFrom(os.Getenv(transaqNetFlowsRecomputeEnv), regular, lentaMin)
+	if err != nil {
+		return 0, err
+	}
+	if from.Before(regular) {
+		log.Infof("%s: %s — пересчёт бакетов с %s", transaqNetFlowsTable, transaqNetFlowsRecomputeEnv,
+			from.Format(time.DateTime))
+	}
 	windows := planNetFlowsWindows(from, lentaMax.Add(time.Second), transaqNetFlowsChunk)
 	if len(windows) == 0 {
 		log.Infof("%s: сделок новее %s нет — no-op", transaqNetFlowsTable, from.Format(time.DateTime))
@@ -239,7 +304,7 @@ func readNetFlowBuckets(ctx context.Context, conn driver.Conn, window netFlowWin
 	var result []netFlowRow
 	for rows.Next() {
 		var row netFlowRow
-		if err = rows.Scan(&row.Minute, &row.SecCode, &row.Board, &row.BuyLots, &row.SellLots,
+		if err = rows.Scan(&row.Minute, &row.SecCode, &row.Board, &row.InstrumentKind, &row.BuyLots, &row.SellLots,
 			&row.BuyValueRub, &row.SellValueRub, &row.TradeCount, &row.GapSuspected); err != nil {
 			return nil, fmt.Errorf("%s: scan bucket: %w", transaqNetFlowsTable, err)
 		}
@@ -260,7 +325,7 @@ func writeNetFlowBuckets(ctx context.Context, conn driver.Conn, rows []netFlowRo
 		return fmt.Errorf("%s: prepare batch: %w", transaqNetFlowsTable, err)
 	}
 	for _, row := range rows {
-		if err = batch.Append(row.Minute, row.SecCode, row.Board, row.BuyLots, row.SellLots,
+		if err = batch.Append(row.Minute, row.SecCode, row.Board, row.InstrumentKind, row.BuyLots, row.SellLots,
 			row.BuyValueRub, row.SellValueRub, row.TradeCount, row.GapSuspected, loadedAt); err != nil {
 			_ = batch.Abort()
 			return fmt.Errorf("%s: append %s/%s/%s: %w", transaqNetFlowsTable,
