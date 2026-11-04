@@ -8,7 +8,9 @@ import (
 	"github.com/xuri/excelize/v2"
 )
 
-// TestIndicatorsCpdFindLink: позиционный селектор страницы aipd находит indicators_cpd.xlsx.
+// TestIndicatorsCpdFindLink: селектор по имени файла на странице aipd находит
+// indicators_cpd.xlsx независимо от позиции блока (на снапшоте 2026-11-04 в разметке
+// обнаружился JSON-LD-скрипт, сломавший прежний позиционный div:nth-child(6)).
 func TestIndicatorsCpdFindLink(t *testing.T) {
 	href, err := util.FindLink(readCbrTestdata(t, "aipd_page.html"), indicatorsCpdLinkSelector)
 	if err != nil {
