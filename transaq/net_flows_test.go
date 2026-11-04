@@ -108,6 +108,40 @@ func TestNetFlowsFrom(t *testing.T) {
 	}
 }
 
+// Разовый пересчёт после смены формулы: TRANSAQ_NET_FLOWS_RECOMPUTE_FROM сдвигает
+// начало окна назад, но не раньше ленты; пустое значение — штатный прогон.
+func TestNetFlowsRecomputeFrom(t *testing.T) {
+	lentaMin := msk(t, "2026-10-30 10:00:00")
+	regular := msk(t, "2026-11-04 19:45:00")
+	tests := []struct {
+		name    string
+		value   string
+		want    string
+		wantErr bool
+	}{
+		{"пусто — штатное окно", "", "2026-11-04 19:45:00", false},
+		{"дата — с начала дня МСК", "2026-11-03", "2026-11-03 00:00:00", false},
+		{"дата и время МСК", "2026-11-03 20:50:00", "2026-11-03 20:50:00", false},
+		{"раньше ленты — с начала ленты", "2026-01-01", "2026-10-30 10:00:00", false},
+		{"позже штатного окна — штатное окно", "2026-11-05", "2026-11-04 19:45:00", false},
+		{"мусор — ошибка", "вчера", "", true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := netFlowsRecomputeFrom(test.value, regular, lentaMin)
+			if (err != nil) != test.wantErr {
+				t.Fatalf("err = %v, wantErr %v", err, test.wantErr)
+			}
+			if test.wantErr {
+				return
+			}
+			if formatted := got.In(moscowLocation).Format(time.DateTime); formatted != test.want {
+				t.Fatalf("from = %s, want %s", formatted, test.want)
+			}
+		})
+	}
+}
+
 // Канон ARCHITECTURE.md §6.2: ключ бакета и версия строки — не косметика.
 // Смена ключа ломает идемпотентность пересчёта, смена версии — замену бакета.
 func TestTransaqNetFlowsDdlPinsCanonicalKey(t *testing.T) {

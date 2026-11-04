@@ -5,6 +5,7 @@ package transaq
 import (
 	"context"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
@@ -179,6 +180,36 @@ func netFlowsFrom(watermark, lentaMin time.Time, hasWatermark bool) time.Time {
 	return from
 }
 
+// transaqNetFlowsRecomputeEnv — разовый пересчёт бакетов с даты (YYYY-MM-DD) или
+// момента (YYYY-MM-DD HH:MM:SS) МСК: нужен после смены формулы или разметки,
+// когда штатное окно [watermark − 15 мин] старые бакеты не трогает. Новые версии
+// заменяют старые по ключу (sec_code, board, minute) через loaded_at.
+const transaqNetFlowsRecomputeEnv = "TRANSAQ_NET_FLOWS_RECOMPUTE_FROM"
+
+// netFlowsRecomputeFrom сдвигает начало окна назад до value, но не раньше ленты
+// и не позже штатного окна. Пустое value — штатный прогон.
+func netFlowsRecomputeFrom(value string, regular, lentaMin time.Time) (time.Time, error) {
+	if value == "" {
+		return regular, nil
+	}
+	layout := time.DateTime
+	if len(value) == len(time.DateOnly) {
+		layout = time.DateOnly
+	}
+	from, err := time.ParseInLocation(layout, value, moscowLocation)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("%s: %s=%q: ожидается YYYY-MM-DD или YYYY-MM-DD HH:MM:SS МСК: %w",
+			transaqNetFlowsTable, transaqNetFlowsRecomputeEnv, value, err)
+	}
+	if from.Before(lentaMin) {
+		from = lentaMin
+	}
+	if from.After(regular) {
+		return regular, nil
+	}
+	return from, nil
+}
+
 func (s *transaqNetFlows) Import(ctx context.Context, conn driver.Conn) (int64, error) {
 	if err := conn.Exec(ctx, fmt.Sprintf(transaqNetFlowsDdl, transaqNetFlowsTable)); err != nil {
 		return 0, fmt.Errorf("%s: create table: %w", transaqNetFlowsTable, err)
@@ -205,7 +236,15 @@ func (s *transaqNetFlows) Import(ctx context.Context, conn driver.Conn) (int64, 
 	if err != nil {
 		return 0, err
 	}
-	from := netFlowsFrom(watermark, lentaMin, hasWatermark)
+	regular := netFlowsFrom(watermark, lentaMin, hasWatermark)
+	from, err := netFlowsRecomputeFrom(os.Getenv(transaqNetFlowsRecomputeEnv), regular, lentaMin)
+	if err != nil {
+		return 0, err
+	}
+	if from.Before(regular) {
+		log.Infof("%s: %s — пересчёт бакетов с %s", transaqNetFlowsTable, transaqNetFlowsRecomputeEnv,
+			from.Format(time.DateTime))
+	}
 	windows := planNetFlowsWindows(from, lentaMax.Add(time.Second), transaqNetFlowsChunk)
 	if len(windows) == 0 {
 		log.Infof("%s: сделок новее %s нет — no-op", transaqNetFlowsTable, from.Format(time.DateTime))
