@@ -224,7 +224,7 @@ Research — [2026-10-30-transaq-net-flows-source.md](research/2026-10-30-transa
 | Приоритет | P1 |
 | Зависит от | `ofz-market/1.5` (витрины `v_transaq_net_flows*`), `ofz-market/1.6` (дашборд `transaq-trades`) |
 | Issue | [#520](https://github.com/kmlebedev/clickhouse-import-rosstat/issues/520) |
-| Статус | ⏳ In Progress — реализация в ветке `feat/ofz-market-1.7`; подписка — PR [transaq-clickhouse-exporter#10](https://github.com/kmlebedev/transaq-clickhouse-exporter/pull/10); живая приёмка ждёт деплоя экспортёра и импортёра |
+| Статус | 🔶 In Review — подписка выложена (PR [transaq-clickhouse-exporter#10](https://github.com/kmlebedev/transaq-clickhouse-exporter/pull/10), merged); живая приёмка 2026-11-04 — протокол в PR |
 
 **Цель.** Нетто-поток покупок/продаж по самым ликвидным индексным фьючерсам FORTS (MIX — два ближайших квартальных, IMOEXF, RTS, MXI) и фондам денежного рынка (AKMM, SBMM, LQDT) в тех же витринах `v_transaq_net_flows`/`v_transaq_net_flows_daily`.
 
@@ -318,6 +318,6 @@ transaq_quotes/trades ───────────────┼→ 1.3
 | `ofz-market/1.4` | ❌ |
 | `ofz-market/1.5` | 🔶 In Review: живая приёмка 2026-10-30 — `transaq_trades` 7 362 строки (TQBR 44 кода IMOEX + TQOB 39 ОФЗ), `transaq_net_flows` 263 бакета 10:53–10:56 МСК, контроль по лотам сходится (605 206 B / 518 637 S / 9 463 сделки), повтор заменяет бакеты (`loaded_at` растёт, дублей ключа нет), `mcp-check` — 4 проверки transaq зелёные |
 | `ofz-market/1.6` | 🔶 In Review: дашборд `transaq-trades` собран кодом (5 панелей в 2 рядах), артефакт `dashboard/transaq-trades.json`; приёмка — этим PR |
-| `ofz-market/1.7` | ⏳ In Progress: формула FORTS, `instrument_kind`, витрины и дашборд реализованы; формула сверена с MOEX ISS (MXZ6/MMZ6/RIZ6/IMOEXF в пределах 0,5 %); живая приёмка — после деплоя экспортёра (#10) и импортёра |
+| `ofz-market/1.7` | 🔶 In Review: живая приёмка 2026-11-04 — 7 фьючерсов (`future`) и 3 фонда (`fund`) в `v_transaq_net_flows_daily`; объём MXZ6/MMZ6/RIZ6/IMOEXF сходится с MOEX ISS в пределах 0,2 % по контрактам и рублям; бакеты с деплоя экспортёра пересчитаны `TRANSAQ_NET_FLOWS_RECOMPUTE_FROM`; деплой дашборда `transaq-trades` — за владельцем |
 
 Статус обновляется тем же PR, что и реализация. `✅` до мержа — `In Review`, не `Done`.
