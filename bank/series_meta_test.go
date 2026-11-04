@@ -54,11 +54,27 @@ func TestBankSeriesMetaCoversFixtures(t *testing.T) {
 			fixture: vtbBookFixture,
 			meta:    vtbSeriesMeta,
 			source:  vtbIfrsTable,
-			series:  36,
+			series:  132,
 			parsed: func(t *testing.T) []string {
 				points, err := parseVtbBook(vtbOpenFixture(t, vtbBookFixture))
 				if err != nil {
 					t.Fatalf("parseVtbBook(%s): %v", vtbBookFixture, err)
+				}
+				return vtbSeriesNames(points)
+			},
+		},
+		{
+			// Квартальная фикстура того же импортёра: балансовые склейки идут в имена
+			// месячных рядов, потоки — в суффиксные «(9М)»/«(3кв)», качество и нормативы —
+			// в новые: контракт сверяет всё с единым каталогом vtbSeriesMeta.
+			fixture: vtbSuppBookFixture,
+			meta:    vtbSeriesMeta,
+			source:  vtbIfrsTable,
+			series:  132,
+			parsed: func(t *testing.T) []string {
+				points, err := parseVtbBook(vtbOpenFixture(t, vtbSuppBookFixture))
+				if err != nil {
+					t.Fatalf("parseVtbBook(%s): %v", vtbSuppBookFixture, err)
 				}
 				return vtbSeriesNames(points)
 			},
@@ -108,14 +124,15 @@ func TestBankSeriesMetaCoversFixtures(t *testing.T) {
 		}
 	}
 
-	// Состав bankSeriesMeta — по источникам: 5 месячных и 46 недельных СберИндекса, 15 ДОМ.РФ, 36
-	// ВТБ, 30 Сбера по РСБУ (спека §3.6). Дубль ключа (source, series) в каталоге тоже ошибка:
-	// ReplacingMergeTree оставил бы из двух описаний одно молча.
+	// Состав bankSeriesMeta — по источникам: 5 месячных и 46 недельных СберИндекса, 15 ДОМ.РФ,
+	// 132 ВТБ (36 месячных + 96 квартальных из супердополнений), 30 Сбера по РСБУ. Дубль ключа
+	// (source, series) в каталоге тоже ошибка: ReplacingMergeTree оставил бы из двух описаний
+	// одно молча.
 	wantSources := map[string]int{
 		sberSourceIndex:      5,
 		sberSourceWeek:       46,
 		domrfMortgageTable:   15,
-		vtbIfrsTable:         36,
+		vtbIfrsTable:         132,
 		sberRpbuDataUrlTable: 30,
 	}
 	gotSources := make(map[string]int, len(wantSources))
@@ -128,8 +145,8 @@ func TestBankSeriesMetaCoversFixtures(t *testing.T) {
 			seen[key] = true
 		}
 	}
-	if got := len(bankSeriesMeta); got != 132 {
-		t.Errorf("bankSeriesMeta: описаний %d, ожидалось 132 (51 СберИндекса + 15 ДОМ.РФ + 36 ВТБ + 30 Сбера по РСБУ)", got)
+	if got := len(bankSeriesMeta); got != 228 {
+		t.Errorf("bankSeriesMeta: описаний %d, ожидалось 228 (51 СберИндекса + 15 ДОМ.РФ + 132 ВТБ + 30 Сбера по РСБУ)", got)
 	}
 	for source, want := range wantSources {
 		if got := gotSources[source]; got != want {

@@ -31,10 +31,17 @@ const (
 	// с литералом.
 	vtbIfrsDataUrlPrefix = "https://www.vtb.ru"
 	// vtbIfrsLinkSelector — ссылки на отчётные файлы в разметке страницы. Якорь — фрагмент имени
-	// файла (rus-vtb-group-ifrs-as-of-…): под него не попадают ни сопутствующие файлы источника
-	// (financial_data_supplement_*), ни прочие ссылки страницы. Расширение выбирает разбор: рядом
-	// с xlsx источник выкладывает pdf-версии тех же отчётов — они отбрасываются.
+	// файла (rus-vtb-group-ifrs-as-of-…): под него не попадают ни сопутствующие файлы источника,
+	// ни прочие ссылки страницы. Расширение выбирает разбор: рядом с xlsx источник выкладывает
+	// pdf-версии тех же отчётов — они отбрасываются.
 	vtbIfrsLinkSelector = `a[href*="rus-vtb-group-ifrs-as-of"]`
+	// vtbSuppLinkSelector — вторая семья отчётных файлов той же страницы: квартальные
+	// супердополнения (financial_data_supplement_<ММГГ>_rus.xlsx). За квартальные месяцы
+	// (31.03 / 30.06 / 30.09 / 31.12) месячный файл источник больше не выкладывает — только
+	// pdf и супердополнение, поэтому без этой семьи квартальные остатки и нормативы Н20.x
+	// в таблицу не попадают вовсе (спека 2026-11-04 §2.1). Старые файлы той же семьи со
+	// старого пути — .xls (не .xlsx): общий фильтр расширения их отбрасывает.
+	vtbSuppLinkSelector = `a[href*="financial_data_supplement"]`
 	// vtbIfrsTableDdl — DDL таблицы в %s-форме шаблона (стандарт §5.1): имя подставляет
 	// util.ClickHouseImport. Типы — legacy-схема таблицы (ARCHITECTURE.md §6.2): name — имя ряда
 	// из подписи источника, date — последний день отчётного месяца, balance — сырое значение
@@ -114,15 +121,51 @@ type vtbColumn struct {
 	date time.Time
 }
 
-// parseVtbBook — разбор книги (импортёр rus_vtb_group_ifrs, МСФО группы ВТБ): три листа — тремя
-// проходами. Разбор чистый (§6.1): на входе открытая книга, ни сети, ни БД, поэтому тесты
-// офлайн на живой фикстуре (§11.3); значения — сырые ячейки (§6.2); текст ошибки называет
-// таблицу и причину (§6.4).
-//
-// Проходы: балансовый лист — блок остатков до vtbBalanceStop включительно («как прежде»: те же
-// 18 рядов, что у базовой линии таблицы); лист P&L — целиком, оба раздела; лист коэффициентов —
-// в живом файле глоссарий без значений (parseVtbRatiosSheet), точек не даёт.
+// parseVtbBook — разбор книги (импортёр rus_vtb_group_ifrs, МСФО группы ВТБ): точка входа,
+// диспетчеризующая семью по листам книги. Месячная книга (лист «Ключевые балансовые
+// показатели») — три существующих прохода; квартальная (лист «1.Ключевые показатели»,
+// супердополнение) — parseVtbSupplementBook. Обе семьи в одной книге или ни одной — ошибка со
+// списком листов: разбор обязан знать, какая книга перед ним, а не гадать (§6.4). Разбор чистый
+// (§6.1): на входе открытая книга, ни сети, ни БД, поэтому тесты офлайн на живых фикстурах
+// (§11.3); значения — сырые ячейки (§6.2); текст ошибки называет таблицу и причину (§6.4).
 func parseVtbBook(xlsx *excelize.File) ([]vtbPoint, error) {
+	monthly, supplement := vtbHasSheet(xlsx, vtbBookSheet), vtbHasSheet(xlsx, vtbSuppSheet)
+	switch {
+	case monthly && !supplement:
+		return parseVtbMonthlyBook(xlsx)
+	case supplement && !monthly:
+		points, err := parseVtbSupplementBook(xlsx)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", vtbIfrsTable, err)
+		}
+		return points, nil
+	case monthly && supplement:
+		return nil, fmt.Errorf("%s: в книге листы обеих семей (%q и %q): какая книга перед разбором — неясно",
+			vtbIfrsTable, vtbBookSheet, vtbSuppSheet)
+	default:
+		return nil, fmt.Errorf("%s: в книге нет ни листа %q, ни листа %q (листы: %s)",
+			vtbIfrsTable, vtbBookSheet, vtbSuppSheet, strings.Join(xlsx.GetSheetList(), ", "))
+	}
+}
+
+// vtbHasSheet — молчаливая проверка якоря листа: для диспетчеризации, где «листа нет» —
+// законная ветка, а не ошибка. Неоднозначность (несколько листов с якорем) здесь не ловится:
+// диспетчер проверяет факт существования, а неоднозначность месячного набора останавливает
+// vtbSheet в проходах месячного пути, супердополнения — в проходе parseVtbSupplementBook.
+func vtbHasSheet(xlsx *excelize.File, anchor string) bool {
+	for _, name := range xlsx.GetSheetList() {
+		if strings.Contains(name, anchor) {
+			return true
+		}
+	}
+	return false
+}
+
+// parseVtbMonthlyBook — разбор месячной книги: три листа — тремя проходами. Рамка разбора —
+// «как прежде» (спека рефакторинга 2026-10-16 §3.3): балансовый лист — блок остатков до
+// vtbBalanceStop включительно; лист P&L — целиком, оба раздела; лист коэффициентов —
+// в живом файле глоссарий без значений (parseVtbRatiosSheet), точек не даёт.
+func parseVtbMonthlyBook(xlsx *excelize.File) ([]vtbPoint, error) {
 	balance, err := parseVtbBookSheet(xlsx)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", vtbIfrsTable, err)
@@ -479,11 +522,14 @@ func appendVtbPoints(batch driver.Batch, points []vtbPoint) error {
 	return nil
 }
 
-// vtbLink — отчётный файл МСФО со страницы результатов: абсолютный адрес и дата отчётности,
-// вынутая из имени файла.
+// vtbLink — отчётный файл МСФО со страницы результатов: абсолютный адрес, дата отчётности,
+// вынутая из имени файла, и семья файла (месячный rus-vtb-group-ifrs-as-of-* или квартальный
+// financial_data_supplement_*). Семья — часть списка, которую сверяют тесты; разбор книги
+// диспетчеризуется по факту её листов (parseVtbBook), а не по этому полю.
 type vtbLink struct {
-	Url    string
-	Report time.Time
+	Url        string
+	Report     time.Time
+	Supplement bool
 }
 
 // vtbIfrsReportRe — дата отчётности в имени файла: «as-of-31-august-2026». Форма без учёта
@@ -509,6 +555,34 @@ var vtbIfrsMonthNames = map[string]time.Month{
 	"october":   time.October,
 	"november":  time.November,
 	"december":  time.December,
+}
+
+// vtbSuppReportRe — отчётный месяц и год в имени квартального супердополнения:
+// «financial_data_supplement_0926_rus.xlsx» — 9-й месяц 2026 года. Совпадение ищется по всему
+// href: префикс пути у ссылок страницы свой. Регистр значим, как у селектора ссылок: имена
+// семьи машинные, строчные.
+var vtbSuppReportRe = regexp.MustCompile(`financial_data_supplement_(\d{2})(\d{2})_rus\.xlsx`)
+
+// vtbSuppReportDate — дата отчётности из имени супердополнения: последний день месяца ММ 20YY.
+// Месяц вне 01–12 и неразбираемые цифры — ошибка с именем файла: молча выпавший квартал выглядел
+// бы как его отсутствие у источника (§6.4). Последний день месяца существует при любом месяце
+// 01–12, отдельной проверки даты не требуется. Год «00» формально допустим (2000-й): семейство
+// именуется ММГГ, и файл с неоднозначным годом лучше разобрать по правилу 20YY, чем угадывать
+// век; старые .xls с годовым именем (<…>_2024_rus.xls) отбрасывает фильтр расширения до разбора.
+func vtbSuppReportDate(href string) (time.Time, error) {
+	m := vtbSuppReportRe.FindStringSubmatch(href)
+	if m == nil {
+		return time.Time{}, fmt.Errorf("имя файла %q: не найдена дата отчётности вида financial_data_supplement_<ММГГ>_rus.xlsx", href)
+	}
+	month, err := strconv.Atoi(m[1])
+	if err != nil || month < 1 || month > 12 {
+		return time.Time{}, fmt.Errorf("имя файла %q: месяц %q вне 01–12", href, m[1])
+	}
+	year, err := strconv.Atoi(m[2])
+	if err != nil {
+		return time.Time{}, fmt.Errorf("имя файла %q: год %q: %w", href, m[2], err)
+	}
+	return vtbLastDayOfMonth(2000+year, time.Month(month)), nil
 }
 
 // vtbIfrsReportDate — дата отчётности из имени файла. Незнакомый месяц, неразбираемые день или
@@ -539,16 +613,18 @@ func vtbIfrsReportDate(href string) (time.Time, error) {
 }
 
 // vtbIfrsXlsLinks — список отчётных файлов со страницы результатов: goquery по байтам страницы
-// (образец — cbr/dip_page.go). Отбираются ссылки якоря vtbIfrsLinkSelector с расширением .xlsx
-// (pdf-версии тех же отчётов отбрасываются), дубли href дедуплицируются, дата отчётности
-// читается из имени файла, список сортируется по возрастанию даты отчётности: свежие отчёты
+// (образец — cbr/dip_page.go). Отбираются ссылки двух селекторов (месячный rus-vtb-group-ifrs-as-of
+// и квартальный financial_data_supplement) с расширением .xlsx (pdf-версии тех же отчётов и
+// старые .xls со старого пути отбрасываются), дубли href дедуплицируются, дата отчётности читается
+// из имени файла своей семьи, список сортируется по возрастанию даты отчётности: свежие отчёты
 // вставляются последними и выигрывают у пересекающихся периодов (в свежее опубликованном отчёте
-// есть колонки прошлых месяцев, и его значения — уточнение прежних, спека §3.3).
+// есть колонки прошлых месяцев и кварталов, и его значения — уточнение прежних, спека §3.3
+// рефакторинга 2026-10-16, распространена на обе семьи спекой 2026-11-04 §4.1).
 //
 // Разбор чистый (§6.1): страницу скачивает вызывающий (Import импортёра, util.GetPage), поэтому
 // функция проверяется офлайн на HTML-фикстуре (§11.3). Fail-fast (§6.4): неразбираемое имя файла
-// и пустой список — ошибка с доменом и именем файла, а не «новых отчётов нет» при живом
-// источнике.
+// и пустой список — ошибка с доменом и ожидаемыми именами файлов, а не «новых отчётов нет» при
+// живом источнике.
 func vtbIfrsXlsLinks(page []byte) ([]vtbLink, error) {
 	doc, err := goquery.NewDocumentFromReader(bytes.NewReader(page))
 	if err != nil {
@@ -559,35 +635,52 @@ func vtbIfrsXlsLinks(page []byte) ([]vtbLink, error) {
 		seen     = make(map[string]bool)
 		parseErr error
 	)
-	doc.Find(vtbIfrsLinkSelector).Each(func(_ int, a *goquery.Selection) {
-		if parseErr != nil {
-			return
-		}
-		href, ok := a.Attr("href")
-		href = strings.TrimSpace(href)
-		if !ok || href == "" || !strings.HasSuffix(strings.ToLower(href), ".xlsx") {
-			return // pdf тех же отчётов и прочие файлы с якорем — не xlsx-отчёты
-		}
-		if seen[href] {
-			return // дубль ссылки — не второй отчёт
-		}
-		report, err := vtbIfrsReportDate(href)
-		if err != nil {
-			parseErr = fmt.Errorf("%s: страница %s: %w", vtbIfrsTable, vtbIfrsResultsUrl, err)
-			return
-		}
-		seen[href] = true
-		links = append(links, vtbLink{Url: vtbIfrsDataUrlPrefix + href, Report: report})
-	})
+	for _, sel := range []struct {
+		selector   string
+		supplement bool
+	}{
+		{vtbIfrsLinkSelector, false},
+		{vtbSuppLinkSelector, true},
+	} {
+		doc.Find(sel.selector).Each(func(_ int, a *goquery.Selection) {
+			if parseErr != nil {
+				return
+			}
+			href, ok := a.Attr("href")
+			href = strings.TrimSpace(href)
+			if !ok || href == "" || !strings.HasSuffix(strings.ToLower(href), ".xlsx") {
+				return // pdf тех же отчётов и старые .xls — не xlsx-отчёты
+			}
+			if seen[href] {
+				return // дубль ссылки — не второй отчёт
+			}
+			var report time.Time
+			var err error
+			if sel.supplement {
+				report, err = vtbSuppReportDate(href)
+			} else {
+				report, err = vtbIfrsReportDate(href)
+			}
+			if err != nil {
+				parseErr = fmt.Errorf("%s: страница %s: %w", vtbIfrsTable, vtbIfrsResultsUrl, err)
+				return
+			}
+			seen[href] = true
+			links = append(links, vtbLink{Url: vtbIfrsDataUrlPrefix + href, Report: report, Supplement: sel.supplement})
+		})
+	}
 	if parseErr != nil {
 		return nil, parseErr
 	}
 	if len(links) == 0 {
-		return nil, fmt.Errorf("%s: страница %s: не найдено ни одной ссылки на rus-vtb-group-ifrs-as-of-*.xlsx (селектор %s)",
-			vtbIfrsTable, vtbIfrsResultsUrl, vtbIfrsLinkSelector)
+		return nil, fmt.Errorf("%s: страница %s: не найдено ни одной ссылки на rus-vtb-group-ifrs-as-of-*.xlsx или financial_data_supplement_*_rus.xlsx (селекторы %s, %s)",
+			vtbIfrsTable, vtbIfrsResultsUrl, vtbIfrsLinkSelector, vtbSuppLinkSelector)
 	}
-	// sort.SliceStable, а не sort.Slice: у двух отчётов с одной датой порядок страницы сохранится,
-	// и результат детерминирован без уникальности дат.
+	// sort.SliceStable, а не sort.Slice: у двух отчётов с одной датой отчётности порядок страницы
+	// сохранится, и результат детерминирован без уникальности дат (даты отчётности семей не
+	// пересекаются: месячные файлы за квартальные месяцы источник не выкладывает, — но точки
+	// пересекаются: остатки на 31.12 и предыдущий месяц приходят и в месячных файлах, и в
+	// супердополнении; там решает порядок вставки — свежее супердополнение идёт последним).
 	sort.SliceStable(links, func(i, j int) bool { return links[i].Report.Before(links[j].Report) })
 	return links, nil
 }
@@ -690,12 +783,36 @@ func (s *VtbIfrs) Import(ctx context.Context, conn driver.Conn) (count int64, er
 
 // vtbIfrsImportFunc — ImportFunc шаблона: книга из памяти → точки → батч. Ошибку разбора не
 // оборачивает: parseVtbBook уже называет таблицу, и второй префикс дал бы дубль в тексте ошибки.
+// Перед записью — warn по рядам, которых нет в каталоге (стандарт §6.6): сырьё импортируется, а
+// описание догоняется правкой, поэтому прогон не краснеет; иначе новый суффикс или подпись
+// источника уляжется в таблицу молча, и агент увидит ряд без описания (правило 11).
 func vtbIfrsImportFunc(xlsx *excelize.File, batch driver.Batch) error {
 	points, err := parseVtbBook(xlsx)
 	if err != nil {
 		return err
 	}
+	vtbWarnUndescribed(points)
 	return appendVtbPoints(batch, points)
+}
+
+// vtbWarnUndescribed — warn на каждый ряд разбора, которого нет в каталоге vtbSeriesMeta.
+// Набор описанных имён собирается на вызов: он маленький (132), а кеш разошёлся бы с правкой
+// каталога. Повторы схлопываются: один ряд — одно предупреждение на файл.
+func vtbWarnUndescribed(points []vtbPoint) {
+	described := make(map[string]bool, len(vtbSeriesMeta))
+	for _, m := range vtbSeriesMeta {
+		if m.Source == vtbIfrsTable {
+			described[m.Series] = true
+		}
+	}
+	warned := make(map[string]bool)
+	for _, p := range points {
+		if !described[p.Series] && !warned[p.Series] {
+			warned[p.Series] = true
+			log.Warnf("%s: ряд %q разобран, но не описан в каталоге — дописать описание в bank/series_meta.go",
+				vtbIfrsTable, p.Series)
+		}
+	}
 }
 
 // vtbImporter — импортёр rus_vtb_group_ifrs для шаблона и реестра: таблица, DDL в %s-форме,
