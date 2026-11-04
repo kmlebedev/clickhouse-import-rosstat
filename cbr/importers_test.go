@@ -64,6 +64,8 @@ var expectedPublicationCountPoints = map[string]string{
 	"cbr_loans_to_individuals":  "SELECT count() FROM cbr_loans_to_individuals FINAL",
 	"cbr_bank_int_rate":         "SELECT count() FROM cbr_bank_int_rate FINAL",
 	"cbr_int_rate_loans":        "SELECT count() FROM cbr_int_rate_loans FINAL",
+	"cbr_int_rate_loans_ind":    "SELECT count() FROM cbr_int_rate_loans_ind FINAL",
+	"cbr_mortgage_rate":         "SELECT count() FROM cbr_mortgage_rate FINAL",
 	"cbr_indicators_cpd":        "SELECT count() FROM cbr_indicators_cpd FINAL",
 	"cbr_infl_exp":              "SELECT count() FROM cbr_infl_exp FINAL",
 	"cbr_infl_exp_op":           "SELECT count() FROM cbr_infl_exp FINAL",
@@ -131,7 +133,7 @@ func TestDaguStatsIgnoreComments(t *testing.T) {
 //     шаг контура резюме обсуждений (cbr_mp_summary: пропавший шаг оставил бы
 //     витрины v_cbr_mp_summary* пустыми при всех зелёных тестах);
 //   - (д) точка контроля публикации (префлайт) объявлена ровно у ожидаемых двадцати
-//     импортёров и запросом из expectedPublicationCountPoints: колонка countPoints
+//     двух импортёров и запросом из expectedPublicationCountPoints: колонка countPoints
 //     реестра сверяется с объявлением самого импортёра (метод Publication()
 //     встроенного util.ClickHouseImport), а у импортёров вне ожидаемого набора
 //     объявления нет вовсе — забытое объявление молча выключило бы префлайт, а
@@ -287,7 +289,7 @@ func TestCbrImportersPrefixedAndRegistered(t *testing.T) {
 	// v_cbr_mp_summary* остались бы пустыми, а у платёжного баланса витрина v_cbr_bop, у приложений
 	// ДИП витрина v_cbr_dip_bulletin и у «Комментария» витрина v_cbr_mt_forecast остались бы
 	// непустыми и просто перестали бы обновляться; последнего не замечает и mcp_check (он проверяет
-	// непустоту витрины и полноту каталога, а не свежесть точек), поэтому все тринадцать шагов
+	// непустоту витрины и полноту каталога, а не свежесть точек), поэтому все четырнадцать шагов
 	// перечислены здесь явно.
 	keyScheduled := map[string]string{
 		"cbr_mp_summary":           "контур резюме обсуждений не запускается по расписанию, а витрины v_cbr_mp_summary* остаются пустыми",
@@ -303,6 +305,7 @@ func TestCbrImportersPrefixedAndRegistered(t *testing.T) {
 		"cbr_mp_bsu_map":           "публичный кроссворд BSU не пересобирается по расписанию, а витрины v_cbr_mp_bsu_map/v_cbr_mp_public_panel тихо стареют",
 		"cbr_publication_calendar": "график публикаций ЦБ и публикационные даты не обновляются по расписанию, а витрины v_cbr_publication_calendar/v_series_publication тихо стареют",
 		"cbr_infl_exp_op":          "оперативная точка инфляционных ожиданий не обновляется до выхода книги, а v_cbr_macro и v_key_rate_dashboard тихо стареют на 1–3 недели",
+		"cbr_psk":                  "квартальный корпус среднерыночных значений ПСК не обновляется по расписанию, а витрина v_cbr_psk и её динамический каталог тихо стареют",
 	}
 	for step, why := range keyScheduled {
 		if !scheduled[step] {

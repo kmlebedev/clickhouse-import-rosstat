@@ -24,6 +24,25 @@ SELECT * FROM (
     
     UNION ALL SELECT 'cbr_int_rate_loans', name, count(), min(date), max(date) FROM cbr_int_rate_loans FINAL GROUP BY name
     
+    -- Ставки по кредитам физическим лицам в рублях по срокам и группам (Всего/Автокредиты):
+    -- 16 рядов, дата точки — предпоследний день отчётного месяца (конвенция контура).
+    -- Пропуски у краткосрочных автокредитов — свойство источника, а не сбой импорта.
+    UNION ALL SELECT 'cbr_int_rate_loans_ind', name, count(), min(date), max(date) FROM cbr_int_rate_loans_ind FINAL GROUP BY name
+
+    -- Средневзвешенная ставка по ипотечным жилищным кредитам, предоставленным физлицам-резидентам
+    -- в рублях, по РФ (импортёр cbr_mortgage_rate): один ряд; дата точки — предпоследний день
+    -- отчётного месяца (конвенция контура). Источник — 02_08_Rates_housing.xlsx, лист
+    -- «ставка в рублях», строка «РОССИЙСКАЯ ФЕДЕРАЦИЯ»; пропусков у ряда РФ на снимке нет.
+    UNION ALL SELECT 'cbr_mortgage_rate', name, count(), min(date), max(date) FROM cbr_mortgage_rate FINAL GROUP BY name
+
+    -- Квартальный корпус среднерыночных значений ПСК кредитных организаций (импортёр cbr_psk):
+    -- одна строка на код категории. Дата точки — КОНЕЦ квартала расчёта (не дата публикации
+    -- выпуска); сравнивать с остальными рядами по toStartOfQuarter(date). Код категории менял
+    -- смысл между редакциями таксономии, поэтому ряд идентифицируется кодом вместе с наименованием
+    -- в v_series_catalog. FINAL обязателен: пересмотр категории новым выпуском того же периода
+    -- заменяет строку по ключу (category_code, date).
+    UNION ALL SELECT 'cbr_psk', category_code, count(), min(date), max(date) FROM cbr_psk FINAL GROUP BY category_code
+
     UNION ALL SELECT 'cbr_m2', name, count(), min(date), max(date) FROM cbr_m2 FINAL GROUP BY name
     
     UNION ALL SELECT 'cbr_credit_m2x', name, count(), min(date), max(date) FROM cbr_credit_m2x FINAL GROUP BY name
