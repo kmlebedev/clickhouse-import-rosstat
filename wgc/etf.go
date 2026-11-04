@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
-	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
 	log "github.com/sirupsen/logrus"
 	"github.com/xuri/excelize/v2"
@@ -311,8 +310,4 @@ func etfCacheLooksStale(apiMax, storedMax time.Time) bool {
 		return false
 	}
 	return apiMax.Before(storedMax)
-}
-
-func init() {
-	chimport.Stats = append(chimport.Stats, &etfFlowsStat{})
 }
