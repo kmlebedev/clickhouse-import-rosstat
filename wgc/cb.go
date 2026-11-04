@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
-	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
 	log "github.com/sirupsen/logrus"
 	"github.com/xuri/excelize/v2"
@@ -198,8 +197,4 @@ func cbParseWorkbook(name, path string, parse func(*excelize.File) ([]seriesPoin
 		return nil, fmt.Errorf("%s: %s: %w", name, path, err)
 	}
 	return points, nil
-}
-
-func init() {
-	chimport.Stats = append(chimport.Stats, &cbReservesStat{})
 }
