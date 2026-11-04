@@ -138,7 +138,30 @@ func TestNetFlowsRecomputeFrom(t *testing.T) {
 			if formatted := got.In(moscowLocation).Format(time.DateTime); formatted != test.want {
 				t.Fatalf("from = %s, want %s", formatted, test.want)
 			}
+			// Зона уходит параметром в ClickHouse: имя FixedZone "MSK" сервер не знает
+			// (code 36), поэтому граница берёт зону ленты из драйвера.
+			if got.Location() != lentaMin.Location() {
+				t.Fatalf("location = %v, want %v (зона ленты)", got.Location(), lentaMin.Location())
+			}
 		})
+	}
+}
+
+func TestNetFlowsRecomputeFromUsesLentaLocation(t *testing.T) {
+	moscow, err := time.LoadLocation("Europe/Moscow")
+	if err != nil {
+		t.Skipf("нет tzdata: %v", err)
+	}
+	lentaMin := time.Date(2026, 10, 30, 10, 0, 0, 0, moscow)
+	got, err := netFlowsRecomputeFrom("2026-11-03", lentaMin.Add(200*time.Hour), lentaMin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Location().String() != "Europe/Moscow" {
+		t.Fatalf("location = %v, want Europe/Moscow", got.Location())
+	}
+	if got.Format(time.DateTime) != "2026-11-03 00:00:00" {
+		t.Fatalf("from = %s", got.Format(time.DateTime))
 	}
 }
 

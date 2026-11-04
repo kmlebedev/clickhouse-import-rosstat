@@ -196,7 +196,9 @@ func netFlowsRecomputeFrom(value string, regular, lentaMin time.Time) (time.Time
 	if len(value) == len(time.DateOnly) {
 		layout = time.DateOnly
 	}
-	from, err := time.ParseInLocation(layout, value, moscowLocation)
+	// Разбор в зоне ленты: она приходит из драйвера как Europe/Moscow и уходит
+	// обратно параметром запроса; FixedZone "MSK" сервер не распознаёт.
+	from, err := time.ParseInLocation(layout, value, lentaMin.Location())
 	if err != nil {
 		return time.Time{}, fmt.Errorf("%s: %s=%q: ожидается YYYY-MM-DD или YYYY-MM-DD HH:MM:SS МСК: %w",
 			transaqNetFlowsTable, transaqNetFlowsRecomputeEnv, value, err)
