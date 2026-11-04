@@ -54,7 +54,7 @@ func TestBankSeriesMetaCoversFixtures(t *testing.T) {
 			fixture: vtbBookFixture,
 			meta:    vtbSeriesMeta,
 			source:  vtbIfrsTable,
-			series:  67,
+			series:  132,
 			parsed: func(t *testing.T) []string {
 				points, err := parseVtbBook(vtbOpenFixture(t, vtbBookFixture))
 				if err != nil {
@@ -70,7 +70,7 @@ func TestBankSeriesMetaCoversFixtures(t *testing.T) {
 			fixture: vtbSuppBookFixture,
 			meta:    vtbSeriesMeta,
 			source:  vtbIfrsTable,
-			series:  67,
+			series:  132,
 			parsed: func(t *testing.T) []string {
 				points, err := parseVtbBook(vtbOpenFixture(t, vtbSuppBookFixture))
 				if err != nil {
@@ -125,14 +125,14 @@ func TestBankSeriesMetaCoversFixtures(t *testing.T) {
 	}
 
 	// Состав bankSeriesMeta — по источникам: 5 месячных и 46 недельных СберИндекса, 15 ДОМ.РФ,
-	// 67 ВТБ (36 месячных + 31 квартальный из супердополнений), 30 Сбера по РСБУ. Дубль ключа
+	// 132 ВТБ (36 месячных + 96 квартальных из супердополнений), 30 Сбера по РСБУ. Дубль ключа
 	// (source, series) в каталоге тоже ошибка: ReplacingMergeTree оставил бы из двух описаний
 	// одно молча.
 	wantSources := map[string]int{
 		sberSourceIndex:      5,
 		sberSourceWeek:       46,
 		domrfMortgageTable:   15,
-		vtbIfrsTable:         67,
+		vtbIfrsTable:         132,
 		sberRpbuDataUrlTable: 30,
 	}
 	gotSources := make(map[string]int, len(wantSources))
@@ -145,8 +145,8 @@ func TestBankSeriesMetaCoversFixtures(t *testing.T) {
 			seen[key] = true
 		}
 	}
-	if got := len(bankSeriesMeta); got != 163 {
-		t.Errorf("bankSeriesMeta: описаний %d, ожидалось 163 (51 СберИндекса + 15 ДОМ.РФ + 67 ВТБ + 30 Сбера по РСБУ)", got)
+	if got := len(bankSeriesMeta); got != 228 {
+		t.Errorf("bankSeriesMeta: описаний %d, ожидалось 228 (51 СберИндекса + 15 ДОМ.РФ + 132 ВТБ + 30 Сбера по РСБУ)", got)
 	}
 	for source, want := range wantSources {
 		if got := gotSources[source]; got != want {
