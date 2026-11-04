@@ -525,7 +525,7 @@ func TestAppendVtbPoints(t *testing.T) {
 
 // Фикстура — живая страница результатов ВТБ (https://www.vtb.ru/ir/statements/results/, снимок
 // 2026-11-04, 368 264 Б): коммитится как есть, разметка не пересобирается (§11.2). Разведка
-// 2026-11-04: 19 ссылок с якорем rus-vtb-group-ifrs-as-of — 13 xlsx и 6 pdf (pdf разбором
+// 2026-11-04: 20 ссылок с якорем rus-vtb-group-ifrs-as-of — 13 xlsx и 7 pdf (pdf разбором
 // отбрасываются) и 8 ссылок с якорем financial_data_supplement — 5 xlsx (квартальные
 // супердополнения 0925, 1225, 0326, 0626, 0926) и 3 старых .xls со старого пути (отбрасываются
 // фильтром расширения); у двух имён хвостовое подчёркивание (31-october-2025_, 30-april-2025_),
@@ -613,9 +613,10 @@ func TestVtbIfrsXlsLinks(t *testing.T) {
 	}
 	for i, want := range vtbFixtureLinks {
 		got := links[i]
-		if got.Url != want.Url || !got.Report.Equal(want.Report) {
-			t.Errorf("ссылка %d = %s (%s), want %s (%s)", i,
-				got.Url, got.Report.Format("2006-01-02"), want.Url, want.Report.Format("2006-01-02"))
+		if got.Url != want.Url || !got.Report.Equal(want.Report) || got.Supplement != want.Supplement {
+			t.Errorf("ссылка %d = %s (%s, supplement=%v), want %s (%s, supplement=%v)", i,
+				got.Url, got.Report.Format("2006-01-02"), got.Supplement,
+				want.Url, want.Report.Format("2006-01-02"), want.Supplement)
 		}
 	}
 	// Дубль ссылки на странице — не второй отчёт: список обязан остаться прежним. Дубль —
@@ -629,10 +630,10 @@ func TestVtbIfrsXlsLinks(t *testing.T) {
 		t.Fatalf("с дублем ссылки разобрано %d, want %d (дедуп по href)", len(dupLinks), len(links))
 	}
 	for i := range dupLinks {
-		if dupLinks[i].Url != links[i].Url || !dupLinks[i].Report.Equal(links[i].Report) {
-			t.Errorf("с дублем ссылка %d = %s (%s), want %s (%s)", i,
-				dupLinks[i].Url, dupLinks[i].Report.Format("2006-01-02"),
-				links[i].Url, links[i].Report.Format("2006-01-02"))
+		if dupLinks[i].Url != links[i].Url || !dupLinks[i].Report.Equal(links[i].Report) || dupLinks[i].Supplement != links[i].Supplement {
+			t.Errorf("с дублем ссылка %d = %s (%s, supplement=%v), want %s (%s, supplement=%v)", i,
+				dupLinks[i].Url, dupLinks[i].Report.Format("2006-01-02"), dupLinks[i].Supplement,
+				links[i].Url, links[i].Report.Format("2006-01-02"), links[i].Supplement)
 		}
 	}
 }

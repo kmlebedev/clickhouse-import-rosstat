@@ -61,6 +61,12 @@ func TestParseVtbSupplementBook(t *testing.T) {
 		}
 		seen[key] = true
 	}
+	// Ряды: 9 балансовых склеек + 16 суффиксных потоков (8 × 2) + 10 коэффициентов (5 × 2) +
+	// 3 качества + 2 капитала = 40 — каталог обязан описывать каждый (контракт §11.4 —
+	// TestBankSeriesMetaCoversFixtures); здесь — чтобы число не разошлось с ожиданием 100 точек.
+	if names := vtbSeriesNames(points); len(names) != 40 {
+		t.Errorf("рядов в разборе %d, want 40", len(names))
+	}
 	// Spot-значения (стандарт §11.5): склейка баланса с месячными именами, суффиксные потоки,
 	// качество кредитов, нормативы с датой первого числа следующего месяца, сноски «(1)»/«(2)»
 	// в подписях (строки 14/16 снимаются до карты).
@@ -115,6 +121,34 @@ func TestParseVtbSupplementBookFailFast(t *testing.T) {
 			},
 			want: "не найдена в карте",
 		},
+		"переименованная подпись с остатком в окне серийных дат": {
+			// 39095.9 и 36884.3 — дробные значения в окне 2000–2100 (как серийные номера они дали
+			// бы 2006 и 2000 годы): строка обязана остаться данными, а не стать датовой шапкой.
+			mutate: func(t *testing.T, f *excelize.File) {
+				vtbSetCell(t, f, vtbSuppSheet, "A42", "ИТОГО АКТИВЫ ГРУППЫ")
+			},
+			want: "не найдена в карте",
+		},
+		"пропала шапка балансовой секции": {
+			// Датовая шапка секции пуста: строки баланса читались бы колонками-периодами
+			// предыдущей секции — вид подписи и вид колонок расходятся, разбор обязан упасть.
+			mutate: func(t *testing.T, f *excelize.File) {
+				for _, cell := range []string{"B36", "C36", "D36"} {
+					vtbSetCell(t, f, vtbSuppSheet, cell, " ")
+				}
+			},
+			want: "не соответствует колонкам секции",
+		},
+		"пропала первая шапка": {
+			// Значения до первой шапки: секция P&L осталась без колонок, и её точки пропали бы
+			// молча — разбор обязан упасть.
+			mutate: func(t *testing.T, f *excelize.File) {
+				for _, cell := range []string{"B9", "C9", "E9", "F9"} {
+					vtbSetCell(t, f, vtbSuppSheet, cell, " ")
+				}
+			},
+			want: "до первой шапки",
+		},
 		"значение не число": {
 			mutate: func(t *testing.T, f *excelize.File) { vtbSetCell(t, f, vtbSuppSheet, "B39", "н/д") },
 			want:   "не число",
@@ -129,7 +163,8 @@ func TestParseVtbSupplementBookFailFast(t *testing.T) {
 		},
 		"ни одной шапки": {
 			// Все пять строк-шапок опустошены целиком (периодные подписи и серийные даты):
-			// секции остаются со значениями, но ни одна не открывается.
+			// секции остаются со значениями, первая же строка данных упирается в отсутствие
+			// шапки — разбор обязан упасть, а не пропустить секции молча.
 			mutate: func(t *testing.T, f *excelize.File) {
 				for _, row := range []int{9, 24, 36, 52, 62} {
 					for col := 'B'; col <= 'N'; col++ {
@@ -137,7 +172,7 @@ func TestParseVtbSupplementBookFailFast(t *testing.T) {
 					}
 				}
 			},
-			want: "шапка",
+			want: "до первой шапки",
 		},
 		"пустой разбор": {
 			// Все строки данных всех секций опустошены: шапки на месте, точек нет.
@@ -195,6 +230,19 @@ func TestParseVtbBookDispatch(t *testing.T) {
 			t.Fatal("ни одной семьи: ожидалась ошибка, а разбор прошёл")
 		}
 		for _, want := range []string{"rus_vtb_group_ifrs", "Ключевые балансовые показатели", "1.Ключевые показатели", "Sheet1"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("ошибка %q не называет %q", err, want)
+			}
+		}
+	})
+	t.Run("якорь супердополнения исчез — ошибка на живой книге", func(t *testing.T) {
+		f := vtbOpenFixture(t, vtbSuppBookFixture)
+		vtbRenameSheet(t, f, vtbSuppSheet, "Ключевые показатели")
+		_, err := parseVtbBook(f)
+		if err == nil {
+			t.Fatal("без якоря супердополнения: ожидалась ошибка, а разбор прошёл")
+		}
+		for _, want := range []string{"rus_vtb_group_ifrs", "1.Ключевые показатели"} {
 			if !strings.Contains(err.Error(), want) {
 				t.Errorf("ошибка %q не называет %q", err, want)
 			}
@@ -293,16 +341,59 @@ func TestVtbSuppPeriodColumns(t *testing.T) {
 	}
 }
 
-// TestVtbSuppMapComplete: каждая пара карты имен согласована внутри себя — значение-ключ (имя
-// месячного ряда или новое имя) не пусто, и базы суффиксных рядов не совпадают с именами
-// колонок-дат (иначе датовая секция, встретив такую подпись, склеила бы остаток с потоком).
+// TestVtbSuppMapComplete: карта имён согласована внутри себя — 27 подписей (9 балансовых +
+// 8 P&L + 5 коэффициентов + 3 качества + 2 капитала), имена рядов не пусты и не повторяются;
+// девять балансовых целей — имена месячных балансовых рядов (это и есть склейка), базы
+// суффиксных рядов с ними не совпадают (иначе вид секции в карте был бы противоречив).
 func TestVtbSuppMapComplete(t *testing.T) {
+	if got := len(vtbSuppSeriesMap); got != 27 {
+		t.Errorf("карта: записей %d, want 27 (подписи пяти секций листа)", got)
+	}
+	names := make(map[string]string, len(vtbSuppSeriesMap))
+	balanceTargets := 0
 	for key, value := range vtbSuppSeriesMap {
-		if key == "" || value == "" {
-			t.Errorf("карта содержит пустую пару %q -> %q", key, value)
+		if key == "" || value.name == "" {
+			t.Errorf("карта содержит пустую пару %q -> %+v", key, value)
+		}
+		if prev, dup := names[value.name]; dup {
+			t.Errorf("имя %q задано дважды: подписи %q и %q", value.name, prev, key)
+		}
+		names[value.name] = key
+		if !value.flow {
+			if slices.Contains(vtbBalanceSeriesNames, value.name) {
+				balanceTargets++
+			} else if !slices.Contains([]string{
+				"Резерв под обесценение кредитов",
+				"Коэффициент неработающих кредитов (NPL)",
+				"Коэффициент покрытия неработающих кредитов",
+				"Общий уровень (Н20.0)",
+				"Базовый капитал (Н20.1)",
+			}, value.name) {
+				t.Errorf("датовый ряд %q (подпись %q) не из месячного баланса и не новый ряд качества/капитала", value.name, key)
+			}
 		}
 	}
-	if slices.Contains(vtbBalanceSeriesNames, "Чистая прибыль (9М)") {
-		t.Error("имя «Чистая прибыль (9М)» не должно входить в месячный список баланса")
+	if balanceTargets != 9 {
+		t.Errorf("балансовых склеек %d, want 9 (все имена — месячные ряды vtbBalanceSeriesNames)", balanceTargets)
+	}
+	for key, value := range vtbSuppSeriesMap {
+		if value.flow && slices.Contains(vtbBalanceSeriesNames, value.name) {
+			t.Errorf("поток %q (подпись %q) назван именем месячного балансового ряда — суффиксный ряд столкнулся бы с остатком", value.name, key)
+		}
+	}
+}
+
+// TestVtbSuppDateColumns: датой-колонкой считается только целый серийный номер в окне лет —
+// дробные значения остатков (39095.9 ≈ 2006 год) датами не становятся; «ИЗМЕНЕНИЕ» и NaN/Inf —
+// не колонки.
+func TestVtbSuppDateColumns(t *testing.T) {
+	cols := vtbSuppDateColumns([]string{"%", "46295", "46022", "39095.9", "36884.3", "ИЗМЕНЕНИЕ", "NaN"})
+	if len(cols) != 2 {
+		t.Fatalf("колонок-дат %d, want 2 (46295 и 46022; дробные остатки, текст и NaN — не даты)", len(cols))
+	}
+	if !cols[0].date.Equal(vtbSuppSep26) || !cols[1].date.Equal(vtbSuppDec25) {
+		t.Errorf("даты колонок = %s, %s; want %s, %s",
+			cols[0].date.Format(vtbTimeLayout), cols[1].date.Format(vtbTimeLayout),
+			vtbSuppSep26.Format(vtbTimeLayout), vtbSuppDec25.Format(vtbTimeLayout))
 	}
 }
