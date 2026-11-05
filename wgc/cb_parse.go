@@ -18,16 +18,17 @@ const (
 	// cbHoldingsSheet — единственный лист выгрузки holdings: таблица топ-100.
 	cbHoldingsSheet = "PDF"
 
-	// cbChangesHeaderRow — строка-заголовок листа Monthly: serial (начало месяца) на каждую
-	// колонку-месяц.
-	cbChangesHeaderRow = 8
-	// cbChangesFirstDataCol — колонка D: в A полное имя, в B короткое (по нему словарь стран),
-	// в C комментарий (не импортируем).
-	cbChangesFirstDataCol = 4
-	// cbChangesNameCol — колонка B: короткое имя страны для словаря.
-	cbChangesNameCol = 2
-	// cbChangesFirstDataRow — данные со строки 9: строки 1..7 служебные.
-	cbChangesFirstDataRow = 9
+	// cbChangesNameHeader, cbChangesCommentHeader — заголовки колонок имени страны и комментария
+	// на листе Monthly. По ним определяется раскладка (см. cbChangesDetectLayout): номера строк
+	// и колонок WGC меняет между релизами (Oct2026: заголовок в строке 8, страна в B, месяцы с D;
+	// Nov2026: заголовок в строке 1, страна в A, месяцы с C).
+	cbChangesNameHeader    = "Country"
+	cbChangesCommentHeader = "Comments"
+	// cbChangesLayoutScanRows — сколько верхних строк просматривается в поиске заголовка;
+	// cbChangesLayoutScanCols — в скольких левых колонках (в Oct2026 слева ещё колонка-ключ
+	// «Country Lookup Column»).
+	cbChangesLayoutScanRows = 20
+	cbChangesLayoutScanCols = 3
 
 	// cbHoldingsTonnesHeader — заголовок блока таблицы топ-100: по нему находятся блоки.
 	cbHoldingsTonnesHeader = "Tonnes"
@@ -108,6 +109,44 @@ type cbChangesMonth struct {
 	date time.Time
 }
 
+// cbChangesLayout — раскладка листа Monthly: строка-заголовок с serial-датами месяцев,
+// колонка короткого имени страны, первая колонка-месяц (через колонку комментария от имени)
+// и первая строка данных.
+type cbChangesLayout struct {
+	headerRow    int
+	nameCol      int
+	firstDataCol int
+	firstDataRow int
+}
+
+// cbChangesDetectLayout находит раскладку по заголовкам: ячейка «Country» (строгое равенство,
+// поэтому «Country Lookup Column» не подходит) с «Comments» справа задаёт строку заголовка и
+// колонку имени; месяцы идут со следующей за комментарием колонки, данные — со строки ниже.
+// Пары нет — ошибка, а не откат на старые координаты: молчаливый откат прочитал бы данные
+// не из тех ячеек.
+func cbChangesDetectLayout(f *excelize.File, maxCol, maxRow int) (cbChangesLayout, error) {
+	for row := 1; row <= min(maxRow, cbChangesLayoutScanRows); row++ {
+		for col := 1; col <= min(maxCol-1, cbChangesLayoutScanCols); col++ {
+			name, err := cellRaw(f, cbChangesSheet, col, row)
+			if err != nil {
+				return cbChangesLayout{}, fmt.Errorf("лист %s: %s: %w", cbChangesSheet, cbCellRef(col, row), err)
+			}
+			if strings.TrimSpace(name) != cbChangesNameHeader {
+				continue
+			}
+			comment, err := cellRaw(f, cbChangesSheet, col+1, row)
+			if err != nil {
+				return cbChangesLayout{}, fmt.Errorf("лист %s: %s: %w", cbChangesSheet, cbCellRef(col+1, row), err)
+			}
+			if strings.TrimSpace(comment) == cbChangesCommentHeader {
+				return cbChangesLayout{headerRow: row, nameCol: col, firstDataCol: col + 2, firstDataRow: row + 1}, nil
+			}
+		}
+	}
+	return cbChangesLayout{}, fmt.Errorf("лист %s: в первых %d строках нет заголовков %q и %q рядом: раскладка выгрузки изменилась",
+		cbChangesSheet, cbChangesLayoutScanRows, cbChangesNameHeader, cbChangesCommentHeader)
+}
+
 // parseCbChanges разбирает лист Monthly выгрузки Changes: по каждой стране словаря — месячные
 // изменения резервов в тоннах с 2002-01. Пустая ячейка — нет данных (пропуск), «0» — значение.
 func parseCbChanges(f *excelize.File) ([]seriesPoint, error) {
@@ -115,16 +154,20 @@ func parseCbChanges(f *excelize.File) ([]seriesPoint, error) {
 	if err != nil {
 		return nil, fmt.Errorf("лист %s: размеры: %w", cbChangesSheet, err)
 	}
-	if maxCol < cbChangesFirstDataCol || maxRow < cbChangesFirstDataRow {
-		return nil, fmt.Errorf("лист %s: нет колонок-месяцев (с %d) или строк данных (с %d): раскладка выгрузки изменилась",
-			cbChangesSheet, cbChangesFirstDataCol, cbChangesFirstDataRow)
-	}
-
-	months, err := cbChangesMonths(f, maxCol, maxRow)
+	layout, err := cbChangesDetectLayout(f, maxCol, maxRow)
 	if err != nil {
 		return nil, err
 	}
-	rows, err := cbChangesCountryRows(f, maxRow)
+	if maxCol < layout.firstDataCol || maxRow < layout.firstDataRow {
+		return nil, fmt.Errorf("лист %s: нет колонок-месяцев (с %d) или строк данных (с %d): раскладка выгрузки изменилась",
+			cbChangesSheet, layout.firstDataCol, layout.firstDataRow)
+	}
+
+	months, err := cbChangesMonths(f, layout, maxCol, maxRow)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := cbChangesCountryRows(f, layout, maxRow)
 	if err != nil {
 		return nil, err
 	}
@@ -155,19 +198,19 @@ func parseCbChanges(f *excelize.File) ([]seriesPoint, error) {
 	return points, nil
 }
 
-// cbChangesMonths читает строку-заголовок 8: колонки D и далее — месяцы (serial). Непустой
+// cbChangesMonths читает строку-заголовок раскладки: колонки с firstDataCol и далее — месяцы (serial). Непустой
 // не-числовой заголовок — ошибка; пустой заголовок допустим только пока колонка пуста, иначе
 // её значения остались бы без даты (fail-fast, как в ETF-парсере).
-func cbChangesMonths(f *excelize.File, maxCol, maxRow int) ([]cbChangesMonth, error) {
-	months := make([]cbChangesMonth, 0, maxCol-cbChangesFirstDataCol+1)
-	for col := cbChangesFirstDataCol; col <= maxCol; col++ {
-		ref := cbCellRef(col, cbChangesHeaderRow)
-		raw, err := cellRaw(f, cbChangesSheet, col, cbChangesHeaderRow)
+func cbChangesMonths(f *excelize.File, layout cbChangesLayout, maxCol, maxRow int) ([]cbChangesMonth, error) {
+	months := make([]cbChangesMonth, 0, maxCol-layout.firstDataCol+1)
+	for col := layout.firstDataCol; col <= maxCol; col++ {
+		ref := cbCellRef(col, layout.headerRow)
+		raw, err := cellRaw(f, cbChangesSheet, col, layout.headerRow)
 		if err != nil {
 			return nil, fmt.Errorf("лист %s: заголовок-дата %s: %w", cbChangesSheet, ref, err)
 		}
 		if raw == "" {
-			if err := cbColumnStaysEmpty(f, col, maxRow); err != nil {
+			if err := cbColumnStaysEmpty(f, layout, col, maxRow); err != nil {
 				return nil, err
 			}
 			continue
@@ -180,15 +223,15 @@ func cbChangesMonths(f *excelize.File, maxCol, maxRow int) ([]cbChangesMonth, er
 	}
 	if len(months) == 0 {
 		return nil, fmt.Errorf("лист %s: в строке %d нет ни одной колонки-месяца: раскладка выгрузки изменилась",
-			cbChangesSheet, cbChangesHeaderRow)
+			cbChangesSheet, layout.headerRow)
 	}
 	return months, nil
 }
 
 // cbColumnStaysEmpty — колонка без заголовка-даты допустима только пока в ней нет данных:
 // значение осталось бы без даты и потерялось бы молча.
-func cbColumnStaysEmpty(f *excelize.File, col, maxRow int) error {
-	for row := cbChangesFirstDataRow; row <= maxRow; row++ {
+func cbColumnStaysEmpty(f *excelize.File, layout cbChangesLayout, col, maxRow int) error {
+	for row := layout.firstDataRow; row <= maxRow; row++ {
 		raw, err := cellRaw(f, cbChangesSheet, col, row)
 		if err != nil {
 			return fmt.Errorf("лист %s: %s: %w", cbChangesSheet, cbCellRef(col, row), err)
@@ -201,15 +244,15 @@ func cbColumnStaysEmpty(f *excelize.File, col, maxRow int) error {
 	return nil
 }
 
-// cbChangesCountryRows — строка каждой страны словаря на листе Monthly. Поиск по колонке B —
+// cbChangesCountryRows — строка каждой страны словаря на листе Monthly. Поиск по колонке имени —
 // строгое равенство, поэтому Turkey (net) не путается с Turkey* (gross). Ноль совпадений
 // (страна пропала из выгрузки) или больше одного (неясно, какая строка верна) — ошибка.
-func cbChangesCountryRows(f *excelize.File, maxRow int) (map[string]int, error) {
-	rowsByName := make(map[string][]int, maxRow-cbChangesFirstDataRow+1)
-	for row := cbChangesFirstDataRow; row <= maxRow; row++ {
-		raw, err := cellRaw(f, cbChangesSheet, cbChangesNameCol, row)
+func cbChangesCountryRows(f *excelize.File, layout cbChangesLayout, maxRow int) (map[string]int, error) {
+	rowsByName := make(map[string][]int, maxRow-layout.firstDataRow+1)
+	for row := layout.firstDataRow; row <= maxRow; row++ {
+		raw, err := cellRaw(f, cbChangesSheet, layout.nameCol, row)
 		if err != nil {
-			return nil, fmt.Errorf("лист %s: %s: %w", cbChangesSheet, cbCellRef(cbChangesNameCol, row), err)
+			return nil, fmt.Errorf("лист %s: %s: %w", cbChangesSheet, cbCellRef(layout.nameCol, row), err)
 		}
 		name := strings.TrimSpace(raw)
 		if name == "" {
@@ -223,7 +266,7 @@ func cbChangesCountryRows(f *excelize.File, maxRow int) (map[string]int, error) 
 		found := rowsByName[c.Name]
 		switch len(found) {
 		case 0:
-			return nil, fmt.Errorf("лист %s: страна %q (%s) не найдена в колонке B: словарь и выгрузка разошлись",
+			return nil, fmt.Errorf("лист %s: страна %q (%s) не найдена в колонке имени: словарь и выгрузка разошлись",
 				cbChangesSheet, c.Name, c.ISO)
 		case 1:
 			rows[c.ISO] = found[0]

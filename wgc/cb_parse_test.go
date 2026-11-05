@@ -15,6 +15,9 @@ import (
 const (
 	cbChangesFixturePath  = "testdata/Changes_latest_as_of_Oct2026_IFS.xlsx"
 	cbHoldingsFixturePath = "testdata/World_official_gold_holdings_as_of_Oct2026_IFS.xlsx"
+	// cbChangesNovFixturePath — выгрузка Nov2026: другая раскладка листа Monthly (заголовок в
+	// строке 1, страна в A, месяцы с C) и данные по сентябрь 2026.
+	cbChangesNovFixturePath = "testdata/Changes_latest_as_of_Nov2026_IFS.xlsx"
 
 	// cbAnnualSheet — сверочный лист выгрузки Changes: годовые итоги по колонке года (строка 1).
 	// Парсер его не читает — лист нужен только сверке «Annual 2026 == Σ Monthly 2026».
@@ -205,6 +208,17 @@ func TestCbSeriesNames(t *testing.T) {
 	if name := wgcCbSeriesName(cbMetricHoldingsTonnes, "POL"); name != "cb_gold_holdings_tonnes_POL" {
 		t.Errorf("wgcCbSeriesName(holdings, POL) = %q, ожидалось cb_gold_holdings_tonnes_POL", name)
 	}
+}
+
+// newCbChangesSheet — лист Monthly в раскладке Oct2026: заголовки «Country» (B8) и «Comments» (C8),
+// месяцы с D8, страны с B9.
+func newCbChangesSheet(t *testing.T) *excelize.File {
+	t.Helper()
+
+	f := newEtfSheet(t, cbChangesSheet)
+	setEtfCell(t, f, cbChangesSheet, "B8", cbChangesNameHeader)
+	setEtfCell(t, f, cbChangesSheet, "C8", cbChangesCommentHeader)
+	return f
 }
 
 func TestCbChangesLastMonthPinned(t *testing.T) {
@@ -414,7 +428,7 @@ func TestCbHoldingsPinned(t *testing.T) {
 func TestCbCountryLookupStrict(t *testing.T) {
 	// Две строки Turkey (остальные страны словаря на месте): какая из них страна — неясно,
 	// поэтому разбор должен упасть.
-	f := newEtfSheet(t, cbChangesSheet)
+	f := newCbChangesSheet(t)
 	setEtfDate(t, f, cbChangesSheet, "D8", cbDate(2026, time.August, 31))
 	row := 9
 	for _, c := range CbCountries() {
@@ -432,7 +446,7 @@ func TestCbCountryLookupStrict(t *testing.T) {
 
 	// Turkey* (gross) — не Turkey (net): словарь ищется строгим равенством, страна набора
 	// остаётся ненайденной и разбор падает.
-	f = newEtfSheet(t, cbChangesSheet)
+	f = newCbChangesSheet(t)
 	setEtfDate(t, f, cbChangesSheet, "D8", cbDate(2026, time.August, 31))
 	row = 9
 	for _, c := range CbCountries() {
@@ -452,7 +466,7 @@ func TestCbCountryLookupStrict(t *testing.T) {
 }
 
 func TestCbChangesMissingCountryFails(t *testing.T) {
-	f := newEtfSheet(t, cbChangesSheet)
+	f := newCbChangesSheet(t)
 	setEtfDate(t, f, cbChangesSheet, "D8", cbDate(2026, time.August, 31))
 	setEtfCell(t, f, cbChangesSheet, "B9", "Turkey")
 	setEtfCell(t, f, cbChangesSheet, "D9", 1)
@@ -465,7 +479,7 @@ func TestCbChangesMissingCountryFails(t *testing.T) {
 }
 
 func TestCbChangesTextDateHeaderFails(t *testing.T) {
-	f := newEtfSheet(t, cbChangesSheet)
+	f := newCbChangesSheet(t)
 	setEtfCell(t, f, cbChangesSheet, "D8", "авг26")
 	setEtfCell(t, f, cbChangesSheet, "B9", "Turkey")
 
@@ -477,7 +491,7 @@ func TestCbChangesTextDateHeaderFails(t *testing.T) {
 }
 
 func TestCbChangesUndatedColumnWithValueFails(t *testing.T) {
-	f := newEtfSheet(t, cbChangesSheet)
+	f := newCbChangesSheet(t)
 	setEtfDate(t, f, cbChangesSheet, "D8", cbDate(2026, time.August, 31))
 	setEtfCell(t, f, cbChangesSheet, "B9", "Turkey")
 	// Колонка E без заголовка-даты, но со значением: месяц не к чему привязать.
@@ -685,5 +699,71 @@ func TestCbHoldingsHeadersTrimmedOK(t *testing.T) {
 	pol := wgcCbSeriesName(cbMetricHoldingsTonnes, "POL")
 	if got := cbValue(t, points, pol, cbDate(2026, time.August, 31)); math.Abs(got-647.98) > cbTolerance {
 		t.Errorf("ряд %s = %v, ожидалось 647.98", pol, got)
+	}
+}
+
+// TestCbChangesNovLayout — выгрузка Nov2026 (заголовок в строке 1, страна в A, месяцы с C)
+// читается тем же разбором: те же значения за август, что в Oct2026, плюс сентябрь 2026.
+func TestCbChangesNovLayout(t *testing.T) {
+	points, err := parseCbChanges(openCbFixture(t, cbChangesNovFixturePath))
+	if err != nil {
+		t.Fatalf("parseCbChanges(Nov2026): %v", err)
+	}
+	oct, err := parseCbChanges(openCbFixture(t, cbChangesFixturePath))
+	if err != nil {
+		t.Fatalf("parseCbChanges(Oct2026): %v", err)
+	}
+
+	aug26 := cbDate(2026, time.August, 31)
+	sep26 := cbDate(2026, time.September, 30)
+	for _, c := range CbCountries() {
+		series := wgcCbSeriesName(cbMetricChangeTonnes, c.ISO)
+		if !cbHasPoint(points, series, sep26) {
+			t.Errorf("%s: в Nov2026 нет точки за 2026-09-30", series)
+		}
+		if cbHasPoint(oct, series, sep26) {
+			t.Errorf("%s: в Oct2026 не должно быть точки за 2026-09-30", series)
+		}
+		// Август в выгрузке пересматривается WGC, поэтому сравниваем не значения, а наличие.
+		if !cbHasPoint(points, series, aug26) {
+			t.Errorf("%s: в Nov2026 нет точки за 2026-08-31", series)
+		}
+	}
+	if len(points) < len(oct) {
+		t.Errorf("Nov2026 дал %d точек, меньше, чем Oct2026 (%d)", len(points), len(oct))
+	}
+}
+
+// TestCbChangesNovLayoutSynthetic — раскладка Nov2026 на синтетическом листе: заголовок в
+// строке 1, страна в A, месяцы с C.
+func TestCbChangesNovLayoutSynthetic(t *testing.T) {
+	f := newEtfSheet(t, cbChangesSheet)
+	setEtfCell(t, f, cbChangesSheet, "A1", cbChangesNameHeader)
+	setEtfCell(t, f, cbChangesSheet, "B1", cbChangesCommentHeader)
+	setEtfDate(t, f, cbChangesSheet, "C1", cbDate(2026, time.September, 1))
+	for i, c := range CbCountries() {
+		row := strconv.Itoa(2 + i)
+		setEtfCell(t, f, cbChangesSheet, "A"+row, c.Name)
+		setEtfCell(t, f, cbChangesSheet, "C"+row, float64(i+1))
+	}
+
+	points, err := parseCbChanges(f)
+	if err != nil {
+		t.Fatalf("parseCbChanges: %v", err)
+	}
+	if got := cbValue(t, points, wgcCbSeriesName(cbMetricChangeTonnes, "POL"), cbDate(2026, time.September, 30)); got != 1 {
+		t.Errorf("POL на 2026-09-30 = %v, ожидалось 1", got)
+	}
+}
+
+func TestCbChangesNoLayoutHeadersFails(t *testing.T) {
+	f := newEtfSheet(t, cbChangesSheet)
+	setEtfDate(t, f, cbChangesSheet, "D8", cbDate(2026, time.August, 31))
+	setEtfCell(t, f, cbChangesSheet, "B9", "Turkey")
+
+	if _, err := parseCbChanges(f); err == nil {
+		t.Fatal("лист без заголовков Country/Comments должен давать ошибку раскладки")
+	} else if !strings.Contains(err.Error(), "раскладка выгрузки изменилась") {
+		t.Errorf("ошибка не говорит об изменении раскладки: %v", err)
 	}
 }

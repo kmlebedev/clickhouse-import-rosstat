@@ -213,10 +213,10 @@ func TestCbSelectFilesPartial(t *testing.T) {
 func writeCbChangesWithoutValues(t *testing.T, dir string) {
 	t.Helper()
 
-	f := newEtfSheet(t, cbChangesSheet)
+	f := newCbChangesSheet(t)
 	setEtfDate(t, f, cbChangesSheet, "D8", cbDate(2026, time.August, 31))
 	for i, c := range CbCountries() {
-		setEtfCell(t, f, cbChangesSheet, "B"+strconv.Itoa(cbChangesFirstDataRow+i), c.Name)
+		setEtfCell(t, f, cbChangesSheet, "B"+strconv.Itoa(9+i), c.Name)
 	}
 	if err := f.SaveAs(filepath.Join(dir, cbChangesFile)); err != nil {
 		t.Fatalf("SaveAs(%s): %v", cbChangesFile, err)
