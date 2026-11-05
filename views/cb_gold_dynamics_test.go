@@ -18,6 +18,8 @@ var cbGoldDynamicsColumns = []string{
 	"country",
 	"last_change_date",
 	"mom_change_tonnes",
+	"q_change_tonnes",
+	"prev_q_change_tonnes",
 	"ytd_change_tonnes",
 	"holdings_date",
 	"holdings_tonnes",
@@ -190,6 +192,32 @@ func TestCbGoldDynamicsViewComputesYtdFromEachSeriesLastDate(t *testing.T) {
 
 	if !strings.Contains(selectText, "argMax(") {
 		t.Fatalf("%s: mom_change_tonnes — значение последней дельты (argMax по дате), got: %s", v.Name, selectText)
+	}
+}
+
+// Кварталы — по той же схеме, что и YTD: от даты последней точки КАЖДОГО ряда (столбец
+// md из подзапроса, а не агрегат внутри sumIf). q_change_tonnes — сумма дельт квартала
+// md (в него всегда входит сама md), prev_q_change_tonnes — сумма дельт предыдущего
+// квартала; его точек в коротком ряде может не быть, и тогда NULL через countIf-гейт,
+// а не 0 (ноль означал бы «дельты существовали и дали ноль»).
+func TestCbGoldDynamicsViewComputesQuartersFromEachSeriesLastDate(t *testing.T) {
+	v := cbGoldDynamicsView
+	selectText := collapseSpaces(v.Select)
+
+	if !strings.Contains(selectText, "toStartOfQuarter(d) = toStartOfQuarter(md)") {
+		t.Fatalf("%s: Q не считается суммой дельт квартала последней точки ряда, got: %s", v.Name, selectText)
+	}
+
+	if !strings.Contains(selectText, "toStartOfQuarter(addMonths(md, -3))") {
+		t.Fatalf("%s: Q-1 не считается от addMonths(md, -3), got: %s", v.Name, selectText)
+	}
+
+	if !strings.Contains(selectText, "countIf(v, toStartOfQuarter(d) = toStartOfQuarter(addMonths(md, -3))) > 0") {
+		t.Fatalf("%s: Q-1 без гейта countIf дал бы 0 вместо NULL на коротком ряде, got: %s", v.Name, selectText)
+	}
+
+	if strings.Contains(selectText, "toStartOfQuarter(max(") {
+		t.Fatalf("%s: агрегат внутри sumIf ClickHouse не принимает — дата последней точки обязана быть столбцом подзапроса", v.Name)
 	}
 }
 

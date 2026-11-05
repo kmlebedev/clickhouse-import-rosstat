@@ -12,22 +12,29 @@ import (
 	"github.com/grafana/grafana-foundation-sdk/go/units"
 )
 
-// goldThesisPanelTitles — состав панелей Task 4 в порядке следования (он же порядок id 1..9).
+// goldThesisPanelTitles — состав панелей в порядке следования по сетке (id заданы
+// вручную и не обязаны идти подряд: панели 10–14 — ECharts-панели обновления статьи).
 var goldThesisPanelTitles = []string{
 	"Цена золота и пол $4 000",
 	"Золото vs DXY",
 	"Золото vs DFII10",
+	"Ставочный контур США: DGS10 / DFII10 / T5YIE",
+	"Золото vs Brent",
+	"Индикаторы верификации сценария",
 	"Crack ULSD и запасы дистиллятов",
 	"CPI/PPI отпечатки, YoY",
 	"ETF-потоки по месяцам, мир (bar)",
 	"ЦБ: покупки YTD, т (bar)",
+	"ETF-потоки дневные, bold (73 фонда)",
+	"ЦБ: покупки по кварталам, 7 стран",
 	"Консенсус Q4-2026 и own-сетка (bar)",
 	"Точность прошлых прогнозов (table)",
 }
 
-// goldThesisRowTitles — ряды дашборда в порядке следования (id 11..15).
+// goldThesisRowTitles — ряды дашборда в порядке следования (id 21..26).
 var goldThesisRowTitles = []string{
 	"Цена и пол",
+	"Ставки, нефть и верификация",
 	"Дизельный канал",
 	"Инфляция",
 	"Спрос: ETF и ЦБ",
@@ -43,12 +50,12 @@ func builtGoldThesis(t *testing.T) dashboard.Dashboard {
 	return d
 }
 
-// TestGoldThesisHasNinePanels считает панели через panelsOf: ряды — такие же элементы
-// d.Panels, и len(d.Panels) вернул бы 9 панелей + 5 рядов.
-func TestGoldThesisHasNinePanels(t *testing.T) {
+// TestGoldThesisHasFourteenPanels считает панели через panelsOf: ряды — такие же элементы
+// d.Panels, и len(d.Panels) вернул бы 14 панелей + 6 рядов.
+func TestGoldThesisHasFourteenPanels(t *testing.T) {
 	panels := panelsOf(builtGoldThesis(t))
-	if len(panels) != 9 {
-		t.Fatalf("панелей %d, ожидалось 9", len(panels))
+	if len(panels) != 14 {
+		t.Fatalf("панелей %d, ожидалось 14", len(panels))
 	}
 	for i, p := range panels {
 		if got := panelTitle(p); got != goldThesisPanelTitles[i] {
@@ -57,26 +64,52 @@ func TestGoldThesisHasNinePanels(t *testing.T) {
 	}
 }
 
-// TestPanelIDsAreUniqueAndSet фиксирует ручную нумерацию панелей: id 1..9, каждый ровно раз
-// (SDK id не присваивает, а нулевой Grafana перезапишет своими).
+// TestPanelIDsAreUniqueAndSet фиксирует ручную нумерацию панелей: id 1..14, каждый ровно
+// раз (SDK id не присваивает, а нулевой Grafana перезапишет своими).
 func TestPanelIDsAreUniqueAndSet(t *testing.T) {
-	seen := make(map[uint32]string, 9)
+	seen := make(map[uint32]string, 14)
 	for _, p := range panelsOf(builtGoldThesis(t)) {
 		if p.Id == nil {
 			t.Fatalf("панель %q без id", panelTitle(p))
 		}
 		id := *p.Id
-		if id < 1 || id > 9 {
-			t.Fatalf("панель %q: id %d вне диапазона 1..9", panelTitle(p), id)
+		if id < 1 || id > 14 {
+			t.Fatalf("панель %q: id %d вне диапазона 1..14", panelTitle(p), id)
 		}
 		if owner, duplicate := seen[id]; duplicate {
 			t.Fatalf("id %d повторяется: %s и %s", id, owner, panelTitle(p))
 		}
 		seen[id] = panelTitle(p)
 	}
-	for id := uint32(1); id <= 9; id++ {
+	for id := uint32(1); id <= 14; id++ {
 		if _, ok := seen[id]; !ok {
 			t.Fatalf("панели с id %d нет", id)
+		}
+	}
+}
+
+// TestEChartsPanelsUseBusinessCharts — панели 10–14 собраны хелпером echartsPanel:
+// тип volkovlabs-echarts-panel, версия плагина из echarts.go (формат getOption
+// подтверждён живым экспортом этой версии) и непустое тело getOption.
+func TestEChartsPanelsUseBusinessCharts(t *testing.T) {
+	for _, id := range []uint32{10, 11, 12, 13, 14} {
+		p := panelByID(t, builtGoldThesis(t), id)
+		if p.Type != EChartsPanelType {
+			t.Fatalf("панель %q: тип %q, ожидался %q", panelTitle(p), p.Type, EChartsPanelType)
+		}
+		if p.PluginVersion == nil || *p.PluginVersion != EChartsPluginVersion {
+			t.Fatalf("панель %q: версия плагина %v, ожидалась %q", panelTitle(p), p.PluginVersion, EChartsPluginVersion)
+		}
+		raw, err := json.Marshal(p.Options)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var opts echartsPanelOptions
+		if err := json.Unmarshal(raw, &opts); err != nil {
+			t.Fatalf("панель %q: options не разбираются: %v", panelTitle(p), err)
+		}
+		if opts.EditorMode != "code" || opts.Renderer != "canvas" || strings.TrimSpace(opts.GetOption) == "" {
+			t.Fatalf("панель %q: невалидные options %+v", panelTitle(p), opts)
 		}
 	}
 }

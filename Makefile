@@ -393,6 +393,20 @@ STATS_key_rate_sources := \
 # пробелами уехало бы в окружение дочернего процесса.
 unexport STATS_key_rate_sources
 
+# Группа «источники дашборда gold-thesis»: make import STAT=gold_thesis_sources.
+# Состав — по рядам дашборда: цена (панели 1–3) → ставки США (DFII10/DGS10/T5YIE,
+# панель 3 и 10) → дизельный канал (панель 4) → CPI/PPI (панель 5) → ETF WGC (панель 6)
+# → резервы ЦБ (панели 7 и 13) → дневной ETF-контур bold (панель 12). Дашборд читает
+# витрины этих импортёров (ARCHITECTURE §6.7). Осознанно вне группы: moex_market
+# (Brent brent_front обновляет контур MOEX / key_rate_sources), manual/webbridge-ряды
+# v_gold_dashboard (dxy, crack_ulsd_proxy, fedwatch_dec_hike, etf_flows_month —
+# сессионный сбор WebBridge/ручной ввод), прогнозы v_gold_forecasts/v_forecast_accuracy
+# (запись через ingest). Спека — docs/superpowers/specs/2026-11-05-gold-thesis-sources-echarts-design.md.
+STATS_gold_thesis_sources := \
+	gold_prices,fred,eia,bls,\
+	wgc_etf_flows,wgc_cb_reserves,bold_etf_flows
+unexport STATS_gold_thesis_sources
+
 import:
 	@test -n "$(STAT)" || { echo "укажите импортёр: make import STAT=bea"; exit 1; }
 	@if [ -n "$(STATS_$(STAT))" ]; then echo "группа $(STAT): $(STATS_$(STAT))"; fi
