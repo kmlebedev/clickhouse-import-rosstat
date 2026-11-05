@@ -32,7 +32,7 @@
           "x": 0,
           "y": 0
         },
-        "id": 11,
+        "id": 21,
         "panels": []
       },
       {
@@ -265,14 +265,153 @@
       {
         "type": "row",
         "collapsed": false,
-        "title": "Дизельный канал",
+        "title": "Ставки, нефть и верификация",
         "gridPos": {
           "h": 1,
           "w": 24,
           "x": 0,
           "y": 10
         },
-        "id": 12,
+        "id": 26,
+        "panels": []
+      },
+      {
+        "type": "volkovlabs-echarts-panel",
+        "id": 10,
+        "pluginVersion": "7.2.5",
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT\n    date AS time,\n    value AS \"DGS10, %\"\nFROM v_fred_macro\nWHERE series = 'DGS10'\n  AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "B",
+            "rawSql": "SELECT\n    date AS time,\n    value AS \"DFII10, %\"\nFROM v_fred_macro\nWHERE series = 'DFII10'\n  AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "C",
+            "rawSql": "SELECT\n    date AS time,\n    value AS \"T5YIE, %\"\nFROM v_fred_macro\nWHERE series = 'T5YIE'\n  AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "Ставочный контур США: DGS10 / DFII10 / T5YIE",
+        "description": "Доходности и ожидания из v_fred_macro, % годовых: DGS10 — номинальная доходность 10-летних казначейских облигаций, DFII10 — реальная доходность TIPS 10 лет, T5YIE — 5-летняя breakeven-инфляция (ожидания рынка). Разложение номинальной доходности: DGS10 ≈ DFII10 + ожидания инфляции. Все серии — уровни в % годовых.",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 9,
+          "w": 8,
+          "x": 0,
+          "y": 11
+        },
+        "repeatDirection": "h",
+        "options": {
+          "editorMode": "code",
+          "getOption": "const byRef = {};\nfor (const s of context.panel.data.series) {\n  if (s \u0026\u0026 s.refId) { byRef[s.refId] = s; }\n}\nfunction lineData(refId) {\n  const s = byRef[refId];\n  if (!s) { return []; }\n  const t = s.fields.find((f) =\u003e f.type === 'time');\n  const v = s.fields.find((f) =\u003e f.type === 'number');\n  if (!t || !v) { return []; }\n  const out = [];\n  for (let i = 0; i \u003c s.length; i++) {\n    if (t.values[i] != null \u0026\u0026 v.values[i] != null) { out.push([t.values[i], v.values[i]]); }\n  }\n  return out;\n}\nconst defs = [\n  { ref: 'A', name: 'DGS10 — номинальная, %', color: '#1971c2' },\n  { ref: 'B', name: 'DFII10 — реальная (TIPS), %', color: '#f08c00' },\n  { ref: 'C', name: 'T5YIE — ожидания 5 лет, %', color: '#2f9e44' }\n];\nconst series = [];\nfor (const d of defs) {\n  const data = lineData(d.ref);\n  if (data.length) {\n    series.push({\n      name: d.name, type: 'line', data: data,\n      showSymbol: false, smooth: true,\n      lineStyle: { width: 1.5, color: d.color }, itemStyle: { color: d.color }\n    });\n  }\n}\nif (!series.length) { return {}; }\nreturn {\n  legend: { top: 0, textStyle: { fontSize: 11, color: '#495057' } },\n  grid: { top: 34, left: 52, right: 20, bottom: 28 },\n  tooltip: {\n    trigger: 'axis',\n    valueFormatter: function (v) { return v == null ? '—' : Number(v).toFixed(2) + ' %'; }\n  },\n  xAxis: { type: 'time' },\n  yAxis: { type: 'value', scale: true, axisLabel: { formatter: function (v) { return v.toFixed(1); } } },\n  series: series\n};",
+          "renderer": "canvas"
+        }
+      },
+      {
+        "type": "volkovlabs-echarts-panel",
+        "id": 11,
+        "pluginVersion": "7.2.5",
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT\n    date AS time,\n    value AS \"Золото, USD/oz\"\nFROM v_gold_prices\nWHERE source = 'gold'\n  AND series = 'comex_front'\n  AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "B",
+            "rawSql": "SELECT\n    date AS time,\n    value AS \"Brent, USD/барр.\"\nFROM v_moex_market\nWHERE series = 'brent_front'\n  AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "Золото vs Brent",
+        "description": "Золото (v_gold_prices, COMEX front, левая ось, USD/oz) против Brent (v_moex_market, series = brent_front, правая ось, USD/барр.). Brent — фронт-месяц фьючерса MOEX BR (settle), НЕ спот и не back-adjusted: на роллах возможен разрыв ценовых стыков. Свежесть ряда Brent — зона ответственности контура MOEX (dagu/moex.yaml), не группы gold_thesis_sources.",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 9,
+          "w": 8,
+          "x": 8,
+          "y": 11
+        },
+        "repeatDirection": "h",
+        "options": {
+          "editorMode": "code",
+          "getOption": "const byRef = {};\nfor (const s of context.panel.data.series) {\n  if (s \u0026\u0026 s.refId) { byRef[s.refId] = s; }\n}\nfunction lineData(refId) {\n  const s = byRef[refId];\n  if (!s) { return []; }\n  const t = s.fields.find((f) =\u003e f.type === 'time');\n  const v = s.fields.find((f) =\u003e f.type === 'number');\n  if (!t || !v) { return []; }\n  const out = [];\n  for (let i = 0; i \u003c s.length; i++) {\n    if (t.values[i] != null \u0026\u0026 v.values[i] != null) { out.push([t.values[i], v.values[i]]); }\n  }\n  return out;\n}\nconst gold = lineData('A');\nconst brent = lineData('B');\nif (!gold.length \u0026\u0026 !brent.length) { return {}; }\nconst series = [];\nif (gold.length) {\n  series.push({\n    name: 'Золото (COMEX front), USD/oz', type: 'line', data: gold,\n    showSymbol: false, smooth: true, lineStyle: { width: 1.5, color: '#d4a017' }, itemStyle: { color: '#d4a017' }\n  });\n}\nif (brent.length) {\n  series.push({\n    name: 'Brent (MOEX front), USD/барр.', type: 'line', data: brent, yAxisIndex: 1,\n    showSymbol: false, smooth: true, lineStyle: { width: 1.5, color: '#1971c2' }, itemStyle: { color: '#1971c2' }\n  });\n}\nreturn {\n  legend: { top: 0, textStyle: { fontSize: 11, color: '#495057' } },\n  grid: { top: 34, left: 60, right: 60, bottom: 28 },\n  tooltip: { trigger: 'axis', valueFormatter: function (v) { return v == null ? '—' : Number(v).toFixed(1); } },\n  xAxis: { type: 'time' },\n  yAxis: [\n    { type: 'value', scale: true, name: 'USD/oz', nameTextStyle: { fontSize: 10, color: '#868e96' } },\n    { type: 'value', scale: true, name: 'USD/барр.', nameTextStyle: { fontSize: 10, color: '#868e96' }, splitLine: { show: false } }\n  ],\n  series: series\n};",
+          "renderer": "canvas"
+        }
+      },
+      {
+        "type": "volkovlabs-echarts-panel",
+        "id": 14,
+        "pluginVersion": "7.2.5",
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT\n    indicator,\n    value,\n    threshold,\n    flag,\n    as_of,\n    stale\nFROM v_gold_dashboard\nORDER BY indicator\n",
+            "editorType": "sql",
+            "format": 1,
+            "queryType": "table",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "Индикаторы верификации сценария",
+        "description": "Дашборд верификации сценария статьи §6 (v_gold_dashboard): DXY (\u003e102 — порог модели), CME FedWatch на повышение в декабре (\u003e65% — сценарное переключение, \u003e80% — алерт), crack-прокси ULSD (\u003e50 USD/барр. — медвежий сигнал). Значения — из приоритетного источника (eia \u003e webbridge \u003e manual): «нет данных» — ни одного источника; «(устарело)» — последнее наблюдение старше 14 дней. Ряды dxy / fedwatch_dec_hike / crack_ulsd_proxy обновляет сессионный сбор WebBridge или ручной ввод, не группа gold_thesis_sources. Запасы дистиллятов и месячный ETF-поток — строкой под шкалами.",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 9,
+          "w": 8,
+          "x": 16,
+          "y": 11
+        },
+        "repeatDirection": "h",
+        "options": {
+          "editorMode": "code",
+          "getOption": "const s = context.panel.data.series[0];\nif (!s) { return {}; }\nfunction col(name) {\n  const f = s.fields.find((x) =\u003e x.name === name);\n  return f ? f.values : [];\n}\nconst ind = col('indicator');\nconst val = col('value');\nconst stl = col('stale');\nconst asof = col('as_of');\nfunction rowOf(code) {\n  const i = ind.indexOf(code);\n  if (i \u003c 0) { return null; }\n  return { value: val[i], stale: stl[i] === 1, asOf: asof[i] };\n}\nfunction fmtDate(v) {\n  if (v == null) { return ''; }\n  if (typeof v === 'number') { return new Date(v).toISOString().slice(0, 10); }\n  return String(v).slice(0, 10);\n}\nfunction gauge(code, title, min, max, zones, unit, center) {\n  const r = rowOf(code);\n  const has = r \u0026\u0026 r.value != null;\n  return {\n    type: 'gauge', center: center, radius: '62%',\n    min: min, max: max, startAngle: 210, endAngle: -30,\n    axisLine: { lineStyle: { width: 10, color: zones } },\n    pointer: has ? { length: '58%', width: 3 } : { show: false },\n    axisTick: { distance: -14, length: 4, lineStyle: { color: '#ffffff', width: 1 } },\n    splitLine: { distance: -14, length: 14, lineStyle: { color: '#ffffff', width: 2 } },\n    axisLabel: { distance: 16, fontSize: 9, color: '#868e96' },\n    title: { fontSize: 11, color: '#495057', offsetCenter: [0, '30%'] },\n    detail: {\n      fontSize: 15, color: '#212529', offsetCenter: [0, '56%'],\n      formatter: function (v) {\n        if (!has) { return 'нет данных'; }\n        return Number(v).toFixed(unit === '%' ? 0 : 1) + (unit ? ' ' + unit : '');\n      }\n    },\n    data: [{ value: has ? Number(r.value) : min, name: title + (r \u0026\u0026 r.stale ? ' (устарело)' : '') + (has \u0026\u0026 fmtDate(r.asOf) ? ' — ' + fmtDate(r.asOf) : '') }]\n  };\n}\nconst rest = [];\nfor (const code of ['distillate_stocks', 'etf_flows_month']) {\n  const r = rowOf(code);\n  if (r \u0026\u0026 r.value != null) {\n    rest.push(code === 'distillate_stocks'\n      ? 'Запасы дистиллятов: ' + Number(r.value).toLocaleString('ru-RU') + ' тыс. барр.' + (r.stale ? ' (устарело)' : '') + (fmtDate(r.asOf) ? ' — ' + fmtDate(r.asOf) : '')\n      : 'ETF-поток месяца: ' + Number(r.value).toLocaleString('ru-RU') + ' млрд $' + (r.stale ? ' (устарело)' : '') + (fmtDate(r.asOf) ? ' — ' + fmtDate(r.asOf) : ''));\n  }\n}\nreturn {\n  series: [\n    gauge('dxy', 'DXY (порог 102)', 90, 115, [[0.48, '#2f9e44'], [1, '#e03131']], '', ['18%', '58%']),\n    gauge('fedwatch_dec_hike', 'FedWatch дек. (\u003e65/\u003e80)', 0, 100, [[0.65, '#2f9e44'], [0.8, '#f08c00'], [1, '#e03131']], '%', ['50%', '58%']),\n    gauge('crack_ulsd_proxy', 'Crack ULSD (\u003e50)', 0, 120, [[0.25, '#2f9e44'], [0.4167, '#f08c00'], [1, '#e03131']], '', ['82%', '58%'])\n  ],\n  graphic: rest.length ? [{ type: 'text', left: 10, bottom: 4, style: { text: rest.join('   |   '), fontSize: 10, color: '#868e96' } }] : []\n};",
+          "renderer": "canvas"
+        }
+      },
+      {
+        "type": "row",
+        "collapsed": false,
+        "title": "Дизельный канал",
+        "gridPos": {
+          "h": 1,
+          "w": 24,
+          "x": 0,
+          "y": 20
+        },
+        "id": 22,
         "panels": []
       },
       {
@@ -306,7 +445,7 @@
           "h": 9,
           "w": 12,
           "x": 0,
-          "y": 11
+          "y": 21
         },
         "repeatDirection": "h",
         "options": {
@@ -383,9 +522,9 @@
           "h": 1,
           "w": 24,
           "x": 0,
-          "y": 20
+          "y": 30
         },
-        "id": 13,
+        "id": 23,
         "panels": []
       },
       {
@@ -419,7 +558,7 @@
           "h": 9,
           "w": 12,
           "x": 0,
-          "y": 21
+          "y": 31
         },
         "repeatDirection": "h",
         "options": {
@@ -450,9 +589,9 @@
           "h": 1,
           "w": 24,
           "x": 0,
-          "y": 30
+          "y": 40
         },
-        "id": 14,
+        "id": 24,
         "panels": []
       },
       {
@@ -478,7 +617,7 @@
           "h": 9,
           "w": 12,
           "x": 0,
-          "y": 31
+          "y": 41
         },
         "repeatDirection": "h",
         "options": {
@@ -537,7 +676,7 @@
           "h": 9,
           "w": 12,
           "x": 12,
-          "y": 31
+          "y": 41
         },
         "repeatDirection": "h",
         "options": {
@@ -591,6 +730,82 @@
         }
       },
       {
+        "type": "volkovlabs-echarts-panel",
+        "id": 12,
+        "pluginVersion": "7.2.5",
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT\n    date AS time,\n    flow_tonnes AS \"Поток, т\"\nFROM v_gold_etf_flows_daily\nWHERE $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "B",
+            "rawSql": "SELECT\n    date AS time,\n    holdings_tonnes AS \"Запасы, т\"\nFROM v_gold_etf_flows_daily\nWHERE $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "ETF-потоки дневные, bold (73 фонда)",
+        "description": "Дневной агрегат 73 физически обеспеченных золотых ETF контура bold.report (ByteTree), ≈83% мирового рынка WGC: бары — дневной поток (Δ запасов, тонны), линия правой оси — совокупные запасы (тонны). Покрывает цифры статьи 2026-11-05: +110,3 т 02.11 (вероятная техническая ошибка источника — максимум двух лет −43,6 т), −8,8 т 03.11, запасы 3 528→3 638 т. С месячной витриной WGC (панель 6) не складывать и не сравнивать напрямую: там все фонды мира и месячная частота. Ряд пишет импортёр bold_etf_flows.",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 9,
+          "w": 12,
+          "x": 0,
+          "y": 50
+        },
+        "repeatDirection": "h",
+        "options": {
+          "editorMode": "code",
+          "getOption": "const byRef = {};\nfor (const s of context.panel.data.series) {\n  if (s \u0026\u0026 s.refId) { byRef[s.refId] = s; }\n}\nfunction lineData(refId) {\n  const s = byRef[refId];\n  if (!s) { return []; }\n  const t = s.fields.find((f) =\u003e f.type === 'time');\n  const v = s.fields.find((f) =\u003e f.type === 'number');\n  if (!t || !v) { return []; }\n  const out = [];\n  for (let i = 0; i \u003c s.length; i++) {\n    if (t.values[i] != null \u0026\u0026 v.values[i] != null) { out.push([t.values[i], v.values[i]]); }\n  }\n  return out;\n}\nconst flow = lineData('A');\nconst hold = lineData('B');\nif (!flow.length \u0026\u0026 !hold.length) { return {}; }\nconst series = [];\nif (flow.length) {\n  series.push({\n    name: 'Поток, т (лев. ось)', type: 'bar', data: flow, barMaxWidth: 6,\n    itemStyle: { color: '#4dabf7' }\n  });\n}\nif (hold.length) {\n  series.push({\n    name: 'Запасы, т (прав. ось)', type: 'line', data: hold, yAxisIndex: 1,\n    showSymbol: false, lineStyle: { width: 1.5, color: '#e8590c' }, itemStyle: { color: '#e8590c' }\n  });\n}\nreturn {\n  legend: { top: 0, textStyle: { fontSize: 11, color: '#495057' } },\n  grid: { top: 34, left: 56, right: 56, bottom: 28 },\n  tooltip: {\n    trigger: 'axis',\n    valueFormatter: function (v) { return v == null ? '—' : Number(v).toFixed(1) + ' т'; }\n  },\n  xAxis: { type: 'time' },\n  yAxis: [\n    { type: 'value', scale: true, name: 'Поток, т', nameTextStyle: { fontSize: 10, color: '#868e96' } },\n    { type: 'value', scale: true, name: 'Запасы, т', nameTextStyle: { fontSize: 10, color: '#868e96' }, splitLine: { show: false } }\n  ],\n  series: series\n};",
+          "renderer": "canvas"
+        }
+      },
+      {
+        "type": "volkovlabs-echarts-panel",
+        "id": 13,
+        "pluginVersion": "7.2.5",
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT\n    country AS \"Страна\",\n    q_change_tonnes AS \"III кв, т\",\n    prev_q_change_tonnes AS \"II кв, т\",\n    ytd_change_tonnes AS \"Янв–сен, т\",\n    mom_change_tonnes AS \"Сентябрь, т\",\n    holdings_tonnes AS \"Запасы, т\"\nFROM v_cb_gold_dynamics\nORDER BY q_change_tonnes DESC\n",
+            "editorType": "sql",
+            "format": 1,
+            "queryType": "table",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "ЦБ: покупки по кварталам, 7 стран",
+        "description": "Покупки семи центральных банков (v_cb_gold_dynamics, WGC Gold Reserves by Country): бары — III квартал, II квартал, январь–сентябрь (YTD) и последний месяц (MoM, тонны), линия правой оси — запасы на 30.09 (тонны). Сортировка по убыванию III квартала повторяет таблицу «Семь стран» статьи 2026-11-05. Кварталы — суммы месячных дельт от последней точки страны; у RUS пропуски 2025-12…2026-03, поэтому кварталы/YTD по фактическим точкам. NULL (нет данных) на графике не рисуется, не ноль.",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 9,
+          "w": 12,
+          "x": 12,
+          "y": 50
+        },
+        "repeatDirection": "h",
+        "options": {
+          "editorMode": "code",
+          "getOption": "const s = context.panel.data.series[0];\nif (!s) { return {}; }\nfunction col(name) {\n  const f = s.fields.find((x) =\u003e x.name === name);\n  return f ? f.values : [];\n}\nconst countries = col('Страна');\nif (!countries.length) { return {}; }\nfunction nums(vals) {\n  const out = [];\n  for (let i = 0; i \u003c countries.length; i++) {\n    out.push(vals[i] == null ? null : Number(vals[i]));\n  }\n  return out;\n}\nreturn {\n  legend: { top: 0, textStyle: { fontSize: 11, color: '#495057' } },\n  grid: { top: 34, left: 56, right: 56, bottom: 44 },\n  tooltip: {\n    trigger: 'axis',\n    axisPointer: { type: 'shadow' },\n    valueFormatter: function (v) { return v == null ? 'нет данных' : Number(v).toFixed(1) + ' т'; }\n  },\n  xAxis: { type: 'category', data: countries, axisLabel: { interval: 0, rotate: 20, fontSize: 11 } },\n  yAxis: [\n    { type: 'value', scale: true, name: 'Δ резервов, т', nameTextStyle: { fontSize: 10, color: '#868e96' } },\n    { type: 'value', scale: true, name: 'Запасы, т', nameTextStyle: { fontSize: 10, color: '#868e96' }, splitLine: { show: false } }\n  ],\n  series: [\n    { name: 'III кв, т', type: 'bar', data: nums(col('III кв, т')), itemStyle: { color: '#2f9e44' } },\n    { name: 'II кв, т', type: 'bar', data: nums(col('II кв, т')), itemStyle: { color: '#74c0fc' } },\n    { name: 'Янв–сен, т', type: 'bar', data: nums(col('Янв–сен, т')), itemStyle: { color: '#f08c00' } },\n    { name: 'Сентябрь, т', type: 'bar', data: nums(col('Сентябрь, т')), itemStyle: { color: '#9775fa' } },\n    {\n      name: 'Запасы, т (прав. ось)', type: 'line', data: nums(col('Запасы, т')), yAxisIndex: 1,\n      lineStyle: { width: 1.5, color: '#495057' }, itemStyle: { color: '#495057' }\n    }\n  ]\n};",
+          "renderer": "canvas"
+        }
+      },
+      {
         "type": "row",
         "collapsed": false,
         "title": "Прогноз и точность",
@@ -598,9 +813,9 @@
           "h": 1,
           "w": 24,
           "x": 0,
-          "y": 40
+          "y": 59
         },
-        "id": 15,
+        "id": 25,
         "panels": []
       },
       {
@@ -626,7 +841,7 @@
           "h": 9,
           "w": 12,
           "x": 0,
-          "y": 41
+          "y": 60
         },
         "repeatDirection": "h",
         "options": {
@@ -687,7 +902,7 @@
           "h": 9,
           "w": 12,
           "x": 12,
-          "y": 41
+          "y": 60
         },
         "repeatDirection": "h",
         "options": {

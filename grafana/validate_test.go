@@ -30,7 +30,7 @@ func TestValidateRejectsForeignDatasource(t *testing.T) {
 	}
 }
 
-// TestGeneratedIDsAreUniqueAndSet фиксирует раскладку id: панели 1..9 (Task 4), ряды 11..15.
+// TestGeneratedIDsAreUniqueAndSet фиксирует раскладку id: панели 1..14, ряды 21..26.
 // Нулевой id у ряда (как в первой версии артефакта) Grafana трактует как «id не задан»,
 // поэтому ряды нумеруются вне диапазона панелей.
 func TestGeneratedIDsAreUniqueAndSet(t *testing.T) {
@@ -57,8 +57,8 @@ func TestGeneratedIDsAreUniqueAndSet(t *testing.T) {
 			if entry.RowPanel.Id == 0 {
 				t.Fatalf("ряд %q без id", optionalString(entry.RowPanel.Title))
 			}
-			if entry.RowPanel.Id < 10 {
-				t.Fatalf("ряд %q: id %d попадает в диапазон панелей 1..9", optionalString(entry.RowPanel.Title), entry.RowPanel.Id)
+			if entry.RowPanel.Id < 21 {
+				t.Fatalf("ряд %q: id %d попадает в диапазон панелей 1..14", optionalString(entry.RowPanel.Title), entry.RowPanel.Id)
 			}
 			label := "ряд " + optionalString(entry.RowPanel.Title)
 			if owner, duplicate := seen[entry.RowPanel.Id]; duplicate {
@@ -69,8 +69,8 @@ func TestGeneratedIDsAreUniqueAndSet(t *testing.T) {
 			t.Fatal("элемент дашборда без панели и ряда")
 		}
 	}
-	if rows != 5 {
-		t.Fatalf("рядов %d, ожидалось 5: %v", rows, goldThesisRowTitles)
+	if rows != len(goldThesisRowTitles) {
+		t.Fatalf("рядов %d, ожидалось %d: %v", rows, len(goldThesisRowTitles), goldThesisRowTitles)
 	}
 }
 
