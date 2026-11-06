@@ -539,5 +539,11 @@
     "page": "research-2026-10-31-gold-selloff-channel-models.md",
     "title": "Канал распродаж в прогнозе золота: модели",
     "section": "Исследования"
+  },
+  {
+    "source": "docs/research/2026-11-06-rosstat-source-availability.md",
+    "page": "research-2026-11-06-rosstat-source-availability.md",
+    "title": "Доступность Росстата: проверка рядов на dev",
+    "section": "Исследования"
   }
 ]
