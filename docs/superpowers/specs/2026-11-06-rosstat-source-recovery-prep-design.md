@@ -1,0 +1,41 @@
+# Проверка рядов Росстата после восстановления сайта и подготовка к обновлению статьи
+
+**Дата:** 2026-11-06. **Роль:** mixed (research + go + python) — источники, проверка, подготовка репозитория. **Пункт:** вне роадмапа, прямое поручение владельца; владеющий документ — [`ROADMAP_ROSSTAT.md`](../../ROADMAP_ROSSTAT.md) §3.
+
+## 1. Проблема
+
+Владелец сообщил, что `rosstat.gov.ru` заработал после длительных технических работ, и попросил проверить на dev все ряды Росстата и подготовить репозиторий и окружение к обновлению статьи по недельной ИПЦ и траектории ключевой ставки.
+
+Разведка 2026-11-06 показала, что источник восстановлен **не полностью**:
+
+| Проверка | Результат |
+|---|---|
+| Страницы `/statistics/price`, `/statistics/accounts`, `/labour_force`, `/labor_market_employment_salaries` | 200 |
+| `Nedel_ipc.xlsx`, `ipc_mes_02-2026.xlsx`, `VVP_kvartal_s1995-2025.xlsx`, `tab1-zpl_12-2025.xlsx`, `trud-1_15-s.xlsx`, `Proizvoditeli_Ind_VED_01-2026.xlsx`, `Proizvoditeli_Ind_tov_01-2026.xlsx`, `vesa_2006-2025.xlsx` | 404 (HTML-заглушка) |
+| Документы на странице цен | датированы 13.03.2026 |
+| `bi.rosstat.gov.ru`, `showdata.rosstat.gov.ru` | TCP:443 открыт, TLS handshake виснет |
+| `www.rosstat.gov.ru/opendata/…/meta.csv` | 200, его `data-*.csv` — 404 |
+| `/bgd/free/…` (архив бюллетеней) | 404 |
+| `cbr.ru`, `moex.com` | 200 |
+
+Второй дефект — репозиторный: генератор графика статьи лежит в `build/weekly-sa-publication-2026-10-22/make_chart.py`, а `/build/` в `.gitignore`. Скрипт содержит 70 недельных и 69 месячных значений **литералами**, то есть числа графика не воспроизводятся из витрин, а сам скрипт в репозитории отсутствует. Обновление статьи «одной командой» невозможно.
+
+## 2. Решение
+
+1. **Группа проверки.** В Makefile — `STATS_rosstat_sources` из 11 `Name()` пакета `rosstat` в порядке `dagu/rosstat.yaml`; `make import STAT=rosstat_sources` прогоняет все ряды одним процессом. Это диагностический инструмент, а не изменение расписания.
+2. **Фиксация доступности.** `docs/research/2026-11-06-rosstat-source-availability.md`: команды, коды ответов, эффект на каждый импортёр, состояние dev-данных, чек-лист готовности статьи, рецепт перепроверки. `ROADMAP_ROSSTAT.md` §3 получает дату и новое условие разблокировки: **первый успешно скачанный файл**, а не HTTP 200 страницы.
+3. **Производные без сети.** `weekly_cpi_sa` читает только `rosstat_ipc_weeks_bulletins` + `rosstat_bi_cpi_weekly` и вызывает X-13 через R, поэтому пересчитывается офлайн и подтягивает `as_of` до последней недели в БД (`2026-10-26`). Рыночный контур (`keyrate_futures`, `ofz_curve`, `cbr_key_rate`, `cbr_ruania`) обновляется, потому что ЦБ и MOEX доступны.
+4. **Генератор графика в репозитории.** `scripts/publications/weekly_sa_chart.py` читает `v_weekly_cpi_sa` (`weekly_cpi:sa_4w`, строка `partial=1` — nowcast) и `v_cbr_macro` («Все товары и услуги») через `scripts/lib/clickhouse.py`; CLI `--as-of`, `--out`, `--publication`. SVG-код переносится без изменения оформления, чтобы parity с закоммиченным `chart-data.json` проверялся байт-в-байт.
+5. **Текст статьи не пишется.** Неделя `2026-11-02` и октябрьский ИПЦ недостижимы; публикация блокирована до их появления.
+
+## 3. Что не меняется
+
+Импортёры `rosstat/*`, DDL, витрины, гранты, `dagu/rosstat.yaml`, `dagu/ppi.yaml`, `ARCHITECTURE.md` (схема и архитектура не меняются), статья `2026-10-22-weekly-sa-cpi.md` и её чек-лист. Резервный источник недельного агрегата не заводится — решение владельца: ждать восстановления.
+
+## 4. Приёмка
+
+- `make import STAT=rosstat_sources` — 10 отказов с названной причиной, `rosstat_ipc_weeks_bulletins` — no-op; `count() FINAL` до и после не меняется.
+- `make import STAT=weekly_cpi_sa` — 210 строк, `as_of=2026-10-26`, повтор — no-op.
+- `make import STAT=keyrate_futures,ofz_curve,cbr_key_rate,cbr_ruania` — рыночная строка `v_key_rate_dashboard` свежая.
+- Генератор воспроизводит закоммиченный `chart-data.json` байт-в-байт; тест без сети и БД зелёный.
+- `make all`, `make docs-check`, `dagu validate dagu/rosstat.yaml` — зелёные.
