@@ -124,6 +124,10 @@ func main() {
 		if rows, err = stat.Import(ctx, conn); err != nil {
 			log.Errorf("%s: %+v", stat.Name(), err)
 			failed = true
+			// Строку «Imported N rows» упавший импортёр не печатает: она —
+			// маркер успеха и no-op, и «Imported 0 rows» рядом с отказом
+			// читается как «источник не изменился», хотя данных не было.
+			continue
 		}
 		log.Infof("Imported %d rows of %s", rows, stat.Name())
 	}
