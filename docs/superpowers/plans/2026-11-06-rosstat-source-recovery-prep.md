@@ -31,7 +31,7 @@
 
 1. `scripts/publications/weekly_sa_chart.py`: чтение витрин через `scripts/lib/clickhouse.py`, CLI `--as-of/--out/--publication`, запись `chart-data.json` и SVG.
 2. `scripts/publications/weekly_sa_chart_test.py`: фикстуры, форматирование чисел, nowcast-строка, пустой ряд.
-3. Parity: прогон на `--as-of 2026-10-31` даёт файл, побайтно равный `docs/publications/2026-10-22-weekly-sa-cpi/chart-data.json`.
+3. Parity: прогон на `--as-of 2026-10-31` даёт файлы, побайтно равные артефактам предыдущего прогона — закоммиченному `weekly-sa-mm-vs-cbr.svg` и локальному `chart-data.json` (в git он не хранится).
 
 **Проверка:** тест зелёный, parity подтверждён `cmp`.
 

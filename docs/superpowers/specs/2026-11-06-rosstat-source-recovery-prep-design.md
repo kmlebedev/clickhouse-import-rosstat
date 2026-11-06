@@ -25,7 +25,7 @@
 1. **Группа проверки.** В Makefile — `STATS_rosstat_sources` из 11 `Name()` пакета `rosstat` в порядке `dagu/rosstat.yaml`; `make import STAT=rosstat_sources` прогоняет все ряды одним процессом. Это диагностический инструмент, а не изменение расписания.
 2. **Фиксация доступности.** `docs/research/2026-11-06-rosstat-source-availability.md`: команды, коды ответов, эффект на каждый импортёр, состояние dev-данных, чек-лист готовности статьи, рецепт перепроверки. `ROADMAP_ROSSTAT.md` §3 получает дату и новое условие разблокировки: **первый успешно скачанный файл**, а не HTTP 200 страницы.
 3. **Производные без сети.** `weekly_cpi_sa` читает только `rosstat_ipc_weeks_bulletins` + `rosstat_bi_cpi_weekly` и вызывает X-13 через R, поэтому пересчитывается офлайн и подтягивает `as_of` до последней недели в БД (`2026-10-26`). Рыночный контур (`keyrate_futures`, `ofz_curve`, `cbr_key_rate`, `cbr_ruania`) обновляется, потому что ЦБ и MOEX доступны.
-4. **Генератор графика в репозитории.** `scripts/publications/weekly_sa_chart.py` читает `v_weekly_cpi_sa` (`weekly_cpi:sa_4w`, строка `partial=1` — nowcast) и `v_cbr_macro` («Все товары и услуги») через `scripts/lib/clickhouse.py`; CLI `--as-of`, `--out`, `--publication`. SVG-код переносится без изменения оформления, чтобы parity с закоммиченным `chart-data.json` проверялся байт-в-байт.
+4. **Генератор графика в репозитории.** `scripts/publications/weekly_sa_chart.py` читает `v_weekly_cpi_sa` (`weekly_cpi:sa_4w`, строка `partial=1` — nowcast) и `v_cbr_macro` («Все товары и услуги») через `scripts/lib/clickhouse.py`; CLI `--as-of`, `--out`, `--publication`. SVG-код переносится без изменения оформления, чтобы parity проверялся байт-в-байт: SVG — с закоммиченным артефактом публикации, `chart-data.json` — с локальным файлом предыдущего прогона (в git он не хранится).
 5. **Текст статьи не пишется.** Неделя `2026-11-02` и октябрьский ИПЦ недостижимы; публикация блокирована до их появления.
 
 ## 3. Что не меняется
@@ -37,5 +37,5 @@
 - `make import STAT=rosstat_sources` — 10 отказов с названной причиной, `rosstat_ipc_weeks_bulletins` — no-op; `count() FINAL` до и после не меняется.
 - `make import STAT=weekly_cpi_sa` — 210 строк, `as_of=2026-10-26`, повтор — no-op.
 - `make import STAT=keyrate_futures,ofz_curve,cbr_key_rate,cbr_ruania` — рыночная строка `v_key_rate_dashboard` свежая.
-- Генератор воспроизводит закоммиченный `chart-data.json` байт-в-байт; тест без сети и БД зелёный.
+- Генератор воспроизводит артефакты предыдущего прогона байт-в-байт (SVG — закоммиченный, `chart-data.json` — локальный); тест без сети и БД зелёный.
 - `make all`, `make docs-check`, `dagu validate dagu/rosstat.yaml` — зелёные.
