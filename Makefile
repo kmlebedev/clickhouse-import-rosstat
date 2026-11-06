@@ -407,6 +407,19 @@ STATS_gold_thesis_sources := \
 	wgc_etf_flows,wgc_cb_reserves,bold_etf_flows
 unexport STATS_gold_thesis_sources
 
+# Группа «все ряды Росстата»: make import STAT=rosstat_sources. Порядок — как в
+# dagu/rosstat.yaml, чтобы проверка совпадала с расписанием: недельный ИПЦ первым,
+# хвост (ИЦП по ВЭД/товарам, веса) последним. Это диагностическая группа, а не
+# контракт публикации: в key_rate_sources входят семь рядов Росстата, здесь — все
+# одиннадцать, включая бюллетени недельного ИПЦ и ОКВЭД2. Ошибка источника не
+# останавливает остальные импортёры (main.go идёт по списку), поэтому прогон на
+# частично недоступном сайте даёт полную картину, а не первый отказ.
+STATS_rosstat_sources := \
+	rosstat_ipc_mes,rosstat_ipc_weeks,rosstat_salaries_mes,rosstat_vvp_kvartal,\
+	rosstat_labour_force_mes,rosstat_ipc_weeks_bulletins,rosstat_okved2,\
+	rosstat_ppi_ved,rosstat_bi_cpi_weekly,rosstat_ppi_product,rosstat_ppi_weights
+unexport STATS_rosstat_sources
+
 import:
 	@test -n "$(STAT)" || { echo "укажите импортёр: make import STAT=bea"; exit 1; }
 	@if [ -n "$(STATS_$(STAT))" ]; then echo "группа $(STAT): $(STATS_$(STAT))"; fi
