@@ -1337,24 +1337,31 @@ var ipcWeeksBulletinsOldAliasKeys = func() map[string]string {
 	return keys
 }()
 
-// ipcWeeksBulletinsSeriesName — имя ряда для строки источника: каноническое из карты, исходное
-// для extra-ряда или исходное с предупреждением. Предупреждение выводится один раз на имя:
-// у выпуска десятки строк, а незнакомых имён обычно одно-два.
-func ipcWeeksBulletinsSeriesName(source string, warned map[string]bool) string {
-	// Старый формат 2009–2015: единица измерения в имени и другие написания. Три попытки —
-	// точное имя, имя без единицы и вариант с «е» вместо «ё» — и для каждой основная карта и
-	// карта старых алиасов. Точное совпадение всегда первое, поэтому поведение 2016–2021 не
-	// меняется.
+// ipcWeeksBulletinsCanonical — каноническое имя по картам без предупреждений: три попытки —
+// точное имя, имя без единицы и вариант с «е» вместо «ё» — и для каждой основная карта и
+// карта старых алиасов. Вынесено из ipcWeeksBulletinsSeriesName: тот же поиск нужен
+// PDF-фолбэку rosstat_ipc_weeks, у которого своя карта перекрытий 2026 года.
+func ipcWeeksBulletinsCanonical(source string) (string, bool) {
 	for _, candidate := range []string{source, ipcWeeksBulletinsWithoutUnit(source)} {
 		for _, variant := range []string{candidate, strings.ReplaceAll(candidate, "ё", "е")} {
 			key := ipcWeeksBulletinsKey(variant)
 			if canonical, ok := ipcWeeksBulletinsSeriesKeys[key]; ok {
-				return canonical
+				return canonical, true
 			}
 			if canonical, ok := ipcWeeksBulletinsOldAliasKeys[key]; ok {
-				return canonical
+				return canonical, true
 			}
 		}
+	}
+	return "", false
+}
+
+// ipcWeeksBulletinsSeriesName — имя ряда для строки источника: каноническое из карты, исходное
+// для extra-ряда или исходное с предупреждением. Предупреждение выводится один раз на имя:
+// у выпуска десятки строк, а незнакомых имён обычно одно-два.
+func ipcWeeksBulletinsSeriesName(source string, warned map[string]bool) string {
+	if canonical, ok := ipcWeeksBulletinsCanonical(source); ok {
+		return canonical
 	}
 	key := ipcWeeksBulletinsKey(source)
 	if ipcWeeksBulletinsExtraKeys[key] {

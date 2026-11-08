@@ -2,6 +2,7 @@ package rosstat
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"strconv"
@@ -51,6 +52,19 @@ const (
 	// ячейка не становится, но строку и лист не обрывает: пропуск данных у одного товара —
 	// не конец таблицы, ниже стоят строки других товаров.
 	ipcWeeksNoData = "…"
+
+	// ipcWeeksKnownDatesQuery — гейт PDF-фолбэка. Дата считается известной, только когда в
+	// таблице уже есть все три марки бензина: CPI-PDF их не содержит, они приходят отдельным
+	// PDF «О потребительских ценах на нефтепродукты». Поэтому неделя, записанная старым
+	// прогоном без этих трёх рядов, остаётся «неизвестной» и добирается повторно (CPI-PDF
+	// перезаписывается идемпотентно, нефтепродукты добавляют три ряда).
+	ipcWeeksKnownDatesQuery = `SELECT date FROM rosstat_ipc_weeks FINAL
+WHERE name IN (
+    'Бензин автомобильный марки АИ-92, л',
+    'Бензин автомобильный марки АИ-95, л',
+    'Бензин автомобильный марки АИ-98 и выше, л'
+)
+GROUP BY date HAVING uniqExact(name) = 3`
 )
 
 type IpcWeeksStat struct {
@@ -230,19 +244,77 @@ func ipcWeeksImport(xlsx *excelize.File, batch driver.Batch) error {
 	return nil
 }
 
-// Import берёт адрес актуального Nedel_ipc.xlsx со страницы цен Росстата: имени файла в коде
-// нет (ссылка берётся со страницы), а сетевое обращение в init() запрещено
-// (ARCHITECTURE.md §8.6). Дальше — полный цикл шаблона: DDL → точки → производные
-// (AfterImport: каталог рядов и витрина v_rosstat_macro) → строка версии. Префлайта нет:
-// файл перезаписывается по тому же URL в недельном темпе, равном темпу шага расписания,
-// поэтому no-op недостижим (§9.3), а HEAD был бы чистыми накладными расходами.
+// Import — полный цикл шага: DDL → XLSX (как раньше) → PDF-фолбэк новостной ленты.
+//
+// При 404 XLSX шаг не падает, если лента доступна: иначе цепочка dagu/rosstat.yaml
+// встала бы на первом же шаге, а неделя 2026-11-02 уже опубликована PDF-выпуском.
+// Отдельный шаг-фолбэк после падающего XLSX в type: chain не запустился бы, поэтому
+// общий util.Fallback вызывается здесь же. В режиме восстановления из архива остаётся
+// прежний путь (только XLSX): PDF-выпуски под этим импортёром не версионируются.
 func (s *IpcWeeksStat) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
-	xlsDataUrl, err := s.getXlsDataUrl()
-	if err != nil {
-		return count, err
+	if util.ArchiveRestoreMode() {
+		xlsDataUrl, err := s.getXlsDataUrl()
+		if err != nil {
+			return count, err
+		}
+		s.DataUrl = xlsDataUrl
+		return s.ClickHouseImport.Import(ctx, conn)
 	}
-	s.DataUrl = xlsDataUrl
-	return s.ClickHouseImport.Import(ctx, conn)
+
+	for _, ddl := range s.CreateTable {
+		if err = conn.Exec(ctx, fmt.Sprintf(ddl, s.TableName)); err != nil {
+			return 0, fmt.Errorf("%s: DDL: %w", rosstatIPCWeeksTable, err)
+		}
+	}
+
+	var primaryErr error
+	xlsDataUrl, linkErr := s.getXlsDataUrl()
+	if linkErr != nil {
+		primaryErr = fmt.Errorf("%s: XLSX: %w", rosstatIPCWeeksTable, linkErr)
+	} else {
+		s.DataUrl = xlsDataUrl
+		local := s.ClickHouseImport
+		local.DataUrl = xlsDataUrl
+		local.CreateTable = nil // DDL уже выполнен выше
+		n, importErr := local.Import(ctx, conn)
+		if importErr != nil {
+			primaryErr = fmt.Errorf("%s: XLSX: %w", rosstatIPCWeeksTable, importErr)
+		} else {
+			count += n
+		}
+	}
+	if primaryErr != nil {
+		log.Warnf("%s: XLSX-выгрузка не импортирована (%v) — пробуем PDF-фолбэк новостной ленты",
+			rosstatIPCWeeksTable, primaryErr)
+	}
+
+	fallback := &util.Fallback{
+		Template: util.ClickHouseImport{
+			TableName:   rosstatIPCWeeksTable,
+			AfterImport: s.AfterImport,
+		},
+		Documents:       ipcWeeksNewsDocuments,
+		Parse:           ipcWeeksNewsRows,
+		KnownDatesQuery: ipcWeeksKnownDatesQuery,
+		Append:          ipcWeeksNewsAppendRow,
+	}
+	res, fallbackErr := fallback.Import(ctx, conn)
+	count += res.Imported
+
+	switch {
+	case primaryErr != nil && fallbackErr != nil:
+		return count, errors.Join(primaryErr, fallbackErr)
+	case primaryErr != nil:
+		log.Warnf("%s: XLSX не импортирован, PDF-фолбэк записал %d точек", rosstatIPCWeeksTable, res.Imported)
+		return count, nil
+	case fallbackErr != nil && res.Missing > 0:
+		return count, fallbackErr
+	case fallbackErr != nil:
+		log.Warnf("%s: PDF-фолбэк недоступен, XLSX обработан: %v", rosstatIPCWeeksTable, fallbackErr)
+		return count, nil
+	default:
+		return count, nil
+	}
 }
 
 // ipcWeeksImporter — еженедельные индексы цен Росстата; регистрируется реестром

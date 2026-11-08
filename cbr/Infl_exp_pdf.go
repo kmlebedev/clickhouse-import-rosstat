@@ -1,11 +1,9 @@
 package cbr
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"math"
-	"os/exec"
 	"path"
 	"regexp"
 	"sort"
@@ -14,6 +12,7 @@ import (
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+	"github.com/kmlebedev/clickhouse-import-rosstat/util"
 )
 
 // Разбор PDF «Оперативная справка» (inFOM_ГГ-ММ.pdf) — источника, который ЦБ публикует
@@ -32,24 +31,12 @@ const (
 	// .versions_item на странице сотни (старые Infl_exp_*.pdf и чужие файлы), поэтому
 	// селектор сужен до inFOM-имени: первая ссылка в DOM — свежая.
 	inflExpPdfLinkSelector = `a.versions_item[href*="inFOM_"][href$=".pdf"]`
-
-	// inflExpPdfHeaderSize — сколько первых байт проверяется на сигнатуру `%PDF-`:
-	// WAF отдаёт HTML-заглушку с кодом 200, и проверка стоит до exec.
-	inflExpPdfHeaderSize = 1024
-
-	// inflExpPdfTimeout — потолок одного извлечения: PDF 26-10 (381 КБ) разбирается за
-	// доли секунды, 2 минуты — запас на медленный хост, а не рабочее время.
-	inflExpPdfTimeout = 2 * time.Minute
 )
 
 // inflExpPdfContext — общая часть сообщений разбора (стандарт §6.4).
 const inflExpPdfContext = cbrInflExpOpName + ", PDF «Оперативная справка»"
 
 var (
-	// inflExpPdfTool — утилита извлечения текста: `pdftotext` из poppler-utils.
-	// Переменная, а не константа, ради теста отсутствующего бинарника.
-	inflExpPdfTool = "pdftotext"
-
 	// inflExpPdfWordRe — слово `-bbox`-вывода с рамкой. Атрибуты и их порядок печатает
 	// сам poppler; текст подписи — ASCII-цифры и кириллица месяцев, поэтому `[^<]*`.
 	inflExpPdfWordRe = regexp.MustCompile(`<word xMin="(-?[\d.]+)" yMin="(-?[\d.]+)" xMax="(-?[\d.]+)" yMax="(-?[\d.]+)">([^<]*)</word>`)
@@ -290,37 +277,19 @@ func inflExpPdfColumns(words []inflExpPdfWord, axis []inflExpPdfWord) ([]inflExp
 	return points, nil
 }
 
-// inflExpPdfBBox извлекает `-bbox`-XHTML первой страницы PDF утилитой pdftotext. Байты
+// inflExpPdfBBox извлекает `-bbox`-XHTML первой страницы PDF общим util.PDFText. Байты
 // приходят срезом от шаблона импорта: util.ClickHouseImport сам качает файл и кладёт тот
-// же срез в винтажный архив, поэтому сети здесь нет. BodyFunc шаблона не получает ctx,
-// поэтому таймаут — свой, от context.Background(): зависший pdftotext не должен держать
-// прогон импортёра.
+// же срез в винтажный архив, поэтому сети здесь нет. ctx приходит из util.Fallback; общий
+// PDFText ограничивает его своим таймаутом, поэтому зависший pdftotext не держит прогон.
 //
-// Fail-fast: в первых inflExpPdfHeaderSize байтах нет `%PDF-` (WAF/HTML-заглушка) —
-// ошибка до exec; пустой stdout — тоже ошибка (скан без текстового слоя).
-func inflExpPdfBBox(body []byte) ([]byte, error) {
-	head := body[:min(len(body), inflExpPdfHeaderSize)]
-	if !bytes.Contains(head, []byte("%PDF-")) {
-		return nil, fmt.Errorf("%s: ответ не PDF (нет сигнатуры %%PDF-) — WAF/HTML вместо файла", inflExpPdfContext)
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), inflExpPdfTimeout)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, inflExpPdfTool, "-bbox", "-enc", "UTF-8", "-f", "1", "-l", "1", "-", "-")
-	cmd.Stdin = bytes.NewReader(body)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	output, err := cmd.Output()
+// Fail-fast (уже в util.PDFText): нет `%PDF-` — ошибка до exec; пустой stdout — тоже
+// ошибка (скан без текстового слоя).
+func inflExpPdfBBox(ctx context.Context, body []byte) ([]byte, error) {
+	bbox, err := util.PDFText(ctx, body, util.PDFBBoxFirstPage)
 	if err != nil {
-		stderrText := strings.TrimSpace(stderr.String())
-		if stderrText == "" {
-			stderrText = "stderr пуст"
-		}
-		return nil, fmt.Errorf("%s: %s: %w: %s (нужен poppler-utils: pdftotext)", inflExpPdfContext, inflExpPdfTool, err, stderrText)
+		return nil, fmt.Errorf("%s: %w", inflExpPdfContext, err)
 	}
-	if len(bytes.TrimSpace(output)) == 0 {
-		return nil, fmt.Errorf("%s: %s: пустой stdout — в PDF нет текстового слоя (скан?)", inflExpPdfContext, inflExpPdfTool)
-	}
-	return output, nil
+	return bbox, nil
 }
 
 // inflExpPdfMonth — месяц выпуска из имени inFOM_ГГ-ММ.pdf: он же месяц последней точки
@@ -353,11 +322,77 @@ func inflExpPdfPointDate(month time.Time) time.Time {
 	return time.Date(month.Year(), month.Month(), 14, 0, 0, 0, 0, time.UTC)
 }
 
-// inflExpPdfNewer — гейт прогона: месяц PDF строго новее уже записанной даты. Пустая
-// таблица (нулевая дата) новее любого месяца; сравнение идёт по суткам, а не по моменту.
-func inflExpPdfNewer(month, known time.Time) bool {
-	day := time.Date(known.Year(), known.Month(), known.Day(), 0, 0, 0, 0, time.UTC)
-	return inflExpPdfPointDate(month).After(day)
+// inflExpPdfDocuments — Documents общего util.Fallback: страница инфляционных ожиданий →
+// свежая inFOM-ссылка → месяц из имени → дата точки (14-е). Одна страница — один документ.
+func inflExpPdfDocuments(_ context.Context) ([]util.FallbackDocument, error) {
+	page, err := util.GetPage(inflExpUrl)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %s: %w", cbrInflExpOpName, inflExpUrl, err)
+	}
+	return inflExpPdfDocumentsFromPage(page)
+}
+
+// inflExpPdfDocumentsFromPage — чистая часть Documents: разбор страницы без сети.
+// Страница — фикстура infl_exp_page.html; тест не требует cbr.ru.
+func inflExpPdfDocumentsFromPage(page []byte) ([]util.FallbackDocument, error) {
+	href, err := util.FindLink(page, inflExpPdfLinkSelector)
+	if err != nil {
+		return nil, fmt.Errorf("%s: не найдена ссылка на PDF на %s: %w", cbrInflExpOpName, inflExpUrl, err)
+	}
+	month, err := inflExpPdfMonth(href)
+	if err != nil {
+		return nil, err
+	}
+	return []util.FallbackDocument{{Date: inflExpPdfPointDate(month), URL: cbrUrl + href}}, nil
+}
+
+// inflExpPdfRows — Parse общего util.Fallback: PDF-байты → `-bbox` → две строки.
+func inflExpPdfRows(ctx context.Context, doc util.FallbackDocument, body []byte) ([]util.FallbackRow, error) {
+	bbox, err := inflExpPdfBBox(ctx, body)
+	if err != nil {
+		return nil, err
+	}
+	return inflExpPdfRowsFromBBox(bbox, doc.Date)
+}
+
+// inflExpPdfRowsFromBBox — чистая часть разбора: последняя колонка PDF обязана совпасть
+// с датой документа (14-е число месяца из имени файла). Расхождение значит, что график не
+// успел за выпуском или ось сдвинулась; писать точку под чужим месяцем нельзя.
+func inflExpPdfRowsFromBBox(bbox []byte, expected time.Time) ([]util.FallbackRow, error) {
+	points, err := inflExpPdfPoints(bbox)
+	if err != nil {
+		return nil, err
+	}
+	last := points[len(points)-1]
+	date := inflExpPdfPointDate(last.Month)
+	if !date.Equal(expected) {
+		return nil, fmt.Errorf("%s: последняя точка графика %s, а файл за %s — график не успел за выпуском или ось сдвинулась",
+			inflExpPdfContext, date.Format("2006-01-02"), expected.Format("2006-01-02"))
+	}
+	return []util.FallbackRow{
+		{Series: inflExpObservedName, Date: date, Value: last.Observed},
+		{Series: inflExpExpectedName, Date: date, Value: last.Expected1y},
+	}, nil
+}
+
+// inflExpPdfAppendRow — Append общего util.Fallback: две колонки cbr_infl_exp.
+func inflExpPdfAppendRow(batch driver.Batch, row util.FallbackRow) error {
+	return batch.Append(row.Series, row.Date, row.Value)
+}
+
+// inflExpPdfAppendLatest — совместимая обёртка для существующих тестов: месяц → 14-е
+// число → строки → батч. Боевой путь идёт через util.Fallback и inflExpPdfRows.
+func inflExpPdfAppendLatest(bbox []byte, expected time.Time, batch driver.Batch) error {
+	rows, err := inflExpPdfRowsFromBBox(bbox, inflExpPdfPointDate(expected))
+	if err != nil {
+		return err
+	}
+	for _, row := range rows {
+		if err := inflExpPdfAppendRow(batch, row); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // inflExpPdfAppend пишет оперативную точку двумя рядами: наблюдаемая инфляция и ожидаемая
