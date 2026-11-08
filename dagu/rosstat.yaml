@@ -79,6 +79,8 @@ steps:
   # нового шага не лишало данных проверенные восемь. Export-URL динамический (новый
   # tmp/exp<uuid> на каждый POST), поэтому HEAD-preflight нет; версия содержимого считается
   # по SHA-256 точек и пишется в source_publications, повтор — no-op (`Imported 0 rows`).
+  # При недоступном BI агрегат добирается PDF-фолбэком из central-news (пункт 1.13):
+  # строка «(оценка)» пишется в ту же таблицу с версией PDF, шаг не роняет цепочку.
   - id: rosstat_bi_cpi_weekly
     run: "$ROSSTAT_IMPORT_BIN"
     env:
