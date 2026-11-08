@@ -29,8 +29,8 @@
 - `cbr/sors_funds.go`:
   - константы: `cbrSorsFundsUrl`, `cbrSorsFundsTable = "cbr_sors_funds"`,
     `cbrSorsFundsCountPoints`, `cbrSorsFundsDateLayout = "02.01.2006"`, лимит дат шапки;
-  - `cbrSorsFundsSheets` — три листа и суффикс валюты (`""`, `_rub`, `_fx`);
-  - `cbrSorsFundsRows` — карта «нормализованная подпись → код» (7 строк);
+  - `cbrSorsFundsSheets` (`series_meta.go`) — три листа и суффикс валюты (`""`, `_rub`, `_fx`);
+  - `cbrSorsFundsSeries` — срез «нормализованная подпись → код» (7 строк, `series_meta.go`), поиск — `sorsFundsCode`;
   - `sorsFundsImport(xlsx, batch)`: три листа, поиск строки дат по признаку, карта подписей,
     сырые значения, `""`/`-` — пропуск, ноль — точка, non-numeric — ошибка, 0 точек — ошибка;
   - `util.ClickHouseImport`: DDL спеки §3.1, `DataUrl`, `ImportFunc`,
