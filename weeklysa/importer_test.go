@@ -103,34 +103,33 @@ func TestSchemaLiterals(t *testing.T) {
 
 func TestCatalogAndView(t *testing.T) {
 	meta := weeklySASeriesMeta()
-	if len(meta) != 3 {
-		t.Fatalf("рядов каталога %d, ожидалось 3", len(meta))
+	if len(meta) != 5 {
+		t.Fatalf("рядов каталога %d, ожидалось 5 (3 месячных + 2 квартальных)", len(meta))
 	}
-	want := map[string]bool{
-		"weekly_cpi:sa_index": false,
-		"weekly_cpi:sa_4w":    false,
-		"weekly_cpi:saar":     false,
+	want := map[string]string{
+		"weekly_cpi:sa_index": "M",
+		"weekly_cpi:sa_4w":    "M",
+		"weekly_cpi:saar":     "M",
+		"weekly_cpi:saar_q":   "Q",
+		"weekly_cpi:saar_3m":  "M",
 	}
 	for _, item := range meta {
 		if item.Source != "weekly_cpi_sa" {
 			t.Errorf("ряд %s: source %q", item.Series, item.Source)
 		}
-		if item.Frequency != "M" {
-			t.Errorf("ряд %s: frequency %q", item.Series, item.Frequency)
+		if freq, ok := want[item.Series]; !ok {
+			t.Errorf("неожиданный ряд %q", item.Series)
+			continue
+		} else if item.Frequency != freq {
+			t.Errorf("ряд %s: frequency %q, ожидалось %q", item.Series, item.Frequency, freq)
 		}
 		if item.Title == "" || item.Unit == "" || item.Origin == "" || item.Description == "" {
 			t.Errorf("ряд %s: неполное описание", item.Series)
 		}
-		if _, ok := want[item.Series]; !ok {
-			t.Errorf("неожиданный ряд %q", item.Series)
-			continue
-		}
-		want[item.Series] = true
+		delete(want, item.Series)
 	}
-	for series, seen := range want {
-		if !seen {
-			t.Errorf("в каталоге нет ряда %q", series)
-		}
+	for series := range want {
+		t.Errorf("в каталоге нет ряда %q", series)
 	}
 
 	for _, fragment := range []string{
@@ -150,5 +149,75 @@ func TestCatalogAndView(t *testing.T) {
 	}
 	if len(weeklySAView.Columns) != 8 {
 		t.Errorf("комментариев колонок %d, ожидалось 8", len(weeklySAView.Columns))
+	}
+}
+
+// TestWeeklyQuarterlyAndRollingViews — две производные квартальные витрины из спеки
+// 2026-11-08-cpi-quarterly-metrics §4.3/§4.4. Контракт проверяется фрагментами SQL и
+// комментариями: потерянный FINAL, avg без partial, замена pow на ^ (в ClickHouse это XOR) или
+// окно не на трёх строках меняют число, а не оформление.
+func TestWeeklyQuarterlyAndRollingViews(t *testing.T) {
+	if weeklySAQuarterlyView.Name != "v_weekly_cpi_quarterly" {
+		t.Fatalf("имя витрины %q, ожидалось v_weekly_cpi_quarterly", weeklySAQuarterlyView.Name)
+	}
+	for _, fragment := range []string{
+		"FROM weekly_cpi_sa FINAL",
+		"toStartOfQuarter(date) AS quarter_start",
+		"count() AS months",
+		"countIf(partial = 0) AS full_months",
+		"avg(saar) AS saar_q",
+		"max(as_of) AS max_as_of",
+		"max(partial) AS max_partial",
+		"GROUP BY quarter_start",
+	} {
+		if !strings.Contains(weeklySAQuarterlyView.Select, fragment) {
+			t.Errorf("SQL квартальной витрины не содержит %q", fragment)
+		}
+	}
+	// alias, совпадающий с именем колонки, ClickHouse подставляет внутрь агрегата
+	// (max(max(partial)) → ILLEGAL_AGGREGATION), поэтому агрегаты обязаны идти под другими именами.
+	for _, forbidden := range []string{"max(as_of) AS as_of", "max(partial) AS partial"} {
+		if strings.Contains(weeklySAQuarterlyView.Select, forbidden) {
+			t.Errorf("SQL квартальной витрины содержит %q: alias совпадёт с колонкой", forbidden)
+		}
+	}
+	for _, column := range []string{"quarter_start", "quarter", "months", "full_months", "saar_q", "as_of", "partial"} {
+		if weeklySAQuarterlyView.Columns[column] == "" {
+			t.Errorf("нет комментария колонки %q", column)
+		}
+	}
+	for _, want := range []string{"8,02", "nowcast", "2026-10-01 = IV кв. 2026", "не оценка ЦБ"} {
+		if !strings.Contains(weeklySAQuarterlyView.Comment, want) {
+			t.Errorf("комментарий квартальной витрины не содержит %q", want)
+		}
+	}
+
+	if weeklySARolling3mView.Name != "v_weekly_cpi_rolling3m" {
+		t.Fatalf("имя витрины %q, ожидалось v_weekly_cpi_rolling3m", weeklySARolling3mView.Name)
+	}
+	for _, fragment := range []string{
+		"FROM weekly_cpi_sa FINAL",
+		"ROWS BETWEEN 2 PRECEDING AND CURRENT ROW",
+		"sum(log(1 + sa_4w / 100))",
+		"pow(exp(",
+		"52.0 / 12.0",
+		"NULL",
+	} {
+		if !strings.Contains(weeklySARolling3mView.Select, fragment) {
+			t.Errorf("SQL скользящей витрины не содержит %q", fragment)
+		}
+	}
+	if strings.Contains(weeklySARolling3mView.Select, "^") {
+		t.Error("SQL скользящей витрины содержит ^: в ClickHouse это XOR, а не степень")
+	}
+	for _, column := range []string{"date", "as_of", "partial", "saar_3m"} {
+		if weeklySARolling3mView.Columns[column] == "" {
+			t.Errorf("нет комментария колонки %q", column)
+		}
+	}
+	for _, want := range []string{"разрыв", "52/12", "тарифная неделя"} {
+		if !strings.Contains(weeklySARolling3mView.Comment, want) {
+			t.Errorf("комментарий скользящей витрины не содержит %q", want)
+		}
 	}
 }
