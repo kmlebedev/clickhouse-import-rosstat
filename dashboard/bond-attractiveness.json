@@ -1,0 +1,1602 @@
+{
+  "apiVersion": "dashboard.grafana.app/v1beta1",
+  "kind": "Dashboard",
+  "metadata": {
+    "name": "bond-attractiveness"
+  },
+  "spec": {
+    "uid": "bond-attractiveness",
+    "title": "Привлекательность облигаций — ставка, ОФЗ, вклады",
+    "tags": [
+      "ofz-market",
+      "cbr",
+      "bonds"
+    ],
+    "timezone": "browser",
+    "editable": true,
+    "graphTooltip": 0,
+    "time": {
+      "from": "2019-01-01",
+      "to": "now"
+    },
+    "fiscalYearStartMonth": 0,
+    "refresh": "1h",
+    "schemaVersion": 42,
+    "panels": [
+      {
+        "type": "row",
+        "collapsed": false,
+        "title": "Триггеры статьи: облигации и акции",
+        "gridPos": {
+          "h": 1,
+          "w": 24,
+          "x": 0,
+          "y": 0
+        },
+        "id": 20,
+        "panels": []
+      },
+      {
+        "type": "stat",
+        "id": 19,
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "WITH m AS (\n    SELECT\n        (SELECT argMax(value, date) FROM v_cbr_macro WHERE series = 'cbr_key_rate' AND $__timeFilter(date)) AS key_rate,\n        (SELECT round((sum(value * dateDiff('day', d0, d1)) + 5.5 * 4) / (sum(dateDiff('day', d0, d1)) + 4), 4)\n         FROM (\n             SELECT value, date AS d0,\n                    leadInFrame(date, 1, addDays(today(), 1))\n                      OVER (ORDER BY date ROWS BETWEEN CURRENT ROW AND UNBOUNDED FOLLOWING) AS d1\n             FROM v_cbr_macro WHERE series = 'cbr_key_rate' AND date \u003e= '2013-09-17'\n         )) AS avg_rate,\n        (SELECT argMax(ofz_1y, date) FROM v_ofz_signal WHERE $__timeFilter(date)) AS ofz_1y,\n        (SELECT argMax(ofz_10y, date) FROM v_ofz_signal WHERE $__timeFilter(date)) AS ofz_10y,\n        (SELECT argMax(value, date) FROM v_cbr_macro WHERE series = 'от 181 дня до 1 года' AND $__timeFilter(date)) AS dep_1y,\n        (SELECT argMax(value, date) FROM v_cbr_macro WHERE series = 'Всего: свыше 1 года' AND $__timeFilter(date)) AS loan_corp,\n        (SELECT argMax(inflation_yoy, date) FROM v_ofz_signal WHERE $__timeFilter(date)) AS cpi,\n        (SELECT round((value / lagInFrame(value, 12) OVER (ORDER BY date) - 1) * 100, 2)\n         FROM v_cbr_macro WHERE series = 'households_deposits_escrow' AND $__timeFilter(date)\n         ORDER BY date DESC LIMIT 1) AS hh_yoy,\n        (SELECT round((index_value / lagInFrame(index_value, 12) OVER (ORDER BY date) - 1) * 100, 2)\n         FROM v_domrf_price_index\n         WHERE region = 'Российская Федерация' AND room_count = 'all' AND $__timeFilter(date)\n         ORDER BY date DESC LIMIT 1) AS re_yoy,\n        (SELECT argMax(value, date) FROM v_domrf_mortgage WHERE series = 'rate_primary' AND $__timeFilter(date)) AS rate_primary,\n        (SELECT argMax(value, date) FROM v_domrf_mortgage WHERE series = 'rate_secondary' AND $__timeFilter(date)) AS rate_secondary\n)\nSELECT\n    toUInt8(if(key_rate \u003e avg_rate, 1, 2)) AS \"Ключ vs среднее\",\n    toUInt8(if(ofz_10y \u003e= key_rate, 1, 2)) AS \"ОФЗ 10л vs ключ\",\n    toUInt8(if(ofz_1y \u003e= key_rate, 1, 2)) AS \"ОФЗ 1г vs ключ\",\n    toUInt8(if(dep_1y \u003e 12, 1, 2)) AS \"Вклады 11–12%\",\n    toUInt8(if(loan_corp \u003e 12, 1, 2)) AS \"Кредиты 11–12%\",\n    toUInt8(if(hh_yoy \u003e= 0, 1, 2)) AS \"Отток вкладов\",\n    toUInt8(if(key_rate \u003e 12, 1, 2)) AS \"Ключ ≤ 12%\",\n    toUInt8(if(key_rate - cpi \u003e 0, 1, 2)) AS \"Реальная ставка\",\n    toUInt8(if(re_yoy \u003e cpi, 2, 0)) AS \"Новостройки vs ИПЦ*\",\n    round(rate_secondary - rate_primary, 2) AS \"Ипотека: вторичка − первичка, п.п.\"\nFROM m\n",
+            "editorType": "sql",
+            "format": 1,
+            "queryType": "sql",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "Все триггеры статьи: облигации и акции",
+        "description": "Чек-лист статьи на текущий момент: десять плиток, в каждой — условие из статьи и вердикт. «Облигации» (зелёный) — условие говорит в пользу облигаций, «акции» (синий) — в пользу акций, «—» — триггер к этой стороне не относится (инфляция активов — довод за акции, но не довод против облигаций). Пороги: средневзвешенная ставка 10.43% с 2013, полоса 11–12% по вкладам и кредитам, ключ ≤ 12% как условие разбора отчётностей, доходность облигаций ниже ключа как условие перехода в активы, отток вкладов (г/г \u003c 0), положительная реальная ставка, инфляция новостроек выше ИПЦ. * Новостройки искажены льготной ипотекой: ДОМ.РФ публикует индекс цен только по первичному рынку, вторички в источнике нет — ряд цен вторичного рынка (Росстат, ЕМИСС) заводится отдельным шагом. Пока искажение видно по спреду ставок: «Ипотека: вторичка − первичка» — при льготной ипотеке первичка дешевле вторички на несколько п.п. (оранжевый — искажение). Значения — на момент запроса в выбранном окне; это сводка условий, а не инвестиционная рекомендация.",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 24,
+          "x": 0,
+          "y": 1
+        },
+        "repeatDirection": "h",
+        "options": {
+          "graphMode": "area",
+          "colorMode": "value",
+          "justifyMode": "auto",
+          "textMode": "auto",
+          "wideLayout": true,
+          "showPercentChange": false,
+          "reduceOptions": {
+            "values": false,
+            "calcs": [
+              "lastNotNull"
+            ]
+          },
+          "percentChangeColorMode": "standard",
+          "orientation": ""
+        },
+        "fieldConfig": {
+          "defaults": {
+            "mappings": [
+              {
+                "type": "value",
+                "options": {
+                  "0": {
+                    "text": "—",
+                    "color": "text",
+                    "index": 2
+                  },
+                  "1": {
+                    "text": "облигации",
+                    "color": "green",
+                    "index": 0
+                  },
+                  "2": {
+                    "text": "акции",
+                    "color": "blue",
+                    "index": 1
+                  }
+                }
+              }
+            ]
+          },
+          "overrides": [
+            {
+              "matcher": {
+                "id": "byName",
+                "options": "Ипотека: вторичка − первичка, п.п."
+              },
+              "properties": [
+                {
+                  "id": "unit",
+                  "value": "short"
+                },
+                {
+                  "id": "decimals",
+                  "value": 2
+                },
+                {
+                  "id": "thresholds",
+                  "value": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "value": null,
+                        "color": "green"
+                      },
+                      {
+                        "value": 0,
+                        "color": "orange"
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "type": "row",
+        "collapsed": false,
+        "title": "Светофор статьи",
+        "gridPos": {
+          "h": 1,
+          "w": 24,
+          "x": 0,
+          "y": 9
+        },
+        "id": 21,
+        "panels": []
+      },
+      {
+        "type": "stat",
+        "id": 1,
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT argMax(value, date) AS \"Ключевая ставка, %\"\nFROM v_cbr_macro\nWHERE series = 'cbr_key_rate'\n",
+            "editorType": "sql",
+            "format": 1,
+            "queryType": "table",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "Ключевая ставка, %",
+        "description": "Последняя точка ключевой ставки ЦБ (v_cbr_macro, series = 'cbr_key_rate'), снимок без фильтра диапазона. Порог 10.43 — средневзвешенная по дням ставка с 13.09.2013 (расчёт панели 7): зелёный — ставка выше средневзвешенной, «долговой режим»; синий — ниже, «дешёвые деньги». Цвет — режим, не рекомендация. На 2026-11-08 — 14.00% (2026-11-06).",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 4,
+          "w": 8,
+          "x": 0,
+          "y": 10
+        },
+        "repeatDirection": "h",
+        "options": {
+          "graphMode": "area",
+          "colorMode": "value",
+          "justifyMode": "auto",
+          "textMode": "auto",
+          "wideLayout": true,
+          "showPercentChange": false,
+          "reduceOptions": {
+            "values": false,
+            "calcs": [
+              "lastNotNull"
+            ]
+          },
+          "percentChangeColorMode": "standard",
+          "orientation": ""
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent",
+            "decimals": 2,
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "value": null,
+                  "color": "blue"
+                },
+                {
+                  "value": 10.4314,
+                  "color": "green"
+                }
+              ]
+            }
+          },
+          "overrides": []
+        }
+      },
+      {
+        "type": "stat",
+        "id": 2,
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT argMax(key_rate, date) - argMax(inflation_yoy, date) AS \"Реальная ставка, п.п.\"\nFROM v_ofz_signal\n",
+            "editorType": "sql",
+            "format": 1,
+            "queryType": "table",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "Реальная ставка, п.п.",
+        "description": "Ключевая ставка минус годовая инфляция (v_ofz_signal: key_rate − inflation_yoy), последняя точка. Положительная — денежная политика жёсткая. На 2026-11-08 — 7.65 п.п. (ставка 14.00, ИПЦ 6.35% г/г).",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 4,
+          "w": 8,
+          "x": 8,
+          "y": 10
+        },
+        "repeatDirection": "h",
+        "options": {
+          "graphMode": "area",
+          "colorMode": "value",
+          "justifyMode": "auto",
+          "textMode": "auto",
+          "wideLayout": true,
+          "showPercentChange": false,
+          "reduceOptions": {
+            "values": false,
+            "calcs": [
+              "lastNotNull"
+            ]
+          },
+          "percentChangeColorMode": "standard",
+          "orientation": ""
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "decimals": 2,
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "value": null,
+                  "color": "blue"
+                },
+                {
+                  "value": 0,
+                  "color": "green"
+                }
+              ]
+            }
+          },
+          "overrides": []
+        }
+      },
+      {
+        "type": "stat",
+        "id": 3,
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT argMax(ofz_10y_minus_key_rate_pp, date) AS \"ОФЗ 10л − ключ, п.п.\"\nFROM v_ofz_signal\n",
+            "editorType": "sql",
+            "format": 1,
+            "queryType": "table",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "ОФЗ 10 лет − ключ, п.п.",
+        "description": "Доходность 10-летней ОФЗ минус ключевая ставка (v_ofz_signal), последняя точка. По правилу статьи «переход в активы» начинается, когда доходность облигаций опускается НИЖЕ ключа: сейчас спред положительный — триггер не наступил. На 2026-11-08 — +2.75 п.п.",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 4,
+          "w": 8,
+          "x": 16,
+          "y": 10
+        },
+        "repeatDirection": "h",
+        "options": {
+          "graphMode": "area",
+          "colorMode": "value",
+          "justifyMode": "auto",
+          "textMode": "auto",
+          "wideLayout": true,
+          "showPercentChange": false,
+          "reduceOptions": {
+            "values": false,
+            "calcs": [
+              "lastNotNull"
+            ]
+          },
+          "percentChangeColorMode": "standard",
+          "orientation": ""
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "decimals": 2,
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "value": null,
+                  "color": "blue"
+                },
+                {
+                  "value": 0,
+                  "color": "green"
+                }
+              ]
+            }
+          },
+          "overrides": []
+        }
+      },
+      {
+        "type": "stat",
+        "id": 4,
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT argMax(ofz_1y, date) AS \"ОФЗ 1 год, %\"\nFROM v_ofz_signal\n",
+            "editorType": "sql",
+            "format": 1,
+            "queryType": "table",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "ОФЗ 1 год, %",
+        "description": "Доходность ОФЗ 1 год (G-curve МосБиржи, v_ofz_signal), последняя точка. Ближний конец кривой — альтернатива ключевой ставке и вкладам до года. На 2026-11-08 — 14.16%.",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 4,
+          "w": 8,
+          "x": 0,
+          "y": 14
+        },
+        "repeatDirection": "h",
+        "options": {
+          "graphMode": "area",
+          "colorMode": "value",
+          "justifyMode": "auto",
+          "textMode": "auto",
+          "wideLayout": true,
+          "showPercentChange": false,
+          "reduceOptions": {
+            "values": false,
+            "calcs": [
+              "lastNotNull"
+            ]
+          },
+          "percentChangeColorMode": "standard",
+          "orientation": ""
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent",
+            "decimals": 2
+          },
+          "overrides": []
+        }
+      },
+      {
+        "type": "stat",
+        "id": 5,
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT argMax(value, date) AS \"Вклад 181 дн–1 год, %\"\nFROM v_cbr_macro\nWHERE series = 'от 181 дня до 1 года'\n",
+            "editorType": "sql",
+            "format": 1,
+            "queryType": "table",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "Вклад 181 дн–1 год, %",
+        "description": "Средневзвешенная ставка по вкладам физлиц на срок 181 день – 1 год (v_cbr_macro, cbr_bank_int_rate), последняя точка месячного ряда. Полоса статьи 11–12%: в ней вклады перестают быть интересными и начинается переток в активы; синий — ниже полосы, зелёный — в полосе, оранжевый — выше. На 2026-11-08 — 12.17% (2026-08-30), то есть у верхней границы полосы.",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 4,
+          "w": 8,
+          "x": 8,
+          "y": 14
+        },
+        "repeatDirection": "h",
+        "options": {
+          "graphMode": "area",
+          "colorMode": "value",
+          "justifyMode": "auto",
+          "textMode": "auto",
+          "wideLayout": true,
+          "showPercentChange": false,
+          "reduceOptions": {
+            "values": false,
+            "calcs": [
+              "lastNotNull"
+            ]
+          },
+          "percentChangeColorMode": "standard",
+          "orientation": ""
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent",
+            "decimals": 2,
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "value": null,
+                  "color": "blue"
+                },
+                {
+                  "value": 11,
+                  "color": "green"
+                },
+                {
+                  "value": 12,
+                  "color": "orange"
+                }
+              ]
+            }
+          },
+          "overrides": []
+        }
+      },
+      {
+        "type": "stat",
+        "id": 6,
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT argMax(value, date) AS \"Кредит юрлицам \u003e1 года, %\"\nFROM v_cbr_macro\nWHERE series = 'Всего: свыше 1 года'\n",
+            "editorType": "sql",
+            "format": 1,
+            "queryType": "table",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "Кредит ЮЛ \u003e1 года, %",
+        "description": "Средневзвешенная ставка по кредитам юрлицам на срок свыше 1 года (v_cbr_macro, cbr_int_rate_loans), последняя точка. Ориентир статьи — 11–12%: при таких ставках начинается отток вкладов и рост спроса на кредиты. На 2026-11-08 — 12.98% (2026-08-30), чуть выше полосы.",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 4,
+          "w": 8,
+          "x": 16,
+          "y": 14
+        },
+        "repeatDirection": "h",
+        "options": {
+          "graphMode": "area",
+          "colorMode": "value",
+          "justifyMode": "auto",
+          "textMode": "auto",
+          "wideLayout": true,
+          "showPercentChange": false,
+          "reduceOptions": {
+            "values": false,
+            "calcs": [
+              "lastNotNull"
+            ]
+          },
+          "percentChangeColorMode": "standard",
+          "orientation": ""
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent",
+            "decimals": 2,
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "value": null,
+                  "color": "blue"
+                },
+                {
+                  "value": 11,
+                  "color": "green"
+                },
+                {
+                  "value": 12,
+                  "color": "orange"
+                }
+              ]
+            }
+          },
+          "overrides": []
+        }
+      },
+      {
+        "type": "row",
+        "collapsed": false,
+        "title": "Ставка и инфляция",
+        "gridPos": {
+          "h": 1,
+          "w": 24,
+          "x": 0,
+          "y": 18
+        },
+        "id": 22,
+        "panels": []
+      },
+      {
+        "type": "timeseries",
+        "id": 7,
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "WITH a AS (\n    SELECT round((sum(value * dateDiff('day', d0, d1)) + 5.5 * 4) / (sum(dateDiff('day', d0, d1)) + 4), 4) AS avg_rate\n    FROM (\n        SELECT value, date AS d0,\n               leadInFrame(date, 1, addDays(today(), 1))\n                 OVER (ORDER BY date ROWS BETWEEN CURRENT ROW AND UNBOUNDED FOLLOWING) AS d1\n        FROM v_cbr_macro\n        WHERE series = 'cbr_key_rate' AND date \u003e= '2013-09-17'\n    )\n)\nSELECT k.date AS time,\n       k.value AS \"Ключевая ставка, %\",\n       a.avg_rate AS \"Средневзвешенная с 2013, %\"\nFROM v_cbr_macro AS k\nCROSS JOIN a\nWHERE k.series = 'cbr_key_rate' AND $__timeFilter(k.date)\nORDER BY time\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "Ключевая ставка и средневзвешенная с 2013, %",
+        "description": "Дневная ключевая ставка и средневзвешенная по дням ставка с 13.09.2013, пересчитываемая на момент запроса. Выше средней — «долговой режим» по правилу статьи, ниже — «дешёвые деньги». Средняя смещается при добавлении новых дней: это ожидаемо. На 2026-11-08 — 10.4314%.",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 24,
+          "x": 0,
+          "y": 19
+        },
+        "repeatDirection": "h",
+        "options": {
+          "legend": {
+            "displayMode": "table",
+            "placement": "bottom",
+            "showLegend": true,
+            "calcs": [
+              "lastNotNull",
+              "min",
+              "max"
+            ]
+          },
+          "tooltip": {
+            "mode": "single",
+            "sort": "none"
+          }
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent",
+            "decimals": 2,
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "gradientMode": "none",
+              "lineWidth": 1,
+              "lineInterpolation": "smooth",
+              "fillOpacity": 0,
+              "spanNulls": false
+            }
+          },
+          "overrides": []
+        }
+      },
+      {
+        "type": "timeseries",
+        "id": 8,
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT date AS time,\n       key_rate AS \"Ключевая ставка, %\",\n       inflation_yoy AS \"ИПЦ, % г/г\"\nFROM v_ofz_signal\nWHERE $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "Ключевая ставка и ИПЦ, %",
+        "description": "Ключевая ставка и годовая инфляция (v_ofz_signal). Разрыв между линиями — реальная жёсткость политики (панель 9). ИПЦ здесь — годовой темп, не индекс.",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 24,
+          "x": 0,
+          "y": 27
+        },
+        "repeatDirection": "h",
+        "options": {
+          "legend": {
+            "displayMode": "table",
+            "placement": "bottom",
+            "showLegend": true,
+            "calcs": [
+              "lastNotNull",
+              "min",
+              "max"
+            ]
+          },
+          "tooltip": {
+            "mode": "single",
+            "sort": "none"
+          }
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent",
+            "decimals": 2,
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "gradientMode": "none",
+              "lineWidth": 1,
+              "lineInterpolation": "smooth",
+              "fillOpacity": 0,
+              "spanNulls": false
+            }
+          },
+          "overrides": []
+        }
+      },
+      {
+        "type": "timeseries",
+        "id": 9,
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT date AS time,\n       key_rate - inflation_yoy AS \"Реальная ключевая ставка, п.п.\"\nFROM v_ofz_signal\nWHERE $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "Реальная ключевая ставка, п.п.",
+        "description": "Ключевая ставка минус ИПЦ г/г (v_ofz_signal). Ноль — граница нейтральной политики; положительная реальная ставка — жёсткая. На 2026-11-08 — +7.65 п.п.",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 24,
+          "x": 0,
+          "y": 35
+        },
+        "repeatDirection": "h",
+        "options": {
+          "legend": {
+            "displayMode": "table",
+            "placement": "bottom",
+            "showLegend": true,
+            "calcs": [
+              "lastNotNull",
+              "min",
+              "max"
+            ]
+          },
+          "tooltip": {
+            "mode": "single",
+            "sort": "none"
+          }
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "decimals": 2,
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "gradientMode": "none",
+              "lineWidth": 1,
+              "lineInterpolation": "smooth",
+              "fillOpacity": 0,
+              "spanNulls": false
+            }
+          },
+          "overrides": []
+        }
+      },
+      {
+        "type": "timeseries",
+        "id": 51,
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT date AS time, value AS \"Ключевая ставка, %\"\nFROM v_cbr_macro\nWHERE series = 'cbr_key_rate' AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "B",
+            "rawSql": "SELECT date AS time, key_rate - inflation_yoy AS \"Реальная ставка, п.п.\"\nFROM v_ofz_signal\nWHERE $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "C",
+            "rawSql": "SELECT decision_date AS time, argMax(settle, date) AS \"Вменённая ставка на ближайшее заседание, %\"\nFROM v_keyrate_expectations\nWHERE secid = 'KKZ6' AND $__timeFilter(date)\nGROUP BY decision_date\nORDER BY time\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "Жёсткая риторика: уровень и цикл",
+        "description": "Иллюстрация тезиса «сейчас риторика жёсткая». Ключевая ставка (шаг решений), реальная ставка (ключ минус ИПЦ г/г) и вменённая ставка рынка на ближайшее заседание (фьючерс KEYRATE-12.26, последняя точка на дате решения 2026-12-18). Уровень жёсткий: 14.00% при ИПЦ 6.35% — реальная +7.65 п.п. Цикл понижательный: 21% с октября 2024 до июня 2025, затем снижение до 14% к 27.07.2026 и пауза; рынок ждёт −7 б.п. на 18.12.2026 (13.93%). Линия 12% — условие статьи «время отчётностей». Значения — на момент запроса в выбранном окне.",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 24,
+          "x": 0,
+          "y": 43
+        },
+        "repeatDirection": "h",
+        "options": {
+          "legend": {
+            "displayMode": "table",
+            "placement": "bottom",
+            "showLegend": true,
+            "calcs": [
+              "lastNotNull",
+              "min",
+              "max"
+            ]
+          },
+          "tooltip": {
+            "mode": "single",
+            "sort": "none"
+          }
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent",
+            "decimals": 2,
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "value": null,
+                  "color": "green"
+                },
+                {
+                  "value": 12,
+                  "color": "orange"
+                }
+              ]
+            },
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "gradientMode": "none",
+              "thresholdsStyle": {
+                "mode": "line"
+              },
+              "lineWidth": 1,
+              "lineInterpolation": "smooth",
+              "fillOpacity": 0,
+              "spanNulls": false
+            }
+          },
+          "overrides": [
+            {
+              "matcher": {
+                "id": "byName",
+                "options": "Вменённая ставка на ближайшее заседание, %"
+              },
+              "properties": [
+                {
+                  "id": "custom.lineWidth",
+                  "value": 0
+                },
+                {
+                  "id": "custom.showPoints",
+                  "value": "always"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "type": "row",
+        "collapsed": false,
+        "title": "Кривая ОФЗ",
+        "gridPos": {
+          "h": 1,
+          "w": 24,
+          "x": 0,
+          "y": 51
+        },
+        "id": 23,
+        "panels": []
+      },
+      {
+        "type": "timeseries",
+        "id": 10,
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT date AS time,\n       ofz_1y AS \"ОФЗ 1 год\",\n       ofz_2y AS \"ОФЗ 2 года\",\n       ofz_10y AS \"ОФЗ 10 лет\",\n       key_rate AS \"Ключевая ставка\"\nFROM v_ofz_signal\nWHERE $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "Кривая ОФЗ и ключевая ставка, %",
+        "description": "Доходности ОФЗ 1г/2г/10л (G-curve МосБиржи) и ключевая ставка. Пока кривая выше ключа, длинный долг даёт надбавку за дюрацию; когда она опускается ниже ключа, по статье начинается переток в активы. На 2026-11-08 — 14.16 / 14.99 / 16.75% против ключа 14.00%.",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 24,
+          "x": 0,
+          "y": 52
+        },
+        "repeatDirection": "h",
+        "options": {
+          "legend": {
+            "displayMode": "table",
+            "placement": "bottom",
+            "showLegend": true,
+            "calcs": [
+              "lastNotNull",
+              "min",
+              "max"
+            ]
+          },
+          "tooltip": {
+            "mode": "single",
+            "sort": "none"
+          }
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent",
+            "decimals": 2,
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "gradientMode": "none",
+              "lineWidth": 1,
+              "lineInterpolation": "smooth",
+              "fillOpacity": 0,
+              "spanNulls": false
+            }
+          },
+          "overrides": []
+        }
+      },
+      {
+        "type": "timeseries",
+        "id": 11,
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT date AS time,\n       ofz_2y_minus_key_rate_pp AS \"ОФЗ 2г − ключ\",\n       ofz_10y_minus_key_rate_pp AS \"ОФЗ 10л − ключ\",\n       slope_10y_1y_pp AS \"Наклон 10л − 1г\"\nFROM v_ofz_signal\nWHERE $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "Спреды ОФЗ к ключу и наклон кривой, п.п.",
+        "description": "ОФЗ 2г − ключ, ОФЗ 10л − ключ и наклон 10л − 1г (v_ofz_signal). Нулевая линия: выше — кривая дороже ключа (долговой режим), ниже — переток в активы по статье. Рост наклона при снижении ставки — премия за длинный долг. На 2026-11-08 — +0.99 / +2.75 / +2.59 п.п.",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 24,
+          "x": 0,
+          "y": 60
+        },
+        "repeatDirection": "h",
+        "options": {
+          "legend": {
+            "displayMode": "table",
+            "placement": "bottom",
+            "showLegend": true,
+            "calcs": [
+              "lastNotNull",
+              "min",
+              "max"
+            ]
+          },
+          "tooltip": {
+            "mode": "single",
+            "sort": "none"
+          }
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "decimals": 2,
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "value": null,
+                  "color": "blue"
+                },
+                {
+                  "value": 0,
+                  "color": "green"
+                }
+              ]
+            },
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "gradientMode": "none",
+              "thresholdsStyle": {
+                "mode": "line"
+              },
+              "lineWidth": 1,
+              "lineInterpolation": "smooth",
+              "fillOpacity": 0,
+              "spanNulls": false
+            }
+          },
+          "overrides": []
+        }
+      },
+      {
+        "type": "row",
+        "collapsed": false,
+        "title": "Вклады, кредиты, альтернатива",
+        "gridPos": {
+          "h": 1,
+          "w": 24,
+          "x": 0,
+          "y": 68
+        },
+        "id": 24,
+        "panels": []
+      },
+      {
+        "type": "timeseries",
+        "id": 12,
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT date AS time,\n       maxIf(value, series = 'от 31 до 90 дней') AS \"31–90 дней\",\n       maxIf(value, series = 'от 91 до 180 дней') AS \"91–180 дней\",\n       maxIf(value, series = 'от 181 дня до 1 года') AS \"181 день – 1 год\",\n       maxIf(value, series = 'от 1 года до 3 лет') AS \"1–3 года\",\n       maxIf(value, series = 'свыше 3 лет') AS \"свыше 3 лет\"\nFROM v_cbr_macro\nWHERE series IN ('от 31 до 90 дней', 'от 91 до 180 дней', 'от 181 дня до 1 года',\n                 'от 1 года до 3 лет', 'свыше 3 лет')\n  AND $__timeFilter(date)\nGROUP BY date\nORDER BY time\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "Вклады физлиц по срокам, %",
+        "description": "Средневзвешенные ставки по вкладам физлиц в рублях по срокам (v_cbr_macro, cbr_bank_int_rate). Месячный ряд ЦБ, последняя точка — 2026-08-30: 31–90 дн 12.42%, 91–180 дн 12.68%, 181 дн–1 г 12.17%, 1–3 г 10.90%, \u003e3 л 8.87%. Полоса статьи 11–12% пройдена на сроках до года; длинные вклады ниже неё.",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 24,
+          "x": 0,
+          "y": 69
+        },
+        "repeatDirection": "h",
+        "options": {
+          "legend": {
+            "displayMode": "table",
+            "placement": "bottom",
+            "showLegend": true,
+            "calcs": [
+              "lastNotNull",
+              "min",
+              "max"
+            ]
+          },
+          "tooltip": {
+            "mode": "single",
+            "sort": "none"
+          }
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent",
+            "decimals": 2,
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "gradientMode": "none",
+              "lineWidth": 1,
+              "lineInterpolation": "smooth",
+              "fillOpacity": 0,
+              "spanNulls": false
+            }
+          },
+          "overrides": []
+        }
+      },
+      {
+        "type": "timeseries",
+        "id": 13,
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT date AS time, value AS \"Кредиты юрлицам, \u003e1 года\"\nFROM v_cbr_macro\nWHERE series = 'Всего: свыше 1 года' AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "B",
+            "rawSql": "SELECT date AS time, value AS \"Кредиты физлицам, \u003e1 года\"\nFROM v_cbr_macro\nWHERE series = 'Всего (кредиты физлицам): свыше 1 года' AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "Ставки по кредитам, %",
+        "description": "Средневзвешенные ставки по кредитам на срок свыше 1 года: юрлица (cbr_int_rate_loans) и физлица (cbr_int_rate_loans_ind). Ориентир статьи — 11–12%: при таких ставках начинается отток вкладов. Юрлица — 12.98% (2026-08-30), физлица — 14.43% (2025-12-30; 2026 года в источнике ЦБ нет, линия обрывается, а не падает в ноль).",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 24,
+          "x": 0,
+          "y": 77
+        },
+        "repeatDirection": "h",
+        "options": {
+          "legend": {
+            "displayMode": "table",
+            "placement": "bottom",
+            "showLegend": true,
+            "calcs": [
+              "lastNotNull",
+              "min",
+              "max"
+            ]
+          },
+          "tooltip": {
+            "mode": "single",
+            "sort": "none"
+          }
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent",
+            "decimals": 2,
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "gradientMode": "none",
+              "lineWidth": 1,
+              "lineInterpolation": "smooth",
+              "fillOpacity": 0,
+              "spanNulls": false
+            }
+          },
+          "overrides": []
+        }
+      },
+      {
+        "type": "timeseries",
+        "id": 50,
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT date AS time, value AS \"Кредиты юрлицам \u003e1 года, %\"\nFROM v_cbr_macro\nWHERE series = 'Всего: свыше 1 года' AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "B",
+            "rawSql": "SELECT date AS time, value AS \"Кредиты физлицам \u003e1 года, %\"\nFROM v_cbr_macro\nWHERE series = 'Всего (кредиты физлицам): свыше 1 года' AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "C",
+            "rawSql": "SELECT time, yoy AS \"Вклады физлиц, % г/г\"\nFROM (\n    SELECT date AS time,\n           round((value / lagInFrame(value, 12) OVER (ORDER BY date) - 1) * 100, 2) AS yoy\n    FROM v_cbr_macro\n    WHERE series = 'households_deposits_escrow'\n)\nWHERE $__timeFilter(time)\nORDER BY time\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "Кредиты и вклады: механизм оттока",
+        "description": "Иллюстрация тезиса «при 11–12% по кредитам начинается отток вкладов». Ставки по кредитам юрлицам и физлицам на срок свыше 1 года (v_cbr_macro) и годовой темп вкладов физлиц с эскроу (SORS). Полоса 11–12% — линии порогов. На 2026-11-08: юрлица 12.98% (2026-08-30), физлица 14.43% (2025-12-30 — источник ЦБ заканчивается этой датой, линия обрывается), вклады +9.77% г/г (2026-10-01). Механизм не подтверждается: ставки выше полосы, а вклады растут, а не убывают. Это иллюстрация условий, а не инвестиционная рекомендация.",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 24,
+          "x": 0,
+          "y": 85
+        },
+        "repeatDirection": "h",
+        "options": {
+          "legend": {
+            "displayMode": "table",
+            "placement": "bottom",
+            "showLegend": true,
+            "calcs": [
+              "lastNotNull",
+              "min",
+              "max"
+            ]
+          },
+          "tooltip": {
+            "mode": "single",
+            "sort": "none"
+          }
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent",
+            "decimals": 2,
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "value": null,
+                  "color": "green"
+                },
+                {
+                  "value": 11,
+                  "color": "yellow"
+                },
+                {
+                  "value": 12,
+                  "color": "red"
+                }
+              ]
+            },
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "gradientMode": "none",
+              "thresholdsStyle": {
+                "mode": "line"
+              },
+              "lineWidth": 1,
+              "lineInterpolation": "smooth",
+              "fillOpacity": 0,
+              "spanNulls": false
+            }
+          },
+          "overrides": []
+        }
+      },
+      {
+        "type": "timeseries",
+        "id": 14,
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT o.m AS time,\n       d.value - o.ofz_1y AS \"Вклад 1 год − ОФЗ 1 год, п.п.\"\nFROM (\n    SELECT toStartOfMonth(date) AS m, argMax(ofz_1y, date) AS ofz_1y\n    FROM v_ofz_signal\n    WHERE $__timeFilter(date)\n    GROUP BY m\n) AS o\nINNER JOIN (\n    SELECT toStartOfMonth(date) AS m, argMax(value, date) AS value\n    FROM v_cbr_macro\n    WHERE series = 'от 181 дня до 1 года'\n    GROUP BY m\n) AS d ON o.m = d.m\nORDER BY time\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "Вклад 1 год − ОФЗ 1 год, п.п.",
+        "description": "Вклад на 181 день – 1 год минус доходность ОФЗ 1 год, по месяцам (v_cbr_macro + v_ofz_signal: toStartOfMonth и argMax с обеих сторон — даты источника разные). Положительный спред — вклад выгоднее короткой ОФЗ; отрицательный — ОФЗ. На 2026-08 — −1.46 п.п. (вклад 12.17, ОФЗ 13.63).",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 24,
+          "x": 0,
+          "y": 93
+        },
+        "repeatDirection": "h",
+        "options": {
+          "legend": {
+            "displayMode": "table",
+            "placement": "bottom",
+            "showLegend": true,
+            "calcs": [
+              "lastNotNull",
+              "min",
+              "max"
+            ]
+          },
+          "tooltip": {
+            "mode": "single",
+            "sort": "none"
+          }
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "decimals": 2,
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "value": null,
+                  "color": "blue"
+                },
+                {
+                  "value": 0,
+                  "color": "green"
+                }
+              ]
+            },
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "gradientMode": "none",
+              "thresholdsStyle": {
+                "mode": "line"
+              },
+              "lineWidth": 1,
+              "lineInterpolation": "smooth",
+              "fillOpacity": 0,
+              "spanNulls": false
+            }
+          },
+          "overrides": []
+        }
+      },
+      {
+        "type": "row",
+        "collapsed": false,
+        "title": "Средства клиентов банков (ЦБ, SORS)",
+        "gridPos": {
+          "h": 1,
+          "w": 24,
+          "x": 0,
+          "y": 101
+        },
+        "id": 25,
+        "panels": []
+      },
+      {
+        "type": "timeseries",
+        "id": 15,
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT date AS time, value / 1e6 AS \"Средства клиентов, всего\"\nFROM v_cbr_macro\nWHERE series = 'clients_total' AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "B",
+            "rawSql": "SELECT date AS time, value / 1e6 AS \"Вклады физлиц (с эскроу)\"\nFROM v_cbr_macro\nWHERE series = 'households_deposits_escrow' AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "C",
+            "rawSql": "SELECT date AS time, value / 1e6 AS \"Депозиты юрлиц\"\nFROM v_cbr_macro\nWHERE series = 'corp_deposits' AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "D",
+            "rawSql": "SELECT date AS time, value / 1e6 AS \"Счета организаций\"\nFROM v_cbr_macro\nWHERE series = 'org_accounts' AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "Средства клиентов банков, трлн ₽",
+        "description": "Средства клиентов банков РФ по SORS (ЦБ, cbr_sors_funds; лист «итого», млн руб. → трлн ₽): всего, вклады физлиц с эскроу, депозиты юрлиц, счета организаций. Это НЕ денежный агрегат «депозиты населения» — другой контур и другой охват. На 2026-10-01: 154.2 / 74.6 / 45.3 / 24.0 трлн ₽.",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 24,
+          "x": 0,
+          "y": 102
+        },
+        "repeatDirection": "h",
+        "options": {
+          "legend": {
+            "displayMode": "table",
+            "placement": "bottom",
+            "showLegend": true,
+            "calcs": [
+              "lastNotNull",
+              "min",
+              "max"
+            ]
+          },
+          "tooltip": {
+            "mode": "single",
+            "sort": "none"
+          }
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "currencyRUB",
+            "decimals": 1,
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "gradientMode": "none",
+              "lineWidth": 1,
+              "lineInterpolation": "smooth",
+              "fillOpacity": 0,
+              "spanNulls": false
+            }
+          },
+          "overrides": []
+        }
+      },
+      {
+        "type": "timeseries",
+        "id": 16,
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT time,\n       yoy AS \"Вклады физлиц, % г/г\",\n       mom AS \"Вклады физлиц, % м/м\"\nFROM (\n    SELECT date AS time,\n           round((value / lagInFrame(value, 12) OVER (ORDER BY date) - 1) * 100, 2) AS yoy,\n           round((value / lagInFrame(value, 1) OVER (ORDER BY date) - 1) * 100, 2) AS mom\n    FROM v_cbr_macro\n    WHERE series = 'households_deposits_escrow'\n)\nWHERE $__timeFilter(time)\nORDER BY time\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "Вклады физлиц: темпы, %",
+        "description": "Г/г и м/м темпы вкладов физлиц с эскроу (SORS). Отрицательный г/г означал бы отток вкладов; на 2026-11-08 г/г +9.77%, м/м +0.21% — оттока нет. Расчёт — lagInFrame по полному ряду, фильтр диапазона снаружи.",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 24,
+          "x": 0,
+          "y": 110
+        },
+        "repeatDirection": "h",
+        "options": {
+          "legend": {
+            "displayMode": "table",
+            "placement": "bottom",
+            "showLegend": true,
+            "calcs": [
+              "lastNotNull",
+              "min",
+              "max"
+            ]
+          },
+          "tooltip": {
+            "mode": "single",
+            "sort": "none"
+          }
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent",
+            "decimals": 2,
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "gradientMode": "none",
+              "lineWidth": 1,
+              "lineInterpolation": "smooth",
+              "fillOpacity": 0,
+              "spanNulls": false
+            }
+          },
+          "overrides": []
+        }
+      },
+      {
+        "type": "timeseries",
+        "id": 17,
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT date AS time, value / 1e6 AS \"Счета эскроу\"\nFROM v_cbr_macro\nWHERE series = 'escrow_accounts' AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "B",
+            "rawSql": "SELECT date AS time, value / 1e6 AS \"Средства ИП\"\nFROM v_cbr_macro\nWHERE series = 'ip_accounts' AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "Счета эскроу и средства ИП, трлн ₽",
+        "description": "Средства на счетах эскроу (с 2019-02) и средства индивидуальных предпринимателей (с 2013-02) по SORS. Ряды начинаются в разные даты — каждая линия стартует со своей первой точки, нулей до старта нет. На 2026-10-01: эскроу 7.60, ИП 2.82 трлн ₽.",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 24,
+          "x": 0,
+          "y": 118
+        },
+        "repeatDirection": "h",
+        "options": {
+          "legend": {
+            "displayMode": "table",
+            "placement": "bottom",
+            "showLegend": true,
+            "calcs": [
+              "lastNotNull",
+              "min",
+              "max"
+            ]
+          },
+          "tooltip": {
+            "mode": "single",
+            "sort": "none"
+          }
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "currencyRUB",
+            "decimals": 2,
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "gradientMode": "none",
+              "lineWidth": 1,
+              "lineInterpolation": "smooth",
+              "fillOpacity": 0,
+              "spanNulls": false
+            }
+          },
+          "overrides": []
+        }
+      },
+      {
+        "type": "timeseries",
+        "id": 18,
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT date AS time,\n       maxIf(value, series = 'clients_total_fx') / maxIf(value, series = 'clients_total') * 100 AS \"Доля инвалюты и металлов, %\"\nFROM v_cbr_macro\nWHERE series IN ('clients_total', 'clients_total_fx') AND $__timeFilter(date)\nGROUP BY date\nORDER BY time\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "Доля инвалюты и металлов в средствах клиентов, %",
+        "description": "Отношение средств клиентов в иностранной валюте и драгоценных металлах к итогу (SORS, листы «в инвалюте» и «итого»). Показывает валютную структуру банковских пассивов — контекст для решения «рублёвый долг vs валюта». На 2026-10-01 — 9.34%.",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 24,
+          "x": 0,
+          "y": 126
+        },
+        "repeatDirection": "h",
+        "options": {
+          "legend": {
+            "displayMode": "table",
+            "placement": "bottom",
+            "showLegend": true,
+            "calcs": [
+              "lastNotNull",
+              "min",
+              "max"
+            ]
+          },
+          "tooltip": {
+            "mode": "single",
+            "sort": "none"
+          }
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent",
+            "decimals": 2,
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "gradientMode": "none",
+              "lineWidth": 1,
+              "lineInterpolation": "smooth",
+              "fillOpacity": 0,
+              "spanNulls": false
+            }
+          },
+          "overrides": []
+        }
+      }
+    ],
+    "templating": {},
+    "annotations": {}
+  }
+}
