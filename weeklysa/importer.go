@@ -353,6 +353,10 @@ func publishWeeklyDerived(ctx context.Context, conn driver.Conn) error {
 	if err := util.UpsertSeriesCatalog(ctx, conn, weeklySASeriesMeta()); err != nil {
 		return err
 	}
-	_, err := util.CreateView(ctx, conn, weeklySAView)
-	return err
+	for _, view := range []util.View{weeklySAView, weeklySAQuarterlyView, weeklySARolling3mView} {
+		if _, err := util.CreateView(ctx, conn, view); err != nil {
+			return err
+		}
+	}
+	return nil
 }
