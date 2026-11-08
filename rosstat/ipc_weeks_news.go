@@ -40,8 +40,24 @@ const (
 	// ipcWeeksNewsTableAnchor — якорь таблицы в тексте PDF: по нему разбор понимает, что
 	// вступительный текст закончился. Повторяется в шапке каждой страницы.
 	ipcWeeksNewsTableAnchor = "Индексы потребительских цен"
-	// ipcWeeksNewsContext — общая часть сообщений разбора.
+	// ipcWeeksNewsContext — общая часть сообщений разбора CPI-PDF.
 	ipcWeeksNewsContext = rosstatIPCWeeksTable + ", PDF-выпуск новостной ленты"
+	// ipcWeeksPetrolSearch — поисковый запрос ленты для PDF «О потребительских ценах на
+	// нефтепродукты»: там три марки бензина, которых нет в CPI-PDF.
+	ipcWeeksPetrolSearch = "О потребительских ценах на нефтепродукты"
+	// ipcWeeksPetrolTitleMarker — маркер карточки нефтепродуктов.
+	ipcWeeksPetrolTitleMarker = "о потребительских ценах на нефтепродукты"
+	// ipcWeeksPetrolContext — общая часть сообщений разбора PDF нефтепродуктов.
+	ipcWeeksPetrolContext = rosstatIPCWeeksTable + ", PDF «О потребительских ценах на нефтепродукты»"
+	// ipcWeeksNewsKindCPI / ipcWeeksNewsKindPetrol — метка документа: у одной недели два
+	// PDF разного формата, и Parse выбирает разбор по ней.
+	ipcWeeksNewsKindCPI    = "cpi"
+	ipcWeeksNewsKindPetrol = "petrol"
+	// Три марки бензина: канонические имена XLSX; в CPI-PDF их нет, в PDF нефтепродуктов —
+	// строки «марки АИ-92/95/98 и выше».
+	ipcWeeksPetrolAI92 = "Бензин автомобильный марки АИ-92, л"
+	ipcWeeksPetrolAI95 = "Бензин автомобильный марки АИ-95, л"
+	ipcWeeksPetrolAI98 = "Бензин автомобильный марки АИ-98 и выше, л"
 )
 
 // ipcWeeksNewsRelease — карточка ленты: дата последнего дня недели из титула, заголовок,
@@ -62,21 +78,28 @@ var (
 	ipcWeeksNewsRowRe = regexp.MustCompile(`^(.+?)\s+(…|\d{1,3}[.,]\d{1,2})\s+(…|\d{1,3}[.,]\d{1,2})\s+(…|\d{1,3}[.,]\d{1,2})$`)
 )
 
-// ipcWeeksNewsURL — URL первой страницы ленты с поиском недельных выпусков. Переменная,
-// а не функция, ради теста недоступной ленты без сети.
-var ipcWeeksNewsURL = func() (string, error) {
+// ipcWeeksNewsFeedURL — URL первой страницы ленты с поиском. Переменные ipcWeeksNewsURL и
+// ipcWeeksPetrolURL — обёртки, чтобы тест мог подменить ленту без сети.
+func ipcWeeksNewsFeedURL(search string) (string, error) {
 	u, err := url.Parse(rosstatUrl + "/central-news")
 	if err != nil {
 		return "", fmt.Errorf("%s: URL ленты: %w", ipcWeeksNewsContext, err)
 	}
 	q := u.Query()
 	q.Set("per_page", ipcWeeksNewsPerPage)
-	q.Set("search", ipcWeeksNewsSearch)
+	q.Set("search", search)
 	q.Set("date_from", "")
 	q.Set("date_to", "")
 	u.RawQuery = q.Encode()
 	return u.String(), nil
 }
+
+var (
+	// ipcWeeksNewsURL — лента CPI-выпусков.
+	ipcWeeksNewsURL = func() (string, error) { return ipcWeeksNewsFeedURL(ipcWeeksNewsSearch) }
+	// ipcWeeksPetrolURL — лента PDF о потребительских ценах на нефтепродукты.
+	ipcWeeksPetrolURL = func() (string, error) { return ipcWeeksNewsFeedURL(ipcWeeksPetrolSearch) }
+)
 
 // ipcWeeksNewsReleases разбирает карточки ленты. Месячные карточки отсекаются маркером
 // титула; дата берётся из титула («с … по …»), а не из даты публикации карточки. Пустой
@@ -132,10 +155,26 @@ func ipcWeeksNewsReleases(page []byte) ([]ipcWeeksNewsRelease, error) {
 	return releases, nil
 }
 
-// ipcWeeksNewsDocuments — Documents общего util.Fallback: первая страница ленты, только
-// PDF-выпуски. HTML-выпуски (старый формат недельных релизов) фолбэк не разбирает — о них
-// только строка в журнале, чтобы пропуск был виден, а не молчал.
-func ipcWeeksNewsDocuments(_ context.Context) ([]util.FallbackDocument, error) {
+// ipcWeeksNewsDocuments — Documents общего util.Fallback: CPI-PDF и PDF о ценах на
+// нефтепродукты. Сбой ленты нефтепродуктов не отменяет CPI-фолбэк: три марки бензина
+// доберутся следующим прогоном, а остальные 108 рядов — уже сейчас. Сбой CPI-ленты —
+// ошибка: без неё нет основной таблицы недели.
+func ipcWeeksNewsDocuments(ctx context.Context) ([]util.FallbackDocument, error) {
+	docs, err := ipcWeeksCPIDocuments(ctx)
+	if err != nil {
+		return nil, err
+	}
+	petrol, err := ipcWeeksPetrolDocuments(ctx)
+	if err != nil {
+		log.Warnf("%s: PDF-фолбэк нефтепродуктов пропущен: %v", ipcWeeksPetrolContext, err)
+		return docs, nil
+	}
+	return append(docs, petrol...), nil
+}
+
+// ipcWeeksCPIDocuments — CPI-выпуски: первая страница ленты, только PDF. HTML-выпуски
+// (старый формат недельных релизов) фолбэк не разбирает — о них только строка в журнале.
+func ipcWeeksCPIDocuments(_ context.Context) ([]util.FallbackDocument, error) {
 	feedURL, err := ipcWeeksNewsURL()
 	if err != nil {
 		return nil, err
@@ -155,7 +194,11 @@ func ipcWeeksNewsDocuments(_ context.Context) ([]util.FallbackDocument, error) {
 			html++
 			continue
 		}
-		docs = append(docs, util.FallbackDocument{Date: release.Date, URL: release.URL})
+		docs = append(docs, util.FallbackDocument{
+			Date: release.Date,
+			URL:  release.URL,
+			Kind: ipcWeeksNewsKindCPI,
+		})
 	}
 	if html > 0 {
 		log.Infof("%s: в ленте %d HTML-выпусков — PDF-фолбэк их не покрывает", ipcWeeksNewsContext, html)
@@ -163,10 +206,101 @@ func ipcWeeksNewsDocuments(_ context.Context) ([]util.FallbackDocument, error) {
 	return docs, nil
 }
 
-// ipcWeeksNewsRows — Parse общего util.Fallback: PDF-байты → текст с колонками → точки.
+// ipcWeeksPetrolDocuments — PDF о ценах на нефтепродукты. Дату берём из титула самого PDF,
+// а не из карточки: в ленте встречается карточка с чужим периодом (28.10.2026 показывает
+// «с 27 октября по 2 ноября», а PDF внутри — за 20–26 октября). Документ скачивается здесь,
+// чтобы прочитать титул; шаблон скачает его ещё раз на импорте — PDF небольшие, а гейт
+// util.Fallback остаётся по датам.
+func ipcWeeksPetrolDocuments(ctx context.Context) ([]util.FallbackDocument, error) {
+	feedURL, err := ipcWeeksPetrolURL()
+	if err != nil {
+		return nil, err
+	}
+	page, err := util.GetFileBytesChecked(feedURL)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %s: %w", ipcWeeksPetrolContext, feedURL, err)
+	}
+	links, err := ipcWeeksNewsPDFLinks(page, ipcWeeksPetrolTitleMarker, ipcWeeksPetrolContext)
+	if err != nil {
+		return nil, err
+	}
+	docs := make([]util.FallbackDocument, 0, len(links))
+	for _, link := range links {
+		body, err := util.GetFileBytesChecked(link)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %s: %w", ipcWeeksPetrolContext, link, err)
+		}
+		text, err := util.PDFText(ctx, body, util.PDFLayout)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %s: %w", ipcWeeksPetrolContext, link, err)
+		}
+		date, err := ipcWeeksPetrolTitleDate(string(text))
+		if err != nil {
+			return nil, fmt.Errorf("%s: %s: %w", ipcWeeksPetrolContext, link, err)
+		}
+		docs = append(docs, util.FallbackDocument{
+			Date: date,
+			URL:  link,
+			Kind: ipcWeeksNewsKindPetrol,
+		})
+	}
+	return docs, nil
+}
+
+// ipcWeeksNewsPDFLinks — PDF-ссылки карточек ленты по маркеру. Карточную дату не разбираем:
+// у нефтепродуктов она бывает неверной, настоящая дата — в титуле PDF.
+func ipcWeeksNewsPDFLinks(page []byte, marker, context string) ([]string, error) {
+	doc, err := goquery.NewDocumentFromReader(bytes.NewReader(page))
+	if err != nil {
+		return nil, fmt.Errorf("%s: разбор страницы новостей: %w", context, err)
+	}
+	cards := doc.Find(".news-card")
+	if cards.Length() == 0 {
+		return nil, fmt.Errorf("%s: карточки .news-card не найдены — вёрстка ленты изменилась", context)
+	}
+	base, err := url.Parse(rosstatUrl + "/central-news")
+	if err != nil {
+		return nil, fmt.Errorf("%s: базовый URL ленты: %w", context, err)
+	}
+	var links []string
+	var parseErr error
+	cards.EachWithBreak(func(_ int, card *goquery.Selection) bool {
+		link := card.Find(".news-card__title a").First()
+		href, ok := link.Attr("href")
+		title := strings.TrimSpace(link.Text())
+		if !ok || strings.TrimSpace(href) == "" || !strings.Contains(strings.ToLower(title), marker) {
+			return true
+		}
+		ref, err := url.Parse(strings.TrimSpace(href))
+		if err != nil {
+			parseErr = fmt.Errorf("%s: ссылка %q: %w", context, href, err)
+			return false
+		}
+		resolved := base.ResolveReference(ref).String()
+		if strings.HasSuffix(strings.ToLower(resolved), ".pdf") {
+			links = append(links, resolved)
+		}
+		return true
+	})
+	if parseErr != nil {
+		return nil, parseErr
+	}
+	return links, nil
+}
+
+// ipcWeeksNewsRows — Parse общего util.Fallback: по метке документа выбирает CPI-таблицу
+// или таблицу марок бензина. У одной недели два PDF разного формата.
+func ipcWeeksNewsRows(ctx context.Context, doc util.FallbackDocument, body []byte) ([]util.FallbackRow, error) {
+	if doc.Kind == ipcWeeksNewsKindPetrol {
+		return ipcWeeksPetrolRows(ctx, doc, body)
+	}
+	return ipcWeeksCPIRows(ctx, doc, body)
+}
+
+// ipcWeeksCPIRows — Parse CPI-PDF: PDF-байты → текст с колонками → точки.
 // Дата шапки обязана совпасть с датой титула: пере-нумерованный буфер отдал бы по той же
 // ссылке чужой выпуск, и точки ушли бы не на свою неделю.
-func ipcWeeksNewsRows(ctx context.Context, doc util.FallbackDocument, body []byte) ([]util.FallbackRow, error) {
+func ipcWeeksCPIRows(ctx context.Context, doc util.FallbackDocument, body []byte) ([]util.FallbackRow, error) {
 	text, err := util.PDFText(ctx, body, util.PDFLayout)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %s: %w", ipcWeeksNewsContext, doc.URL, err)
@@ -193,6 +327,90 @@ func ipcWeeksNewsFallbackRows(points []ipcWeeksPoint, expected time.Time) ([]uti
 				ipcWeeksNewsContext, point.date.Format("2006-01-02"), expected.Format("2006-01-02"))
 		}
 		rows = append(rows, util.FallbackRow{Series: point.product, Date: point.date, Value: point.value})
+	}
+	return rows, nil
+}
+
+// ipcWeeksPetrolRowRe — строка таблицы «Динамика потребительских цен на бензин»: марка и
+// четыре значения. Колонки: предыдущая дата, текущая дата, к концу месяца, к концу года;
+// недельный индекс — второе значение (m[3]).
+var ipcWeeksPetrolRowRe = regexp.MustCompile(`^марки АИ-(92|95|98 и выше)\s+(\d{1,3}[.,]\d{1,2})\s+(\d{1,3}[.,]\d{1,2})\s+(\d{1,3}[.,]\d{1,2})\s+(\d{1,3}[.,]\d{1,2})$`)
+
+// ipcWeeksPetrolSeries — марка из PDF → каноническое имя XLSX.
+var ipcWeeksPetrolSeries = map[string]string{
+	"92":        ipcWeeksPetrolAI92,
+	"95":        ipcWeeksPetrolAI95,
+	"98 и выше": ipcWeeksPetrolAI98,
+}
+
+// ipcWeeksPetrolTitleDate — дата последнего дня недели из титула PDF нефтепродуктов
+// («С 27 ОКТЯБРЯ ПО 2 НОЯБРЯ 2026 ГОДА»). Титул — отдельная строка, регистр не важен.
+func ipcWeeksPetrolTitleDate(text string) (time.Time, error) {
+	for _, raw := range strings.Split(text, "\n") {
+		line := strings.TrimSpace(raw)
+		lower := strings.ToLower(line)
+		if !strings.HasPrefix(lower, "с ") || !strings.Contains(lower, " по ") {
+			continue
+		}
+		if date, _, err := ipcWeeksBulletinsTitleDate(line); err == nil {
+			return date, nil
+		}
+	}
+	return time.Time{}, fmt.Errorf("%s: титул «С … по …» не найден", ipcWeeksPetrolContext)
+}
+
+// ipcWeeksPetrolRows — Parse PDF нефтепродуктов: три марки бензина, значение — текущая
+// неделя. Агрегат «Бензин автомобильный» и дизельное топливо уже приходят из CPI-PDF,
+// поэтому здесь не пишутся: иначе округлённое значение нефтепродуктов перезаписало бы
+// более точное.
+func ipcWeeksPetrolRows(ctx context.Context, doc util.FallbackDocument, body []byte) ([]util.FallbackRow, error) {
+	text, err := util.PDFText(ctx, body, util.PDFLayout)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %s: %w", ipcWeeksPetrolContext, doc.URL, err)
+	}
+	rows, err := ipcWeeksPetrolParse(string(text), doc.Date)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %s: %w", ipcWeeksPetrolContext, doc.URL, err)
+	}
+	return rows, nil
+}
+
+// ipcWeeksPetrolParse — чистая часть разбора. Дата титула обязана совпасть с датой
+// документа: карточка ленты у источника иногда подписана чужим периодом, и титул PDF —
+// единственный надёжный источник.
+func ipcWeeksPetrolParse(text string, expected time.Time) ([]util.FallbackRow, error) {
+	date, err := ipcWeeksPetrolTitleDate(text)
+	if err != nil {
+		return nil, err
+	}
+	if !date.Equal(expected) {
+		return nil, fmt.Errorf("%s: дата титула %s не совпала с датой документа %s",
+			ipcWeeksPetrolContext, date.Format("2006-01-02"), expected.Format("2006-01-02"))
+	}
+	rows := make([]util.FallbackRow, 0, 3)
+	seen := make(map[string]bool, 3)
+	for _, raw := range strings.Split(text, "\n") {
+		line := strings.Join(strings.Fields(raw), " ")
+		m := ipcWeeksPetrolRowRe.FindStringSubmatch(line)
+		if m == nil {
+			continue
+		}
+		series, ok := ipcWeeksPetrolSeries[m[1]]
+		if !ok {
+			return nil, fmt.Errorf("%s: марка %q не описана", ipcWeeksPetrolContext, m[1])
+		}
+		if seen[series] {
+			return nil, fmt.Errorf("%s: ряд %q встречается в выпуске дважды", ipcWeeksPetrolContext, series)
+		}
+		seen[series] = true
+		value, err := ipcWeeksNewsValue(m[3])
+		if err != nil {
+			return nil, fmt.Errorf("%s: ряд %q: %w", ipcWeeksPetrolContext, series, err)
+		}
+		rows = append(rows, util.FallbackRow{Series: series, Date: date, Value: value})
+	}
+	if len(rows) != 3 {
+		return nil, fmt.Errorf("%s: разобрано %d марок бензина, ожидалось 3", ipcWeeksPetrolContext, len(rows))
 	}
 	return rows, nil
 }

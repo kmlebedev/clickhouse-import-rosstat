@@ -3,6 +3,7 @@ package rosstat
 import (
 	"context"
 	"fmt"
+	"math"
 	"os"
 	"strings"
 	"testing"
@@ -252,5 +253,116 @@ func TestIpcWeeksNewsDocumentsUnavailable(t *testing.T) {
 
 	if _, err := ipcWeeksNewsDocuments(context.Background()); err == nil {
 		t.Fatal("ожидалась ошибка URL ленты")
+	}
+}
+
+// TestIpcWeeksPetrolTitleDate — дата из титула PDF нефтепродуктов, а не из карточки ленты:
+// карточка 28.10.2026 подписана «с 27 октября по 2 ноября», а PDF внутри — за 20–26 октября.
+func TestIpcWeeksPetrolTitleDate(t *testing.T) {
+	for _, tc := range []struct {
+		file string
+		want string
+	}{
+		{"ipc_weeks_petrol_2026_11_02.txt", "2026-11-02"},
+		{"ipc_weeks_petrol_2026_10_26.txt", "2026-10-26"},
+	} {
+		t.Run(tc.want, func(t *testing.T) {
+			date, err := ipcWeeksPetrolTitleDate(string(readIpcWeeksNewsFixture(t, tc.file)))
+			if err != nil {
+				t.Fatalf("ipcWeeksPetrolTitleDate: %v", err)
+			}
+			if got := date.Format("2006-01-02"); got != tc.want {
+				t.Errorf("дата %s, ожидалась %s", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestIpcWeeksPetrolParse — три марки бензина, значение — текущая неделя (вторая колонка).
+func TestIpcWeeksPetrolParse(t *testing.T) {
+	for _, tc := range []struct {
+		file   string
+		date   string
+		values map[string]float64
+	}{
+		{
+			file: "ipc_weeks_petrol_2026_11_02.txt",
+			date: "2026-11-02",
+			values: map[string]float64{
+				ipcWeeksPetrolAI92: 97.8,
+				ipcWeeksPetrolAI95: 98.0,
+				ipcWeeksPetrolAI98: 99.8,
+			},
+		},
+		{
+			file: "ipc_weeks_petrol_2026_10_26.txt",
+			date: "2026-10-26",
+			values: map[string]float64{
+				ipcWeeksPetrolAI92: 98.2,
+				ipcWeeksPetrolAI95: 98.4,
+				ipcWeeksPetrolAI98: 100.1,
+			},
+		},
+	} {
+		t.Run(tc.date, func(t *testing.T) {
+			expected := time.Date(2026, time.October, 26, 0, 0, 0, 0, time.UTC)
+			if tc.date == "2026-11-02" {
+				expected = time.Date(2026, time.November, 2, 0, 0, 0, 0, time.UTC)
+			}
+			rows, err := ipcWeeksPetrolParse(string(readIpcWeeksNewsFixture(t, tc.file)), expected)
+			if err != nil {
+				t.Fatalf("ipcWeeksPetrolParse: %v", err)
+			}
+			if len(rows) != 3 {
+				t.Fatalf("строк %d, ожидалось 3", len(rows))
+			}
+			for _, row := range rows {
+				if got := row.Date.Format("2006-01-02"); got != tc.date {
+					t.Errorf("ряд %q: дата %s, ожидалась %s", row.Series, got, tc.date)
+				}
+				want, ok := tc.values[row.Series]
+				if !ok {
+					t.Errorf("неожиданный ряд %q", row.Series)
+					continue
+				}
+				if math.Abs(row.Value-want) > 0.001 {
+					t.Errorf("ряд %q = %v, ожидалось %v", row.Series, row.Value, want)
+				}
+			}
+		})
+	}
+}
+
+// TestIpcWeeksPetrolParseMismatch — титул PDF не совпал с датой документа — ошибка.
+func TestIpcWeeksPetrolParseMismatch(t *testing.T) {
+	text := string(readIpcWeeksNewsFixture(t, "ipc_weeks_petrol_2026_11_02.txt"))
+	if _, err := ipcWeeksPetrolParse(text, time.Date(2026, time.October, 26, 0, 0, 0, 0, time.UTC)); err == nil {
+		t.Fatal("ожидалась ошибка расхождения даты")
+	}
+}
+
+// TestIpcWeeksNewsPDFLinksPetrol — из ленты нефтепродуктов берутся только PDF, CPI-ссылка
+// с другим маркером отсекается.
+func TestIpcWeeksNewsPDFLinksPetrol(t *testing.T) {
+	links, err := ipcWeeksNewsPDFLinks(
+		readIpcWeeksNewsFixture(t, "ipc_weeks_petrol_page.html"),
+		ipcWeeksPetrolTitleMarker, ipcWeeksPetrolContext)
+	if err != nil {
+		t.Fatalf("ipcWeeksNewsPDFLinks: %v", err)
+	}
+	if len(links) != 2 {
+		t.Fatalf("ссылок %d, ожидалось 2: %v", len(links), links)
+	}
+	if !strings.HasSuffix(links[0], "n-ben11_02.pdf") || !strings.HasSuffix(links[1], "169n-ben28.pdf") {
+		t.Errorf("ссылки %v, ожидались n-ben11_02.pdf и 169n-ben28.pdf", links)
+	}
+}
+
+// TestIpcWeeksPetrolSeriesInCatalog — три марки уже описаны в каталоге XLSX.
+func TestIpcWeeksPetrolSeriesInCatalog(t *testing.T) {
+	for _, series := range []string{ipcWeeksPetrolAI92, ipcWeeksPetrolAI95, ipcWeeksPetrolAI98} {
+		if !ipcWeeksKnownProducts[series] {
+			t.Errorf("ряда %q нет в ipcWeeksProducts", series)
+		}
 	}
 }

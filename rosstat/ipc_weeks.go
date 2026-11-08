@@ -53,9 +53,18 @@ const (
 	// не конец таблицы, ниже стоят строки других товаров.
 	ipcWeeksNoData = "…"
 
-	// ipcWeeksKnownDatesQuery — гейт PDF-фолбэка: даты, уже лежащие в таблице. Множество, а
-	// не max(date): общий util.Fallback лечит и пропущенную середину набора.
-	ipcWeeksKnownDatesQuery = "SELECT DISTINCT date FROM rosstat_ipc_weeks FINAL"
+	// ipcWeeksKnownDatesQuery — гейт PDF-фолбэка. Дата считается известной, только когда в
+	// таблице уже есть все три марки бензина: CPI-PDF их не содержит, они приходят отдельным
+	// PDF «О потребительских ценах на нефтепродукты». Поэтому неделя, записанная старым
+	// прогоном без этих трёх рядов, остаётся «неизвестной» и добирается повторно (CPI-PDF
+	// перезаписывается идемпотентно, нефтепродукты добавляют три ряда).
+	ipcWeeksKnownDatesQuery = `SELECT date FROM rosstat_ipc_weeks FINAL
+WHERE name IN (
+    'Бензин автомобильный марки АИ-92, л',
+    'Бензин автомобильный марки АИ-95, л',
+    'Бензин автомобильный марки АИ-98 и выше, л'
+)
+GROUP BY date HAVING uniqExact(name) = 3`
 )
 
 type IpcWeeksStat struct {
