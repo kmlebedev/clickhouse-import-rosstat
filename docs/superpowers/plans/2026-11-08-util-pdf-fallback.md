@@ -25,6 +25,9 @@
 - [ ] Фикстуры: два текста PDF, HTML-фрагмент ленты.
 - [ ] `rosstat/ipc_weeks_news_test.go`: 108 точек × 2, spot-values, имена, лента, ошибки.
 - [ ] `make import STAT=rosstat_ipc_weeks` — 108 строк за 2026-11-02, повтор no-op.
+- [ ] `rosstat/ipc_weeks_news.go`: второй PDF-источник «О потребительских ценах на нефтепродукты» (`Kind: petrol`) — 3 марки бензина АИ-92/95/98; `ipcWeeksKnownDatesQuery` гейтит по всем трём маркам сразу, чтобы неделя без них пере-импортировалась.
+- [ ] `util/fallback.go`: дедупликация документов по URL, а не по дате — у одной недели два PDF.
+- [ ] `make import STAT=rosstat_ipc_weeks` — 111 строк (108 CPI + 3 бензин), повтор no-op.
 
 ## 4. Документы
 
