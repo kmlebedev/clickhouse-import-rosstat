@@ -52,7 +52,7 @@ return fallback.Import(ctx, conn)
 - `Documents` — CPI-выпуски `central-news` (тот же источник, что у 1.12); берутся только PDF, HTML-выпуски не разбираются.
 - `KnownDatesQuery` — `SELECT DISTINCT date FROM rosstat_bi_cpi_weekly FINAL WHERE series = 'Индекс потребительских цен (недельная оценка)'`.
 - `Append` — батч `(series, date, value)`; значение `Float64`, как в DDL таблицы.
-- `Template.PublicationCountPoints` включает шаблонную версию: на каждый импортированный PDF пишется строка `source_publications` (`source='rosstat_bi_cpi_weekly'`, `name` = basename PDF, HEAD-отпечаток, URL, points). При включённом `ARCHIVE_BACKEND` PDF сохраняется в винтажный архив; при выключенном — только строка версии.
+- `Template.PublicationCountPoints` включает шаблонную версию: на каждый импортированный PDF пишется строка `source_publications` (`source='rosstat_bi_cpi_weekly'`, `name` = basename PDF, HEAD-отпечаток, URL, points). При включённом `ARCHIVE_BACKEND` PDF сохраняется в винтажный архив; при выключенном — только строка версии. Если шаблон уйдёт в no-op по версии PDF при отсутствующей дате, `res.Imported` включит общий `count()` таблицы; post-cycle проверка дат `util.Fallback` делает такой рассинхрон громкой ошибкой, а штатный путь (дата отсутствует → версия новая) считает строки точно.
 
 **Политика ошибок** (как у `rosstat_ipc_weeks`):
 
@@ -87,6 +87,7 @@ return fallback.Import(ctx, conn)
 - Лента `central-news` отдаёт 20 карточек (~5 месяцев): пропуски старше окна ленты фолбэк не закрывает; ограничение фиксируется в `docs/LIMITATIONS.md`.
 - Значение из PDF может быть ревизовано BI позже; это ожидаемо и перекрывается ключом `(series, date)`.
 - `pdftotext` (poppler-utils) уже обязателен в production с 1.12; новых зависимостей нет.
+- При включённом `ARCHIVE_BACKEND` PDF-версия сохраняется только как аудит; `ARCHIVE_ACTION=restore` для `rosstat_bi_cpi_weekly` по-прежнему не поддержан, и архивные PDF не участвуют в восстановлении.
 
 ## 6. Приёмка
 

@@ -3,6 +3,7 @@ package rosstat
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -794,6 +795,28 @@ func TestBICpiWeeklyKnownDatesQueryUsesAggregateSeries(t *testing.T) {
 	if !strings.Contains(biCpiWeeklyKnownDatesQuery, ipcWeeksBulletinsAggregateSeries) {
 		t.Fatalf("запрос дат не содержит ряд %q: %s", ipcWeeksBulletinsAggregateSeries, biCpiWeeklyKnownDatesQuery)
 	}
+	if !strings.Contains(biCpiWeeklyKnownDatesQuery, rosstatBICpiWeeklyTable) {
+		t.Fatalf("запрос дат не содержит таблицу %q: %s", rosstatBICpiWeeklyTable, biCpiWeeklyKnownDatesQuery)
+	}
+	if !strings.Contains(biCpiWeeklyKnownDatesQuery, "FINAL") {
+		t.Fatalf("запрос дат без FINAL: %s", biCpiWeeklyKnownDatesQuery)
+	}
+}
+
+func TestBICpiWeeklyFallbackOutcome(t *testing.T) {
+	fetchErr := errors.New("bi down")
+	fallbackErr := errors.New("pdf down")
+	count, err := biCpiWeeklyFallbackOutcome(fetchErr, fallbackErr, 1)
+	if count != 1 || err == nil {
+		t.Fatalf("двойной отказ: count=%d err=%v, ожидались 1 и ошибка", count, err)
+	}
+	if !errors.Is(err, fetchErr) || !errors.Is(err, fallbackErr) {
+		t.Errorf("errors.Join не содержит обе причины: %v", err)
+	}
+	count, err = biCpiWeeklyFallbackOutcome(fetchErr, nil, 1)
+	if count != 1 || err != nil {
+		t.Errorf("успешный фолбэк: count=%d err=%v, ожидались 1 и nil", count, err)
+	}
 }
 
 func TestBICpiWeeklyPDFRowsRejectsNonPDF(t *testing.T) {
@@ -803,5 +826,8 @@ func TestBICpiWeeklyPDFRowsRejectsNonPDF(t *testing.T) {
 	}, []byte("<html><body>Доступ ограничен</body></html>"))
 	if err == nil {
 		t.Fatal("ожидалась ошибка: не PDF")
+	}
+	if !strings.Contains(err.Error(), "не PDF") {
+		t.Errorf("ошибка %q не про сигнатуру PDF — тест мог пройти на отсутствии pdftotext", err)
 	}
 }

@@ -135,17 +135,22 @@ func (s *BICpiWeeklyStat) Import(ctx context.Context, conn driver.Conn) (count i
 	}
 	points, fetchErr := s.biCpiWeeklyFetchPoints(ctx)
 	if fetchErr != nil {
+		// Отменённый шаг не должен начинать новую сетевую работу с мёртвым контекстом.
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return 0, errors.Join(fetchErr, ctxErr)
+		}
 		log.Warnf("%s: BI недоступен (%v) — пробуем PDF-фолбэк агрегата", rosstatBICpiWeeklyTable, fetchErr)
 		res, fallbackErr := s.biCpiWeeklyFallback(ctx, conn)
+		count, outcomeErr := biCpiWeeklyFallbackOutcome(fetchErr, fallbackErr, res.Imported)
 		switch {
-		case fallbackErr != nil:
-			return res.Imported, errors.Join(fetchErr, fallbackErr)
+		case outcomeErr != nil:
+			return count, outcomeErr
 		case res.Imported > 0:
 			log.Warnf("%s: BI недоступен, PDF-фолбэк записал %d точек", rosstatBICpiWeeklyTable, res.Imported)
 		default:
 			log.Warnf("%s: BI недоступен, PDF-фолбэк новых дат не нашёл", rosstatBICpiWeeklyTable)
 		}
-		return res.Imported, nil
+		return count, nil
 	}
 	fingerprint := biCpiWeeklyFingerprint(points)
 	// Производные (каталог ряда + витрина) публикуются и на no-op-пути: их отсутствие после
@@ -248,6 +253,15 @@ func (s *BICpiWeeklyStat) biCpiWeeklyFallback(ctx context.Context, conn driver.C
 		Append:          biCpiWeeklyPDFAppendRow,
 	}
 	return fallback.Import(ctx, conn)
+}
+
+// biCpiWeeklyFallbackOutcome — политика ошибок фолбэка без БД и логирования: успешный
+// фолбэк отдаёт imported, двойной отказ — errors.Join. Вынесена ради табличного теста.
+func biCpiWeeklyFallbackOutcome(fetchErr, fallbackErr error, imported int64) (int64, error) {
+	if fallbackErr != nil {
+		return imported, errors.Join(fetchErr, fallbackErr)
+	}
+	return imported, nil
 }
 
 // biCpiWeeklyRetry повторяет транспортный вызов: обрыв соединения — свойство источника, а не
@@ -395,7 +409,7 @@ func biCpiWeeklyPDFTextRows(text string, expected time.Time) ([]util.FallbackRow
 	if err != nil {
 		return nil, err
 	}
-	value, err := ipcWeeksNewsAggregate(text)
+	value, err := ipcWeeksNewsAggregateFor(text, biCpiWeeklyPDFContext)
 	if err != nil {
 		return nil, err
 	}

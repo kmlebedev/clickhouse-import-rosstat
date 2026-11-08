@@ -496,11 +496,17 @@ func ipcWeeksNewsValue(cell string) (float64, error) {
 	return value, nil
 }
 
-// ipcWeeksNewsAggregate — недельный агрегат из шапки CPI-PDF: строка «Индекс
+// ipcWeeksNewsAggregate — недельный агрегат из шапки CPI-PDF с контекстом 1.12. Обёртка
+// над ...For: фолбэк BI передаёт свой префикс диагностики.
+func ipcWeeksNewsAggregate(text string) (float64, error) {
+	return ipcWeeksNewsAggregateFor(text, ipcWeeksNewsContext)
+}
+
+// ipcWeeksNewsAggregateFor — недельный агрегат из шапки CPI-PDF: строка «Индекс
 // потребительских цен» и следующая за ней «(оценка) 99,96 …» (или обе в одной строке).
 // Первое число — индекс к предыдущей дате регистрации, та же семантика, что у ряда BI.
 // Чистая функция без сети/exec: тесты офлайн.
-func ipcWeeksNewsAggregate(text string) (float64, error) {
+func ipcWeeksNewsAggregateFor(text, context string) (float64, error) {
 	var (
 		value float64
 		found bool
@@ -523,24 +529,21 @@ func ipcWeeksNewsAggregate(text string) (float64, error) {
 			continue
 		}
 		fields := strings.Fields(rest)
-		if len(fields) == 0 {
-			return 0, fmt.Errorf("%s: строка агрегата «(оценка)» без значения", ipcWeeksNewsContext)
-		}
 		parsed, err := ipcWeeksNewsValue(fields[0])
 		if err != nil {
-			return 0, fmt.Errorf("%s: агрегат «(оценка)»: %w", ipcWeeksNewsContext, err)
+			return 0, fmt.Errorf("%s: агрегат «(оценка)»: %w", context, err)
 		}
 		// Шапка повторяется на каждой странице; одинаковое значение — не дубль, а
 		// расхождение значений в одном выпуске — повод не писать точку.
 		if found && parsed != value {
 			return 0, fmt.Errorf("%s: строка агрегата «(оценка)» встречается дважды: %v и %v",
-				ipcWeeksNewsContext, value, parsed)
+				context, value, parsed)
 		}
 		value, found = parsed, true
 	}
 	if !found {
 		return 0, fmt.Errorf("%s: строка агрегата «%s (оценка)» не найдена",
-			ipcWeeksNewsContext, ipcWeeksNewsAggregateAnchor)
+			context, ipcWeeksNewsAggregateAnchor)
 	}
 	return value, nil
 }

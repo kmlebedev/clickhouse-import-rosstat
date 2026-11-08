@@ -2475,21 +2475,27 @@ async def check(params, server_log):
             q_week_q3_n = q_week_q3.get("saar_q")
             q_week_q4_n = q_week_q4.get("saar_q")
             # 3к26 — закрытый квартал, но его SAAR пересчитывается при каждом перефите
-            # X-13: добавление недели меняет сезонные факторы и историю, поэтому снимок
-            # 6,92 не является контрактом. Проверяются непустота и правдоподобный
-            # диапазон, а не точка; точное значение — в research-паритете.
-            # 4к26 — «квартал к дате»: месяцев 1, полных 0, partial = 1. Если октябрь
-            # закроется, months станет 2, full_months — 1, partial — 1; проверяются
-            # признаки незакрытого квартала, а не число месяцев.
-            q_week_ok = (0 < (q_week_q3_n or 0) < 100
-                         and 0 < (q_week_q4_n or 0) < 100
+            # X-13: добавление недели меняет сезонные факторы и историю, а отрицательные
+            # значения — легитимная дезинфляция. Проверяется двусторонний коридор, не снимок.
+            # 4к26 — «квартал к дате»: инвариант, не зависящий от перефита, — saar_q равен
+            # среднему месячных saar за месяцы квартала из v_weekly_cpi_sa; partial = 1,
+            # full_months < months. Если октябрь закроется, months станет 2, full_months — 1.
+            q_week_monthly = text(await session.call_tool("run_query", {"query":
+                "SELECT round(avg(value), 2) AS saar_avg FROM v_weekly_cpi_sa "
+                "WHERE series = 'weekly_cpi:saar' "
+                "AND toStartOfQuarter(date) = toStartOfQuarter(toDate('2026-10-01'))"}))
+            q_week_monthly_rows = result_rows(q_week_monthly) or []
+            q_week_avg_n = q_week_monthly_rows[0].get("saar_avg") if q_week_monthly_rows else None
+            q_week_ok = (q_week_q3_n is not None and q_week_q4_n is not None
+                         and -100 < q_week_q3_n < 100
                          and q_week_q4.get("partial") == 1
-                         and (q_week_q4.get("full_months") or 0) < (q_week_q4.get("months") or 0))
-            failed += not expect("витрина v_weekly_cpi_quarterly: 3к26 и 4к26 заполнены",
+                         and (q_week_q4.get("full_months") or 0) < (q_week_q4.get("months") or 0)
+                         and abs(q_week_q4_n - (q_week_avg_n or 0)) < 0.02)
+            failed += not expect("витрина v_weekly_cpi_quarterly: 3к26 в коридоре, 4к26 = среднему месячных",
                                  q_week_ok,
-                                 f"3к26: {q_week_q3_n} (want 0..100), 4к26: {q_week_q4_n} "
-                                 f"(want 0..100), partial: {q_week_q4.get('partial')} (want 1), "
-                                 f"full_months/months: {q_week_q4.get('full_months')}/"
+                                 f"3к26: {q_week_q3_n} (want -100..100), 4к26: {q_week_q4_n} "
+                                 f"(want avg {q_week_avg_n} ± 0.02), partial: {q_week_q4.get('partial')} "
+                                 f"(want 1), full_months/months: {q_week_q4.get('full_months')}/"
                                  f"{q_week_q4.get('months')} — прогнать make import STAT=weekly_cpi_sa")
 
             q_roll = text(await session.call_tool("run_query", {"query":
@@ -2502,12 +2508,12 @@ async def check(params, server_log):
             q_roll_last_n = q_roll_last_rows[0].get("saar_3m") if q_roll_last_rows else None
             q_roll_nulls = q_roll_rows[0].get("nulls") if q_roll_rows else None
             # Первые две точки — NULL (окно неполное), и это проверяется явно: ноль вместо NULL
-            # нарисовал бы на графике обвал к нулю, которого не было. Последняя точка
-            # ревизуется перефитом X-13, поэтому проверяется диапазон, а не снимок 8,15.
-            failed += not expect("витрина v_weekly_cpi_rolling3m: последняя заполнена, первые две NULL",
-                                 (q_roll_last_n or 0) > 0 and (q_roll_last_n or 0) < 200
+            # нарисовал бы на графике обвал к нулю, которого не было. Последняя точка ревизуется
+            # перефитом X-13 и может быть отрицательной, поэтому проверяется коридор, не снимок.
+            failed += not expect("витрина v_weekly_cpi_rolling3m: последняя в коридоре, первые две NULL",
+                                 q_roll_last_n is not None and -100 < q_roll_last_n < 200
                                  and (q_roll_nulls or 0) == 2,
-                                 f"последняя: {q_roll_last_n} (want 0..200), NULL: {q_roll_nulls} "
+                                 f"последняя: {q_roll_last_n} (want -100..200), NULL: {q_roll_nulls} "
                                  "(want 2) — прогнать make import STAT=weekly_cpi_sa")
 
             q_quarter_label = text(await session.call_tool("run_query", {"query":
