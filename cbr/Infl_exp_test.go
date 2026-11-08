@@ -1,7 +1,9 @@
 package cbr
 
 import (
+	"context"
 	"fmt"
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -234,7 +236,7 @@ func TestInflExpPdfColumnShapeFails(t *testing.T) {
 
 // TestInflExpPdfNotPDFFails: WAF/HTML вместо файла распознаётся до exec по сигнатуре.
 func TestInflExpPdfNotPDFFails(t *testing.T) {
-	_, err := inflExpPdfBBox([]byte(`<html><body>Доступ ограничен</body></html>`))
+	_, err := inflExpPdfBBox(context.Background(), []byte(`<html><body>Доступ ограничен</body></html>`))
 	if err == nil {
 		t.Fatal("ожидалась ошибка: HTML-заглушка не является PDF")
 	}
@@ -246,10 +248,10 @@ func TestInflExpPdfNotPDFFails(t *testing.T) {
 // TestInflExpPdfToolMissingFails: отсутствующий pdftotext — ошибка с подсказкой
 // poppler-utils, а не «0 rows» и не паника exec.
 func TestInflExpPdfToolMissingFails(t *testing.T) {
-	old := inflExpPdfTool
-	inflExpPdfTool = "pdftotext-kimi-code-missing"
-	defer func() { inflExpPdfTool = old }()
-	_, err := inflExpPdfBBox([]byte("%PDF-1.4\n1 0 obj\n"))
+	old := util.PDFTool
+	util.PDFTool = "pdftotext-kimi-code-missing"
+	defer func() { util.PDFTool = old }()
+	_, err := inflExpPdfBBox(context.Background(), []byte("%PDF-1.4\n1 0 obj\n"))
 	if err == nil {
 		t.Fatal("ожидалась ошибка отсутствующего pdftotext")
 	}
@@ -258,23 +260,58 @@ func TestInflExpPdfToolMissingFails(t *testing.T) {
 	}
 }
 
-// TestInflExpPdfNewer: гейт сравнивает 14-е число месяца PDF с уже записанной датой.
-func TestInflExpPdfNewer(t *testing.T) {
-	october := time.Date(2026, time.October, 1, 0, 0, 0, 0, time.UTC)
-	for name, tc := range map[string]struct {
-		known time.Time
-		want  bool
-	}{
-		"пустая таблица": {time.Time{}, true},
-		"тот же месяц":   {time.Date(2026, time.October, 14, 0, 0, 0, 0, time.UTC), false},
-		"прошлый месяц":  {time.Date(2026, time.September, 14, 0, 0, 0, 0, time.UTC), true},
-		"будущий месяц":  {time.Date(2026, time.November, 14, 0, 0, 0, 0, time.UTC), false},
-	} {
-		t.Run(name, func(t *testing.T) {
-			if got := inflExpPdfNewer(october, tc.known); got != tc.want {
-				t.Errorf("inflExpPdfNewer(2026-10, %s) = %v, want %v", tc.known.Format("2006-01-02"), got, tc.want)
-			}
-		})
+// TestInflExpPdfDocumentsFromPage: страница → один документ с датой 14-е и URL PDF.
+func TestInflExpPdfDocumentsFromPage(t *testing.T) {
+	docs, err := inflExpPdfDocumentsFromPage(readCbrTestdata(t, "infl_exp_page.html"))
+	if err != nil {
+		t.Fatalf("inflExpPdfDocumentsFromPage: %v", err)
+	}
+	if len(docs) != 1 {
+		t.Fatalf("документов %d, want 1", len(docs))
+	}
+	if got := docs[0].Date.Format("2006-01-02"); got != "2026-10-14" {
+		t.Errorf("дата %s, want 2026-10-14", got)
+	}
+	if !strings.HasSuffix(docs[0].URL, "inFOM_26-10.pdf") {
+		t.Errorf("URL %q, want inFOM_26-10.pdf", docs[0].URL)
+	}
+}
+
+// TestInflExpPdfRowsFromBBox: на фикстуре 26-10 две строки оперативной точки.
+func TestInflExpPdfRowsFromBBox(t *testing.T) {
+	rows, err := inflExpPdfRowsFromBBox(readCbrTestdata(t, inflExpPdfFixture),
+		time.Date(2026, time.October, 14, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("inflExpPdfRowsFromBBox: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("строк %d, want 2", len(rows))
+	}
+	want := map[string]float64{inflExpObservedName: 14.5, inflExpExpectedName: 13.2}
+	for _, row := range rows {
+		if row.Date.Format("2006-01-02") != "2026-10-14" {
+			t.Errorf("дата %s, want 2026-10-14", row.Date.Format("2006-01-02"))
+		}
+		expected, ok := want[row.Series]
+		if !ok {
+			t.Errorf("неожиданный ряд %q", row.Series)
+			continue
+		}
+		if math.Abs(row.Value-expected) > 0.001 {
+			t.Errorf("ряд %q = %v, want %v", row.Series, row.Value, expected)
+		}
+	}
+}
+
+// TestInflExpPdfRowsFromBBoxMismatch: дата не совпала — ошибка и ни одной строки.
+func TestInflExpPdfRowsFromBBoxMismatch(t *testing.T) {
+	_, err := inflExpPdfRowsFromBBox(readCbrTestdata(t, inflExpPdfFixture),
+		time.Date(2026, time.September, 14, 0, 0, 0, 0, time.UTC))
+	if err == nil {
+		t.Fatal("ожидалась ошибка расхождения даты")
+	}
+	if !strings.Contains(err.Error(), "график") {
+		t.Errorf("ошибка %q не называет расхождение графика и файла", err)
 	}
 }
 
