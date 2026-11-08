@@ -425,3 +425,12 @@ func TestIpcWeeksNewsAggregateErrors(t *testing.T) {
 		})
 	}
 }
+
+// TestIpcWeeksNewsAggregateForContext — фолбэк BI передаёт свой префикс диагностики,
+// а не контекст rosstat_ipc_weeks.
+func TestIpcWeeksNewsAggregateForContext(t *testing.T) {
+	_, err := ipcWeeksNewsAggregateFor("нет строки агрегата", "test-context")
+	if err == nil || !strings.Contains(err.Error(), "test-context") {
+		t.Fatalf("ошибка %v не содержит контекст test-context", err)
+	}
+}
