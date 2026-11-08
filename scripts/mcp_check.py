@@ -1407,7 +1407,8 @@ async def check(params, server_log):
 
             # Недельный SA-агрегат ИПЦ (пункт key-rate/phase-4-weekly-sa-aggregate,
             # #353): витрина v_weekly_cpi_sa читается агентом и непуста, каталог
-            # описывает 3 ряда, сырая weekly_cpi_sa закрыта. Ряд растёт с каждым
+            # описывает 5 рядов (3 месячных + 2 квартальных, #542), сырая weekly_cpi_sa
+            # закрыта. Ряд растёт с каждым
             # закрытым месяцем, поэтому строки — «>= 627» (3 × 209 на снимке
             # 2026-10-22), а не точное равенство.
             sa_view = text(await session.call_tool("run_query", {"query":
@@ -1436,8 +1437,9 @@ async def check(params, server_log):
                 "SELECT count() AS n FROM v_series_catalog WHERE source = 'weekly_cpi_sa'"}))
             sa_catalog_rows = result_rows(sa_catalog)
             sa_catalog_n = sa_catalog_rows[0].get("n") if sa_catalog_rows else None
-            failed += not expect("каталог weekly_cpi_sa описывает 3 ряда", sa_catalog_n == 3,
-                                 f"записей: {sa_catalog_n}" if sa_catalog_rows is not None
+            failed += not expect("каталог weekly_cpi_sa описывает 5 рядов", sa_catalog_n == 5,
+                                 f"записей: {sa_catalog_n} (3 месячных + 2 квартальных)"
+                                 if sa_catalog_rows is not None
                                  else f"каталог не читается: {sa_catalog[:200]}")
 
             raw = text(await session.call_tool("run_query", {"query": "SELECT count() FROM weekly_cpi_sa"}))
@@ -2424,13 +2426,92 @@ async def check(params, server_log):
             dip_catalog_n = dip_catalog_rows[0].get("n") if dip_catalog_rows else None
             if dip_catalog_rows is None:
                 dip_catalog_detail = f"ответ не распознан: {dip_catalog[:200]}"
-            elif dip_catalog_n == 8:
-                dip_catalog_detail = "рядов cbr_dip_bulletin: 8 (4 SAAR + 2 безработицы + 2 занятости)"
+            elif dip_catalog_n == 9:
+                dip_catalog_detail = ("рядов cbr_dip_bulletin: 9 (4 SAAR + 2 безработицы + "
+                                      "2 занятости + квартальный saar_q)")
             else:
-                dip_catalog_detail = (f"рядов cbr_dip_bulletin: {dip_catalog_n}, want 8 (4 SAAR + "
-                                      "2 безработицы + 2 занятости) — прогнать make import "
-                                      "STAT=cbr_dip_bulletin (каталог перепубликовывается прогоном)")
-            failed += not expect("каталог cbr_dip_bulletin полон", dip_catalog_n == 8, dip_catalog_detail)
+                dip_catalog_detail = (f"рядов cbr_dip_bulletin: {dip_catalog_n}, want 9 (4 SAAR + "
+                                      "2 безработицы + 2 занятости + квартальный saar_q) — прогнать "
+                                      "make import STAT=cbr_dip_bulletin (каталог перепубликовывается "
+                                      "прогоном)")
+            failed += not expect("каталог cbr_dip_bulletin полон", dip_catalog_n == 9, dip_catalog_detail)
+
+            # Квартальные метрики ЦБ (пункт key-rate/phase-4-cpi-quarterly-metrics, #542):
+            # четыре производные витрины, которые редактор читает вместо ad-hoc SQL из §4.7
+            # KEY_RATE_PUBLICATIONS. Проверка идёт по числам приёмки спеки §7, а не по «> 0»:
+            # витрина может существовать и быть пустой (импортёр не отработал) или отдавать
+            # другую формулу, и тогда статья соберётся с неверным кварталом.
+            q_dip = text(await session.call_tool("run_query", {"query":
+                "SELECT release, quarter, months, round(saar_q, 2) AS saar_q "
+                "FROM v_cbr_dip_quarterly WHERE release = "
+                "(SELECT max(release) FROM v_cbr_dip_quarterly) "
+                "AND quarter = '3к26'"}))
+            q_dip_rows = result_rows(q_dip)
+            q_dip_n = q_dip_rows[0].get("saar_q") if q_dip_rows else None
+            q_dip_months = q_dip_rows[0].get("months") if q_dip_rows else None
+            failed += not expect("витрина v_cbr_dip_quarterly: 3к26 = 8,02 (ЦБ 8,0)",
+                                 abs((q_dip_n or 0) - 8.02) < 0.005 and q_dip_months == 3,
+                                 f"3к26: {q_dip_n} (want 8.02), месяцев: {q_dip_months} (want 3) — "
+                                 "прогнать make import STAT=cbr_dip_bulletin")
+
+            q_core = text(await session.call_tool("run_query", {"query":
+                "SELECT quarter, months, round(saar_q, 2) AS saar_q FROM v_cbr_core_quarterly "
+                "WHERE quarter = '3к26'"}))
+            q_core_rows = result_rows(q_core)
+            q_core_n = q_core_rows[0].get("saar_q") if q_core_rows else None
+            q_core_months = q_core_rows[0].get("months") if q_core_rows else None
+            failed += not expect("витрина v_cbr_core_quarterly: 3к26 = 6,21 (ЦБ 6,2)",
+                                 abs((q_core_n or 0) - 6.21) < 0.005 and q_core_months == 3,
+                                 f"3к26: {q_core_n} (want 6.21), месяцев: {q_core_months} (want 3) — "
+                                 "прогнать make import STAT=cbr_indicators_cpd")
+
+            q_week = text(await session.call_tool("run_query", {"query":
+                "SELECT quarter, months, full_months, partial, round(saar_q, 2) AS saar_q "
+                "FROM v_weekly_cpi_quarterly WHERE quarter IN ('3к26', '4к26') "
+                "ORDER BY quarter"}))
+            q_week_rows = result_rows(q_week) or []
+            q_week_q3 = next((r for r in q_week_rows if r.get("quarter") == "3к26"), {})
+            q_week_q4 = next((r for r in q_week_rows if r.get("quarter") == "4к26"), {})
+            q_week_q3_n = q_week_q3.get("saar_q")
+            q_week_q4_n = q_week_q4.get("saar_q")
+            # 4к26 — «квартал к дате»: месяцев 1, полных 0, partial = 1. Если октябрь закроется,
+            # months станет 2 (октябрь полный + ноябрь nowcast), full_months — 1, partial — 1;
+            # поэтому проверяется не точное число месяцев, а признаки незакрытого квартала и
+            # значение: оно меняется с каждой новой неделей, и допуск здесь не ставится — тест
+            # требует лишь непустоты и partial = 1.
+            q_week_ok = (abs((q_week_q3_n or 0) - 6.92) < 0.02
+                         and (q_week_q4_n or 0) > 0
+                         and q_week_q4.get("partial") == 1
+                         and (q_week_q4.get("full_months") or 0) < (q_week_q4.get("months") or 0))
+            failed += not expect("витрина v_weekly_cpi_quarterly: 3к26 = 6,92, 4к26 — к дате",
+                                 q_week_ok,
+                                 f"3к26: {q_week_q3_n} (want 6.92), 4к26: {q_week_q4_n} "
+                                 f"(want > 0), partial: {q_week_q4.get('partial')} (want 1), "
+                                 f"full_months/months: {q_week_q4.get('full_months')}/"
+                                 f"{q_week_q4.get('months')} — прогнать make import STAT=weekly_cpi_sa")
+
+            q_roll = text(await session.call_tool("run_query", {"query":
+                "SELECT countIf(saar_3m IS NULL) AS nulls FROM v_weekly_cpi_rolling3m"}))
+            q_roll_rows = result_rows(q_roll)
+            q_roll_last = text(await session.call_tool("run_query", {"query":
+                "SELECT round(saar_3m, 2) AS saar_3m FROM v_weekly_cpi_rolling3m "
+                "ORDER BY date DESC LIMIT 1"}))
+            q_roll_last_rows = result_rows(q_roll_last)
+            q_roll_last_n = q_roll_last_rows[0].get("saar_3m") if q_roll_last_rows else None
+            q_roll_nulls = q_roll_rows[0].get("nulls") if q_roll_rows else None
+            # Первые две точки — NULL (окно неполное), и это проверяется явно: ноль вместо NULL
+            # нарисовал бы на графике обвал к нулю, которого не было.
+            failed += not expect("витрина v_weekly_cpi_rolling3m: последняя 8,15, первые две NULL",
+                                 abs((q_roll_last_n or 0) - 8.15) < 0.02 and (q_roll_nulls or 0) == 2,
+                                 f"последняя: {q_roll_last_n} (want 8.15), NULL: {q_roll_nulls} "
+                                 "(want 2) — прогнать make import STAT=weekly_cpi_sa")
+
+            q_quarter_label = text(await session.call_tool("run_query", {"query":
+                "SELECT countIf(quarter = '') AS blank FROM v_cbr_dip_quarterly"}))
+            q_label_rows = result_rows(q_quarter_label)
+            q_label_blank = q_label_rows[0].get("blank") if q_label_rows else None
+            failed += not expect("метка quarter заполнена", q_label_blank == 0,
+                                 f"пустых quarter: {q_label_blank} (want 0)")
 
             # Винтажность — то, ради чего у витрины есть колонки release, release_id и
             # publication_date (спека §3.6): агент читает точку как «значение, каким его
