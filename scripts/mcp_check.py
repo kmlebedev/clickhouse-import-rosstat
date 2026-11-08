@@ -902,6 +902,63 @@ async def check(params, server_log):
             failed += not expect("сырая cbr_households_b_mes закрыта", denied,
                                  "отказ ClickHouse 497 на cbr_households_b_mes (ожидаемо)" if denied else raw[:200])
 
+            # Средства клиентов банков (импортёр cbr_sors_funds, пункт
+            # key-rate/phase-2-cbr-sors-funds, #544): 21 ряд = 7 строк × 3 листа («итого»,
+            # «в рублях», «в инвалюте»). Каталог сверяется точным числом, а не «> 0»: 7 подписей
+            # источника × 3 листа, и имя ряда код собирает из подписи и суффикса валюты. Меньшее
+            # число значит ни разу не отработавший шаг cbr_sors_funds (числа агент прочитает, а
+            # что измеряет ряд и в каких единицах — нет), большее — ряд без строки в источнике.
+            # Выборка по origin, а не по source: у source='cbr' лежат ряды всех импортёров ЦБ, а
+            # 02_01_Funds_all.xlsx — источник ровно этого набора; «_» в LIKE экранирован, путь
+            # якорится каталогом Borrowings (без якоря «Funds_all» совпало бы с будущим соседом).
+            sors_catalog = text(await session.call_tool("run_query", {"query": "SELECT count() FROM v_series_catalog WHERE source = 'cbr' AND origin LIKE '%/Borrowings/02\\_01\\_Funds\\_all.xlsx%'"}))
+            sors_catalog_rows = result_rows(sors_catalog)
+            sors_catalog_n = sors_catalog_rows[0].get("count()") if sors_catalog_rows else None
+            if sors_catalog_rows is None:
+                sors_catalog_detail = f"каталог не читается: {sors_catalog[:200]}"
+            elif sors_catalog_n == 21:
+                sors_catalog_detail = "рядов cbr_sors_funds: 21 (7 строк × 3 листа)"
+            else:
+                sors_catalog_detail = (f"рядов cbr_sors_funds: {sors_catalog_n}, want 21 (7 строк × 3 листа: "
+                                       "итого/рубли/инвалюта) — прогнать make import STAT=cbr_sors_funds "
+                                       "(каталог перепубликовывается прогоном)")
+            failed += not expect("каталог cbr_sors_funds полон", sors_catalog_n == 21, sors_catalog_detail)
+
+            # Ряды cbr_sors_funds агент читает только через общую витрину v_cbr_macro (проверка
+            # выше), сырая таблица ему не выдана. Число РАЗНЫХ рядов в витрине сверяется по
+            # явному списку 21 кода, а не по LIKE: у рядов общие префиксы (households_deposits и
+            # households_deposits_escrow, суффиксы _rub/_fx), и выборка «по подстроке» не
+            # доказывала бы, что выставлены все три валютных разреза.
+            sors_names = ", ".join(f"'{name}'" for name in (
+                "clients_total", "clients_total_rub", "clients_total_fx",
+                "org_accounts", "org_accounts_rub", "org_accounts_fx",
+                "corp_deposits", "corp_deposits_rub", "corp_deposits_fx",
+                "households_deposits_escrow", "households_deposits_escrow_rub", "households_deposits_escrow_fx",
+                "households_deposits", "households_deposits_rub", "households_deposits_fx",
+                "escrow_accounts", "escrow_accounts_rub", "escrow_accounts_fx",
+                "ip_accounts", "ip_accounts_rub", "ip_accounts_fx",
+            ))
+            sors_view = text(await session.call_tool("run_query", {"query": f"SELECT uniqExact(series) AS n_series FROM v_cbr_macro WHERE series IN ({sors_names})"}))
+            sors_view_rows = result_rows(sors_view)
+            sors_view_n = sors_view_rows[0].get("n_series") if sors_view_rows else None
+            if sors_view_rows is None:
+                sors_view_detail = f"витрина не читается: {sors_view[:200]}"
+            elif sors_view_n == 21:
+                sors_view_detail = "рядов cbr_sors_funds в v_cbr_macro: 21"
+            else:
+                sors_view_detail = (f"рядов cbr_sors_funds в v_cbr_macro: {sors_view_n}, want 21 — прогнать "
+                                    "make import STAT=cbr_sors_funds (витрину пересоздаёт прогон)")
+            failed += not expect("ряды cbr_sors_funds видны в v_cbr_macro", sors_view_n == 21, sors_view_detail)
+
+            # Сырая cbr_sors_funds агенту не выдана — как cbr_int_rate_loans и
+            # cbr_households_b_mes: витрина — единственное место, где агент читает ряды контура.
+            # Таблицу создаёт DDL-прогон импортёра, поэтому UNKNOWN_TABLE здесь — провал, а не
+            # успех: таблица обязана существовать и быть закрытой.
+            raw = text(await session.call_tool("run_query", {"query": "SELECT count() FROM cbr_sors_funds"}))
+            denied = "ACCESS_DENIED" in raw or "Not enough privileges" in raw
+            failed += not expect("сырая cbr_sors_funds закрыта", denied,
+                                 "отказ ClickHouse 497 на cbr_sors_funds (ожидаемо)" if denied else raw[:200])
+
             # Ставки по кредитам нефинансовым организациям в рублях (импортёр
             # cbr_int_rate_loans, шаг 4.2 #8 роадмапа): ряды контура агент читает только
             # через общую витрину v_cbr_macro (проверка выше), а сырая таблица ему не
