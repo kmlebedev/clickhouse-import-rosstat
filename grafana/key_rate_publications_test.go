@@ -1384,7 +1384,7 @@ func TestKeyRateQuarterlyTableNoZeros(t *testing.T) {
 			t.Errorf("панель 43: SQL не должен содержать %q — отсутствующее значение не ноль", forbidden)
 		}
 	}
-	for _, want := range []string{"14.11", "+1,24", "8,04", "другая база"} {
+	for _, want := range []string{"14.11", "на собственной базе", "8,04", "другая база"} {
 		if !strings.Contains(*panel.Description, want) {
 			t.Errorf("описание панели 43 не содержит %q", want)
 		}
