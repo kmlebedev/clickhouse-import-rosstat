@@ -249,7 +249,7 @@ LLM-плагин [`rosstat-mcp`](https://github.com/kmlebedev/rosstat-mcp) жи�
 
 ## Grafana
 
-Пять дашбордов как код — `gold-thesis`, `key-rate-publications`, `finance-polyus`, `transaq-trades`, `urals-budget-rule`. Установка, переменные стендов, цикл деплоя и приёмка — [docs/GRAFANA.md](docs/GRAFANA.md).
+Шесть дашбордов как код — `gold-thesis`, `key-rate-publications`, `finance-polyus`, `transaq-trades`, `urals-budget-rule`, `bond-attractiveness`. Установка, переменные стендов, цикл деплоя и приёмка — [docs/GRAFANA.md](docs/GRAFANA.md).
 
 ## CI и релизы
 
