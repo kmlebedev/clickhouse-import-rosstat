@@ -70,19 +70,23 @@ func TestFallbackMissing(t *testing.T) {
 		{Date: day(19), URL: "old"},
 		{Date: day(26), URL: "new-first"},
 		{Date: day(26), URL: "new-second"},
+		{Date: day(26), URL: "new-first"},
 		{Date: november, URL: "november"},
 	}
 	known := map[string]bool{"2026-10-19": true}
 
 	missing := FallbackMissing(docs, known)
-	if len(missing) != 2 {
-		t.Fatalf("недостающих %d, ожидалось 2: %+v", len(missing), missing)
+	if len(missing) != 3 {
+		t.Fatalf("недостающих %d, ожидалось 3: %+v", len(missing), missing)
 	}
 	if missing[0].URL != "new-first" || missing[0].Date.Format("2006-01-02") != "2026-10-26" {
 		t.Errorf("первый документ %+v, ожидался new-first/2026-10-26", missing[0])
 	}
-	if missing[1].URL != "november" || missing[1].Date.Format("2006-01-02") != "2026-11-02" {
-		t.Errorf("второй документ %+v, ожидался november/2026-11-02", missing[1])
+	if missing[1].URL != "new-second" || missing[1].Date.Format("2006-01-02") != "2026-10-26" {
+		t.Errorf("второй документ %+v, ожидался new-second/2026-10-26", missing[1])
+	}
+	if missing[2].URL != "november" || missing[2].Date.Format("2006-01-02") != "2026-11-02" {
+		t.Errorf("третий документ %+v, ожидался november/2026-11-02", missing[2])
 	}
 }
 

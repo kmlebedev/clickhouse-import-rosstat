@@ -23,10 +23,13 @@ import (
 )
 
 // FallbackDocument — документ резервного источника: дата периода, к которой относятся
-// его точки (последний день недели/месяца, а не дата публикации), и адрес файла.
+// его точки (последний день недели/месяца, а не дата публикации), адрес файла и
+// необязательная метка вида. Метка нужна, когда у одного периода несколько документов
+// разного формата (например, ИПЦ и нефтепродукты): Parse по ней выбирает разбор.
 type FallbackDocument struct {
 	Date time.Time
 	URL  string
+	Kind string
 }
 
 // FallbackRow — строка резервного источника. Имена и единицы задаёт Parse; в какие
@@ -99,17 +102,17 @@ func FallbackKnownDates(ctx context.Context, conn driver.Conn, query string) (ma
 }
 
 // FallbackMissing — документы, дат которых нет в known, в хронологическом порядке.
-// Дедуп по дате: повторная публикация того же периода (пере-нумерованный файл) не должна
-// давать двух скачиваний; остаётся первый документ входного порядка.
+// Дедуп по URL: у одного периода может быть несколько документов разного формата
+// (rosstat_ipc_weeks — ИПЦ и нефтепродукты одной недели), и оба нужны. Повторная
+// публикация того же файла под тем же URL не должна давать двух скачиваний.
 func FallbackMissing(docs []FallbackDocument, known map[string]bool) []FallbackDocument {
 	seen := make(map[string]bool, len(docs))
 	missing := make([]FallbackDocument, 0, len(docs))
 	for _, doc := range docs {
-		key := doc.Date.Format("2006-01-02")
-		if known[key] || seen[key] {
+		if known[doc.Date.Format("2006-01-02")] || seen[doc.URL] {
 			continue
 		}
-		seen[key] = true
+		seen[doc.URL] = true
 		missing = append(missing, doc)
 	}
 	sort.SliceStable(missing, func(i, j int) bool {
