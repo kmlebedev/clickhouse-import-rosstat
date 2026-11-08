@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
-	log "github.com/sirupsen/logrus"
 	"github.com/xuri/excelize/v2"
 	"strconv"
 	"strings"
@@ -48,10 +47,10 @@ const cbrInflExpDdl = `CREATE TABLE IF NOT EXISTS %s (
 			, value Float32
 		) ENGINE = ReplacingMergeTree ORDER BY (name, date);`
 
-// cbrInflExpMaxDateQuery — гейт оперативного импортёра: максимальная уже записанная дата.
-// PDF выходит раз в месяц, dagu ходит ежедневно, поэтому в обычный день это единственное
-// чтение своей таблицы и ни одного сетевого обращения к файлу.
-const cbrInflExpMaxDateQuery = "SELECT max(date) FROM cbr_infl_exp FINAL"
+// cbrInflExpKnownDatesQuery — гейт резервного PDF-импортёра: даты, уже лежащие в общей
+// таблице. Множество, а не max(date): общий util.Fallback лечит и пропущенную середину.
+// Общая таблица создаётся книгой cbr_infl_exp; у PDF-шага своего DDL нет.
+const cbrInflExpKnownDatesQuery = "SELECT DISTINCT date FROM cbr_infl_exp FINAL"
 
 // inflExpLinkSelector — ссылка на актуальный XLSX в блоке версий. Имена файлов и id
 // меняются при каждом обновлении (Infl_exp_ГГ-ММ.xlsx), ссылки идут от свежей к старой.
@@ -163,6 +162,7 @@ var cbrInflExpImporter = &inflExpStat{ClickHouseImport: util.ClickHouseImport{
 // другой артефакт (PDF «Оперативная справка»), поэтому и своё имя, и свой ключ версии.
 type inflExpOpStat struct {
 	util.ClickHouseImport
+	fallback util.Fallback
 }
 
 // Name — имя импортёра, а не таблицы: в cbr_infl_exp пишут два артефакта, и
@@ -170,46 +170,21 @@ type inflExpOpStat struct {
 // util.ClickHouseImport Name() вернул бы TableName — общее имя для обоих.
 func (s *inflExpOpStat) Name() string { return cbrInflExpOpName }
 
-// Import — цикл оперативного импортёра: DDL → страница → свежий PDF → месяц из имени →
-// гейт по max(date) → шаблон (префлайт, скачивание, архив, каталог, строка версии).
-// Гейт стоит до скачивания: если PDF за этот месяц уже разобран (или книга пришла
-// раньше), прогон — «0 строк» без единого обращения к файлу. Ошибка разбора PDF не
-// трогает книгу: у неё свой шаг и своя строка версии.
+// Import — тонкая обёртка над общим util.Fallback: страница → свежий PDF → гейт по
+// датам cbr_infl_exp → шаблон на документ. Гейт стоит до скачивания: если PDF за этот
+// месяц уже разобран (или книга пришла раньше), прогон — «0 строк» без обращения к
+// файлу. Ошибка разбора PDF не трогает книгу: у неё свой шаг и своя строка версии.
 func (s *inflExpOpStat) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
-	for _, ddl := range s.CreateTable {
-		if err = conn.Exec(ctx, fmt.Sprintf(ddl, s.TableName)); err != nil {
-			return 0, fmt.Errorf("%s: DDL: %w", cbrInflExpOpName, err)
-		}
-	}
-	page, err := util.GetPage(inflExpUrl)
-	if err != nil {
-		return 0, fmt.Errorf("%s: %s: %w", cbrInflExpOpName, inflExpUrl, err)
-	}
-	href, err := util.FindLink(page, inflExpPdfLinkSelector)
-	if err != nil {
-		return 0, fmt.Errorf("%s: не найдена ссылка на PDF на %s: %w", cbrInflExpOpName, inflExpUrl, err)
-	}
-	month, err := inflExpPdfMonth(href)
-	if err != nil {
-		return 0, err
-	}
-	var known time.Time
-	if err = conn.QueryRow(ctx, cbrInflExpMaxDateQuery).Scan(&known); err != nil {
-		return 0, fmt.Errorf("%s: максимум date не прочитан: %w", cbrInflExpOpName, err)
-	}
-	if !inflExpPdfNewer(month, known) {
-		log.Infof("%s: PDF за %s уже импортирован (max=%s) — скачивание не требуется",
-			cbrInflExpOpName, month.Format("2006-01"), known.Format("2006-01-02"))
-		return 0, nil
-	}
-	s.DataUrl = cbrUrl + href
-	return s.ClickHouseImport.Import(ctx, conn)
+	res, err := s.fallback.Import(ctx, conn)
+	return res.Imported, err
 }
 
 // cbrInflExpOpImporter — оперативная точка инфляционных ожиданий из PDF «Оперативная
-// справка». CreateTable намеренно пуст: DDL общей cbr_infl_exp выполняет собственный
-// Import() (иначе шаблон выполнил бы его второй раз). TableName — общая таблица,
-// PublicationSource — своё имя, чтобы версия PDF не смешивалась с версией книги.
+// справка». CreateTable намеренно пуст: DDL общей cbr_infl_exp выполняет книга (иначе
+// шаблон выполнил бы его второй раз). TableName — общая таблица, PublicationSource —
+// своё имя, чтобы версия PDF не смешивалась с версией книги. Шаблон передаётся в
+// util.Fallback целиком: механизм сохраняет AfterImport (каталог/витрина до строки
+// версии) и PublicationCountPoints (версия и винтажный архив PDF).
 var cbrInflExpOpImporter = newInflExpOpImporter()
 
 func newInflExpOpImporter() *inflExpOpStat {
@@ -219,38 +194,12 @@ func newInflExpOpImporter() *inflExpOpStat {
 		AfterImport:            afterCbrMacro(cbrInflExpSeriesMeta),
 		PublicationCountPoints: cbrInflExpCountPoints,
 	}}
-	// BodyFunc — метод импортёра: месяц ожидаемой точки он берёт из s.DataUrl, который
-	// Import() уже выставил по свежей ссылке. Отдельного состояния это не заводит.
-	s.BodyFunc = s.importPDF
+	s.fallback = util.Fallback{
+		Template:        s.ClickHouseImport,
+		Documents:       inflExpPdfDocuments,
+		Parse:           inflExpPdfRows,
+		KnownDatesQuery: cbrInflExpKnownDatesQuery,
+		Append:          inflExpPdfAppendRow,
+	}
 	return s
-}
-
-// importPDF — BodyFunc импортёра: PDF-байты → `-bbox` → колонки → две строки батчем.
-// Месяц последней колонки обязан совпасть с месяцем из имени файла (см. appendLatest).
-func (s *inflExpOpStat) importPDF(body []byte, batch driver.Batch) error {
-	expected, err := inflExpPdfMonth(s.DataUrl)
-	if err != nil {
-		return err
-	}
-	bbox, err := inflExpPdfBBox(body)
-	if err != nil {
-		return err
-	}
-	return inflExpPdfAppendLatest(bbox, expected, batch)
-}
-
-// inflExpPdfAppendLatest разбирает страницу и пишет две строки оперативной точки. Месяц
-// последней колонки обязан совпасть с месяцем из имени файла: расхождение значит, что
-// график не успел за выпуском или ось сдвинулась, и писать точку под чужим месяцем нельзя.
-func inflExpPdfAppendLatest(bbox []byte, expected time.Time, batch driver.Batch) error {
-	points, err := inflExpPdfPoints(bbox)
-	if err != nil {
-		return err
-	}
-	last := points[len(points)-1]
-	if last.Month.Year() != expected.Year() || last.Month.Month() != expected.Month() {
-		return fmt.Errorf("%s: последняя точка графика %s, а файл за %s — график не успел за выпуском или ось сдвинулась",
-			inflExpPdfContext, last.Month.Format("2006-01"), expected.Format("2006-01"))
-	}
-	return inflExpPdfAppend(last, batch)
 }
