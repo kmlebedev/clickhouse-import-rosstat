@@ -2925,6 +2925,307 @@
           },
           "overrides": []
         }
+      },
+      {
+        "type": "row",
+        "collapsed": false,
+        "title": "Квартальные метрики ЦБ",
+        "gridPos": {
+          "h": 1,
+          "w": 24,
+          "x": 0,
+          "y": 197
+        },
+        "id": 46,
+        "panels": []
+      },
+      {
+        "type": "timeseries",
+        "id": 42,
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT quarter_start AS time, saar_q / 100 AS \"Текущий рост цен, SAAR (ЦБ)\"\nFROM v_cbr_dip_quarterly\nWHERE release = (SELECT max(release) FROM v_cbr_dip_quarterly)\n  AND months = 3\n  AND $__timeFilter(quarter_start)\nORDER BY quarter_start\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "B",
+            "rawSql": "SELECT quarter_start AS time, saar_q / 100 AS \"Базовая инфляция, SAAR (ЦБ)\"\nFROM v_cbr_core_quarterly\nWHERE months = 3\n  AND $__timeFilter(quarter_start)\nORDER BY quarter_start\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "C",
+            "rawSql": "SELECT quarter_start AS time, saar_q / 100 AS \"Незакрытый квартал к дате (недельный)\"\nFROM v_weekly_cpi_quarterly\nWHERE quarter_start = (SELECT max(quarter_start) FROM v_weekly_cpi_quarterly WHERE months \u003c 3)\n  AND $__timeFilter(quarter_start)\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "Квартальный SAAR: текущий рост и базовая",
+        "description": "Квартальные оценки ЦБ (v_cbr_dip_quarterly, v_cbr_core_quarterly) и единственная точка незакрытого квартала из нашего недельного агрегата (v_weekly_cpi_quarterly, months \u003c 3). Текущий рост — среднее месячных SAAR «Все товары и услуги» за квартал, базовая — среднее годовых темпов из SA м/м (pow(1 + r/100, 12) − 1): 3к26 — 8,02 и 6,21 % (ЦБ называет 8,0 и 6,2). Показаны только полные кварталы (months = 3). ДИП — последний выпуск 26-07 от 14.10.2026: статья, цитирующая резюме на дату, может брать другую редакцию того же квартала (2к26: 5,02 / 5,36 / 4,89) — это ревизия SA, а не ошибка. Оранжевая точка — 4к26 «к дате»: одна 4-недельная точка на 26.10 (12,88 %), не квартал и не оценка ЦБ; официальная базовая за 4к26 появится 14.11. Порог 4 % — цель ЦБ по инфляции.",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 9,
+          "w": 12,
+          "x": 0,
+          "y": 198
+        },
+        "repeatDirection": "h",
+        "options": {
+          "legend": {
+            "displayMode": "table",
+            "placement": "bottom",
+            "showLegend": true,
+            "calcs": [
+              "last",
+              "mean",
+              "max"
+            ]
+          },
+          "tooltip": {
+            "mode": "single",
+            "sort": "none"
+          }
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percentunit",
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "value": null,
+                  "color": "super-light-green"
+                },
+                {
+                  "value": 0.04,
+                  "color": "super-light-red"
+                }
+              ]
+            },
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "gradientMode": "none",
+              "thresholdsStyle": {
+                "mode": "line"
+              },
+              "lineWidth": 1,
+              "lineInterpolation": "smooth",
+              "fillOpacity": 0,
+              "spanNulls": false
+            }
+          },
+          "overrides": [
+            {
+              "matcher": {
+                "id": "byFrameRefID",
+                "options": "C"
+              },
+              "properties": [
+                {
+                  "id": "custom.lineWidth",
+                  "value": 0
+                },
+                {
+                  "id": "custom.showPoints",
+                  "value": "always"
+                },
+                {
+                  "id": "color",
+                  "value": {
+                    "mode": "fixed",
+                    "fixedColor": "orange"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "type": "table",
+        "id": 43,
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "WITH\n  q3 AS (SELECT round(saar_q, 2) AS v FROM v_cbr_dip_quarterly\n         WHERE release = (SELECT max(release) FROM v_cbr_dip_quarterly)\n           AND quarter_start = (SELECT max(quarter_start) FROM v_cbr_dip_quarterly WHERE months = 3)\n           AND months = 3),\n  q4 AS (SELECT round(saar_q, 2) AS v FROM v_weekly_cpi_quarterly\n         WHERE quarter_start = (SELECT max(quarter_start) FROM v_weekly_cpi_quarterly WHERE months \u003c 3)),\n  c3 AS (SELECT round(saar_q, 2) AS v FROM v_cbr_core_quarterly\n         WHERE quarter_start = (SELECT max(quarter_start) FROM v_cbr_core_quarterly WHERE months = 3)),\n  m3 AS (SELECT round(saar_3m, 2) AS v FROM v_weekly_cpi_rolling3m\n         WHERE saar_3m IS NOT NULL ORDER BY date DESC LIMIT 1),\n  m3cbr AS (SELECT round((pow(exp(sum(log(1 + value / 100))), 4) - 1) * 100, 2) AS v\n            FROM v_cbr_macro\n            WHERE series = 'Все товары и услуги'\n              AND date \u003e= (SELECT max(quarter_start) FROM v_cbr_dip_quarterly WHERE months = 3)\n              AND date \u003c (SELECT max(quarter_start) FROM v_cbr_dip_quarterly WHERE months = 3) + INTERVAL 3 MONTH)\nSELECT\n    'Текущий рост цен' AS \"Метрика\",\n    ifNull(toString(round((SELECT v FROM q3), 1)), 'н/д') AS \"3к26\",\n    ifNull(toString(round((SELECT v FROM q4), 1)), 'н/д') AS \"4к26 к дате\",\n    ifNull(toString(round((SELECT v FROM q4) - (SELECT v FROM q3), 1)), '—') AS \"Δ 4к26 − 3к26\",\n    ifNull(toString(round((SELECT v FROM m3), 1)), 'н/д') AS \"3м SAAR\",\n    ifNull(toString(round((SELECT v FROM m3) - (SELECT v FROM m3cbr), 1)), '—') AS \"Δ 3м\"\nUNION ALL\nSELECT 'Базовая инфляция',\n       ifNull(toString(round((SELECT v FROM c3), 1)), 'н/д'), 'н/д', '—', 'н/д', '—'\nUNION ALL\nSELECT 'Устойчивый рост цен', '5–6 % (диапазон)', 'н/д', '—', '—', '—'\n",
+            "editorType": "sql",
+            "format": 1,
+            "queryType": "table",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "4к26 к дате: квартал и 3 месяца",
+        "description": "Квартальные числа без графика: 3к26 — последний полный квартал ДИП последнего выпуска (8,02 %), «4к26 к дате» — среднее месячных SAAR недельного агрегата по незакрытому кварталу (12,88 % — одна 4-недельная точка на 26.10), 3м — последняя точка v_weekly_cpi_rolling3m (8,15 %). Δ 4к26 − 3к26 = +4,9 п.п. Δ 3м считается против окна ЦБ — три месячных SA «Все товары и услуги» июля–сентября, приведённые к году (8,04 %), отсюда +0,1 п.п.; на собственной базе недельного ряда 3м вырос с 6,91 % (сентябрь) до 8,15 % (+1,24 п.п.), и это другая база — не смешивать. «н/д» — данных нет (базовая за октябрь выходит 14.11), «—» — разность не считается; ноль не подставляется. «Устойчивый рост цен» — диапазон из резюме ЦБ (5–6 %), а не числовой ряд.",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 9,
+          "w": 12,
+          "x": 12,
+          "y": 198
+        },
+        "repeatDirection": "h",
+        "options": {
+          "frameIndex": 0,
+          "showHeader": true,
+          "showTypeIcons": false,
+          "footer": {
+            "show": false,
+            "reducer": null,
+            "countRows": false
+          },
+          "cellHeight": "sm"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "custom": {
+              "align": "auto",
+              "inspect": false
+            }
+          },
+          "overrides": []
+        }
+      },
+      {
+        "type": "timeseries",
+        "id": 44,
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT if(partial = 1, as_of, date) AS time, saar_3m / 100 AS \"3-месячный SAAR (недельный)\"\nFROM v_weekly_cpi_rolling3m\nWHERE $__timeFilter(if(partial = 1, as_of, date))\nORDER BY time\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "Недельный ИПЦ: 3-месячный SAAR",
+        "description": "Скользящий SAAR по официальному недельному агрегату ИПЦ, сезонно скорректированному (v_weekly_cpi_rolling3m): цепочка трёх месячных 4-недельных SA-темпов, годовой пересчёт pow(Π(1 + sa_4w/100), 52/12) − 1. Это не официальный SAAR ЦБ: сглаживается один агрегат на 4-недельном окне, поэтому уровень расходится с ДИП систематически (3к26: 6,92 % на квартал против 8,02 % ЦБ). Показывает разворот раньше квартального среднего: 3м 8,15 % на 26.10 после 6,91 % в сентябре — октябрьский всплеск даёт тарифная неделя 05.10 (индекс 100,96), а не смена тренда. Первые две точки ряда — NULL (окно неполное): это разрыв, а не ноль. Последняя точка — nowcast-месяц (partial = 1), она рисуется на дате as_of. Порог 4 % — цель ЦБ по инфляции.",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 9,
+          "w": 12,
+          "x": 0,
+          "y": 207
+        },
+        "repeatDirection": "h",
+        "options": {
+          "legend": {
+            "displayMode": "table",
+            "placement": "bottom",
+            "showLegend": true,
+            "calcs": [
+              "last",
+              "mean",
+              "max"
+            ]
+          },
+          "tooltip": {
+            "mode": "single",
+            "sort": "none"
+          }
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percentunit",
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "value": null,
+                  "color": "super-light-green"
+                },
+                {
+                  "value": 0.04,
+                  "color": "super-light-red"
+                }
+              ]
+            },
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "gradientMode": "none",
+              "thresholdsStyle": {
+                "mode": "line"
+              },
+              "lineWidth": 1,
+              "lineInterpolation": "smooth",
+              "fillOpacity": 0,
+              "spanNulls": false
+            }
+          },
+          "overrides": []
+        }
+      },
+      {
+        "type": "table",
+        "id": 45,
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT\n    release AS \"Выпуск\",\n    toString(publication_date) AS \"Опубликован\",\n    if(countIf(quarter_start = '2026-01-01' AND months = 3) = 0, '—',\n       toString(round(maxIf(saar_q, quarter_start = '2026-01-01' AND months = 3), 2))) AS \"1к26\",\n    if(countIf(quarter_start = '2026-04-01' AND months = 3) = 0, '—',\n       toString(round(maxIf(saar_q, quarter_start = '2026-04-01' AND months = 3), 2))) AS \"2к26\",\n    if(countIf(quarter_start = '2026-07-01' AND months = 3) = 0, '—',\n       toString(round(maxIf(saar_q, quarter_start = '2026-07-01' AND months = 3), 2))) AS \"3к26\",\n    if(countIf(quarter_start = '2026-07-01') = 0, '—',\n       toString(maxIf(months, quarter_start = '2026-07-01'))) AS \"Месяцев в 3к26\"\nFROM v_cbr_dip_quarterly\nWHERE quarter_start \u003e= '2026-01-01'\nGROUP BY release, publication_date\nORDER BY publication_date DESC\nLIMIT 8\n",
+            "editorType": "sql",
+            "format": 1,
+            "queryType": "table",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "Оценки ЦБ по кварталам: ревизии",
+        "description": "Последние выпуски приложений ДИП и квартальные оценки по ним (v_cbr_dip_quarterly): разными выпусками ЦБ ревизует один и тот же квартал — 2к26 5,02 / 5,36 / 4,89, 1к26 8,82 / 8,74 / 8,81 / 8,71 / 8,70, 3к26 в выпуске 26-06 11,59 (один июль) и 8,02 (три месяца) в 26-07. Квартал показывается только при трёх месяцах: прочерк — выпуск этого квартала полным не показал, а «Месяцев в 3к26» говорит, сколько месяцев квартала в выпуске было. Сравнивать кварталы между выпусками нельзя без даты публикации: это ревизия SA, а не исправление ошибки. Колонки закреплены за 2026 годом.",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 9,
+          "w": 24,
+          "x": 12,
+          "y": 207
+        },
+        "repeatDirection": "h",
+        "options": {
+          "frameIndex": 0,
+          "showHeader": true,
+          "showTypeIcons": false,
+          "footer": {
+            "show": false,
+            "reducer": null,
+            "countRows": false
+          },
+          "cellHeight": "sm"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "custom": {
+              "align": "auto",
+              "inspect": false
+            }
+          },
+          "overrides": []
+        }
       }
     ],
     "templating": {},
