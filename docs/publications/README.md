@@ -73,6 +73,7 @@ python3 scripts/publications/weekly_sa_chart.py --publication 2026-10-22-weekly-
 ```
 
 - `weekly_cpi_sa` читает `rosstat_ipc_weeks_bulletins` + `rosstat_bi_cpi_weekly` и пишет `weekly_cpi_sa` (`sa_index`, `sa_4w`, `saar`, `as_of`, `partial`); повтор при неизменных входах — no-op по отпечатку.
+- Если BI недоступен, агрегат за свежую неделю добирает `rosstat_bi_cpi_weekly` из CPI-PDF (`make import STAT=rosstat_bi_cpi_weekly`, пункт 1.13): строка «Индекс потребительских цен (оценка)» пишется в ту же таблицу с версией PDF в `source_publications`. После этого `make import STAT=weekly_cpi_sa` пересчитывает SA по новой точке.
 - Скрипт графика читает витрины `v_weekly_cpi_sa` (`weekly_cpi:sa_4w`, строка `partial=1` — nowcast) и `v_cbr_macro` («Все товары и услуги») и пишет `chart-data.json` и `weekly-sa-mm-vs-cbr.svg` в каталог публикации. DSN — из `CLICKHOUSE_URL`; в ClickHouse скрипт не пишет.
 - `--as-of YYYY-MM-DD` ограничивает ряд датой включительно — так воспроизводится уже опубликованный график; `--out DIR` пишет артефакты в скретч-каталог.
 - Перед выпуском сверьте `as_of` строки nowcast с календарём: если последняя неделя в БД старше последней четверговой публикации, разбор не выпускается ([KEY_RATE_PUBLICATIONS.md](../KEY_RATE_PUBLICATIONS.md) §3).
