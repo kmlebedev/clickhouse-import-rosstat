@@ -92,3 +92,29 @@
   §6.4, а не «0 строк»); шаг в хвосте цепочки ограничивает радиус.
 - **`clients_total` не аддитивен:** в каталоге зафиксировано, чтобы агент не собирал «всего»
   суммой компонент.
+
+## Протокол живой приёмки (2026-11-08)
+
+- `make all` — зелёный: golangci-lint `0 issues`, `go vet` чисто, `go test -race ./...` все `ok`
+  (`cbr` 96,8 с), обе сборки.
+- `make import STAT=cbr_sors_funds ARCHIVE_BACKEND=local ARCHIVE_LOCAL_DIR=build/archive-dev` —
+  `Imported 3177 rows of cbr_sors_funds`; таблица — 3 177 точек, 21 ряд, 2012-02-01 … 2026-10-01;
+  по листам по 1 059; `clients_total` 177, `households_deposits` 93, `escrow_accounts` 93,
+  `ip_accounts` 165.
+- Повтор — `cbr_sors_funds: no-op, версия f29816c0b9159558d59ed2a8370af8cd уже импортирована,
+  3177 точек на месте`, затем `Imported 3177 rows`.
+- `source_publications` — строка `cbr_sors_funds / 02_01_Funds_all.xlsx / 3177`; архив — объект
+  `build/archive-dev/cbr_sors_funds/f29816c0b9159558_02_01_Funds_all.xlsx` и строка
+  `registry.jsonl` (`sha256 e76062dc…`, 42 817 байт).
+- Витрина `v_cbr_macro` — 21 ряд / 3 177 строк / 2012-02-01 … 2026-10-01; spot 2026-10-01:
+  `clients_total` 154 200 014, `households_deposits` 67 000 831, `households_deposits_rub`
+  63 779 513, `escrow_accounts_fx` 0.
+- Каталог — 21 запись; сырая таблица у `kimi_reader` — отказ ClickHouse 497.
+- `make mcp-check` — 291 OK; 5 провалов вне пункта: news LLM bootstrap (`ifax_go 43/87`,
+  `markettwits 54/105`, `newssmartlab 52/100`, `russianmacro 16/39`, `MarketOverview 31/65`,
+  `mozgovikresearch 28/61`), каталог `fedstat` 1734 против 1727 и `v_fedstat_ipc` 204 101 / 1112,
+  `instrument_kind` в `v_transaq_net_flows` и `v_transaq_net_flows_daily`.
+- `dagu validate dagu/cbr.yaml` — exit 0; `make docs-check` — 91 страница, 33 теста OK.
+- Ревью (task-reviewer, `qwencloud/qwen3.8-flash`) — `APPROVE_WITH_NITS`: устаревшие счётчики
+  §6.1/§6.2 `ARCHITECTURE.md` («из 33», «тридцать семь / двадцать два»); исправлены до коммита
+  статуса.
