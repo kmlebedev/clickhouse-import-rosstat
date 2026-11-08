@@ -40,6 +40,9 @@ const (
 	// ipcWeeksNewsTableAnchor — якорь таблицы в тексте PDF: по нему разбор понимает, что
 	// вступительный текст закончился. Повторяется в шапке каждой страницы.
 	ipcWeeksNewsTableAnchor = "Индексы потребительских цен"
+	// ipcWeeksNewsAggregateAnchor — строка агрегата в шапке CPI-PDF: за ней идёт
+	// «(оценка) 99,96 …». Единственное число, не путать с якорем таблицы.
+	ipcWeeksNewsAggregateAnchor = "Индекс потребительских цен"
 	// ipcWeeksNewsContext — общая часть сообщений разбора CPI-PDF.
 	ipcWeeksNewsContext = rosstatIPCWeeksTable + ", PDF-выпуск новостной ленты"
 	// ipcWeeksPetrolSearch — поисковый запрос ленты для PDF «О потребительских ценах на
@@ -105,17 +108,23 @@ var (
 // титула; дата берётся из титула («с … по …»), а не из даты публикации карточки. Пустой
 // список карточек — ошибка: это смена вёрстки, а не «новостей нет».
 func ipcWeeksNewsReleases(page []byte) ([]ipcWeeksNewsRelease, error) {
+	return ipcWeeksNewsReleasesFor(page, ipcWeeksNewsContext)
+}
+
+// ipcWeeksNewsReleasesFor — то же с явным префиксом диагностики: ту же ленту использует
+// фолбэк агрегата rosstat_bi_cpi_weekly, и его ошибки не должны называть чужой импортёр.
+func ipcWeeksNewsReleasesFor(page []byte, context string) ([]ipcWeeksNewsRelease, error) {
 	doc, err := goquery.NewDocumentFromReader(bytes.NewReader(page))
 	if err != nil {
-		return nil, fmt.Errorf("%s: разбор страницы новостей: %w", ipcWeeksNewsContext, err)
+		return nil, fmt.Errorf("%s: разбор страницы новостей: %w", context, err)
 	}
 	cards := doc.Find(".news-card")
 	if cards.Length() == 0 {
-		return nil, fmt.Errorf("%s: карточки .news-card не найдены — вёрстка ленты изменилась", ipcWeeksNewsContext)
+		return nil, fmt.Errorf("%s: карточки .news-card не найдены — вёрстка ленты изменилась", context)
 	}
 	base, err := url.Parse(rosstatUrl + "/central-news")
 	if err != nil {
-		return nil, fmt.Errorf("%s: базовый URL ленты: %w", ipcWeeksNewsContext, err)
+		return nil, fmt.Errorf("%s: базовый URL ленты: %w", context, err)
 	}
 
 	var releases []ipcWeeksNewsRelease
@@ -132,12 +141,12 @@ func ipcWeeksNewsReleases(page []byte) ([]ipcWeeksNewsRelease, error) {
 		}
 		date, _, err := ipcWeeksBulletinsTitleDate(title)
 		if err != nil {
-			parseErr = fmt.Errorf("%s: титул %q: %w", ipcWeeksNewsContext, title, err)
+			parseErr = fmt.Errorf("%s: титул %q: %w", context, title, err)
 			return false
 		}
 		ref, err := url.Parse(strings.TrimSpace(href))
 		if err != nil {
-			parseErr = fmt.Errorf("%s: ссылка %q: %w", ipcWeeksNewsContext, href, err)
+			parseErr = fmt.Errorf("%s: ссылка %q: %w", context, href, err)
 			return false
 		}
 		resolved := base.ResolveReference(ref).String()
@@ -174,16 +183,22 @@ func ipcWeeksNewsDocuments(ctx context.Context) ([]util.FallbackDocument, error)
 
 // ipcWeeksCPIDocuments — CPI-выпуски: первая страница ленты, только PDF. HTML-выпуски
 // (старый формат недельных релизов) фолбэк не разбирает — о них только строка в журнале.
-func ipcWeeksCPIDocuments(_ context.Context) ([]util.FallbackDocument, error) {
+func ipcWeeksCPIDocuments(ctx context.Context) ([]util.FallbackDocument, error) {
+	return ipcWeeksCPIDocumentsFor(ctx, ipcWeeksNewsContext)
+}
+
+// ipcWeeksCPIDocumentsFor — то же с явным префиксом диагностики: ленту использует и
+// фолбэк агрегата rosstat_bi_cpi_weekly, у которого свой контекст сообщений.
+func ipcWeeksCPIDocumentsFor(_ context.Context, context string) ([]util.FallbackDocument, error) {
 	feedURL, err := ipcWeeksNewsURL()
 	if err != nil {
 		return nil, err
 	}
 	page, err := util.GetFileBytesChecked(feedURL)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %s: %w", ipcWeeksNewsContext, feedURL, err)
+		return nil, fmt.Errorf("%s: %s: %w", context, feedURL, err)
 	}
-	releases, err := ipcWeeksNewsReleases(page)
+	releases, err := ipcWeeksNewsReleasesFor(page, context)
 	if err != nil {
 		return nil, err
 	}
@@ -201,7 +216,7 @@ func ipcWeeksCPIDocuments(_ context.Context) ([]util.FallbackDocument, error) {
 		})
 	}
 	if html > 0 {
-		log.Infof("%s: в ленте %d HTML-выпусков — PDF-фолбэк их не покрывает", ipcWeeksNewsContext, html)
+		log.Infof("%s: в ленте %d HTML-выпусков — PDF-фолбэк их не покрывает", context, html)
 	}
 	return docs, nil
 }
@@ -477,6 +492,55 @@ func ipcWeeksNewsValue(cell string) (float64, error) {
 	}
 	if math.IsNaN(value) || math.IsInf(value, 0) {
 		return 0, fmt.Errorf("значение %q не конечное число", cell)
+	}
+	return value, nil
+}
+
+// ipcWeeksNewsAggregate — недельный агрегат из шапки CPI-PDF: строка «Индекс
+// потребительских цен» и следующая за ней «(оценка) 99,96 …» (или обе в одной строке).
+// Первое число — индекс к предыдущей дате регистрации, та же семантика, что у ряда BI.
+// Чистая функция без сети/exec: тесты офлайн.
+func ipcWeeksNewsAggregate(text string) (float64, error) {
+	var (
+		value float64
+		found bool
+		prev  string
+	)
+	for _, raw := range strings.Split(text, "\n") {
+		line := strings.Join(strings.Fields(raw), " ")
+		if line == "" {
+			continue
+		}
+		var rest string
+		switch {
+		case strings.HasPrefix(line, ipcWeeksNewsAggregateAnchor+" (оценка)"):
+			rest = strings.TrimSpace(strings.TrimPrefix(line, ipcWeeksNewsAggregateAnchor+" (оценка)"))
+		case prev == ipcWeeksNewsAggregateAnchor && strings.HasPrefix(line, "(оценка)"):
+			rest = strings.TrimSpace(strings.TrimPrefix(line, "(оценка)"))
+		}
+		prev = line
+		if rest == "" {
+			continue
+		}
+		fields := strings.Fields(rest)
+		if len(fields) == 0 {
+			return 0, fmt.Errorf("%s: строка агрегата «(оценка)» без значения", ipcWeeksNewsContext)
+		}
+		parsed, err := ipcWeeksNewsValue(fields[0])
+		if err != nil {
+			return 0, fmt.Errorf("%s: агрегат «(оценка)»: %w", ipcWeeksNewsContext, err)
+		}
+		// Шапка повторяется на каждой странице; одинаковое значение — не дубль, а
+		// расхождение значений в одном выпуске — повод не писать точку.
+		if found && parsed != value {
+			return 0, fmt.Errorf("%s: строка агрегата «(оценка)» встречается дважды: %v и %v",
+				ipcWeeksNewsContext, value, parsed)
+		}
+		value, found = parsed, true
+	}
+	if !found {
+		return 0, fmt.Errorf("%s: строка агрегата «%s (оценка)» не найдена",
+			ipcWeeksNewsContext, ipcWeeksNewsAggregateAnchor)
 	}
 	return value, nil
 }

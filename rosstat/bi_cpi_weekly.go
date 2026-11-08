@@ -7,6 +7,7 @@ import (
 	"encoding/csv"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"net/url"
@@ -54,6 +55,13 @@ const (
 	// biCpiWeeklyFingerprintScheme — префикс канонического представления: смена схемы
 	// отпечатка не должна совпадать с прежними версиями.
 	biCpiWeeklyFingerprintScheme = "rosstat_bi_cpi_weekly-v1"
+	// biCpiWeeklyPDFContext — общая часть сообщений PDF-фолбэка агрегата.
+	biCpiWeeklyPDFContext = rosstatBICpiWeeklyTable + ", PDF-фолбэк агрегата"
+	// biCpiWeeklyKnownDatesQuery — гейт фолбэка по датам агрегатного ряда. Литерал, а не
+	// склейка с ipcWeeksBulletinsAggregateSeries: запрос уходит в util.Fallback без
+	// параметров, а тест сверяет литерал с константой.
+	biCpiWeeklyKnownDatesQuery = `SELECT DISTINCT date FROM rosstat_bi_cpi_weekly FINAL
+WHERE series = 'Индекс потребительских цен (недельная оценка)'`
 )
 
 // biCpiWeeklyExportURL — GWT-RPC endpoint BI, который готовит CSV по карточке
@@ -125,20 +133,19 @@ func (s *BICpiWeeklyStat) Import(ctx context.Context, conn driver.Conn) (count i
 			return 0, fmt.Errorf("%s: DDL: %w", rosstatBICpiWeeklyTable, err)
 		}
 	}
-	csvURL, err := biCpiWeeklyCSVURL(ctx)
-	if err != nil {
-		return 0, err
-	}
-	s.DataUrl = csvURL
-	body, err := biCpiWeeklyRetry(ctx, "CSV", func() ([]byte, error) {
-		return util.GetFileBytesChecked(csvURL)
-	})
-	if err != nil {
-		return 0, err
-	}
-	points, err := biCpiWeeklyParseCSV(body)
-	if err != nil {
-		return 0, fmt.Errorf("%s: %w", rosstatBICpiWeeklyTable, err)
+	points, fetchErr := s.biCpiWeeklyFetchPoints(ctx)
+	if fetchErr != nil {
+		log.Warnf("%s: BI недоступен (%v) — пробуем PDF-фолбэк агрегата", rosstatBICpiWeeklyTable, fetchErr)
+		res, fallbackErr := s.biCpiWeeklyFallback(ctx, conn)
+		switch {
+		case fallbackErr != nil:
+			return res.Imported, errors.Join(fetchErr, fallbackErr)
+		case res.Imported > 0:
+			log.Warnf("%s: BI недоступен, PDF-фолбэк записал %d точек", rosstatBICpiWeeklyTable, res.Imported)
+		default:
+			log.Warnf("%s: BI недоступен, PDF-фолбэк новых дат не нашёл", rosstatBICpiWeeklyTable)
+		}
+		return res.Imported, nil
 	}
 	fingerprint := biCpiWeeklyFingerprint(points)
 	// Производные (каталог ряда + витрина) публикуются и на no-op-пути: их отсутствие после
@@ -191,7 +198,7 @@ func (s *BICpiWeeklyStat) Import(ctx context.Context, conn driver.Conn) (count i
 		Source:      rosstatBICpiWeeklyTable,
 		Name:        biCpiWeeklyVersionName,
 		Fingerprint: fingerprint,
-		Url:         csvURL,
+		Url:         s.DataUrl,
 		FirstSeen:   time.Now(),
 		Points:      dbPoints,
 	}); err != nil {
@@ -200,6 +207,47 @@ func (s *BICpiWeeklyStat) Import(ctx context.Context, conn driver.Conn) (count i
 	log.Infof("%s: %s..%s, версия %s", rosstatBICpiWeeklyTable,
 		points[0].date.Format("2006-01-02"), points[len(points)-1].date.Format("2006-01-02"), fingerprint)
 	return inserted, nil
+}
+
+// biCpiWeeklyFetchPoints — сетевая часть цикла: export-RPC, CSV, разбор. Вынесена, чтобы
+// PDF-фолбэк включался только на сбое источника, а не на ошибке вставки или публикации.
+func (s *BICpiWeeklyStat) biCpiWeeklyFetchPoints(ctx context.Context) ([]biCpiWeeklyPoint, error) {
+	csvURL, err := biCpiWeeklyCSVURL(ctx)
+	if err != nil {
+		return nil, err
+	}
+	s.DataUrl = csvURL
+	body, err := biCpiWeeklyRetry(ctx, "CSV", func() ([]byte, error) {
+		return util.GetFileBytesChecked(csvURL)
+	})
+	if err != nil {
+		return nil, err
+	}
+	points, err := biCpiWeeklyParseCSV(body)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", rosstatBICpiWeeklyTable, err)
+	}
+	return points, nil
+}
+
+// biCpiWeeklyFallback — агрегат из CPI-PDF. Внутри шага, а не отдельным шагом DAG: в
+// type: chain шаг после падающего BI не запустится. Шаблон с PublicationCountPoints пишет
+// версию каждого PDF в source_publications и (при включённом архиве) сохраняет PDF.
+func (s *BICpiWeeklyStat) biCpiWeeklyFallback(ctx context.Context, conn driver.Conn) (util.FallbackResult, error) {
+	fallback := &util.Fallback{
+		Template: util.ClickHouseImport{
+			TableName:              s.TableName,
+			AfterImport:            s.AfterImport,
+			PublicationCountPoints: biCpiWeeklyCountPoints,
+		},
+		Documents: func(ctx context.Context) ([]util.FallbackDocument, error) {
+			return ipcWeeksCPIDocumentsFor(ctx, biCpiWeeklyPDFContext)
+		},
+		Parse:           biCpiWeeklyPDFRows,
+		KnownDatesQuery: biCpiWeeklyKnownDatesQuery,
+		Append:          biCpiWeeklyPDFAppendRow,
+	}
+	return fallback.Import(ctx, conn)
 }
 
 // biCpiWeeklyRetry повторяет транспортный вызов: обрыв соединения — свойство источника, а не
@@ -337,6 +385,49 @@ func biCpiWeeklyAppend(points []biCpiWeeklyPoint, batch driver.Batch) error {
 		}
 	}
 	return nil
+}
+
+// biCpiWeeklyPDFTextRows — чистая часть разбора CPI-PDF: проверка выпуска существующим
+// ipcWeeksNewsParse (таблица, дата шапки) плюс строка агрегата «(оценка)». Возвращает одну
+// точку: util.Fallback сверяет её дату с датой документа.
+func biCpiWeeklyPDFTextRows(text string, expected time.Time) ([]util.FallbackRow, error) {
+	points, err := ipcWeeksNewsParse(text)
+	if err != nil {
+		return nil, err
+	}
+	value, err := ipcWeeksNewsAggregate(text)
+	if err != nil {
+		return nil, err
+	}
+	date := points[0].date
+	if !date.Equal(expected) {
+		return nil, fmt.Errorf("%s: дата таблицы %s не совпала с датой выпуска %s",
+			biCpiWeeklyPDFContext, date.Format("2006-01-02"), expected.Format("2006-01-02"))
+	}
+	return []util.FallbackRow{{
+		Series: ipcWeeksBulletinsAggregateSeries,
+		Date:   date,
+		Value:  value,
+	}}, nil
+}
+
+// biCpiWeeklyPDFRows — Parse общего util.Fallback: PDF-байты → текст → агрегат.
+func biCpiWeeklyPDFRows(ctx context.Context, doc util.FallbackDocument, body []byte) ([]util.FallbackRow, error) {
+	text, err := util.PDFText(ctx, body, util.PDFLayout)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %s: %w", biCpiWeeklyPDFContext, doc.URL, err)
+	}
+	rows, err := biCpiWeeklyPDFTextRows(string(text), doc.Date)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %s: %w", biCpiWeeklyPDFContext, doc.URL, err)
+	}
+	return rows, nil
+}
+
+// biCpiWeeklyPDFAppendRow — Append фолбэка: колонки rosstat_bi_cpi_weekly. Значение Float64,
+// как в DDL; rosstat_ipc_weeks хранит Float32 и сюда не подходит.
+func biCpiWeeklyPDFAppendRow(batch driver.Batch, row util.FallbackRow) error {
+	return batch.Append(row.Series, row.Date, row.Value)
 }
 
 // biCpiWeeklyFingerprint — SHA-256 канонического представления ряда: версия содержимого, а не
