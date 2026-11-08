@@ -26,6 +26,15 @@ GRANT SELECT ON default.v_rosstat_ppi TO kimi_reader;
 -- Недельный SA-агрегат ИПЦ (пункт key-rate/phase-4-weekly-sa-aggregate, #353):
 -- производный ряд weekly_cpi_sa; сырая таблица агенту не выдана — только витрина.
 GRANT SELECT ON default.v_weekly_cpi_sa TO kimi_reader;
+-- Квартальные метрики ЦБ по ИПЦ (пункт key-rate/phase-4-cpi-quarterly-metrics, #542):
+-- производные витрины над cbr_dip_bulletin, cbr_indicators_cpd и weekly_cpi_sa — квартальный
+-- SAAR ДИП по выпускам, квартальный SAAR базовой инфляции, квартал к дате недельного агрегата и
+-- 3-месячный скользящий SAAR. Сырые таблицы агенту не выданы — только витрины с комментариями
+-- таблицы и колонок.
+GRANT SELECT ON default.v_cbr_dip_quarterly TO kimi_reader;
+GRANT SELECT ON default.v_cbr_core_quarterly TO kimi_reader;
+GRANT SELECT ON default.v_weekly_cpi_quarterly TO kimi_reader;
+GRANT SELECT ON default.v_weekly_cpi_rolling3m TO kimi_reader;
 -- ЕМИСС 37426: недельные средние потребительские цены (импортёр fedstat_weekly_prices)
 GRANT SELECT ON default.v_fedstat_weekly_prices TO kimi_reader;
 -- ЕМИСС макро-блоки: ИПП, розница, сельхоз, инвестиции, ИПЦ 31074 (импортёры fedstat_ipp,
