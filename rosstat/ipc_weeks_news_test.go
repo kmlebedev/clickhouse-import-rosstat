@@ -370,3 +370,58 @@ func TestIpcWeeksPetrolSeriesInCatalog(t *testing.T) {
 		}
 	}
 }
+
+// TestIpcWeeksNewsAggregateFixtures — агрегат из шапки двух живых CPI-выпусков. Значение
+// 2026-10-26 сверено с BI в v_rosstat_macro (100.08), 2026-11-02 — с текстом PDF.
+func TestIpcWeeksNewsAggregateFixtures(t *testing.T) {
+	cases := map[string]float64{
+		"ipc_weeks_news_2026_11_02.txt": 99.96,
+		"ipc_weeks_news_2026_10_26.txt": 100.08,
+	}
+	for file, want := range cases {
+		t.Run(file, func(t *testing.T) {
+			got, err := ipcWeeksNewsAggregate(string(readIpcWeeksNewsFixture(t, file)))
+			if err != nil {
+				t.Fatalf("ipcWeeksNewsAggregate: %v", err)
+			}
+			if got != want {
+				t.Errorf("агрегат = %v, ожидалось %v", got, want)
+			}
+		})
+	}
+}
+
+func TestIpcWeeksNewsAggregateOneLine(t *testing.T) {
+	got, err := ipcWeeksNewsAggregate("Индекс потребительских цен (оценка) 99,96 99,99 -0,005 0,012 0,014")
+	if err != nil {
+		t.Fatalf("ipcWeeksNewsAggregate: %v", err)
+	}
+	if got != 99.96 {
+		t.Errorf("агрегат = %v, ожидалось 99.96", got)
+	}
+}
+
+// TestIpcWeeksNewsAggregateRepeat — шапка повторяется на каждой странице: одинаковое
+// значение дублем не считается.
+func TestIpcWeeksNewsAggregateRepeat(t *testing.T) {
+	text := "Индекс потребительских цен\n(оценка) 99,96 1 2 3\n" +
+		"Индекс потребительских цен\n(оценка) 99,96 1 2 3\n"
+	if got, err := ipcWeeksNewsAggregate(text); err != nil || got != 99.96 {
+		t.Fatalf("агрегат = %v, err = %v; ожидалось 99.96, nil", got, err)
+	}
+}
+
+func TestIpcWeeksNewsAggregateErrors(t *testing.T) {
+	for name, text := range map[string]string{
+		"no line":     "Индексы потребительских цен\n2 ноября 2026 г.\n",
+		"not numeric": "Индекс потребительских цен\n(оценка) abc 1 2 3\n",
+		"conflicting": "Индекс потребительских цен\n(оценка) 99,96 1 2 3\nИндекс потребительских цен\n(оценка) 99,97 1 2 3\n",
+		"alone":       "(оценка) 99,96 1 2 3\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := ipcWeeksNewsAggregate(text); err == nil {
+				t.Fatal("ожидалась ошибка")
+			}
+		})
+	}
+}

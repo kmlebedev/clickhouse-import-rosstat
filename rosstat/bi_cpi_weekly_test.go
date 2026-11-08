@@ -721,3 +721,87 @@ func TestBICpiWeeklyImportWritesFullPath(t *testing.T) {
 		t.Errorf("строка версии: Append=%d Send=%d, ожидалось 1/1", pub.appends, pub.sends)
 	}
 }
+
+// TestBICpiWeeklyPDFTextRows — агрегат из CPI-PDF: ряд, дата и значение для двух живых
+// выпусков. Значение 2026-10-26 совпадает с BI в v_rosstat_macro.
+func TestBICpiWeeklyPDFTextRows(t *testing.T) {
+	cases := []struct {
+		file  string
+		date  string
+		value float64
+	}{
+		{file: "ipc_weeks_news_2026_11_02.txt", date: "2026-11-02", value: 99.96},
+		{file: "ipc_weeks_news_2026_10_26.txt", date: "2026-10-26", value: 100.08},
+	}
+	for _, tc := range cases {
+		t.Run(tc.file, func(t *testing.T) {
+			expected, err := time.Parse("2006-01-02", tc.date)
+			if err != nil {
+				t.Fatal(err)
+			}
+			text := string(readIpcWeeksNewsFixture(t, tc.file))
+			rows, err := biCpiWeeklyPDFTextRows(text, expected)
+			if err != nil {
+				t.Fatalf("biCpiWeeklyPDFTextRows: %v", err)
+			}
+			if len(rows) != 1 {
+				t.Fatalf("строк %d, ожидалась 1: %+v", len(rows), rows)
+			}
+			row := rows[0]
+			if row.Series != ipcWeeksBulletinsAggregateSeries {
+				t.Errorf("series = %q, ожидался %q", row.Series, ipcWeeksBulletinsAggregateSeries)
+			}
+			if !row.Date.Equal(expected) {
+				t.Errorf("date = %s, ожидалась %s", row.Date.Format("2006-01-02"), tc.date)
+			}
+			if row.Value != tc.value {
+				t.Errorf("value = %v, ожидалось %v", row.Value, tc.value)
+			}
+		})
+	}
+}
+
+func TestBICpiWeeklyPDFTextRowsDateMismatch(t *testing.T) {
+	text := string(readIpcWeeksNewsFixture(t, "ipc_weeks_news_2026_11_02.txt"))
+	if _, err := biCpiWeeklyPDFTextRows(text, biCpiWeeklyDateOnly(2026, time.October, 26)); err == nil {
+		t.Fatal("ожидалась ошибка расхождения даты выпуска")
+	}
+}
+
+func TestBICpiWeeklyPDFAppendRow(t *testing.T) {
+	rec := &appendRecorder{}
+	row := util.FallbackRow{
+		Series: ipcWeeksBulletinsAggregateSeries,
+		Date:   biCpiWeeklyDateOnly(2026, time.November, 2),
+		Value:  99.96,
+	}
+	if err := biCpiWeeklyPDFAppendRow(rec, row); err != nil {
+		t.Fatalf("biCpiWeeklyPDFAppendRow: %v", err)
+	}
+	if len(rec.rows) != 1 {
+		t.Fatalf("Append вызван %d раз, ожидался 1", len(rec.rows))
+	}
+	got := rec.rows[0]
+	if got.series != ipcWeeksBulletinsAggregateSeries || got.value != 99.96 || got.valueType != "float64" {
+		t.Errorf("строка = %+v, ожидались агрегатный ряд, 99.96 и float64", got)
+	}
+	if !got.date.Equal(row.Date) {
+		t.Errorf("date = %s, ожидалась %s", got.date.Format("2006-01-02"), row.Date.Format("2006-01-02"))
+	}
+}
+
+func TestBICpiWeeklyKnownDatesQueryUsesAggregateSeries(t *testing.T) {
+	if !strings.Contains(biCpiWeeklyKnownDatesQuery, ipcWeeksBulletinsAggregateSeries) {
+		t.Fatalf("запрос дат не содержит ряд %q: %s", ipcWeeksBulletinsAggregateSeries, biCpiWeeklyKnownDatesQuery)
+	}
+}
+
+func TestBICpiWeeklyPDFRowsRejectsNonPDF(t *testing.T) {
+	_, err := biCpiWeeklyPDFRows(context.Background(), util.FallbackDocument{
+		Date: biCpiWeeklyDateOnly(2026, time.November, 2),
+		URL:  "https://example.test/ipc11_02.pdf",
+	}, []byte("<html><body>Доступ ограничен</body></html>"))
+	if err == nil {
+		t.Fatal("ожидалась ошибка: не PDF")
+	}
+}
