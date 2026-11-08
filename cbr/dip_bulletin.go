@@ -117,8 +117,16 @@ func (s *cbrDipStat) Import(ctx context.Context, conn driver.Conn) (count int64,
 	fresh := cbrDipNewReleases(releases, known)
 	if len(fresh) == 0 {
 		log.Infof("%s: новых выпусков нет (на странице %d, в таблице %d выпусков)", cbrDipTable, len(releases), len(known))
-		// Слой создаётся и на no-op-пути: витрины — производная таблицы, и пропущенный при
-		// прошлом сбое CreateView обязан вылечиться без нового выпуска (спека §2.5).
+		// Производные (каталог рядов, v_cbr_dip_bulletin, v_cbr_dip_quarterly) создаются и на
+		// no-op-пути: витрины — производная таблицы, и пропущенная при прошлом сбое CreateView
+		// обязана вылечиться без нового выпуска (спека §2.5). Шаблон на своём no-op-пути
+		// AfterImport не зовёт (util.ClickHouseImport возвращает count до него), поэтому у
+		// импортёра со своим Import() производные публикует именно эта ветка — иначе на уже
+		// заполненной БД новая витрина не появилась бы до следующего выпуска ЦБ.
+		if err = s.AfterImport(ctx, conn); err != nil {
+			return 0, err
+		}
+		// Слой point-in-time создаётся тем же путём — он тоже производная таблицы.
 		if err = ensurePitViews(ctx, conn); err != nil {
 			return 0, err
 		}

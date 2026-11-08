@@ -41,7 +41,10 @@ type indicatorsCpdStat struct {
 
 // Import берёт адрес актуального XLSX со страницы aipd: id файла в URL меняется при
 // обновлении, поэтому ссылку ищем на странице, а не хардкодим. Вызывается из Import():
-// сетевые вызовы в init() запрещены (ARCHITECTURE.md §8.6).
+// сетевые вызовы в init() запрещены (ARCHITECTURE.md §8.6). Производные публикуются шаблоном
+// после точек и до строки версии; на no-op-пути шаблон их не зовёт (возвращает count до
+// AfterImport), поэтому их публикует эта обёртка — иначе на уже заполненной БД
+// v_cbr_core_quarterly не появилась бы до следующей ревизии файла ЦБ.
 func (s *indicatorsCpdStat) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
 	page, err := util.GetPage(indicatorsCpdUrl)
 	if err != nil {
@@ -52,7 +55,16 @@ func (s *indicatorsCpdStat) Import(ctx context.Context, conn driver.Conn) (count
 		return count, fmt.Errorf("indicatorsCpd: не найдена ссылка на xlsx на %s: %w", indicatorsCpdUrl, err)
 	}
 	s.DataUrl = "https://www.cbr.ru" + href
-	return s.ClickHouseImport.Import(ctx, conn)
+	count, err = s.ClickHouseImport.Import(ctx, conn)
+	// Производные публикуются шаблоном после точек и до строки версии; повторный вызов здесь
+	// страхует no-op-путь, на котором шаблон отдаёт число точек, не доходя до AfterImport: на уже
+	// заполненной БД v_cbr_core_quarterly иначе не появилась бы до следующей ревизии файла ЦБ.
+	// На полном пути вызов второй (идемпотентный: upsert каталога + CREATE OR REPLACE VIEW), и
+	// сбой первого после записи версии лечится следующим прогоном, а не ждёт новой ревизии.
+	if derivedErr := afterCbrIndicatorsCpd(ctx, conn); derivedErr != nil && err == nil {
+		err = derivedErr
+	}
+	return count, err
 }
 
 // cbrIndicatorsCpdImporter — сезонно сглаженная динамика потребительских цен;
@@ -65,8 +77,34 @@ var cbrIndicatorsCpdImporter = &indicatorsCpdStat{ClickHouseImport: util.ClickHo
 			, value Float32
 		) ENGINE = ReplacingMergeTree ORDER BY (name, date);`},
 	ImportFunc:             indicatorsCpdImport,
-	AfterImport:            afterCbrMacro(cbrIndicatorsCpdSeriesMeta),
+	AfterImport:            afterCbrIndicatorsCpd,
 	PublicationCountPoints: cbrIndicatorsCpdCountPoints,
+}}
+
+// cbrCoreQuarterlySeriesMeta — каталог квартального ряда «Базовый ИПЦ:SAAR_q» (спека
+// 2026-11-08-cpi-quarterly-metrics §5.1): производного от месячного SA м/м «Базового ИПЦ», но с
+// годовой единицей и привязкой даты квартала. source — 'cbr' (общая витрина v_cbr_macro, где
+// живут месячные ряды файла), поэтому у cbr в каталоге появляется ряд, которого нет в v_cbr_macro:
+// он живёт в v_cbr_core_quarterly, и origin это называет. Винтажей нет — cbr_indicators_cpd
+// хранит текущую редакцию файла, и это оговорено в описании, а не замалчивается.
+var cbrCoreQuarterlySeriesMeta = []util.SeriesMeta{{
+	Source:    cbrSource,
+	Series:    "Базовый ИПЦ:SAAR_q",
+	Title:     "Базовая инфляция: квартальный SAAR",
+	Unit:      "% годовых",
+	Frequency: "Q",
+	Origin: "cbr.ru/statistics/ddkp/aipd, indicators_cpd.xlsx, лист «Лист1», строка «Базовый ИПЦ»; " +
+		"витрина v_cbr_core_quarterly (среднее годовых темпов из SA м/м за квартал)",
+	Description: "Квартальное среднее годовых темпов из сезонно очищенных месячных темпов " +
+		"«Базового ИПЦ»: (pow(1 + SA м/м / 100, 12) − 1) × 100 по каждому месяцу, затем среднее за " +
+		"квартал (3к26 — 6,21 %, ЦБ называет 6,2). value файла — уже SA м/м в процентах, повторная " +
+		"сезонная корректировка не применяется. Дата точки — quarter_start, первый день отчётного " +
+		"квартала (2026-07-01 = III кв. 2026), читаемая метка — колонка quarter («3к26»); это не " +
+		"каноническая привязка каталога «1-е число квартала, следующего за отчётным». months = 3 — " +
+		"полный квартал; у 4к26 строки нет до публикации октябрьской базовой (14.11) — «н/д», не " +
+		"ноль. Винтажей нет: cbr_indicators_cpd — текущая редакция файла, поэтому цитируемый в " +
+		"старом релизе квартал может расходиться сильнее, чем на 0,2 п.п. (2к26 в июльском релизе " +
+		"— 4,2 % против 4,57 % текущей редакции): это ревизия файла, а не ошибка формулы.",
 }}
 
 // https://www.cbr.ru/analytics/dkp/dinamic/

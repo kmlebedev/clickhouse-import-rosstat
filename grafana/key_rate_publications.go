@@ -709,11 +709,220 @@ func krZeroThresholds() *dashboard.ThresholdsConfigBuilder {
 		})
 }
 
+// quarterlyRowID — id седьмого ряда (46): панели 42–45 заняли следующий свободный диапазон после
+// 41 (теплокарта недельного ИПЦ инфры/5.14), поэтому ряд берёт id вне диапазона панелей — иначе
+// Grafana трактует совпавший id как «не задан» и заменит его своим.
+const quarterlyRowID = 46
+
+// krQuarterlyDipSQL — ряд A панели 42: квартальный SAAR последнего выпуска ДИП (среднее месячных
+// SAAR «Все товары и услуги»). release = max(release) — последняя редакция; статья может
+// цитировать выпуск на дату резюме, и тогда числа разойдутся на величину ревизии (2к26:
+// 5,02/5,36/4,89), поэтому выбранный выпуск назван в описании панели, а не подразумевается.
+// months = 3 — только полные кварталы: 3к26 в выпуске 26-06 (одна июльская точка, 11,59) в
+// сравнение не идёт. Значения — доли (saar_q / 100): панель в percentunit, как панели 2 и 4,
+// поэтому порог 4 % остаётся 0.04.
+const krQuarterlyDipSQL = `SELECT quarter_start AS time, saar_q / 100 AS "Текущий рост цен, SAAR (ЦБ)"
+FROM v_cbr_dip_quarterly
+WHERE release = (SELECT max(release) FROM v_cbr_dip_quarterly)
+  AND months = 3
+  AND $__timeFilter(quarter_start)
+ORDER BY quarter_start
+`
+
+// krQuarterlyCoreSQL — ряд B панели 42: квартальный SAAR базовой инфляции (среднее годовых
+// темпов из SA м/м). Винтажей у файла ЦБ нет, поэтому строка одна на квартал; 4к26 появится
+// 14.11, до тех пор линия кончается 3к26, и это «нет данных», а не ноль.
+const krQuarterlyCoreSQL = `SELECT quarter_start AS time, saar_q / 100 AS "Базовая инфляция, SAAR (ЦБ)"
+FROM v_cbr_core_quarterly
+WHERE months = 3
+  AND $__timeFilter(quarter_start)
+ORDER BY quarter_start
+`
+
+// krQuarterlyToDateSQL — ряд C панели 42: единственная точка незакрытого квартала из недельного
+// агрегата («квартал к дате»). Берётся последний неполный квартал, а не все: в начале истории ДИП
+// есть 2к09 с двумя месяцами, и фильтр «months < 3» без max(quarter_start) нарисовал бы лишнюю
+// точку 2009 года. Серия — точки, не линия: одна точка квартала не тянет тренд, а сравнение с
+// официальным SAAR ЦБ некорректно (другой агрегат), поэтому на графике она отдельным цветом и с
+// явной подписью «недельный».
+const krQuarterlyToDateSQL = `SELECT quarter_start AS time, saar_q / 100 AS "Незакрытый квартал к дате (недельный)"
+FROM v_weekly_cpi_quarterly
+WHERE quarter_start = (SELECT max(quarter_start) FROM v_weekly_cpi_quarterly WHERE months < 3)
+  AND $__timeFilter(quarter_start)
+`
+
+// krQuarterlyTableSQL — панель 43: «4к26 к дате» в числах. Все значения считаются из витрин, а не
+// хардкодятся: 3к26 — последний полный квартал ДИП последнего выпуска, «к дате» — незакрытый
+// квартал недельного агрегата, 3м — последняя точка скользящего ряда, база Δ 3м — окно ЦБ из трёх
+// месячных SA «Все товары и услуги» того же полного квартала (pow(exp(Σln(1+r)), 4) − 1: три
+// месячных темпа, годовой пересчёт четырьмя кварталами). Пустое место — строка «н/д», а не ноль:
+// базовой за октябрь до 14.11 нет, и ноль читался бы как «базовая инфляция 0 %». Базовая строка
+// «к дате» фиксирована «н/д» по той же причине; диапазон устойчивого роста — текст, потому что
+// ЦБ называет диапазон (5–6 %), а не точку, и числового ряда у него нет.
+const krQuarterlyTableSQL = `WITH
+  q3 AS (SELECT round(saar_q, 2) AS v FROM v_cbr_dip_quarterly
+         WHERE release = (SELECT max(release) FROM v_cbr_dip_quarterly)
+           AND quarter_start = (SELECT max(quarter_start) FROM v_cbr_dip_quarterly WHERE months = 3)
+           AND months = 3),
+  q4 AS (SELECT round(saar_q, 2) AS v FROM v_weekly_cpi_quarterly
+         WHERE quarter_start = (SELECT max(quarter_start) FROM v_weekly_cpi_quarterly WHERE months < 3)),
+  c3 AS (SELECT round(saar_q, 2) AS v FROM v_cbr_core_quarterly
+         WHERE quarter_start = (SELECT max(quarter_start) FROM v_cbr_core_quarterly WHERE months = 3)),
+  m3 AS (SELECT round(saar_3m, 2) AS v FROM v_weekly_cpi_rolling3m
+         WHERE saar_3m IS NOT NULL ORDER BY date DESC LIMIT 1),
+  m3cbr AS (SELECT round((pow(exp(sum(log(1 + value / 100))), 4) - 1) * 100, 2) AS v
+            FROM v_cbr_macro
+            WHERE series = 'Все товары и услуги'
+              AND date >= (SELECT max(quarter_start) FROM v_cbr_dip_quarterly WHERE months = 3)
+              AND date < (SELECT max(quarter_start) FROM v_cbr_dip_quarterly WHERE months = 3) + INTERVAL 3 MONTH)
+SELECT
+    'Текущий рост цен' AS "Метрика",
+    ifNull(toString(round((SELECT v FROM q3), 1)), 'н/д') AS "3к26",
+    ifNull(toString(round((SELECT v FROM q4), 1)), 'н/д') AS "4к26 к дате",
+    ifNull(toString(round((SELECT v FROM q4) - (SELECT v FROM q3), 1)), '—') AS "Δ 4к26 − 3к26",
+    ifNull(toString(round((SELECT v FROM m3), 1)), 'н/д') AS "3м SAAR",
+    ifNull(toString(round((SELECT v FROM m3) - (SELECT v FROM m3cbr), 1)), '—') AS "Δ 3м"
+UNION ALL
+SELECT 'Базовая инфляция',
+       ifNull(toString(round((SELECT v FROM c3), 1)), 'н/д'), 'н/д', '—', 'н/д', '—'
+UNION ALL
+SELECT 'Устойчивый рост цен', '5–6 % (диапазон)', 'н/д', '—', '—', '—'
+`
+
+// krWeeklyRolling3mSQL — панель 44: 3-месячный скользящий SAAR недельного агрегата. Время
+// точки — if(partial = 1, as_of, date): метка неполного месяца лежит в будущем относительно
+// to=now, и фильтр по сырому date вырезал бы nowcast из окна (урок #361, панель 4); $__timeFilter
+// поэтому тоже по вычисленному времени. NULL первых двух точек — разрыв, не ноль.
+const krWeeklyRolling3mSQL = `SELECT if(partial = 1, as_of, date) AS time, saar_3m / 100 AS "3-месячный SAAR (недельный)"
+FROM v_weekly_cpi_rolling3m
+WHERE $__timeFilter(if(partial = 1, as_of, date))
+ORDER BY time
+`
+
+// krQuarterlyRevisionsSQL — панель 45: ревизии квартальных оценок ЦБ по выпускам. Колонки
+// закреплены за кварталами 2026 года (в 2027 их надо переписать — динамических имён колонок в
+// SQL ClickHouse нет); последние выпуски видны строкой каждый. Квартал показывается только при
+// months = 3: в 26-06 3к26 — одна июльская точка (11,59), и подписывать её кварталом нельзя.
+// Прочерк в «Месяцев» — выпуск квартал не показывал вовсе, а не «ноль месяцев».
+const krQuarterlyRevisionsSQL = `SELECT
+    release AS "Выпуск",
+    toString(publication_date) AS "Опубликован",
+    if(countIf(quarter_start = '2026-01-01' AND months = 3) = 0, '—',
+       toString(round(maxIf(saar_q, quarter_start = '2026-01-01' AND months = 3), 2))) AS "1к26",
+    if(countIf(quarter_start = '2026-04-01' AND months = 3) = 0, '—',
+       toString(round(maxIf(saar_q, quarter_start = '2026-04-01' AND months = 3), 2))) AS "2к26",
+    if(countIf(quarter_start = '2026-07-01' AND months = 3) = 0, '—',
+       toString(round(maxIf(saar_q, quarter_start = '2026-07-01' AND months = 3), 2))) AS "3к26",
+    if(countIf(quarter_start = '2026-07-01') = 0, '—',
+       toString(maxIf(months, quarter_start = '2026-07-01'))) AS "Месяцев в 3к26"
+FROM v_cbr_dip_quarterly
+WHERE quarter_start >= '2026-01-01'
+GROUP BY release, publication_date
+ORDER BY publication_date DESC
+LIMIT 8
+`
+
+// krQuarterlySarPanel — панель 42: квартальный SAAR двух официальных рядов ЦБ и точка
+// незакрытого квартала из нашего недельного агрегата. Квартальные значения недельной модели
+// (1к26–3к26: 10,80 / 6,83 / 6,92) сюда сознательно не выводятся: другая конструкция, и на одной
+// линии с 8,02 они читались бы как ошибка ЦБ. Они идут в таблицу 43 как справочные.
+func krQuarterlySarPanel() *timeseries.PanelBuilder {
+	return krPanelDefaults(timeseries.NewPanelBuilder()).
+		Id(42).
+		Title("Квартальный SAAR: текущий рост и базовая").
+		Span(spanHalf).
+		Description("Квартальные оценки ЦБ (v_cbr_dip_quarterly, v_cbr_core_quarterly) и "+
+			"единственная точка незакрытого квартала из нашего недельного агрегата "+
+			"(v_weekly_cpi_quarterly, months < 3). Текущий рост — среднее месячных SAAR «Все товары "+
+			"и услуги» за квартал, базовая — среднее годовых темпов из SA м/м (pow(1 + r/100, 12) − 1): "+
+			"3к26 — 8,02 и 6,21 % (ЦБ называет 8,0 и 6,2). Показаны только полные кварталы "+
+			"(months = 3). ДИП — последний выпуск 26-07 от 14.10.2026: статья, цитирующая резюме на "+
+			"дату, может брать другую редакцию того же квартала (2к26: 5,02 / 5,36 / 4,89) — это "+
+			"ревизия SA, а не ошибка. Оранжевая точка — 4к26 «к дате»: одна 4-недельная точка на "+
+			"26.10 (12,88 %), не квартал и не оценка ЦБ; официальная базовая за 4к26 появится 14.11. "+
+			"Порог 4 % — цель ЦБ по инфляции.").
+		WithTarget(timeseriesQuery("A", krQuarterlyDipSQL)).
+		WithTarget(timeseriesQuery("B", krQuarterlyCoreSQL)).
+		WithTarget(timeseriesQuery("C", krQuarterlyToDateSQL)).
+		Unit(units.PercentUnit).
+		Thresholds(krFourPercentThresholds()).
+		ThresholdsStyle(krThresholdLineStyle()).
+		OverrideByQuery("C", append(pointsOnlyProps(), krFixedColorProp("orange")))
+}
+
+// krQuarterlyTablePanel — панель 43: квартальные числа в таблице, с обоими Δ. Δ 3м даётся против
+// окна ЦБ (три месячных SA того же полного квартала — 8,04 %), а не против сентября недельного
+// ряда: подпись Δ иначе означала бы разницу двух разных конструкций. Второй Δ — на собственной
+// базе недельного ряда (6,91 → 8,15, +1,24 п.п.) — в описании панели.
+func krQuarterlyTablePanel() *table.PanelBuilder {
+	return table.NewPanelBuilder().
+		Id(43).
+		Title("4к26 к дате: квартал и 3 месяца").
+		Span(spanHalf).
+		Description("Квартальные числа без графика: 3к26 — последний полный квартал ДИП " +
+			"последнего выпуска (8,02 %), «4к26 к дате» — среднее месячных SAAR недельного " +
+			"агрегата по незакрытому кварталу (12,88 % — одна 4-недельная точка на 26.10), 3м — " +
+			"последняя точка v_weekly_cpi_rolling3m (8,15 %). Δ 4к26 − 3к26 = +4,9 п.п. Δ 3м " +
+			"считается против окна ЦБ — три месячных SA «Все товары и услуги» июля–сентября, " +
+			"приведённые к году (8,04 %), отсюда +0,1 п.п.; на собственной базе недельного ряда 3м " +
+			"вырос с 6,91 % (сентябрь) до 8,15 % (+1,24 п.п.), и это другая база — не смешивать. " +
+			"«н/д» — данных нет (базовая за октябрь выходит 14.11), «—» — разность не считается; " +
+			"ноль не подставляется. «Устойчивый рост цен» — диапазон из резюме ЦБ (5–6 %), а не " +
+			"числовой ряд.").
+		Datasource(datasourceRef()).
+		WithTarget(tableQuery("A", krQuarterlyTableSQL))
+}
+
+// krWeeklyRolling3mPanel — панель 44: 3-месячный скользящий SAAR недельного агрегата. Окно —
+// двенадцать недель (три месячные точки), поэтому степень 52/12, а не 13. Разрыв в начале ряда —
+// неполное окно (NULL), а не ноль. Октябрьский всплеск 8,15 % — тарифная неделя 05.10, а не
+// разворот тренда; серия индикативная и не заменяет официальный SAAR ЦБ.
+func krWeeklyRolling3mPanel() *timeseries.PanelBuilder {
+	return krPanelDefaults(timeseries.NewPanelBuilder()).
+		Id(44).
+		Title("Недельный ИПЦ: 3-месячный SAAR").
+		Span(spanHalf).
+		Description("Скользящий SAAR по официальному недельному агрегату ИПЦ, сезонно " +
+			"скорректированному (v_weekly_cpi_rolling3m): цепочка трёх месячных 4-недельных SA-темпов, " +
+			"годовой пересчёт pow(Π(1 + sa_4w/100), 52/12) − 1. Это не официальный SAAR ЦБ: " +
+			"сглаживается один агрегат на 4-недельном окне, поэтому уровень расходится с ДИП " +
+			"систематически (3к26: 6,92 % на квартал против 8,02 % ЦБ). Показывает разворот раньше " +
+			"квартального среднего: 3м 8,15 % на 26.10 после 6,91 % в сентябре — октябрьский всплеск " +
+			"даёт тарифная неделя 05.10 (индекс 100,96), а не смена тренда. Первые две точки ряда — " +
+			"NULL (окно неполное): это разрыв, а не ноль. Последняя точка — nowcast-месяц " +
+			"(partial = 1), она рисуется на дате as_of. Порог 4 % — цель ЦБ по инфляции.").
+		WithTarget(timeseriesQuery("A", krWeeklyRolling3mSQL)).
+		Unit(units.PercentUnit).
+		Thresholds(krFourPercentThresholds()).
+		ThresholdsStyle(krThresholdLineStyle())
+}
+
+// krQuarterlyRevisionsPanel — панель 45: как ЦБ ревизует один и тот же квартал между выпусками.
+// Смысл — не «последнее значение», а разброс редакций: 2к26 менялся 5,02 → 5,36 → 4,89, 1к26 —
+// 8,82 → 8,74 → 8,81 → 8,71 → 8,70, 3к26 в 26-06 был 11,59 по одному июлю и стал 8,02 по трём
+// месяцам. Поэтому сравнивать кварталы нужно в пределах одной даты публикации.
+func krQuarterlyRevisionsPanel() *table.PanelBuilder {
+	return table.NewPanelBuilder().
+		Id(45).
+		Title("Оценки ЦБ по кварталам: ревизии").
+		Span(24).
+		Description("Последние выпуски приложений ДИП и квартальные оценки по ним " +
+			"(v_cbr_dip_quarterly): разными выпусками ЦБ ревизует один и тот же квартал — 2к26 " +
+			"5,02 / 5,36 / 4,89, 1к26 8,82 / 8,74 / 8,81 / 8,71 / 8,70, 3к26 в выпуске 26-06 11,59 " +
+			"(один июль) и 8,02 (три месяца) в 26-07. Квартал показывается только при трёх месяцах: " +
+			"прочерк — выпуск этого квартала полным не показал, а «Месяцев в 3к26» говорит, сколько " +
+			"месяцев квартала в выпуске было. Сравнивать кварталы между выпусками нельзя без даты " +
+			"публикации: это ревизия SA, а не исправление ошибки. Колонки закреплены за 2026 годом.").
+		Datasource(datasourceRef()).
+		WithTarget(tableQuery("A", krQuarterlyRevisionsSQL))
+}
+
 // NewKeyRatePublications собирает дашборд «Ключевая ставка — публикации». Собраны ряды 21 «Ставка
-// и инфляция» (панели 1–5), 22 «Деньги, кредит, бюджет, труд» (панели 6–10 и 35), 23 «Рыночный
-// контур» (панели 11–14 и 25–28), 24 «Сигнал, консенсус, календарь» (панели 15–19) и 34 «Остальные
-// каналы решения» (панели 29–33) — полный контракт спеки §5. Порядок вызовов WithRow/WithPanel
-// задаёт и порядок сетки, и нумерацию панелей.
+// и инфляция» (панели 1–5, 36 и 41), 22 «Деньги, кредит, бюджет, труд» (панели 6–10 и 35), 23
+// «Рыночный контур» (панели 11–14 и 25–28), 24 «Сигнал, консенсус, календарь» (панели 15–19),
+// 34 «Остальные каналы решения» (панели 29–33), 40 «Цены производителей, продовольствие, средние
+// цены» (панели 37–39) и 46 «Квартальные метрики ЦБ» (панели 42–45) — полный контракт спеки §5.
+// Порядок вызовов WithRow/WithPanel задаёт и порядок сетки, и нумерацию панелей.
 func NewKeyRatePublications() *dashboard.DashboardBuilder {
 	return dashboard.NewDashboardBuilder("Ключевая ставка — публикации").
 		Uid(KeyRatePublicationsUID).
@@ -760,7 +969,12 @@ func NewKeyRatePublications() *dashboard.DashboardBuilder {
 		WithRow(dashboard.NewRowBuilder("Цены производителей, продовольствие, средние цены").Id(pricesRowID)).
 		WithPanel(krPPIPanel()).
 		WithPanel(krFAOPanel()).
-		WithPanel(krFedstatPricesPanel())
+		WithPanel(krFedstatPricesPanel()).
+		WithRow(dashboard.NewRowBuilder("Квартальные метрики ЦБ").Id(quarterlyRowID)).
+		WithPanel(krQuarterlySarPanel()).
+		WithPanel(krQuarterlyTablePanel()).
+		WithPanel(krWeeklyRolling3mPanel()).
+		WithPanel(krQuarterlyRevisionsPanel())
 }
 
 // krRatePanel — панель 1: ключевая ставка линией и точки решений ЦБ. Ставка — уровень на дату,
