@@ -42,7 +42,7 @@ GF_PLUGINS   := $(GF_DIR)/plugins
 # уходит в окружение процесса gcx (make экспортирует переменные) и не светится в командной строке.
 # Список uid всех дашбордов контура — источник истины для деплоя и smoke: цели ниже идут по нему
 # циклом, поэтому новый дашборд добавляется здесь одной строкой (свои uid генератор grafana/ знает сам).
-DASHBOARDS       := gold-thesis key-rate-publications finance-polyus transaq-trades urals-budget-rule
+DASHBOARDS       := gold-thesis key-rate-publications finance-polyus transaq-trades urals-budget-rule bond-attractiveness
 GRAFANA_TEST_URL ?= http://localhost:3000
 GRAFANA_ORG_ID   ?= 1
 GRAFANA_TOKEN    ?= $(GRAFANA_TEST_TOKEN)

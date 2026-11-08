@@ -64,7 +64,7 @@ jobs:
           gcx dev lint run \
             --disable uneditable-dashboard --disable panel-title-description \
             dashboard/gold-thesis.json dashboard/key-rate-publications.json dashboard/finance-polyus.json \
-            dashboard/transaq-trades.json dashboard/urals-budget-rule.json
+            dashboard/transaq-trades.json dashboard/urals-budget-rule.json dashboard/bond-attractiveness.json
       # Один артефакт dashboards на все файлы: скачивают и смотрят их всё равно вместе, а «какой
       # именно дашборд поехал» видно по имени файла внутри архива.
       - uses: actions/upload-artifact@v4
@@ -76,3 +76,4 @@ jobs:
             dashboard/finance-polyus.json
             dashboard/transaq-trades.json
             dashboard/urals-budget-rule.json
+            dashboard/bond-attractiveness.json

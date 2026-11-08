@@ -2,9 +2,10 @@
 //
 // Каждый дашборд контура (gold-thesis — §4 золотого роадмапа, key-rate-publications — публикации
 // ключевой ставки, finance-polyus — финансы и прогноз Полюса, transaq-trades — лента сделок MOEX,
-// urals-budget-rule — реальная цена Urals и бюджетное правило) собирается в K8s-стиль манифест,
-// который деплоится `gcx resources push` (make grafana-deploy-test / -staging). Файл артефакта —
-// <out-dir>/<uid>.json:
+// urals-budget-rule — реальная цена Urals и бюджетное правило, bond-attractiveness —
+// привлекательность облигаций: ставка, ОФЗ, вклады и средства клиентов) собирается в K8s-стиль
+// манифест, который деплоится `gcx resources push` (make grafana-deploy-test / -staging). Файл
+// артефакта — <out-dir>/<uid>.json:
 //
 //	cd grafana && go run .                                     # все дашборды в ../dashboard
 //	cd grafana && go run . -dashboard key-rate-publications    # только один дашборд
@@ -38,6 +39,7 @@ func main() {
 		{FinancePolyusUID, NewFinancePolyus},
 		{TransaqTradesUID, NewTransaqTrades},
 		{UralsBudgetRuleUID, NewUralsBudgetRule},
+		{BondAttractivenessUID, NewBondAttractiveness},
 	}
 
 	selected := dashboards
