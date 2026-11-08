@@ -56,6 +56,12 @@ SELECT * FROM (
     UNION ALL SELECT 'cbr_loans_to_individuals', name, count(), min(date), max(date) FROM cbr_loans_to_individuals FINAL GROUP BY name
     
     UNION ALL SELECT 'cbr_households_b_mes', name, count(), min(date), max(date) FROM cbr_households_b_mes FINAL GROUP BY name
+
+    -- Средства клиентов банков РФ (импортёр cbr_sors_funds): 21 ряд = 7 строк × 3 листа
+    -- («итого»/«в рублях»/«в инвалюте»); дата — первое число отчётного месяца (уровень на дату,
+    -- не поток). Прочерк в источнике — пропуск точки, а не ноль; в валютном листе строка эскроу
+    -- состоит из нулей (счета эскроу рублёвые) — это значение, а не пропуск.
+    UNION ALL SELECT 'cbr_sors_funds', name, count(), min(date), max(date) FROM cbr_sors_funds FINAL GROUP BY name
     
     UNION ALL SELECT 'cbr_zcyc', tenor, count(), min(date), max(date) FROM cbr_zcyc FINAL GROUP BY tenor
 
