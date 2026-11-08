@@ -1,7 +1,7 @@
 # План: импортёр `cbr_sors_funds` — средства клиентов банков (пункт `key-rate/phase-2-cbr-sors-funds`, issue #544)
 
 **Дата:** 8 ноября 2026 г.
-**Спека:** [2026-11-08-cbr-sors-funds-design.md](../superpowers/specs/2026-11-08-cbr-sors-funds-design.md)
+**Спека:** [2026-11-08-cbr-sors-funds-design.md](../specs/2026-11-08-cbr-sors-funds-design.md)
 **Пункт роадмапа:** [ROADMAP_KEY_RATE.md](../../ROADMAP_KEY_RATE.md) §4.2 №26, фаза 2.
 **Ветка:** `feat/cbr-sors-funds`. **Worktree:** `.worktrees/cbr-sors-funds`.
 **Исполнение:** контроллер (эта сессия); ревью — `subagent-dispatch` (task-reviewer на другой модели).

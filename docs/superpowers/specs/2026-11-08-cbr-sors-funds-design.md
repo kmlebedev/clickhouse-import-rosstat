@@ -1,11 +1,11 @@
 # Спека: импортёр `cbr_sors_funds` — средства клиентов банков (счета, депозиты, вклады)
 
 **Дата:** 8 ноября 2026 г.
-**Пункт роадмапа:** [ROADMAP_KEY_RATE.md](ROADMAP_KEY_RATE.md) §4.2 №26, фаза 2 —
+**Пункт роадмапа:** [ROADMAP_KEY_RATE.md](../../ROADMAP_KEY_RATE.md) §4.2 №26, фаза 2 —
 `key-rate/phase-2-cbr-sors-funds`, issue [#544](https://github.com/kmlebedev/clickhouse-import-rosstat/issues/544).
-**План:** [2026-11-08-cbr-sors-funds.md](../superpowers/plans/2026-11-08-cbr-sors-funds.md).
+**План:** [2026-11-08-cbr-sors-funds.md](../plans/2026-11-08-cbr-sors-funds.md).
 **Статус документа:** спека дизайна; нормативные правила не пересказываются — на них даются
-ссылки вида «стандарт §6.4» ([IMPORTER_PACKAGE_STANDARD.md](IMPORTER_PACKAGE_STANDARD.md)).
+ссылки вида «стандарт §6.4» ([IMPORTER_PACKAGE_STANDARD.md](../../IMPORTER_PACKAGE_STANDARD.md)).
 
 ---
 
