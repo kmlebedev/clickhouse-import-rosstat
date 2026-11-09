@@ -2,7 +2,7 @@
 
 **Дата:** 2026-11-09. **Ветка:** `feat/transaq-trades-heatmap` (worktree `.worktrees/transaq-trades-heatmap`).
 **Пункт:** `ofz-market/1.9` ([issue #554](https://github.com/kmlebedev/clickhouse-import-rosstat/issues/554)), зависит от `ofz-market/1.6` (дашборд `transaq-trades`) и `ofz-market/1.7` (`instrument_kind` в витринах, merged).
-**Приёмка (кратко):** в `transaq-trades` добавлена панель id 6 в ряду id 23 — две Apache ECharts `treemap`-карты cash-рынка («Акции и фонды» и «ОФЗ по срокам») на `v_transaq_net_flows_daily` + `v_ofz_issue_analytics`; каждый запрос — только `v_*`, `$__dateFilter` в таргете, `LIMIT` на теплокарте нет; `make all`, `make grafana-validate`, `make grafana-build` (детерминизм), `make docs-check`, `gcx dev lint run` и CI `dashboards` зелёные; живой SQL панели на staging (192.168.3.9) под `kimi_reader` — 104 строки / 7 кластеров; визуальный smoke — staging (owner-assisted); PR отревьюен `qwencloud/qwen3.8-flash`; протокол — комментарием в PR. Детали — §7.
+**Приёмка (кратко):** в `transaq-trades` добавлена панель id 6 в ряду id 23 — две Apache ECharts `treemap`-карты cash-рынка («Акции и фонды» и «ОФЗ по срокам») на `v_transaq_net_flows_daily` + `v_ofz_issue_analytics`; каждый запрос — только `v_*`, `$__dateFilter` в таргете, `LIMIT` на теплокарте нет; `make all`, `make grafana-validate`, `make grafana-build` (детерминизм), `make docs-check`, `gcx dev lint run` и CI `dashboards` зелёные; живой SQL панели на staging (192.168.3.9) под `kimi_reader` — 104 строки / 7 кластеров; staging deploy + smoke — выполнены (dashboard v5, панель 6 — 104 точки, панель 1 — 10 точек), render API 500, визуальный smoke — локально на реальных строках staging; PR отревьюен `qwencloud/qwen3.8-flash`; протокол — комментарием в PR. Детали — §7.
 
 ## 1. Заказ и место в роадмапах
 
@@ -151,7 +151,7 @@ ORDER BY "Оборот, ₽" DESC
 3. `gcx dev lint run --disable uneditable-dashboard --disable panel-title-description dashboard/transaq-trades.json` — no violations.
 4. `make import STAT=transaq_net_flows` локально публикует актуальные витрины (лента пуста — no-op); SQL панели 6 на staging (192.168.3.9) под `kimi_reader` с явным диапазоном `2026-11-03…09` — **104 строки, 7 кластеров** (акции 44, фонды 3, ОФЗ 57 по пяти тенор-бакетам), фьючерсов нет; локально — 0 строк без ошибок; `EXPLAIN ESTIMATE`; тенор-выражение отдельно на `v_ofz_issue_analytics` — 5 бакетов.
 5. JS-харнесс на Node с синтетическим и реальным staging-фреймом — option строит **два** `treemap`-ряда, цвета/подписи/tooltip не падают; визуальный smoke — dev/staging: в локальный smoke-дашборд подставляются 104 реальные строки staging, проверяются заголовки кластеров и две карты.
-6. Staging: `make grafana-deploy-staging` + smoke (owner-assisted); если туннель/токен недоступны — в PR «не проверено».
+6. Staging deploy + smoke — **выполнены 2026-11-09**: только `transaq-trades` через Grafana REST API на palmshell (Admin-токен из `/etc/clickhouse-import-rosstat.env`, значение не печаталось), dashboard version 5; `grafana_check.py` — «ПРОВЕРКА ПРОЙДЕНА», панель 6 — 104 точки, панель 1 — 10 точек. Render API панели вернул 500 (image renderer), поэтому визуальный скриншот — локальный на 104 реальных строках staging.
 7. PR: `Closes #554` вне backticks; ревью субагентом `qwencloud/qwen3.8-flash`; findings разобраны; протокол — комментарием в PR; CI `dashboards` зелёный.
 
 ## 8. Границы v1 и следствия
