@@ -12,7 +12,7 @@
 
 **Владелец роадмапа — `ofz-market`:** контур Transaq (лента сделок, витрины `v_transaq_net_flows*`, дашборд `transaq-trades`) ведётся в [ROADMAP_OFZ_MARKET.md](../../ROADMAP_OFZ_MARKET.md) §5; пункт 1.9 — теплокарта на уже существующих витринах 1.5/1.7, данных не добавляет. `ROADMAP_INDEX.md` §1: схема item-id `ofz-market` расширена до `1.1`–`1.9`.
 
-**Трекер:** issue #554 с labels `roadmap:ofz-market` + `role:go`; Project V2 — приватный `Treasury Autopilot — Roadmap` (number 12), поля: Roadmap `ofz-market`, Phase `1`, Item `1.9`, Priority `P1`, Depends on `ofz-market/1.6`, `ofz-market/1.7`, Spec/Plan — пути этого документа и плана.
+**Трекер:** issue #554 с labels `roadmap:ofz-market` + `role:go`; Project V2 — приватный `Treasury Autopilot — Roadmap` (number 12), поля: Track `data`, Phase `1 Data`, Item `1.9`, Priority `P1`, Depends on `ofz-market/1.6`, `ofz-market/1.7`, Spec/Plan — пути этого документа и плана; отдельного поля Roadmap в проекте нет — трек задаёт label issue.
 
 **Дашборд — код, а не экспорт.** Источник истины — `grafana/transaq_trades.go`; `dashboard/transaq-trades.json` собирается `make grafana-build` и руками не правится (ARCHITECTURE.md §6.7). Панель добавляется в Go-билдер, артефакт перегенерируется тем же PR.
 
