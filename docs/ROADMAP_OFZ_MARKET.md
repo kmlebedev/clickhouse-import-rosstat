@@ -300,7 +300,7 @@ Research — [2026-10-30-transaq-net-flows-source.md](research/2026-10-30-transa
 
 - каждый запрос — только `v_*`, `$__dateFilter` в таргете, `LIMIT` на теплокарте нет; новых сырых таблиц и DDL нет;
 - `make all`, `make grafana-validate`, `make grafana-build` (детерминизм), `make docs-check` зелёные; `gcx dev lint run` — без нарушений; CI `dashboards` зелёный;
-- живой SQL панели через MCP/HTTP под `kimi_reader` на staging (192.168.3.9): 104 строки, 7 кластеров, ОФЗ по 5 тенор-бакетам; локальная лента пуста — 0 строк без ошибок; реальная визуальная приёмка — staging, owner-assisted;
+- живой SQL панели через MCP/HTTP под `kimi_reader` на staging (192.168.3.9): 104 строки, 7 кластеров, ОФЗ по 5 тенор-бакетам; локальная лента пуста — 0 строк без ошибок; staging deploy + smoke — выполнены 2026-11-09 (dashboard v5, панель 6 — 104 точки, панель 1 — 10 точек); render API 500, визуальный smoke — локально на 104 реальных строках staging;
 - PR отревьюен субагентом `qwencloud/qwen3.8-flash`; findings разобраны; протокол — комментарием в PR;
 - нет торговых сигналов и рекомендаций.
 
