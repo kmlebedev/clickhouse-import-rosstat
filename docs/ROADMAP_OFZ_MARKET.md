@@ -277,6 +277,37 @@ Research — [2026-10-30-transaq-net-flows-source.md](research/2026-10-30-transa
 
 Спека — [2026-11-08-grafana-bond-attractiveness-design.md](superpowers/specs/2026-11-08-grafana-bond-attractiveness-design.md); план — [2026-11-08-grafana-bond-attractiveness.md](superpowers/plans/2026-11-08-grafana-bond-attractiveness.md).
 
+### `ofz-market/1.9` — Теплокарта нетто-потоков Transaq (market map)
+
+| Поле | Значение |
+|---|---|
+| Приоритет | P1 |
+| Зависит от | `ofz-market/1.6` (дашборд `transaq-trades`), `ofz-market/1.7` (`instrument_kind` в витринах — merged) |
+| Issue | [#554](https://github.com/kmlebedev/clickhouse-import-rosstat/issues/554) |
+| Статус | 🔶 In Progress |
+
+**Цель.** Добавить в дашборд `transaq-trades` обзорную теплокарту (Apache ECharts `treemap`) нетто-потоков за выбранный период: площадь плитки — оборот инструмента, цвет — относительный перевес покупок/продаж (`(buy − sell) / (buy + sell)`), кластеры — акции, ОФЗ по срокам до 1/3/5/10 лет, фонды денежного рынка и фьючерсы.
+
+**Состав:**
+
+- панель id 6 в новом ряду id 23 «Теплокарта периода» (первой в дашборде), `dashboard/transaq-trades.json` пересобирается `make grafana-build`;
+- SQL панели — `v_transaq_net_flows_daily` + `$__dateFilter(date)`; срок ОФЗ — `max(maturity_date)` из `v_ofz_issue_analytics`; новые таблицы/витрины/гранты не заводятся;
+- теплокарта Business Charts (`grafana/echarts.go`): два уровня «кластер → тикер», цвет — HSL-градиент зелёный/красный по 95-му перцентилю `|net/gross|`, подпись — тикер и нетто в ₽, tooltip — покупки/продажи/нетто/оборот/сделки;
+- корпоративные облигации (`TQCB`) в ленте отсутствуют — тенор-бакеты считаются только для ОФЗ, для прочих режимов остаётся кластер «Прочие»;
+- синк доков: `docs/GRAFANA.md`, `ARCHITECTURE.md` §6.7, `docs/ROADMAP_INDEX.md`.
+
+**Критерий приёмки:**
+
+- каждый запрос — только `v_*`, `$__dateFilter` в таргете, `LIMIT` на теплокарте нет; новых сырых таблиц и DDL нет;
+- `make all`, `make grafana-validate`, `make grafana-build` (детерминизм), `make docs-check` зелёные; `gcx dev lint run` — без нарушений; CI `dashboards` зелёный;
+- живой SQL панели через MCP под `kimi_reader` (локальная лента пуста — 0 строк без ошибок; реальная визуальная приёмка — staging, owner-assisted);
+- PR отревьюен субагентом `qwencloud/qwen3.8-flash`; findings разобраны; протокол — комментарием в PR;
+- нет торговых сигналов и рекомендаций.
+
+**Не делать:** не читать сырые `transaq_*`; не заводить витрину сроков корпоративных облигаций до появления `TQCB` в подписке; не вводить шаблонные переменные; не добавлять стратегию и рекомендации.
+
+Спека — [2026-11-09-transaq-trades-heatmap-design.md](superpowers/specs/2026-11-09-transaq-trades-heatmap-design.md); план — [2026-11-09-transaq-trades-heatmap.md](superpowers/plans/2026-11-09-transaq-trades-heatmap.md).
+
 ---
 
 ## 5. Данные и витрины
@@ -312,6 +343,7 @@ transaq_quotes/trades ───────────────┼→ 1.3
 - `1.5` — P1, после `1.1`; читает ту же ленту `transaq_trades` и ждёт рыночную подписку аккаунта.
 - `1.6` — P1, после `1.5`; дашборд-как-код на его витринах `v_transaq_net_flows*` (данных не добавляет).
 - `1.7` — P1, после `1.6`; расширяет ленту `1.5` фьючерсами и фондами и меняет фильтры дашборда `1.6`.
+- `1.9` — P1, после `1.6`/`1.7`; теплокарта на витринах `1.5`/`1.7` и `v_ofz_issue_analytics`, данных не добавляет.
 - `key-rate/phase-2-cbr-zcyc` (✅) и `key-rate/phase-2-ofz-debt-stress` (⏳) не дублируются: это входы, не пункты этого роадмапа.
 
 ---
