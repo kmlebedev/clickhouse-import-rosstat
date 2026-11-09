@@ -15,7 +15,7 @@
 
 3. **`grafana/transaq_trades_test.go`.**
    - `TestTransaqTradesHasFivePanels` → шесть панелей; `transaqTradesRowTitles` → три ряда.
-   - `TestTransaqTradesSQLContract` — оставить кейсы 1–5; добавить `TestTransaqTradesHeatmapSQLContract`: `FROM v_transaq_net_flows_daily`, `FROM v_ofz_issue_analytics`, один `$__dateFilter(d.date)`, `IN ('share','fund','ofz','other')` без `'future'`, нет `LIMIT`, формат `table`/`table`.
+   - `TestTransaqTradesSQLContract` — оставить кейсы 1–5; добавить `TestTransaqTradesHeatmapSQLContract`: `FROM v_transaq_net_flows_daily`, `FROM v_ofz_issue_analytics`, один `$__dateFilter(d.date)`, `IN ('share','fund','ofz','other')` без `'future'`, нет `LIMIT`, `format=1`/`queryType=table`.
    - `TestTransaqTradesHeatmapPanel`: тип `EChartsPanelType`, версия `EChartsPluginVersion`, `editorMode=code`, `renderer=canvas`, `getOption` содержит `treemapSeries`, `'Акции и фонды'`, `'ОФЗ по срокам'` и имена полей; нет `FROM v_`, `$__dateFilter`, `$__timeFilter`, литеральных тикеров.
    - `TestTransaqTradesUnits` — панель 6 тоже `currencyRUB`/0 (ставим Unit/Decimals в билдере).
    - Существующие `TestTransaqTradesNoRawTablesAndNoFill`, `TestTransaqTradesNoTemplating`, `TestTransaqTradesValidateUID` должны проходить без изменений (кроме числа панелей в первом тесте).
