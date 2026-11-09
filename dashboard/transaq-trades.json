@@ -26,12 +26,66 @@
       {
         "type": "row",
         "collapsed": false,
-        "title": "Итоги периода",
+        "title": "Теплокарта периода",
         "gridPos": {
           "h": 1,
           "w": 24,
           "x": 0,
           "y": 0
+        },
+        "id": 23,
+        "panels": []
+      },
+      {
+        "type": "volkovlabs-echarts-panel",
+        "id": 6,
+        "pluginVersion": "7.2.5",
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT\n    multiIf(\n        instrument_kind = 'share', 'Акции',\n        instrument_kind = 'fund', 'Фонды денежного рынка',\n        instrument_kind = 'ofz' AND days_left IS NULL, 'ОФЗ (срок н/д)',\n        instrument_kind = 'ofz' AND days_left \u003c= 365, '≤1 года',\n        instrument_kind = 'ofz' AND days_left \u003c= 1095, '1–3',\n        instrument_kind = 'ofz' AND days_left \u003c= 1825, '3–5',\n        instrument_kind = 'ofz' AND days_left \u003c= 3650, '5–10',\n        instrument_kind = 'ofz', '10+',\n        'Прочие'\n    ) AS \"Кластер\",\n    \"Тикер\", \"Покупки, ₽\", \"Продажи, ₽\", \"Оборот, ₽\", \"Нетто, ₽\", \"Сделок\"\nFROM (\n    SELECT\n        d.sec_code AS \"Тикер\",\n        argMax(d.instrument_kind, d.date) AS instrument_kind,\n        sum(d.buy_value_rub) AS \"Покупки, ₽\",\n        sum(d.sell_value_rub) AS \"Продажи, ₽\",\n        sum(d.buy_value_rub + d.sell_value_rub) AS \"Оборот, ₽\",\n        sum(d.buy_value_rub - d.sell_value_rub) AS \"Нетто, ₽\",\n        sum(d.trade_count) AS \"Сделок\",\n        dateDiff('day', max(d.date), nullIf(max(m.maturity_date), toDate('1970-01-01'))) AS days_left\n    FROM v_transaq_net_flows_daily AS d\n    LEFT JOIN (\n        SELECT sec_code, max(maturity_date) AS maturity_date\n        FROM v_ofz_issue_analytics\n        GROUP BY sec_code\n    ) AS m ON m.sec_code = d.sec_code\n    WHERE $__dateFilter(d.date)\n      AND d.instrument_kind IN ('share', 'fund', 'ofz', 'other')\n    GROUP BY d.sec_code\n)\nWHERE \"Оборот, ₽\" \u003e 0\nORDER BY \"Оборот, ₽\" DESC\n",
+            "editorType": "sql",
+            "format": 1,
+            "queryType": "table",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "Теплокарта cash-рынка: акции, фонды, ОФЗ",
+        "description": "Две карты фактических сделок за выбранный период (v_transaq_net_flows_daily, $__dateFilter по date): слева акции IMOEX и фонды денежного рынка, справа ОФЗ по сроку до погашения (до 1 года, 1–3, 3–5, 5–10, 10+ лет; срок — max(maturity_date) из v_ofz_issue_analytics). Площадь плитки — оборот (покупки + продажи), цвет — относительный перевес (покупки − продажи) / оборот, зелёный — перевес покупателей, красный — продавцов; у каждой карты своя шкала площади, цвет общий. Фьючерсы в карту не входят: их номинал задавил бы cash-рынок, это отдельная панель/пункт. Рублёвый объём — оценка Σ цена × лоты × lotsize, а не биржевой оборот; сделки без lotsize в сумму не входят. Лента событийная: разрыв сессии не догоняется, пропуск не считается нулём. Корпоративных облигаций (TQCB) в подписке нет — их теноры не считаются; для прочих режимов остаётся кластер «Прочие». Это аналитика, а не сигнал и не рекомендация.",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 16,
+          "w": 24,
+          "x": 0,
+          "y": 1
+        },
+        "repeatDirection": "h",
+        "options": {
+          "editorMode": "code",
+          "getOption": "const s = context.panel.data.series[0];\nif (!s) { return {}; }\nfunction column(name) {\n  const f = s.fields.find(function (x) { return x.name === name; });\n  if (!f) { return null; }\n  // plain array не имеет .buffer и остаётся как есть; Grafana Vector отдаёт значения в .buffer.\n  return f.values \u0026\u0026 f.values.buffer ? f.values.buffer : f.values;\n}\nconst clustersField = column('Кластер');\nconst tickers = column('Тикер');\nconst buys = column('Покупки, ₽');\nconst sells = column('Продажи, ₽');\nconst grosses = column('Оборот, ₽');\nconst nets = column('Нетто, ₽');\nconst trades = column('Сделок');\nif (!clustersField || !tickers || !buys || !sells || !grosses || !nets || !trades) { return {}; }\nconst rows = [];\nfor (let i = 0; i \u003c tickers.length; i++) {\n  const gross = Number(grosses[i]);\n  if (!(gross \u003e 0)) { continue; }\n  rows.push({\n    cluster: String(clustersField[i]),\n    ticker: String(tickers[i]),\n    buy: Number(buys[i]),\n    sell: Number(sells[i]),\n    gross: gross,\n    net: Number(nets[i]),\n    trades: Number(trades[i])\n  });\n}\nif (!rows.length) { return {}; }\nconst cashOrder = ['Акции', 'Фонды денежного рынка', 'Прочие'];\nconst bondOrder = ['≤1 года', '1–3', '3–5', '5–10', '10+', 'ОФЗ (срок н/д)'];\nconst byCluster = {};\nfor (let i = 0; i \u003c rows.length; i++) {\n  const r = rows[i];\n  if (!byCluster[r.cluster]) {\n    byCluster[r.cluster] = { name: r.cluster, gross: 0, net: 0, children: [] };\n  }\n  byCluster[r.cluster].gross += r.gross;\n  byCluster[r.cluster].net += r.net;\n  byCluster[r.cluster].children.push(r);\n}\nconst cashNames = cashOrder.filter(function (n) { return byCluster[n]; });\nObject.keys(byCluster).forEach(function (n) {\n  if (cashOrder.indexOf(n) \u003c 0 \u0026\u0026 bondOrder.indexOf(n) \u003c 0) { cashNames.push(n); }\n});\nconst bondNames = bondOrder.filter(function (n) { return byCluster[n]; });\nconst ratios = rows.map(function (r) { return Math.abs(r.net / r.gross); }).sort(function (a, b) { return a - b; });\nconst p95 = ratios.length ? ratios[Math.floor((ratios.length - 1) * 0.95)] : 0.02;\nconst scale = Math.min(1, Math.max(0.02, p95));\nfunction colorFor(ratio) {\n  if (!ratio) { return '#ced4da'; }\n  const t = Math.sqrt(Math.min(1, Math.abs(ratio) / scale));\n  const hue = ratio \u003e 0 ? 142 : 0;\n  const light = 80 - 48 * t;\n  return 'hsl(' + hue + ', 65%, ' + light.toFixed(0) + '%)';\n}\nfunction shortName(name) {\n  return name.replace(/RMFS\\d$/, '');\n}\nfunction money(v) {\n  const a = Math.abs(v);\n  if (a \u003e= 1e9) { return (a / 1e9).toFixed(2).replace('.', ',') + ' млрд'; }\n  if (a \u003e= 1e6) { return (a / 1e6).toFixed(1).replace('.', ',') + ' млн'; }\n  if (a \u003e= 1e3) { return (a / 1e3).toFixed(0) + ' тыс.'; }\n  return String(Math.round(a));\n}\nfunction signedMoney(v) {\n  if (v \u003e 0) { return '+' + money(v); }\n  if (v \u003c 0) { return '−' + money(v); }\n  return '0';\n}\nfunction ratioPct(v) {\n  if (Math.abs(v * 100) \u003c 0.05) { return '0,0%'; }\n  return (v \u003e 0 ? '+' : '−') + Math.abs(v * 100).toFixed(1).replace('.', ',') + '%';\n}\nfunction clusterNode(name) {\n  const c = byCluster[name];\n  const children = c.children.map(function (r) {\n    const ratio = r.net / r.gross;\n    return {\n      name: r.ticker,\n      value: r.gross,\n      net: r.net,\n      buy: r.buy,\n      sell: r.sell,\n      gross: r.gross,\n      trades: r.trades,\n      ratio: ratio,\n      cluster: name,\n      isLeaf: true,\n      itemStyle: { color: colorFor(ratio), borderColor: '#fff', borderWidth: 1 }\n    };\n  });\n  return {\n    name: name,\n    value: c.gross,\n    net: c.net,\n    gross: c.gross,\n    ratio: c.gross \u003e 0 ? c.net / c.gross : 0,\n    isLeaf: false,\n    itemStyle: { color: '#343a40', borderColor: '#fff', borderWidth: 2 },\n    children: children\n  };\n}\nconst cashData = cashNames.map(function (n) { return clusterNode(n); });\nconst bondData = bondNames.map(function (n) { return clusterNode(n); });\nif (!cashData.length \u0026\u0026 !bondData.length) { return {}; }\nfunction treemapSeries(title, data, left, width) {\n  return {\n    type: 'treemap',\n    name: title,\n    data: data,\n    left: left,\n    width: width,\n    top: 24,\n    bottom: 28,\n    roam: false,\n    nodeClick: false,\n    breadcrumb: { show: false },\n    leafDepth: 2,\n    sort: false,\n    label: {\n      show: true,\n      position: 'inside',\n      formatter: function (p) {\n        if (!p.data || !p.data.isLeaf) { return ''; }\n        return '{name|' + shortName(p.name) + '}\\n{net|' + signedMoney(p.data.net) + '}';\n      },\n      rich: {\n        name: { fontSize: 12, fontWeight: 'bold', color: '#fff', lineHeight: 15, textBorderColor: 'rgba(0,0,0,0.45)', textBorderWidth: 2 },\n        net: { fontSize: 11, color: '#fff', lineHeight: 14, textBorderColor: 'rgba(0,0,0,0.45)', textBorderWidth: 2 }\n      },\n      overflow: 'truncate',\n      ellipsis: '…'\n    },\n    levels: [\n      { label: { show: false }, upperLabel: { show: false } },\n      { itemStyle: { borderColor: '#fff', borderWidth: 2, gapWidth: 2 }, upperLabel: { show: true, formatter: '{b}', height: 20, color: '#fff', fontSize: 12, fontWeight: 'bold', backgroundColor: 'rgba(33,37,41,0.85)', padding: [3, 6] }, label: { show: false } },\n      { itemStyle: { borderColor: '#fff', borderWidth: 1, gapWidth: 1 }, upperLabel: { show: false }, label: { show: true } }\n    ]\n  };\n}\nconst series = [];\nconst graphic = [];\nconst hasCash = cashData.length \u003e 0;\nconst hasBonds = bondData.length \u003e 0;\nconst cashLeft = '0%';\nconst bondLeft = hasCash ? '59%' : '0%';\nif (hasCash) {\n  series.push(treemapSeries('Акции и фонды', cashData, cashLeft, hasBonds ? '57%' : '100%'));\n  graphic.push({ type: 'text', left: cashLeft, top: 2, style: { text: 'Акции и фонды', fill: '#495057', font: 'bold 11px sans-serif' } });\n}\nif (hasBonds) {\n  series.push(treemapSeries('ОФЗ по срокам', bondData, bondLeft, hasCash ? '41%' : '100%'));\n  graphic.push({ type: 'text', left: bondLeft, top: 2, style: { text: 'ОФЗ по срокам', fill: '#495057', font: 'bold 11px sans-serif' } });\n}\nreturn {\n  backgroundColor: 'transparent',\n  tooltip: {\n    trigger: 'item',\n    formatter: function (p) {\n      const d = p.data;\n      if (!d) { return p.name; }\n      if (d.isLeaf) {\n        return '\u003cb\u003e' + d.name + '\u003c/b\u003e\u003cbr/\u003e' + d.cluster +\n          '\u003cbr/\u003eПокупки: ' + money(d.buy) + ' ₽' +\n          '\u003cbr/\u003eПродажи: ' + money(d.sell) + ' ₽' +\n          '\u003cbr/\u003eНетто: \u003cb\u003e' + signedMoney(d.net) + ' ₽\u003c/b\u003e (' + ratioPct(d.ratio) + ' оборота)' +\n          '\u003cbr/\u003eОборот: ' + money(d.gross) + ' ₽' +\n          '\u003cbr/\u003eСделок: ' + d.trades;\n      }\n      return '\u003cb\u003e' + d.name + '\u003c/b\u003e' +\n        '\u003cbr/\u003eОборот: ' + money(d.gross) + ' ₽' +\n        '\u003cbr/\u003eНетто: ' + signedMoney(d.net) + ' ₽ (' + ratioPct(d.ratio) + ' оборота)';\n    }\n  },\n  series: series,\n  graphic: graphic.concat([{\n    type: 'text',\n    left: 'center',\n    bottom: 2,\n    style: {\n      text: 'Цвет — перевес покупок/продаж, % оборота; площадь — оборот, ₽',\n      fill: '#868e96',\n      font: '11px sans-serif'\n    }\n  }])\n};",
+          "renderer": "canvas"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "currencyRUB",
+            "decimals": 0
+          },
+          "overrides": []
+        }
+      },
+      {
+        "type": "row",
+        "collapsed": false,
+        "title": "Итоги периода",
+        "gridPos": {
+          "h": 1,
+          "w": 24,
+          "x": 0,
+          "y": 17
         },
         "id": 21,
         "panels": []
@@ -60,7 +114,7 @@
           "h": 9,
           "w": 12,
           "x": 0,
-          "y": 1
+          "y": 18
         },
         "repeatDirection": "h",
         "options": {
@@ -116,7 +170,7 @@
           "h": 9,
           "w": 12,
           "x": 12,
-          "y": 1
+          "y": 18
         },
         "repeatDirection": "h",
         "options": {
@@ -156,7 +210,7 @@
           "h": 1,
           "w": 24,
           "x": 0,
-          "y": 10
+          "y": 27
         },
         "id": 22,
         "panels": []
@@ -185,7 +239,7 @@
           "h": 8,
           "w": 24,
           "x": 0,
-          "y": 11
+          "y": 28
         },
         "repeatDirection": "h",
         "options": {
@@ -246,7 +300,7 @@
           "h": 8,
           "w": 24,
           "x": 0,
-          "y": 19
+          "y": 36
         },
         "repeatDirection": "h",
         "options": {
@@ -307,7 +361,7 @@
           "h": 8,
           "w": 24,
           "x": 0,
-          "y": 27
+          "y": 44
         },
         "repeatDirection": "h",
         "options": {
