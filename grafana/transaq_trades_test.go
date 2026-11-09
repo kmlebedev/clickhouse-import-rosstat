@@ -262,7 +262,7 @@ func TestTransaqTradesHeatmapPanel(t *testing.T) {
 			t.Fatalf("панель 6: в getOption нет %q", want)
 		}
 	}
-	for _, banned := range []string{"FROM v_", "$__dateFilter", "$__timeFilter", "SBER", "GAZP", "SU26238", "Фьючерсы"} {
+	for _, banned := range []string{"FROM v_", "$__dateFilter", "$__timeFilter", "SBER", "GAZP", "SU26238", "Фьючерсы", "visualMap"} {
 		if strings.Contains(opts.GetOption, banned) {
 			t.Fatalf("панель 6: getOption содержит %q — SQL/литеральные данные в JS запрещены", banned)
 		}

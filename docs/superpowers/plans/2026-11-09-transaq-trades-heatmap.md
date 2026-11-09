@@ -15,7 +15,7 @@
 
 3. **`grafana/transaq_trades_test.go`.**
    - `TestTransaqTradesHasFivePanels` → шесть панелей; `transaqTradesRowTitles` → три ряда.
-   - `TestTransaqTradesSQLContract` — оставить кейсы 1–5; добавить `TestTransaqTradesHeatmapSQLContract`: `FROM v_transaq_net_flows_daily`, `FROM v_ofz_issue_analytics`, один `$__dateFilter(d.date)`, `IN ('share','fund','ofz','other')` без `'future'`, нет `LIMIT`, формат `table`/`sql`.
+   - `TestTransaqTradesSQLContract` — оставить кейсы 1–5; добавить `TestTransaqTradesHeatmapSQLContract`: `FROM v_transaq_net_flows_daily`, `FROM v_ofz_issue_analytics`, один `$__dateFilter(d.date)`, `IN ('share','fund','ofz','other')` без `'future'`, нет `LIMIT`, формат `table`/`table`.
    - `TestTransaqTradesHeatmapPanel`: тип `EChartsPanelType`, версия `EChartsPluginVersion`, `editorMode=code`, `renderer=canvas`, `getOption` содержит `treemapSeries`, `'Акции и фонды'`, `'ОФЗ по срокам'` и имена полей; нет `FROM v_`, `$__dateFilter`, `$__timeFilter`, литеральных тикеров.
    - `TestTransaqTradesUnits` — панель 6 тоже `currencyRUB`/0 (ставим Unit/Decimals в билдере).
    - Существующие `TestTransaqTradesNoRawTablesAndNoFill`, `TestTransaqTradesNoTemplating`, `TestTransaqTradesValidateUID` должны проходить без изменений (кроме числа панелей в первом тесте).
@@ -28,10 +28,10 @@
    - `make all`, `make grafana-validate`, `make docs-check`.
    - `gcx dev lint run --disable uneditable-dashboard --disable panel-title-description dashboard/transaq-trades.json`.
    - `make import STAT=transaq_net_flows` (локальная лента пуста, витрины пересобираются).
-   - SQL панели 6 на staging (192.168.3.9) под `kimi_reader` с явным диапазоном (`date >= '2026-11-03' AND date <= '2026-11-09'`): 104 строки, 8 кластеров (акции 44, фонды 3, ОФЗ 57 по 5 бакетам), фьючерсов нет; локально — 0 строк без ошибок; `EXPLAIN ESTIMATE`; тенор-выражение на `v_ofz_issue_analytics` — 5 бакетов.
+   - SQL панели 6 на staging (192.168.3.9) под `kimi_reader` с явным диапазоном (`date >= '2026-11-03' AND date <= '2026-11-09'`): 104 строки, 7 кластеров (акции 44, фонды 3, ОФЗ 57 по 5 бакетам), фьючерсов нет; локально — 0 строк без ошибок; `EXPLAIN ESTIMATE`; тенор-выражение на `v_ofz_issue_analytics` — 5 бакетов.
    - Node-харнесс: синтетический фрейм + 104 реальные строки staging → два `treemap`-ряда, цвета, подписи, tooltip.
 
-7. **Визуальный smoke.** `make grafana-up` (если стенд не поднят), `make grafana-deploy-test`; на dev данных нет — панель пустая, это ожидаемо. Для визуальной проверки — временный smoke-дашборд `transaq-trades-smoke` с 104 реальными строками staging (вне коммита), скриншот: два заголовка карт, заголовки кластеров (`Акции`, `Фонды денежного рынка`, `ОФЗ ≤1 года`, `ОФЗ 1–3`, …), цвета покупок/продаж. Реальная приёмка — staging (owner-assisted): `make grafana-deploy-staging`, smoke, скриншот панели; если недоступно — «не проверено» в PR.
+7. **Визуальный smoke.** `make grafana-up` (если стенд не поднят), `make grafana-deploy-test`; на dev данных нет — панель пустая, это ожидаемо. Для визуальной проверки — временный smoke-дашборд `transaq-trades-smoke` с 104 реальными строками staging (вне коммита), скриншот: два заголовка карт, заголовки кластеров (`Акции`, `Фонды денежного рынка`, `≤1 года`, `1–3`, …), цвета покупок/продаж. Реальная приёмка — staging (owner-assisted): `make grafana-deploy-staging`, smoke, скриншот панели; если недоступно — «не проверено» в PR.
 
 8. **PR.** Коммиты: docs (роадмап + спека + план), код (панель + тесты), артефакт + синк доков. Push, `gh pr create`/MCP, `Closes #554` вне backticks; описание — пункт, источник, схема, запуск, проверка.
 

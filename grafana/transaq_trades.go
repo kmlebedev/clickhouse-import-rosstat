@@ -12,7 +12,7 @@ import (
 // dashboard/<uid>.json; uid попадает и в spec, и в metadata.name манифеста.
 const TransaqTradesUID = "transaq-trades"
 
-// Id рядов вне диапазона панелей 1..5: нулевой id Grafana заменит своим, а совпавший с панелью
+// Id рядов вне диапазона панелей 1..6: нулевой id Grafana заменит своим, а совпавший с панелью
 // сделает артефакт неотличимым от кода.
 const firstTransaqTradesRowID = 21
 
@@ -105,7 +105,7 @@ ORDER BY time
 FROM (
     SELECT
         d.sec_code AS "Тикер",
-        any(d.instrument_kind) AS instrument_kind,
+        argMax(d.instrument_kind, d.date) AS instrument_kind,
         sum(d.buy_value_rub) AS "Покупки, ₽",
         sum(d.sell_value_rub) AS "Продажи, ₽",
         sum(d.buy_value_rub + d.sell_value_rub) AS "Оборот, ₽",

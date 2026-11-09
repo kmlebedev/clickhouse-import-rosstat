@@ -2,7 +2,7 @@
 
 **Дата:** 2026-11-09. **Ветка:** `feat/transaq-trades-heatmap` (worktree `.worktrees/transaq-trades-heatmap`).
 **Пункт:** `ofz-market/1.9` ([issue #554](https://github.com/kmlebedev/clickhouse-import-rosstat/issues/554)), зависит от `ofz-market/1.6` (дашборд `transaq-trades`) и `ofz-market/1.7` (`instrument_kind` в витринах, merged).
-**Приёмка (кратко):** в `transaq-trades` добавлена панель id 6 в ряду id 23 — две Apache ECharts `treemap`-карты cash-рынка («Акции и фонды» и «ОФЗ по срокам») на `v_transaq_net_flows_daily` + `v_ofz_issue_analytics`; каждый запрос — только `v_*`, `$__dateFilter` в таргете, `LIMIT` на теплокарте нет; `make all`, `make grafana-validate`, `make grafana-build` (детерминизм), `make docs-check`, `gcx dev lint run` и CI `dashboards` зелёные; живой SQL панели на staging (192.168.3.9) под `kimi_reader` — 104 строки / 8 кластеров; визуальный smoke — staging (owner-assisted); PR отревьюен `qwencloud/qwen3.8-flash`; протокол — комментарием в PR. Детали — §7.
+**Приёмка (кратко):** в `transaq-trades` добавлена панель id 6 в ряду id 23 — две Apache ECharts `treemap`-карты cash-рынка («Акции и фонды» и «ОФЗ по срокам») на `v_transaq_net_flows_daily` + `v_ofz_issue_analytics`; каждый запрос — только `v_*`, `$__dateFilter` в таргете, `LIMIT` на теплокарте нет; `make all`, `make grafana-validate`, `make grafana-build` (детерминизм), `make docs-check`, `gcx dev lint run` и CI `dashboards` зелёные; живой SQL панели на staging (192.168.3.9) под `kimi_reader` — 104 строки / 7 кластеров; визуальный smoke — staging (owner-assisted); PR отревьюен `qwencloud/qwen3.8-flash`; протокол — комментарием в PR. Детали — §7.
 
 ## 1. Заказ и место в роадмапах
 
@@ -32,14 +32,14 @@
 ## 3. Живые факты: витрины, гранты, данные
 
 - `v_transaq_net_flows_daily` — `SELECT` из `transaq_net_flows FINAL` с группировкой по `(date, sec_code, board)`; колонки `instrument_kind`, `buy_value_rub`, `sell_value_rub`, `trade_count` (см. `transaq/views.go`). На staging витрина актуальна после `ofz-market/1.7`; локальный dev-ClickHouse может отставать: до `make import STAT=transaq_net_flows` в локальной витрине нет `instrument_kind`, а лента пуста.
-- `v_ofz_issue_analytics` — `ofz_issue_analytics FINAL`; колонки `date`, `sec_code`, `isin`, `board`, `maturity_date`, `days_to_maturity`, `short_name`, `calculation_status`. Локально на 2026-10-24 — 64 строки / 61 код, погашения 2027–2044; три CNY-ОФЗ лежат с `sec_code` = ISIN (`RU000A10DQA8`, `RU000A10DQB6`, `RU000A10FAK6`), остальные — `SU…RMFS…`. Группировка по `sec_code` и `max(maturity_date)` снимает дубли `board=''`/`TQOB`.
+- `v_ofz_issue_analytics` — `ofz_issue_analytics FINAL`; колонки `date`, `sec_code`, `isin`, `board`, `maturity_date`, `days_to_maturity`, `short_name`, `calculation_status`. Локально на 2026-10-24 — 64 строки / 61 код, погашения 2026-12-23…2044-07-20; три CNY-ОФЗ лежат с `sec_code` = ISIN (`RU000A10DQA8`, `RU000A10DQB6`, `RU000A10FAK6`), остальные — `SU…RMFS…`. Группировка по `sec_code` и `max(maturity_date)` снимает дубли `board=''`/`TQOB`.
 - Гранты `kimi_reader`: `sql/mcp_kimi_reader.sql` — `v_ofz_issue_analytics` (строка 109), `v_transaq_net_flows` (153), `v_transaq_net_flows_daily` (154). Новых выдач не требуется.
-- **Staging (192.168.3.9), проверено 2026-11-09.** `v_transaq_net_flows_daily`: 874 строки, 2026-10-30…2026-11-09, 116 кодов; по типам — `share` 355 строк / 47 кодов, `ofz` 456 / 57, `future` 51 / 9, `fund` 12 / 3. `v_ofz_issue_analytics`: 637 строк, 61 код. За 7 дней (2026-11-03…09) оборот: `future` 281,8 млрд ₽, `share` 210,5 млрд, `fund` 31,2 млрд, `ofz` 4,35 млрд; абсолютное нетто: 19,7 / 13,1 / 6,0 / 1,42 млрд. SQL панели без фьючерсов: **104 строки, 8 кластеров** — акции 44, фонды 3, ОФЗ 57 по пяти тенор-бакетам; кластеры «Прочие» и «ОФЗ (срок н/д)» пусты.
+- **Staging (192.168.3.9), проверено 2026-11-09.** `v_transaq_net_flows_daily`: 874 строки, 2026-10-30…2026-11-09, 116 кодов; по типам — `share` 355 строк / 47 кодов, `ofz` 456 / 57, `future` 51 / 9, `fund` 12 / 3. `v_ofz_issue_analytics`: 637 строк, 61 код. За 7 дней (2026-11-03…09) оборот: `future` 281,8 млрд ₽, `share` 210,5 млрд, `fund` 31,2 млрд, `ofz` 4,35 млрд; абсолютное нетто: 19,7 / 13,1 / 6,0 / 1,42 млрд. SQL панели без фьючерсов: **104 строки, 7 кластеров** — акции 44, фонды 3, ОФЗ 57 по пяти тенор-бакетам; кластеры «Прочие» и «ОФЗ (срок н/д)» пусты.
 - Локальная лента Transaq пуста; приёмка SQL на dev фиксирует только отсутствие ошибок и 0 строк. Реальная визуальная приёмка — staging (owner-assisted): стенд с рыночной подпиской и свежими `v_transaq_net_flows_daily`.
 
 ## 4. SQL-контракт (дословно)
 
-Формат ответа — `table` (`format=1`, `queryType=sql`), датасорс `ch-rosstat`. Запрос один; `$__dateFilter` — на сырой `Date`-колонке до агрегации.
+Формат ответа — `table` (`format=1`, `queryType=table`), датасорс `ch-rosstat`. Запрос один; `$__dateFilter` — на сырой `Date`-колонке до агрегации.
 
 ```sql
 SELECT
@@ -47,18 +47,18 @@ SELECT
         instrument_kind = 'share', 'Акции',
         instrument_kind = 'fund', 'Фонды денежного рынка',
         instrument_kind = 'ofz' AND days_left IS NULL, 'ОФЗ (срок н/д)',
-        instrument_kind = 'ofz' AND days_left <= 365, 'ОФЗ ≤1 года',
-        instrument_kind = 'ofz' AND days_left <= 1095, 'ОФЗ 1–3',
-        instrument_kind = 'ofz' AND days_left <= 1825, 'ОФЗ 3–5',
-        instrument_kind = 'ofz' AND days_left <= 3650, 'ОФЗ 5–10',
-        instrument_kind = 'ofz', 'ОФЗ 10+',
+        instrument_kind = 'ofz' AND days_left <= 365, '≤1 года',
+        instrument_kind = 'ofz' AND days_left <= 1095, '1–3',
+        instrument_kind = 'ofz' AND days_left <= 1825, '3–5',
+        instrument_kind = 'ofz' AND days_left <= 3650, '5–10',
+        instrument_kind = 'ofz', '10+',
         'Прочие'
     ) AS "Кластер",
     "Тикер", "Покупки, ₽", "Продажи, ₽", "Оборот, ₽", "Нетто, ₽", "Сделок"
 FROM (
     SELECT
         d.sec_code AS "Тикер",
-        any(d.instrument_kind) AS instrument_kind,
+        argMax(d.instrument_kind, d.date) AS instrument_kind,
         sum(d.buy_value_rub) AS "Покупки, ₽",
         sum(d.sell_value_rub) AS "Продажи, ₽",
         sum(d.buy_value_rub + d.sell_value_rub) AS "Оборот, ₽",
@@ -88,7 +88,7 @@ ORDER BY "Оборот, ₽" DESC
 - `ORDER BY "Оборот, ₽" DESC` — внутри кластера крупные плитки идут первыми; `LIMIT` нет — график не обрезается.
 - `$__dateFilter(d.date)` — макрос плагина, разворачивается в границы дашборда; алиас `d` снимает неоднозначность с `date` в подзапросе аналитики.
 
-**Тестовый контракт.** Тест панели 6 проверяет: `FROM v_transaq_net_flows_daily` и `FROM v_ofz_issue_analytics`, ровно один `$__dateFilter(d.date)`, отсутствие `LIMIT`, `format=1`/`queryType=sql`, отсутствие сырых `transaq_*` и `WITH FILL`.
+**Тестовый контракт.** Тест панели 6 проверяет: `FROM v_transaq_net_flows_daily` и `FROM v_ofz_issue_analytics`, ровно один `$__dateFilter(d.date)`, отсутствие `LIMIT`, `format=1`/`queryType=table`, отсутствие сырых `transaq_*` и `WITH FILL`.
 
 ## 5. Визуал: Apache ECharts `treemap`
 
@@ -96,7 +96,7 @@ ORDER BY "Оборот, ₽" DESC
 
 **Данные.** Поля SQL читаются по именам: `Кластер`, `Тикер`, `Покупки, ₽`, `Продажи, ₽`, `Оборот, ₽`, `Нетто, ₽`, `Сделок`. Строки группируются в два уровня:
 
-1. кластер: cash-карта — `Акции`, `Фонды денежного рынка`, `Прочие`; карта ОФЗ — `ОФЗ ≤1 года`, `ОФЗ 1–3`, `ОФЗ 3–5`, `ОФЗ 5–10`, `ОФЗ 10+`, `ОФЗ (срок н/д)`; порядок фиксирован, незнакомые кластеры добавляются в cash-карту;
+1. кластер: cash-карта — `Акции`, `Фонды денежного рынка`, `Прочие`; карта ОФЗ — `≤1 года`, `1–3`, `3–5`, `5–10`, `10+`, `ОФЗ (срок н/д)`; порядок фиксирован, незнакомые кластеры добавляются в cash-карту;
 2. лист — `sec_code`; у ОФЗ для подписи срезается суффикс `RMFS9` (`SU26238RMFS9` → `SU26238`), в tooltip остаётся полный код.
 
 **Фьючерсы** в данные не попадают (`instrument_kind='future'` отфильтрован в SQL); на staging их номинал задавил бы cash-карту (см. §1).
@@ -113,7 +113,7 @@ ORDER BY "Оборот, ₽" DESC
 - Лист: две строки rich-text — короткий тикер (12 px, bold) и нетто в компактных рублях (`+1,2 млрд`, `−340 млн`, `0`); белый текст с тёмной обводкой, `overflow: 'truncate'`. На маленьких плитках ECharts сам скрывает подпись.
 - Кластер: `upperLabel` высотой 20 px, белый текст на полупрозрачном тёмном фоне; **`formatter: '{b}'` обязателен** — series-level `label.formatter` возвращает пустую строку для не-листьев, и без своего formatter'а заголовок кластера остаётся пустым. Уровни: `levels[0]` — виртуальный корень, `levels[1]` — кластеры (upperLabel), `levels[2]` — листья (label).
 - Tooltip: кластер, покупки ₽, продажи ₽, нетто ₽ и % оборота, оборот ₽, число сделок; для кластера — суммарные оборот/нетто и %.
-- Внизу — `graphic`-подпись: «Слева — акции и фонды, справа — ОФЗ по срокам; цвет — перевес покупок/продаж, % оборота; площадь — оборот, ₽».
+- Внизу — `graphic`-подпись: «Цвет — перевес покупок/продаж, % оборота; площадь — оборот, ₽»; названия карт — отдельными `graphic`-текстами сверху: «Акции и фонды» и «ОФЗ по срокам».
 
 **Поведение и пустые данные.** `leafDepth: 2`, `sort: false`, `nodeClick: false`, `breadcrumb.show: false`, `roam: false`. Листья — `sec_code`; если в данных нет ни cash-, ни bond-строк, `getOption` возвращает `{}` (панель пустая, без ошибки); если пуст один класс, второй `treemap` занимает всю ширину. Пропуск срока у ОФЗ — кластер «ОФЗ (срок н/д)», а не «≤1 года». Литеральных тикеров и сумм в JS нет: все значения приходят из SQL.
 
@@ -149,7 +149,7 @@ ORDER BY "Оборот, ₽" DESC
 1. `cd grafana && go vet ./... && go test ./...`; `make grafana-build` дважды — `git diff -- dashboard/` пуст.
 2. `make all`, `make grafana-validate`, `make docs-check` — зелёные.
 3. `gcx dev lint run --disable uneditable-dashboard --disable panel-title-description dashboard/transaq-trades.json` — no violations.
-4. `make import STAT=transaq_net_flows` локально публикует актуальные витрины (лента пуста — no-op); SQL панели 6 на staging (192.168.3.9) под `kimi_reader` с явным диапазоном `2026-11-03…09` — **104 строки, 8 кластеров** (акции 44, фонды 3, ОФЗ 57 по пяти тенор-бакетам), фьючерсов нет; локально — 0 строк без ошибок; `EXPLAIN ESTIMATE`; тенор-выражение отдельно на `v_ofz_issue_analytics` — 5 бакетов.
+4. `make import STAT=transaq_net_flows` локально публикует актуальные витрины (лента пуста — no-op); SQL панели 6 на staging (192.168.3.9) под `kimi_reader` с явным диапазоном `2026-11-03…09` — **104 строки, 7 кластеров** (акции 44, фонды 3, ОФЗ 57 по пяти тенор-бакетам), фьючерсов нет; локально — 0 строк без ошибок; `EXPLAIN ESTIMATE`; тенор-выражение отдельно на `v_ofz_issue_analytics` — 5 бакетов.
 5. JS-харнесс на Node с синтетическим и реальным staging-фреймом — option строит **два** `treemap`-ряда, цвета/подписи/tooltip не падают; визуальный smoke — dev/staging: в локальный smoke-дашборд подставляются 104 реальные строки staging, проверяются заголовки кластеров и две карты.
 6. Staging: `make grafana-deploy-staging` + smoke (owner-assisted); если туннель/токен недоступны — в PR «не проверено».
 7. PR: `Closes #554` вне backticks; ревью субагентом `qwencloud/qwen3.8-flash`; findings разобраны; протокол — комментарием в PR; CI `dashboards` зелёный.
