@@ -4,7 +4,7 @@
 **Роль:** Go.
 **Пункт:** предлагаемый `key-rate/phase-4-cpi-quarterly-metrics`; issue на момент написания не заведён — перед реализацией завести по [github-tracker](../../../.kimi-code/skills/github-tracker/SKILL.md), заголовок `[key-rate/phase-4-cpi-quarterly-metrics] Квартальные метрики ЦБ: ряды и панели`.
 **Зависимости:** нет. Входы уже в БД: `cbr_dip_bulletin`, `cbr_indicators_cpd`, `weekly_cpi_sa`; витрины `v_cbr_dip_bulletin`, `v_cbr_macro`, `v_weekly_cpi_sa` — в проде.
-**Связанные документы:** [KEY_RATE_PUBLICATIONS.md](../../KEY_RATE_PUBLICATIONS.md) §4.7 и §6, [KEY_RATE_CHANNELS.md](../../KEY_RATE_CHANNELS.md) §8, [ARCHITECTURE.md](../../../ARCHITECTURE.md) §6.3/§6.5, [ROADMAP_KEY_RATE.md](../../ROADMAP_KEY_RATE.md) фаза 4.
+**Связанные документы:** [KEY_RATE_PUBLICATIONS.md](../../KEY_RATE_PUBLICATIONS.md) §4.7 и §6, [KEY_RATE_CHANNELS.md](https://github.com/kmlebedev/bi-ml-models/blob/main/docs/models/key-rate-channels.md) §8, [ARCHITECTURE.md](../../../ARCHITECTURE.md) §6.3/§6.5, [ROADMAP_KEY_RATE.md](../../ROADMAP_KEY_RATE.md) фаза 4.
 
 ## 1. Контекст и цель
 

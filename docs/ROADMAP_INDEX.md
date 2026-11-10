@@ -1,5 +1,8 @@
 # Реестр роадмапов и правила GitHub-трекера
 
+> **2026-11-10.** ML-контур (модели, бэктесты, gate, MLflow-клиент, live-проверки) вынесен в [`kmlebedev/bi-ml-models`](https://github.com/kmlebedev/bi-ml-models). Команды `make cpi-*`, `make cb-comp-*`, `make key-rate-model`, `make ml-*`, `make ppi-*` и пути `scripts/models/...` ниже — исторические протоколы приёмки; актуальные команды и model cards — в README нового репозитория. Issue, Project V2 и статусы пунктов остаются здесь.
+
+
 **Дата:** 17 октября 2026 г.
 **Роль документа:** единый реестр всех роадмапов репозитория и правил трекера: слаги, границы владения, составной ID пункта, карта статусов и порядок заведения issue. Источник истины о работах — файлы роадмапов; GitHub (issue и Project V2) — журнал и вид.
 **Сопутствующие документы:** спека [2026-10-17-github-tracker-design.md](superpowers/specs/2026-10-17-github-tracker-design.md), план [2026-10-17-github-tracker.md](superpowers/plans/2026-10-17-github-tracker.md), правило 12 [AGENTS.md](../AGENTS.md), скил [`.kimi-code/skills/github-tracker/SKILL.md`](../.kimi-code/skills/github-tracker/SKILL.md).

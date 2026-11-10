@@ -186,4 +186,4 @@ FROM v_events_calendar WHERE category='cbr';
 
 **Ключевые URL:** `https://www.cbr.ru/calendar/`, `https://www.cbr.ru/Queries/FileSource/105732/vCalendar.ics?inline=True`, `https://www.cbr.ru/analytics/dkp/inflationary_expectations/`, `https://www.cbr.ru/analytics/dkp/dinamic/`, `https://www.cbr.ru/analytics/dkp/monitoring/`, `https://www.cbr.ru/statistics/ddkp/aipd/`, `https://www.cbr.ru/dkp/cal_mp/` (заседания — существующий `events_calendar`).
 
-**Связанные документы:** [ROADMAP_KEY_RATE.md](../ROADMAP_KEY_RATE.md) §6 (фаза 4), [KEY_RATE_MODEL.md](../KEY_RATE_MODEL.md) §4, [2026-10-19-point-in-time-design.md](../superpowers/specs/2026-10-19-point-in-time-design.md), [LIMITATIONS.md](../LIMITATIONS.md).
+**Связанные документы:** [ROADMAP_KEY_RATE.md](../ROADMAP_KEY_RATE.md) §6 (фаза 4), [KEY_RATE_MODEL.md](https://github.com/kmlebedev/bi-ml-models/blob/main/docs/models/key-rate.md) §4, [2026-10-19-point-in-time-design.md](../superpowers/specs/2026-10-19-point-in-time-design.md), [LIMITATIONS.md](../LIMITATIONS.md).

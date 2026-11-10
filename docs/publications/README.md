@@ -1,6 +1,6 @@
 # Публикационный прогон: команды
 
-Этот файл — рабочий сценарий перед публикацией по ключевой ставке: одной командой импортировать все источники контура, запустить модели ИПЦ и ставки, записать прогноз в журнал и подготовить витрину с графиками. Порядок мысли и требования к тексту — в [KEY_RATE_PUBLICATIONS.md](../KEY_RATE_PUBLICATIONS.md) §4/§7/§9; каналы и канонические ряды — в [KEY_RATE_CHANNELS.md](../KEY_RATE_CHANNELS.md) §8; модель и метрики — в [KEY_RATE_MODEL.md](../KEY_RATE_MODEL.md). Сам текст собирается по скилу главного редактора (`.kimi-code/skills/editor-in-chief/SKILL.md`).
+Этот файл — рабочий сценарий перед публикацией по ключевой ставке: одной командой импортировать все источники контура, запустить модели ИПЦ и ставки, записать прогноз в журнал и подготовить витрину с графиками. Порядок мысли и требования к тексту — в [KEY_RATE_PUBLICATIONS.md](../KEY_RATE_PUBLICATIONS.md) §4/§7/§9; каналы и канонические ряды — в [KEY_RATE_CHANNELS.md](https://github.com/kmlebedev/bi-ml-models/blob/main/docs/models/key-rate-channels.md) §8; модель и метрики — в [KEY_RATE_MODEL.md](https://github.com/kmlebedev/bi-ml-models/blob/main/docs/models/key-rate.md). Сам текст собирается по скилу главного редактора (`.kimi-code/skills/editor-in-chief/SKILL.md`).
 
 Применяется к форматам «предзаседание», «постзаседание», «после резюме» и «недельный разбор». Команды запускаются только через `make`: Makefile сам подключает `~/.config/rosstat/env`, поэтому ключи и DSN в командной строке не передаются.
 
@@ -197,8 +197,8 @@ make import STAT=key_rate_views
 ## 11. Ссылки
 
 - [KEY_RATE_PUBLICATIONS.md](../KEY_RATE_PUBLICATIONS.md) — тезисы, шаблон, контракт данных, порядок прогона, чек-лист.
-- [KEY_RATE_CHANNELS.md](../KEY_RATE_CHANNELS.md) — 11 каналов и канонические ряды.
-- [KEY_RATE_MODEL.md](../KEY_RATE_MODEL.md) — модель, бэктест, метрики.
+- [KEY_RATE_CHANNELS.md](https://github.com/kmlebedev/bi-ml-models/blob/main/docs/models/key-rate-channels.md) — 11 каналов и канонические ряды.
+- [KEY_RATE_MODEL.md](https://github.com/kmlebedev/bi-ml-models/blob/main/docs/models/key-rate.md) — модель, бэктест, метрики.
 - [IMPORTERS.md](../IMPORTERS.md) — импортёры и расписание.
 - [GRAFANA.md](../GRAFANA.md) — дашборды как код и стенды.
 - [2026-10-18-key-rate.md](2026-10-18-key-rate.md) — первая публикация как образец сборки.

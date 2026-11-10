@@ -3,7 +3,7 @@
 **Дата:** 19 октября 2026 г.
 **Пункт роадмапа:** `key-rate/phase-4-dashboard`, фаза 4 [ROADMAP_KEY_RATE.md](../../ROADMAP_KEY_RATE.md) («❌ витрина `v_key_rate_dashboard` — сводка двух контуров, пороги, ближайшее заседание, последний прогноз и его ошибка»).
 **Зависимость:** `key-rate/phase-4-forecast-log` (#127) — ✅; `forecast_log.error_bp`, `probabilities`, `model`, `data_version`, `prompt_version` уже в живой схеме.
-**Сопутствующие документы:** [ARCHITECTURE.md](../../../ARCHITECTURE.md) §6.3 (витрины), [KEY_RATE_PUBLICATIONS.md](../../KEY_RATE_PUBLICATIONS.md) §4, §6, §7, [KEY_RATE_MODEL.md](../../KEY_RATE_MODEL.md) §5, [KEY_RATE_CHANNELS.md](../../KEY_RATE_CHANNELS.md) §6–§7, [IMPORTER_PACKAGE_STANDARD.md](../../IMPORTER_PACKAGE_STANDARD.md) §10.
+**Сопутствующие документы:** [ARCHITECTURE.md](../../../ARCHITECTURE.md) §6.3 (витрины), [KEY_RATE_PUBLICATIONS.md](../../KEY_RATE_PUBLICATIONS.md) §4, §6, §7, [KEY_RATE_MODEL.md](https://github.com/kmlebedev/bi-ml-models/blob/main/docs/models/key-rate.md) §5, [KEY_RATE_CHANNELS.md](https://github.com/kmlebedev/bi-ml-models/blob/main/docs/models/key-rate-channels.md) §6–§7, [IMPORTER_PACKAGE_STANDARD.md](../../IMPORTER_PACKAGE_STANDARD.md) §10.
 
 ---
 
@@ -99,7 +99,7 @@
 
 ## 6. Пороги, `flag` и `stale`
 
-Пороги взяты из [KEY_RATE_CHANNELS.md](../../KEY_RATE_CHANNELS.md) §6 и [KEY_RATE_PUBLICATIONS.md](../../KEY_RATE_PUBLICATIONS.md) §4 п. 6:
+Пороги взяты из [KEY_RATE_CHANNELS.md](https://github.com/kmlebedev/bi-ml-models/blob/main/docs/models/key-rate-channels.md) §6 и [KEY_RATE_PUBLICATIONS.md](../../KEY_RATE_PUBLICATIONS.md) §4 п. 6:
 
 - **`base_ipc_saar` > 4 % два месяца подряд** — главный триггер (в источнике — «две недели подряд» по недельной базовой инфляции; недельного базового ИПЦ в БД нет, поэтому используется месячный `Базовый ИПЦ` как явно названный прокси). `flag = 1`, только если оба последних годовых значения > 4 %.
 - **`infl_exp_expected`**: рост к прошлой волне — проинфляционный разворот; снижение — пространство для снижения ставки. `flag = 1` при росте.

@@ -1,24 +1,24 @@
 ---
 name: python-engineer
-description: Use when the task is non-ML Python tooling in clickhouse-import-rosstat — collectors, harvest, docs generator, MCP setup/check, forecast-log sender, Grafana checks or ingest payloads — and you need the repo-specific test and write-boundary rules
+description: Use when the task is non-ML Python tooling in clickhouse-import-rosstat — collectors, harvest, docs generator, MCP setup/check, Grafana checks or ingest payloads — and you need the repo-specific test and write-boundary rules
 type: prompt
-whenToUse: When working on non-ML Python tools in scripts/ (root), scripts/lib/ or scripts/models/ in clickhouse-import-rosstat
+whenToUse: When working on non-ML Python tools in scripts/ (root) or scripts/lib/ in clickhouse-import-rosstat
 ---
 
 # Python-инженер в clickhouse-import-rosstat
 
-**Назначение.** Маршрут не-ML Python-задачи: где граница записи, как писать офлайн-тесты, как пинить зависимости и что считается готовым результатом. ML-эксперименты — в [ml-engineer](../ml-engineer/SKILL.md), разведка источника — в [research-engineer](../research-engineer/SKILL.md).
+**Назначение.** Маршрут не-ML Python-задачи: где граница записи, как писать офлайн-тесты, как пинить зависимости и что считается готовым результатом. ML-эксперименты — в [`bi-ml-models`](https://github.com/kmlebedev/bi-ml-models), разведка источника — в [research-engineer](../research-engineer/SKILL.md).
 
 **Канонические документы.** Команды и Python-тесты — [DEVELOPMENT.md](../../../docs/DEVELOPMENT.md); конфигурация — [CONFIGURATION.md](../../../docs/CONFIGURATION.md); граница записи — [IMPORTER_PACKAGE_STANDARD.md](../../../docs/IMPORTER_PACKAGE_STANDARD.md); роадмапы — [ROADMAP_INDEX.md](../../../docs/ROADMAP_INDEX.md).
 
 ## 1. Когда применять
 
-- Немодельные скрипты в корне `scripts/`: `edisclosure_collect.py`, `harvest.py`, `docs_build.py`, `mcp_setup_user.py`, `mcp_check.py`, `grafana_check.py`, `grafana_alert_check.py`, `key_rate_forecast_log.py`, `mlflow_*.py`, `ml_gate.py`, `ml_live_check.py`, `xlsx_*.py`, `ppi_sa_probe.py`.
-- Общий код — `scripts/lib/` (`clickhouse`, `eval_utils`, `ml_experiment`); модельные скрипты — `scripts/models/{cpi,cb_comp,key_rate,polyus}/` (ML-роль, см. `ml-engineer`).
+- Немодельные скрипты в корне `scripts/`: `edisclosure_collect.py`, `harvest.py`, `docs_build.py`, `mcp_setup_user.py`, `mcp_check.py`, `grafana_check.py`, `grafana_alert_check.py`, `xlsx_*.py`.
+- Общий код — `scripts/lib/clickhouse.py` (нужен `scripts/publications/weekly_sa_chart.py`). Модели, `ml_experiment`, `eval_utils`, MLflow-клиент и `ppi_sa` вынесены в `bi-ml-models`.
 - Ingest-payload: подготовка JSON для `POST /v1/...`, `--dry-run`, схема полей.
 - Офлайн-тесты Python-инструментов (`*_test.py`), фикстуры, `uv`-пины.
 
-**Когда не применять:** ML-модели/признаки/бэктест (→ `ml-engineer`); Go-импортёр/DDL/витрина/грант (→ `go-engineer`); разведка источника (→ `research-engineer`).
+**Когда не применять:** ML-модели/признаки/бэктест (→ [`bi-ml-models`](https://github.com/kmlebedev/bi-ml-models)); Go-импортёр/DDL/витрина/грант (→ `go-engineer`); разведка источника (→ `research-engineer`).
 
 ## 2. Что прочитать перед стартом
 
@@ -56,7 +56,7 @@ whenToUse: When working on non-ML Python tools in scripts/ (root), scripts/lib/ 
 1. **Секреты только из env/`make`**; не читать и не печатать `~/.config/rosstat/env`.
 2. **Тесты без сети и живой БД:** моки `urllib`/`http.client` (например, `patch.object(module.urllib.request, "urlopen", ...)`), фикстуры; локальный HTTP-сервер — тоже сеть; `unittest`, не pytest.
 3. **Детерминизм:** фиксированный seed, сортировка, стабильные имена артефактов.
-4. **Запись — только payload:** `key_rate_forecast_log.py` готовит JSON для ingest; `--dry-run` обязателен для проверки.
+4. **Запись — только payload:** `tools/forecast_log.py` в `bi-ml-models` готовит JSON для ingest; `--dry-run` обязателен для проверки.
 5. **Артефакты прогонов не коммитить:** `build/`, `*.json`/`*.csv` результатов — в gitignore; фикстуры — явно.
 6. **Не логировать секреты** и полные payload с токенами.
 7. **Python 3.12** для официальных прогонов (`uv ... --python 3.12`); системный `python3` — только для stdlib-тестов.
@@ -69,7 +69,7 @@ whenToUse: When working on non-ML Python tools in scripts/ (root), scripts/lib/ 
 - **Dry-run.** Без env и сети, детерминированный JSON, общий валидатор для dry-run и отправки, тело ≤ 1 MiB, коды 0/1.
 - **Фикстуры.** Реальный урезанный XLSX в `scripts/testdata/`, не синтетическая книга.
 - **Идемпотентность.** Ключи endpoint'ов (`(source, series, date)`, `(metric, forecast_date)`) делают повтор upsert'ом; проверь повтор.
-- **Тестовая проводка.** Новый `scripts/lib/<name>_test.py` или `scripts/models/<family>/<name>_test.py` добавь в `DEVELOPMENT.md` и §9 этого скила; `make all` Python-тесты не запускает.
+- **Тестовая проводка.** Новый `scripts/lib/<name>_test.py` добавь в `DEVELOPMENT.md` и §9 этого скила; модельные тесты — в `bi-ml-models` (`make test`); `make all` Python-тесты не запускает.
 - **Живая приёмка.** Локальный `make run-ingest INGEST_ADDR=:18081`, `inserted=N`, повтор — тот же N, тестовые строки убрать.
 - **Новый ряд/таблица/витрина/грант.** Стоп: отдельный Go-пункт; Python готовит payload и спеку.
 - **Снапшот для Go-импортёра.** Второй паттерн (`build/...` + `EDISCLOSURE_INPUT_DIR`) требует Go-импортёра; выбери паттерн в спеке.
@@ -80,12 +80,12 @@ whenToUse: When working on non-ML Python tools in scripts/ (root), scripts/lib/ 
 
 | Цель | Команда |
 |---|---|
-| stdlib-тесты | `python3 scripts/lib/<name>_test.py` или `python3 scripts/models/<family>/<name>_test.py` |
-| ML/тяжёлые тесты | `uv run --with ... --python 3.12 python3 scripts/models/<family>/<name>_test.py` |
+| stdlib-тесты | `python3 scripts/lib/<name>_test.py` |
+| ML/тяжёлые тесты | `make test` в `bi-ml-models` |
 | MCP end-to-end | `make mcp-check` |
 | Docs | `make docs-check` |
 | Универсальный CI | `make all` |
-| Forecast payload | `make key-rate-forecast-log ARGS="--dry-run"` |
+| Forecast payload | `make key-rate-forecast-log ARGS="--dry-run"` в `bi-ml-models` |
 | e-disclosure сбор | `make edisclosure-collect` |
 | Grafana smoke | `make grafana-check` (нужны токен/URL) |
 
@@ -112,13 +112,13 @@ whenToUse: When working on non-ML Python tools in scripts/ (root), scripts/lib/ 
 
 ## 9. CI-долг (`infra/5.2`)
 
-- **Fast, stdlib-only:** `scripts/docs_build_test.py`, `scripts/harvest_test.py`, `scripts/lib/ml_experiment_test.py`, `scripts/lib/clickhouse_test.py`, `scripts/mlflow_export_test.py`, `scripts/mlflow_registry_test.py`, `scripts/models/key_rate/key_rate_llm_forecast_test.py`, `scripts/key_rate_forecast_log_test.py`, `scripts/mcp_setup_user_test.py`, `scripts/models/cb_comp/cb_comp_proxy_test.py`, `scripts/edisclosure_collect_test.py`, `scripts/models/polyus/aisc_test.py`, `scripts/models/polyus/polyus_output_model_test.py`, `scripts/ppi_sa_parity_test.py`.
-- **Тяжёлые (CatBoost/sklearn/statsmodels):** `scripts/models/key_rate/key_rate_model_test.py`, `scripts/models/key_rate/shock_classifier_test.py`, `scripts/models/cpi/cpi_nowcast_test.py`, `scripts/models/cpi/cpi_monthly_test.py`, `scripts/models/cpi/cpi_monthly_v3_test.py`, `scripts/models/cpi/cpi_monthly_industry_test.py`, `scripts/models/cb_comp/cb_comp_parity_test.py`, `scripts/models/cb_comp/cb_comp_bottomup_test.py`, `scripts/models/cb_comp/cb_comp_live_pipeline_test.py` — path-filter/nightly.
+- **Fast, stdlib-only:** `scripts/docs_build_test.py`, `scripts/harvest_test.py`, `scripts/lib/clickhouse_test.py`, `scripts/mcp_setup_user_test.py`, `scripts/edisclosure_collect_test.py`.
+- **Тяжёлые (CatBoost/sklearn/statsmodels):** в `bi-ml-models` — `make test`; здесь их нет.
 - **С `openpyxl` (XLSX):** `scripts/ppi_sa_mapping_test.py`, `scripts/ppi_sa_weights_panel_test.py` — `uv run --with openpyxl --python 3.12`.
 - До появления workflow тесты гоняются вручную; `make all` их не включает.
 
 ## 10. Ссылки
 
 - [AGENTS.md](../../../AGENTS.md), [DEVELOPMENT.md](../../../docs/DEVELOPMENT.md), [CONFIGURATION.md](../../../docs/CONFIGURATION.md).
-- [ml-engineer](../ml-engineer/SKILL.md), [research-engineer](../research-engineer/SKILL.md), [github-tracker](../github-tracker/SKILL.md).
+- [`bi-ml-models`](https://github.com/kmlebedev/bi-ml-models), [research-engineer](../research-engineer/SKILL.md), [github-tracker](../github-tracker/SKILL.md).
 - [2026-10-19-engineering-issue-review.md](../../../docs/research/2026-10-19-engineering-issue-review.md) §4/§5.
