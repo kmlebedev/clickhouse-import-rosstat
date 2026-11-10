@@ -24,11 +24,7 @@ var financePolyusRowTitles = []string{
 
 func builtFinancePolyus(t *testing.T) dashboard.Dashboard {
 	t.Helper()
-	d, err := NewFinancePolyus().Build()
-	if err != nil {
-		t.Fatal(err)
-	}
-	return d
+	return mustBuild(t, NewFinancePolyus())
 }
 
 // TestFinancePolyusHasNineteenPanels фиксирует состав собранных рядов: ряд 31 — шесть панелей

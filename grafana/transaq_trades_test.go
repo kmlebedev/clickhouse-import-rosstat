@@ -15,11 +15,7 @@ var transaqTradesRowTitles = []string{"Теплокарта периода", "И
 
 func builtTransaqTrades(t *testing.T) dashboard.Dashboard {
 	t.Helper()
-	d, err := NewTransaqTrades().Build()
-	if err != nil {
-		t.Fatal(err)
-	}
-	return d
+	return mustBuild(t, NewTransaqTrades())
 }
 
 // TestTransaqTradesHasSixPanels фиксирует состав: теплокарта, две top-10 панели и три графика;

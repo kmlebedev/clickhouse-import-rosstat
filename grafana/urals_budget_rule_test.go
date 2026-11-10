@@ -34,11 +34,7 @@ var uralsBudgetRulePanelHeights = []uint32{10, 10, 4, 4, 4, 4, 8}
 
 func builtUralsBudgetRule(t *testing.T) dashboard.Dashboard {
 	t.Helper()
-	d, err := NewUralsBudgetRule().Build()
-	if err != nil {
-		t.Fatal(err)
-	}
-	return d
+	return mustBuild(t, NewUralsBudgetRule())
 }
 
 // TestUralsBudgetRuleComposition фиксирует состав дашборда: 7 панелей id 1–7 в заданном порядке,

@@ -32,11 +32,7 @@ var keyRateRows = []struct {
 
 func builtKeyRatePublications(t *testing.T) dashboard.Dashboard {
 	t.Helper()
-	d, err := NewKeyRatePublications().Build()
-	if err != nil {
-		t.Fatal(err)
-	}
-	return d
+	return mustBuild(t, NewKeyRatePublications())
 }
 
 // TestKeyRatePublicationsPanelCount фиксирует состав дашборда: ряды 21 (панели 1–5, 41 — теплокарта
@@ -297,27 +293,6 @@ func TestKeyRateUnits(t *testing.T) {
 	}
 }
 
-// overridePropByRefID возвращает значение свойства override'а серии по refId: пер-серийные
-// единица и ось живут только в properties override'а, и опечатка в refId молча оставила бы
-// серию с панельным дефолтом.
-func overridePropByRefID(p *dashboard.Panel, refID, propID string) any {
-	for _, override := range p.FieldConfig.Overrides {
-		if override.Matcher.Id != "byFrameRefID" {
-			continue
-		}
-		name, ok := override.Matcher.Options.(*string)
-		if !ok || name == nil || *name != refID {
-			continue
-		}
-		for _, prop := range override.Properties {
-			if prop.Id == propID {
-				return prop.Value
-			}
-		}
-	}
-	return nil
-}
-
 // TestKeyRateThresholdsStyleSet: без custom.thresholdsStyle Grafana не рисует порог (по умолчанию
 // off), а пороги — смысловые границы: 4% (цель ЦБ по инфляции) у панелей 2 и 4, нуль (граница
 // роста и сжатия) у панели 6. Порог без стиля молча пропал бы с графика. Значение шага — доля
@@ -421,23 +396,6 @@ func TestKeyRateYoYPanelsFilterOutsideWindow(t *testing.T) {
 	}
 }
 
-// targetByRefID возвращает запрос панели по refId: тесты YoY адресуют конкретную серию
-// (панель 9 — только B), а не «все таргеты панели».
-func targetByRefID(t *testing.T, p *dashboard.Panel, refID string) CHQuery {
-	t.Helper()
-	for _, target := range p.Targets {
-		query, ok := chQuery(target)
-		if !ok {
-			t.Fatalf("панель %q: запрос не является запросом ClickHouse", panelTitle(p))
-		}
-		if query.RefId == refID {
-			return query
-		}
-	}
-	t.Fatalf("панель %q: запроса с refId %q нет", panelTitle(p), refID)
-	return CHQuery{}
-}
-
 // TestKeyRateBudgetPanelNamesConsolidatedBudget: панель 8 читает minfin_mesyats — это
 // консолидированный бюджет РФ и государственных внебюджетных фондов, а не федеральный
 // (федеральный — source = 'minfin', и отдельного ряда его дефицита в контуре пока нет — фаза 2).
@@ -453,19 +411,6 @@ func TestKeyRateBudgetPanelNamesConsolidatedBudget(t *testing.T) {
 		if !strings.Contains(description, want) {
 			t.Fatalf("Description панели 8 не содержит %q: %s", want, description)
 		}
-	}
-}
-
-// assertPointsOnly проверяет оба свойства «серия рисуется только точками» (pointsOnlyProps золотого
-// дашборда): custom.lineWidth 0 и custom.showPoints always. Свойства ищутся в override'е конкретной
-// серии: опечатка в refId молча оставила бы серию сплошной линией по одной точке.
-func assertPointsOnly(t *testing.T, p *dashboard.Panel, refID string) {
-	t.Helper()
-	if got := overridePropByRefID(p, refID, "custom.lineWidth"); got != 0 {
-		t.Fatalf("панель %q: custom.lineWidth серии %s = %v, ожидался 0 (серия из одной точки — не линия)", panelTitle(p), refID, got)
-	}
-	if got := overridePropByRefID(p, refID, "custom.showPoints"); got != "always" {
-		t.Fatalf("панель %q: custom.showPoints серии %s = %v, ожидалось \"always\"", panelTitle(p), refID, got)
 	}
 }
 

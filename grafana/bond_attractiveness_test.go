@@ -22,11 +22,7 @@ var bondAttractivenessRowTitles = []string{
 
 func builtBondAttractiveness(t *testing.T) dashboard.Dashboard {
 	t.Helper()
-	d, err := NewBondAttractiveness().Build()
-	if err != nil {
-		t.Fatal(err)
-	}
-	return d
+	return mustBuild(t, NewBondAttractiveness())
 }
 
 // TestBondAttractivenessHasTwentyOnePanels фиксирует состав дашборда: 21 панель — чек-лист
