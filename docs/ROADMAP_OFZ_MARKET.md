@@ -284,7 +284,8 @@ Research — [2026-10-30-transaq-net-flows-source.md](research/2026-10-30-transa
 | Приоритет | P1 |
 | Зависит от | `ofz-market/1.6` (дашборд `transaq-trades`), `ofz-market/1.7` (`instrument_kind` в витринах — merged) |
 | Issue | [#554](https://github.com/kmlebedev/clickhouse-import-rosstat/issues/554) |
-| Статус | 🔶 In Review |
+| Статус | ✅ |
+| Реализация | PR [#555](https://github.com/kmlebedev/clickhouse-import-rosstat/pull/555) (merged 2026-11-09); staging deploy v5 + smoke — панель 6: 104 точки, панель 1: 10 точек; qwen 3.8 flash — APPROVED; протокол — [комментарий в PR](https://github.com/kmlebedev/clickhouse-import-rosstat/pull/555#issuecomment-6746640314) |
 
 **Цель.** Добавить в дашборд `transaq-trades` две теплокарты cash-рынка (Apache ECharts `treemap`) за выбранный период: слева акции IMOEX и фонды денежного рынка, справа ОФЗ по срокам до 1/3/5/10 лет. Площадь плитки — оборот инструмента, цвет — относительный перевес покупок/продаж (`(buy − sell) / (buy + sell)`). Фьючерсы вне карты: на staging их номинал — ~52% оборота, в общем treemap они задавили бы cash-рынок; это отдельная панель/пункт.
 
@@ -300,7 +301,7 @@ Research — [2026-10-30-transaq-net-flows-source.md](research/2026-10-30-transa
 
 - каждый запрос — только `v_*`, `$__dateFilter` в таргете, `LIMIT` на теплокарте нет; новых сырых таблиц и DDL нет;
 - `make all`, `make grafana-validate`, `make grafana-build` (детерминизм), `make docs-check` зелёные; `gcx dev lint run` — без нарушений; CI `dashboards` зелёный;
-- живой SQL панели через MCP/HTTP под `kimi_reader` на staging (192.168.3.9): 104 строки, 7 кластеров, ОФЗ по 5 тенор-бакетам; локальная лента пуста — 0 строк без ошибок; реальная визуальная приёмка — staging, owner-assisted;
+- живой SQL панели через MCP/HTTP под `kimi_reader` на staging (192.168.3.9): 104 строки, 7 кластеров, ОФЗ по 5 тенор-бакетам; локальная лента пуста — 0 строк без ошибок; staging deploy + smoke — выполнены 2026-11-09 (dashboard v5, панель 6 — 104 точки, панель 1 — 10 точек); render API 500, визуальный smoke — локально на 104 реальных строках staging;
 - PR отревьюен субагентом `qwencloud/qwen3.8-flash`; findings разобраны; протокол — комментарием в PR;
 - нет торговых сигналов и рекомендаций.
 
