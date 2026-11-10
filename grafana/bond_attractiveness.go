@@ -340,37 +340,20 @@ func NewBondAttractiveness() *dashboard.DashboardBuilder {
 		WithPanel(baFxSharePanel())
 }
 
-// baStatDefaults — общие настройки шести снимков: последняя точка (lastNotNull), авто-текст,
+// baStatDefaults — общие настройки шести снимков (statDefaults) плюс размер снимка в сетке:
 // снимок не зависит от окна дашборда.
 func baStatDefaults(builder *stat.PanelBuilder) *stat.PanelBuilder {
-	return builder.
-		Datasource(datasourceRef()).
-		ReduceOptions(common.NewReduceDataOptionsBuilder().Calcs([]string{"lastNotNull"}).Values(false)).
-		TextMode(common.BigValueTextModeAuto).
+	return statDefaults(builder).
 		Height(baStatHeight).
 		Span(baStatSpan)
 }
 
-// baPanelDefaults — визуальные конвенции графиков контура: палитра classic, легенда снизу
-// таблицей с calcs, tooltip по одной серии, линия 1 без заливки, SpanNulls=false — пропуск в
-// витрине остаётся разрывом (розница после 2025-12, эскроу до 2019-02), нули не подставляются.
+// baPanelDefaults — конвенции графиков контура: база timeseriesDefaults (SpanNulls=false — пропуск в
+// витрине остаётся разрывом: розница после 2025-12, эскроу до 2019-02, нули не подставляются),
+// легенда lastNotNull/min/max, сглаженная линия и полная ширина.
 func baPanelDefaults(builder *timeseries.PanelBuilder) *timeseries.PanelBuilder {
-	return builder.
-		Datasource(datasourceRef()).
-		ColorScheme(dashboard.NewFieldColorBuilder().Mode(dashboard.FieldColorModeIdPaletteClassic)).
-		Legend(common.NewVizLegendOptionsBuilder().
-			ShowLegend(true).
-			Placement(common.LegendPlacementBottom).
-			DisplayMode(common.LegendDisplayModeTable).
-			Calcs([]string{"lastNotNull", "min", "max"})).
-		Tooltip(common.NewVizTooltipOptionsBuilder().
-			Mode(common.TooltipDisplayModeSingle).
-			Sort(common.SortOrderNone)).
-		LineWidth(1).
+	return timeseriesDefaults(builder, "lastNotNull", "min", "max").
 		LineInterpolation(common.LineInterpolationSmooth).
-		FillOpacity(0).
-		GradientMode(common.GraphGradientModeNone).
-		SpanNulls(common.BoolOrFloat64{Bool: ptr(false)}).
 		Height(baPanelHeight).
 		Span(spanFull)
 }
@@ -383,17 +366,6 @@ func baRegimeThresholds() *dashboard.ThresholdsConfigBuilder {
 		Steps([]dashboard.Threshold{
 			{Value: nil, Color: "blue"},
 			{Value: ptr(10.4314), Color: "green"},
-		})
-}
-
-// baZeroThresholds — знак спреда: отрицательный (облигации дешевле ставки) — синий,
-// положительный (кривая выше ключа) — зелёный.
-func baZeroThresholds() *dashboard.ThresholdsConfigBuilder {
-	return dashboard.NewThresholdsConfigBuilder().
-		Mode(dashboard.ThresholdsModeAbsolute).
-		Steps([]dashboard.Threshold{
-			{Value: nil, Color: "blue"},
-			{Value: ptr(0.0), Color: "green"},
 		})
 }
 
@@ -433,7 +405,7 @@ func baRealKeyStatPanel() *stat.PanelBuilder {
 		Title("Реальная ставка, п.п.").
 		Unit(units.Short).
 		Decimals(2).
-		Thresholds(baZeroThresholds()).
+		Thresholds(zeroThresholds("blue")).
 		WithTarget(tableQuery("A", baRealKeyLatestSQL)).
 		Description("Ключевая ставка минус годовая инфляция (v_ofz_signal: key_rate − " +
 			"inflation_yoy), последняя точка. Положительная — денежная политика жёсткая. " +
@@ -447,7 +419,7 @@ func baOfzSpreadStatPanel() *stat.PanelBuilder {
 		Title("ОФЗ 10 лет − ключ, п.п.").
 		Unit(units.Short).
 		Decimals(2).
-		Thresholds(baZeroThresholds()).
+		Thresholds(zeroThresholds("blue")).
 		WithTarget(tableQuery("A", baOfzSpreadLatestSQL)).
 		Description("Доходность 10-летней ОФЗ минус ключевая ставка (v_ofz_signal), последняя " +
 			"точка. По правилу статьи «переход в активы» начинается, когда доходность облигаций " +
@@ -561,8 +533,8 @@ func baOfzSpreadsPanel() *timeseries.PanelBuilder {
 		Title("Спреды ОФЗ к ключу и наклон кривой, п.п.").
 		Unit(units.Short).
 		Decimals(2).
-		Thresholds(baZeroThresholds()).
-		ThresholdsStyle(common.NewGraphThresholdsStyleConfigBuilder().Mode(common.GraphThresholdsStyleModeLine)).
+		Thresholds(zeroThresholds("blue")).
+		ThresholdsStyle(thresholdLineStyle()).
 		WithTarget(timeseriesQuery("A", baOfzSpreadsSQL)).
 		Description("ОФЗ 2г − ключ, ОФЗ 10л − ключ и наклон 10л − 1г (v_ofz_signal). Нулевая линия: " +
 			"выше — кривая дороже ключа (долговой режим), ниже — переток в активы по статье. " +
@@ -607,8 +579,8 @@ func baDepositOfzSpreadPanel() *timeseries.PanelBuilder {
 		Title("Вклад 1 год − ОФЗ 1 год, п.п.").
 		Unit(units.Short).
 		Decimals(2).
-		Thresholds(baZeroThresholds()).
-		ThresholdsStyle(common.NewGraphThresholdsStyleConfigBuilder().Mode(common.GraphThresholdsStyleModeLine)).
+		Thresholds(zeroThresholds("blue")).
+		ThresholdsStyle(thresholdLineStyle()).
 		WithTarget(timeseriesQuery("A", baDepositOfzSpreadSQL)).
 		Description("Вклад на 181 день – 1 год минус доходность ОФЗ 1 год, по месяцам " +
 			"(v_cbr_macro + v_ofz_signal: toStartOfMonth и argMax с обеих сторон — даты источника " +
@@ -758,14 +730,11 @@ func baSideMapping() dashboard.ValueMapping {
 // формат плагина со строковыми колонками вешает датасорс на стенде (проверено 2026-11-08).
 // Фильтра диапазона в SQL нет у снимков? Есть: каждый подзапрос уважает окно дашборда.
 func baTriggersPanel() *stat.PanelBuilder {
-	return stat.NewPanelBuilder().
-		Datasource(datasourceRef()).
+	return statDefaults(stat.NewPanelBuilder()).
 		Id(19).
 		Title("Все триггеры статьи: облигации и акции").
 		Span(spanFull).
 		Height(8).
-		ReduceOptions(common.NewReduceDataOptionsBuilder().Calcs([]string{"lastNotNull"}).Values(false)).
-		TextMode(common.BigValueTextModeAuto).
 		ColorMode(common.BigValueColorModeValue).
 		Mappings([]dashboard.ValueMapping{baSideMapping()}).
 		OverrideByName("Ипотека: вторичка − первичка, п.п.", []dashboard.DynamicConfigValue{
@@ -818,7 +787,7 @@ func baCreditDepositPanel() *timeseries.PanelBuilder {
 		Unit(units.Percent).
 		Decimals(2).
 		Thresholds(baBandThresholds()).
-		ThresholdsStyle(common.NewGraphThresholdsStyleConfigBuilder().Mode(common.GraphThresholdsStyleModeLine)).
+		ThresholdsStyle(thresholdLineStyle()).
 		WithTarget(timeseriesQuery("A", baCorpLoanRateSQL)).
 		WithTarget(timeseriesQuery("B", baRetailLoanRateSQL)).
 		WithTarget(timeseriesQuery("C", baDepositGrowthSQL)).
@@ -850,7 +819,7 @@ func baRhetoricPanel() *timeseries.PanelBuilder {
 		Unit(units.Percent).
 		Decimals(2).
 		Thresholds(baRhetoricThresholds()).
-		ThresholdsStyle(common.NewGraphThresholdsStyleConfigBuilder().Mode(common.GraphThresholdsStyleModeLine)).
+		ThresholdsStyle(thresholdLineStyle()).
 		WithTarget(timeseriesQuery("A", baRhetoricKeyRateSQL)).
 		WithTarget(timeseriesQuery("B", baRhetoricRealRateSQL)).
 		WithTarget(timeseriesQuery("C", baRhetoricImpliedSQL)).

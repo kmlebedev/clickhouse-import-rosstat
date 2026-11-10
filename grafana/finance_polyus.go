@@ -306,39 +306,13 @@ func fpRowGridPos(y uint32) dashboard.GridPos {
 	return dashboard.GridPos{X: 0, Y: y, W: 24, H: 1}
 }
 
-// fpPanelDefaults — общие визуальные конвенции панелей дашборда: палитра classic, легенда снизу
-// таблицей с calcs (последнее/среднее/максимум), tooltip по одной серии, линия шириной 1 без заливки,
-// градиента и соединения разрывов (разрыв ряда честно остаётся разрывом). Те же конвенции, что у
-// key-rate (спека §6, «визуал переносим»), но своим хелпером: финансы Полюса могут разойтись с
-// публикациями ставки, и правка конвенций одного дашборда не должна молча менять артефакт другого.
-// Панели добавляют свои Id/Title/Description/GridPos и таргеты поверх.
+// fpPanelDefaults — конвенции графиков дашборда: база timeseriesDefaults (разрыв ряда честно
+// остаётся разрывом) с легендой последнее/среднее/максимум, без сглаживания линии. Те же конвенции,
+// что у key-rate (спека §6, «визуал переносим»), но своей обёрткой: финансы Полюса могут разойтись
+// с публикациями ставки — расхождение добавляется здесь, а правка общей базы видна в диффе всех
+// артефактов dashboard/*.json. Панели добавляют свои Id/Title/Description/GridPos и таргеты поверх.
 func fpPanelDefaults(builder *timeseries.PanelBuilder) *timeseries.PanelBuilder {
-	return builder.
-		Datasource(datasourceRef()).
-		ColorScheme(dashboard.NewFieldColorBuilder().Mode(dashboard.FieldColorModeIdPaletteClassic)).
-		Legend(common.NewVizLegendOptionsBuilder().
-			ShowLegend(true).
-			Placement(common.LegendPlacementBottom).
-			DisplayMode(common.LegendDisplayModeTable).
-			Calcs([]string{"last", "mean", "max"})).
-		Tooltip(common.NewVizTooltipOptionsBuilder().
-			Mode(common.TooltipDisplayModeSingle).
-			Sort(common.SortOrderNone)).
-		LineWidth(1).
-		FillOpacity(0).
-		GradientMode(common.GraphGradientModeNone).
-		SpanNulls(common.BoolOrFloat64{Bool: ptr(false)})
-}
-
-// fpFixedColorProp — свойство override'а с фиксированным цветом серии: палитра classic красит серии
-// по порядку таргетов, и без фиксации цвет тенора менялся бы при добавлении ряда. Форма свойства —
-// как у krFixedColorProp key-rate: держим её своим хелпером, чтобы правка конвенций одного дашборда
-// не меняла молча артефакт другого.
-func fpFixedColorProp(color string) dashboard.DynamicConfigValue {
-	return dashboard.DynamicConfigValue{
-		Id:    "color",
-		Value: dashboard.FieldColor{Mode: dashboard.FieldColorModeIdFixed, FixedColor: ptr(color)},
-	}
+	return timeseriesDefaults(builder, "last", "mean", "max")
 }
 
 // NewFinancePolyus собирает дашборд «Полюс (PLZL) — финансы и прогноз» (спека §4–§5). Собраны ряды 31
@@ -483,7 +457,7 @@ func fpRatesOfzPanel() *timeseries.PanelBuilder {
 	} {
 		panel = panel.
 			WithTarget(timeseriesQuery(tenor.refID, fpOfzTenorSQL(tenor.code, tenor.alias))).
-			OverrideByQuery(tenor.refID, append(pointsOnlyProps(), fpFixedColorProp(tenor.color)))
+			OverrideByQuery(tenor.refID, append(pointsOnlyProps(), fixedColorProp(tenor.color)))
 	}
 	return panel
 }
@@ -767,7 +741,7 @@ func fpGoldForecastPanel() *timeseries.PanelBuilder {
 	for _, scenario := range fpOwnScenarios {
 		panel = panel.
 			WithTarget(timeseriesQuery(scenario.refID, fpForecastScenarioSQL(scenario.scenario, scenario.alias))).
-			OverrideByQuery(scenario.refID, append(pointsOnlyProps(), fpFixedColorProp(scenario.color)))
+			OverrideByQuery(scenario.refID, append(pointsOnlyProps(), fixedColorProp(scenario.color)))
 	}
 	return panel
 }

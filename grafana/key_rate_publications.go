@@ -630,38 +630,14 @@ func krFedstatPriceSQL(p krFedstatPrice) string {
 	return fmt.Sprintf(krFedstatPriceTemplate, p.alias, p.series, krFedstatRegion)
 }
 
-// krPanelDefaults — общие визуальные конвенции дашборда (выведены из UI-экспорта): палитра classic,
-// легенда снизу таблицей с calcs (последнее/среднее/максимум), tooltip по одной серии, линия
-// шириной 1 без заливки, градиента и соединения разрывов (spanNulls false — разрыв недельного
-// ряда честно остаётся разрывом). Интерполяция — smooth: соседние месячные точки соединяются
-// сглаженной линией, а не ломаной (значения при этом не сглаживаются). Панели добавляют свои
-// Id/Title/Description/Span и таргеты поверх: так конвенции не разъезжаются между рядами.
+// krPanelDefaults — конвенции графиков дашборда (выведены из UI-экспорта): база timeseriesDefaults
+// (spanNulls false — разрыв недельного ряда честно остаётся разрывом) с легендой последнее/среднее/
+// максимум. Интерполяция — smooth: соседние месячные точки соединяются сглаженной линией, а не
+// ломаной (значения при этом не сглаживаются). Панели добавляют свои Id/Title/Description/Span и
+// таргеты поверх: так конвенции не разъезжаются между рядами.
 func krPanelDefaults(builder *timeseries.PanelBuilder) *timeseries.PanelBuilder {
-	return builder.
-		Datasource(datasourceRef()).
-		ColorScheme(dashboard.NewFieldColorBuilder().Mode(dashboard.FieldColorModeIdPaletteClassic)).
-		Legend(common.NewVizLegendOptionsBuilder().
-			ShowLegend(true).
-			Placement(common.LegendPlacementBottom).
-			DisplayMode(common.LegendDisplayModeTable).
-			Calcs([]string{"last", "mean", "max"})).
-		Tooltip(common.NewVizTooltipOptionsBuilder().
-			Mode(common.TooltipDisplayModeSingle).
-			Sort(common.SortOrderNone)).
-		LineWidth(1).
-		LineInterpolation(common.LineInterpolationSmooth).
-		FillOpacity(0).
-		GradientMode(common.GraphGradientModeNone).
-		SpanNulls(common.BoolOrFloat64{Bool: ptr(false)})
-}
-
-// krFixedColorProp — свойство override'а с фиксированным цветом серии: палитра classic красит
-// серии по порядку, и без фиксации цвет решения ЦБ/пунктов ожиданий менялся бы при добавлении таргета.
-func krFixedColorProp(color string) dashboard.DynamicConfigValue {
-	return dashboard.DynamicConfigValue{
-		Id:    "color",
-		Value: dashboard.FieldColor{Mode: dashboard.FieldColorModeIdFixed, FixedColor: ptr(color)},
-	}
+	return timeseriesDefaults(builder, "last", "mean", "max").
+		LineInterpolation(common.LineInterpolationSmooth)
 }
 
 // krDashedProps — пунктирная линия: серия-референс не должна читаться как ещё один равноправный
@@ -688,24 +664,6 @@ func krFourPercentThresholds() *dashboard.ThresholdsConfigBuilder {
 		Steps([]dashboard.Threshold{
 			{Value: nil, Color: "super-light-green"},
 			{Value: ptr(0.04), Color: "super-light-red"},
-		})
-}
-
-// krThresholdLineStyle — стиль отображения порога: ThresholdsStyle обязателен, иначе Grafana
-// порог не рисует (по умолчанию off), и линия цели 4% пропала бы с графика.
-func krThresholdLineStyle() *common.GraphThresholdsStyleConfigBuilder {
-	return common.NewGraphThresholdsStyleConfigBuilder().Mode(common.GraphThresholdsStyleModeLine)
-}
-
-// krZeroThresholds — нулевой порог панели 6: темп г/г выше нуля (рост) зелёный, ниже (сжатие)
-// красный. Как и 4%-ный порог, задаётся панельными thresholds и рисуется только вместе со стилем
-// line (krThresholdLineStyle); значения серий — доли, поэтому граница тоже 0, а не «0%».
-func krZeroThresholds() *dashboard.ThresholdsConfigBuilder {
-	return dashboard.NewThresholdsConfigBuilder().
-		Mode(dashboard.ThresholdsModeAbsolute).
-		Steps([]dashboard.Threshold{
-			{Value: nil, Color: "red"},
-			{Value: ptr(0.0), Color: "green"},
 		})
 }
 
@@ -847,8 +805,8 @@ func krQuarterlySarPanel() *timeseries.PanelBuilder {
 		WithTarget(timeseriesQuery("C", krQuarterlyToDateSQL)).
 		Unit(units.PercentUnit).
 		Thresholds(krFourPercentThresholds()).
-		ThresholdsStyle(krThresholdLineStyle()).
-		OverrideByQuery("C", append(pointsOnlyProps(), krFixedColorProp("orange")))
+		ThresholdsStyle(thresholdLineStyle()).
+		OverrideByQuery("C", append(pointsOnlyProps(), fixedColorProp("orange")))
 }
 
 // krQuarterlyTablePanel — панель 43: квартальные числа в таблице, с обоими Δ. Δ 3м даётся против
@@ -897,7 +855,7 @@ func krWeeklyRolling3mPanel() *timeseries.PanelBuilder {
 		WithTarget(timeseriesQuery("A", krWeeklyRolling3mSQL)).
 		Unit(units.PercentUnit).
 		Thresholds(krFourPercentThresholds()).
-		ThresholdsStyle(krThresholdLineStyle())
+		ThresholdsStyle(thresholdLineStyle())
 }
 
 // krQuarterlyRevisionsPanel — панель 45: как ЦБ ревизует один и тот же квартал между выпусками.
@@ -995,7 +953,7 @@ func krRatePanel() *timeseries.PanelBuilder {
 		WithTarget(timeseriesQuery("A", krMacroValueSQL("cbr_key_rate", `"Ключевая ставка, % годовых"`))).
 		WithTarget(timeseriesQuery("B", krDecisionsSQL)).
 		Unit(units.Percent).
-		OverrideByQuery("B", append(pointsOnlyProps(), krFixedColorProp("purple")))
+		OverrideByQuery("B", append(pointsOnlyProps(), fixedColorProp("purple")))
 }
 
 // krWeeklyAnnualizedPanel — панель 2: годовое выражение среднего недельного индекса (×52 недели);
@@ -1014,7 +972,7 @@ func krWeeklyAnnualizedPanel() *timeseries.PanelBuilder {
 		WithTarget(timeseriesQuery("B", krWeeklyAnnualizedSQL("date_add(YEAR, 1, date)", `"Прошлый год, годовое выражение"`, "toYear(now()) - 1"))).
 		Unit(units.PercentUnit).
 		Thresholds(krFourPercentThresholds()).
-		ThresholdsStyle(krThresholdLineStyle()).
+		ThresholdsStyle(thresholdLineStyle()).
 		OverrideByQuery("B", krPastYearProps())
 }
 
@@ -1051,7 +1009,7 @@ func krInflationPanel() *timeseries.PanelBuilder {
 		WithTarget(timeseriesQuery("C", krWeeklySAARSQL)).
 		Unit(units.PercentUnit).
 		Thresholds(krFourPercentThresholds()).
-		ThresholdsStyle(krThresholdLineStyle())
+		ThresholdsStyle(thresholdLineStyle())
 }
 
 // krExpectationsPanel — панель 5: инфляционные ожидания населения и ценовые ожидания бизнеса.
@@ -1072,7 +1030,7 @@ func krExpectationsPanel() *timeseries.PanelBuilder {
 		Unit(units.Percent).
 		OverrideByQuery("C", []dashboard.DynamicConfigValue{
 			{Id: "unit", Value: units.Short},
-			krFixedColorProp("text"),
+			fixedColorProp("text"),
 		})
 }
 
@@ -1115,8 +1073,8 @@ func krBankLoansPanel() *timeseries.PanelBuilder {
 		WithTarget(timeseriesQuery("B", krBankLoansYoYSQL("VTBR", `"ВТБ: кредиты ЮЛ+ФЛ, г/г"`))).
 		WithTarget(timeseriesQuery("C", krYoYSQL("v_cbr_macro", "М2 SA", `"М2 SA, г/г — референс"`))).
 		Unit(units.PercentUnit).
-		Thresholds(krZeroThresholds()).
-		ThresholdsStyle(krThresholdLineStyle()).
+		Thresholds(zeroThresholds("red")).
+		ThresholdsStyle(thresholdLineStyle()).
 		OverrideByQuery("C", krDashedProps())
 }
 
@@ -1135,8 +1093,8 @@ func krMoneyCreditPanel() *timeseries.PanelBuilder {
 		WithTarget(timeseriesQuery("A", krYoYSQL("v_cbr_macro", "М2 SA", `"М2, г/г"`))).
 		WithTarget(timeseriesQuery("B", krYoYSQL("v_cbr_macro", "Кредит экономике", `"Кредит экономике, г/г"`))).
 		Unit(units.PercentUnit).
-		Thresholds(krZeroThresholds()).
-		ThresholdsStyle(krThresholdLineStyle())
+		Thresholds(zeroThresholds("red")).
+		ThresholdsStyle(thresholdLineStyle())
 }
 
 // krCreditRatesPanel — панель 7: трансмиссия ключевой ставки в кредитные — уровень ключевой против
@@ -1244,7 +1202,7 @@ func krKeyrateTrajectoryPanel() *timeseries.PanelBuilder {
 		WithTarget(timeseriesQuery("B", krKeyrateSQL("KKZ6", `"KEYRATE-12.26, % годовых"`))).
 		WithTarget(timeseriesQuery("C", krKeyrateSQL("KKG7", `"KEYRATE-2.27, % годовых"`))).
 		Unit(units.Percent).
-		OverrideByQuery("C", append(pointsOnlyProps(), krFixedColorProp("orange")))
+		OverrideByQuery("C", append(pointsOnlyProps(), fixedColorProp("orange")))
 }
 
 // krKeyrateSnapshotPanel — панель 12: таблица последнего среза KEYRATE — значение рядом с
@@ -1403,12 +1361,12 @@ func krConsensusPanel() *timeseries.PanelBuilder {
 		WithTarget(timeseriesQuery("E", krConsensusSQL("key_rate_avg_2027_p10", `"Интервал 2027, p10"`))).
 		WithTarget(timeseriesQuery("F", krConsensusSQL("key_rate_avg_2027_p90", `"Интервал 2027, p90"`))).
 		Unit(units.Percent).
-		OverrideByQuery("A", []dashboard.DynamicConfigValue{krFixedColorProp("light-blue")}).
-		OverrideByQuery("B", []dashboard.DynamicConfigValue{krFixedColorProp("blue")}).
-		OverrideByQuery("C", []dashboard.DynamicConfigValue{krFixedColorProp("light-green")}).
-		OverrideByQuery("D", []dashboard.DynamicConfigValue{krFixedColorProp("green")}).
-		OverrideByQuery("E", []dashboard.DynamicConfigValue{krFixedColorProp("super-light-blue")}).
-		OverrideByQuery("F", []dashboard.DynamicConfigValue{krFixedColorProp("super-light-blue")})
+		OverrideByQuery("A", []dashboard.DynamicConfigValue{fixedColorProp("light-blue")}).
+		OverrideByQuery("B", []dashboard.DynamicConfigValue{fixedColorProp("blue")}).
+		OverrideByQuery("C", []dashboard.DynamicConfigValue{fixedColorProp("light-green")}).
+		OverrideByQuery("D", []dashboard.DynamicConfigValue{fixedColorProp("green")}).
+		OverrideByQuery("E", []dashboard.DynamicConfigValue{fixedColorProp("super-light-blue")}).
+		OverrideByQuery("F", []dashboard.DynamicConfigValue{fixedColorProp("super-light-blue")})
 }
 
 // krMpSummaryPanel — панель 16: последние резюме ЦБ одной таблицей — решение заседания, его шаг
@@ -1616,7 +1574,7 @@ func krWeeklyAvg4Panel() *timeseries.PanelBuilder {
 		WithTarget(timeseriesQuery("C", krWeeklyAvg4SQL(krWeeklyAggregateIndexSQL, `"4-нед. средняя (недельный ИПЦ)"`))).
 		Unit(units.PercentUnit).
 		Thresholds(krFourPercentThresholds()).
-		ThresholdsStyle(krThresholdLineStyle())
+		ThresholdsStyle(thresholdLineStyle())
 }
 
 // krPPIPanel — панель 37: ИЦП в годовом выражении. Две разные формулы (индекс к прошлому месяцу

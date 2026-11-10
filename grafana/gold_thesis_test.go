@@ -43,11 +43,7 @@ var goldThesisRowTitles = []string{
 
 func builtGoldThesis(t *testing.T) dashboard.Dashboard {
 	t.Helper()
-	d, err := NewGoldThesis().Build()
-	if err != nil {
-		t.Fatal(err)
-	}
-	return d
+	return mustBuild(t, NewGoldThesis())
 }
 
 // TestGoldThesisHasFourteenPanels считает панели через panelsOf: ряды — такие же элементы
@@ -218,43 +214,6 @@ func TestForecastAccuracyUnitScopedToErrorColumn(t *testing.T) {
 	if !strings.Contains(query.RawSql, "error_pct AS "+strconv.Quote(errorColumnAlias)) {
 		t.Fatalf("в SQL нет алиаса %q — override не сработает: %s", errorColumnAlias, query.RawSql)
 	}
-}
-
-// panelByID возвращает панель по id: нумерация задаётся вручную, уникальность держит Validate.
-func panelByID(t *testing.T, d dashboard.Dashboard, id uint32) *dashboard.Panel {
-	t.Helper()
-	for _, p := range panelsOf(d) {
-		if p.Id != nil && *p.Id == id {
-			return p
-		}
-	}
-	t.Fatalf("панель с id %d не найдена", id)
-	return nil
-}
-
-// thresholdStyleMode читает custom.thresholdsStyle.mode из JSON панели: тест проверяет то,
-// что реально уедет в артефакт, а не Go-структуру (поле Custom у FieldConfig — any).
-func thresholdStyleMode(t *testing.T, p *dashboard.Panel) string {
-	t.Helper()
-	raw, err := json.Marshal(p)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var parsed struct {
-		FieldConfig struct {
-			Defaults struct {
-				Custom struct {
-					ThresholdsStyle struct {
-						Mode string `json:"mode"`
-					} `json:"thresholdsStyle"`
-				} `json:"custom"`
-			} `json:"defaults"`
-		} `json:"fieldConfig"`
-	}
-	if err := json.Unmarshal(raw, &parsed); err != nil {
-		t.Fatal(err)
-	}
-	return parsed.FieldConfig.Defaults.Custom.ThresholdsStyle.Mode
 }
 
 func TestManifestWrapper(t *testing.T) {

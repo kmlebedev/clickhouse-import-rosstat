@@ -6,26 +6,9 @@ import (
 	"github.com/grafana/grafana-foundation-sdk/go/barchart"
 	"github.com/grafana/grafana-foundation-sdk/go/common"
 	"github.com/grafana/grafana-foundation-sdk/go/dashboard"
-	"github.com/grafana/grafana-foundation-sdk/go/resource"
 	"github.com/grafana/grafana-foundation-sdk/go/table"
 	"github.com/grafana/grafana-foundation-sdk/go/timeseries"
 	"github.com/grafana/grafana-foundation-sdk/go/units"
-)
-
-// Панели читают только витрины v_*: у датасорса стенда нет грантов на сырые таблицы.
-// Форматы запросов подтверждены живым экспортом плагина 4.3.2 (grafana/clickhouse.go):
-// 0 + timeseries — временные ряды (панели 1–6), 1 + table — категориальные бары и таблица (7–9).
-const (
-	queryFormatTimeseries = 0
-	queryFormatTable      = 1
-	queryTypeTimeseries   = "timeseries"
-	queryTypeTable        = "table"
-)
-
-// Ширина панелей в колонках сетки Grafana (всего 24): ряд 1 — три панели по 8, остальные — по 12.
-const (
-	spanThird = 8
-	spanHalf  = 12
 )
 
 // Id панелей дашборда — 1..14, рядов — 21..26: нулевой id Grafana трактует как «не задан»
@@ -244,35 +227,6 @@ FROM v_cb_gold_dynamics
 ORDER BY q_change_tonnes DESC
 `
 
-// datasourceRef — ссылка на датасорс стенда: у всех панелей только эти константы (проверяет Validate).
-func datasourceRef() common.DataSourceRef {
-	return common.DataSourceRef{Type: ptr(DatasourceType), Uid: ptr(DatasourceUID)}
-}
-
-// timeseriesQuery — запрос временного ряда (формат 0, панели 1–6).
-func timeseriesQuery(refID, sql string) *CHQueryBuilder {
-	return NewCHQuery(refID, sql).Format(queryFormatTimeseries).QueryType(queryTypeTimeseries)
-}
-
-// tableQuery — категориальный/табличный запрос (формат 1, панели 7–9).
-func tableQuery(refID, sql string) *CHQueryBuilder {
-	return NewCHQuery(refID, sql).Format(queryFormatTable).QueryType(queryTypeTable)
-}
-
-// pointsOnlyProps — серия рисуется только точками: у dxy и crack по одной точке,
-// сплошная линия по ним не читается (линия появится с накоплением истории).
-func pointsOnlyProps() []dashboard.DynamicConfigValue {
-	return []dashboard.DynamicConfigValue{
-		{Id: "custom.lineWidth", Value: 0},
-		{Id: "custom.showPoints", Value: "always"},
-	}
-}
-
-// axisPlacementRightProp — серия на правой оси: у неё другая размерность (индекс, % или $/барр.).
-func axisPlacementRightProp() dashboard.DynamicConfigValue {
-	return dashboard.DynamicConfigValue{Id: "custom.axisPlacement", Value: "right"}
-}
-
 // rightAxisPointsProps — правая ось + только точки (серии dxy и crack).
 func rightAxisPointsProps() []dashboard.DynamicConfigValue {
 	return append([]dashboard.DynamicConfigValue{axisPlacementRightProp()}, pointsOnlyProps()...)
@@ -372,7 +326,7 @@ func goldPricePanel() *timeseries.PanelBuilder {
 		WithTarget(timeseriesQuery("A", goldPriceSQL(`"Цена, USD/oz"`, ""))).
 		WithTarget(timeseriesQuery("B", goldPriceSQL(`"Касания пола $4 000"`, "  AND value < 4000\n"))).
 		Thresholds(priceFloorThresholds()).
-		ThresholdsStyle(common.NewGraphThresholdsStyleConfigBuilder().Mode(common.GraphThresholdsStyleModeLine)).
+		ThresholdsStyle(thresholdLineStyle()).
 		OverrideByQuery("B", pointsOnlyProps())
 }
 
@@ -813,20 +767,3 @@ return {
   ],
   graphic: rest.length ? [{ type: 'text', left: 10, bottom: 4, style: { text: rest.join('   |   '), fontSize: 10, color: '#868e96' } }] : []
 };`
-
-// Manifest оборачивает дашборд в K8s-стиль ресурс, который принимает gcx resources push.
-// metadata.name и spec.uid равны (инвариант): имя берётся из uid дашборда, а непустой uid
-// гарантирует Validate — main вызывает её до Manifest.
-func Manifest(d dashboard.Dashboard) resource.Manifest {
-	return resource.Manifest{
-		ApiVersion: ApiVersion,
-		Kind:       resource.DashboardKind,
-		Metadata:   resource.Metadata{Name: *d.Uid},
-		Spec:       d,
-	}
-}
-
-// ptr возвращает указатель на значение: необязательные поля builders SDK — указатели.
-func ptr[T any](v T) *T {
-	return &v
-}
