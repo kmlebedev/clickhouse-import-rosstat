@@ -5,7 +5,7 @@
 
 ## 1. Пробел
 
-Grafana-дашборд `key-rate-publications` покрывал 7 из 11 каналов решения ЦБ; без панелей оставались четыре ([KEY_RATE_CHANNELS.md](../../KEY_RATE_CHANNELS.md) §8):
+Grafana-дашборд `key-rate-publications` покрывал 7 из 11 каналов решения ЦБ; без панелей оставались четыре ([KEY_RATE_CHANNELS.md](https://github.com/kmlebedev/bi-ml-models/blob/main/docs/models/key-rate-channels.md) §8):
 
 | Канал | Витрина | Что нужно показать |
 |---|---|---|

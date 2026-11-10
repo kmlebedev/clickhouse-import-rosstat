@@ -1,7 +1,7 @@
 # Спека: починка пустых рядов Сбера (`sber_consumper_spending_index`, `sber_izmenenie_trat`)
 
 **Дата:** 15 октября 2026 г.
-**Пункт:** [ROADMAP_KEY_RATE.md](../../ROADMAP_KEY_RATE.md) §6, фаза 2 — «починка пустых рядов» (остаток после закрытого 2026-10-14 шага `rosstat/`); тот же класс дефекта зафиксирован в §4.1 (дефект № 2) и в [KEY_RATE_MODEL.md](../../KEY_RATE_MODEL.md) §4.
+**Пункт:** [ROADMAP_KEY_RATE.md](../../ROADMAP_KEY_RATE.md) §6, фаза 2 — «починка пустых рядов» (остаток после закрытого 2026-10-14 шага `rosstat/`); тот же класс дефекта зафиксирован в §4.1 (дефект № 2) и в [KEY_RATE_MODEL.md](https://github.com/kmlebedev/bi-ml-models/blob/main/docs/models/key-rate.md) §4.
 **Стандарт:** [IMPORTER_PACKAGE_STANDARD.md](../../IMPORTER_PACKAGE_STANDARD.md) — ссылки вида «стандарт §N» ниже указывают на него.
 **Статус:** спека на реализации; живая приёмка — по протоколу в плане `docs/superpowers/plans/2026-10-15-sber-spending-importers.md`.
 

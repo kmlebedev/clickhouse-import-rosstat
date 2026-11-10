@@ -370,8 +370,8 @@ calendar (next meeting)
 **Проект:**
 - [ROADMAP_KEY_RATE.md](../ROADMAP_KEY_RATE.md) — фаза 4, #191, #184.
 - [KEY_RATE_PUBLICATIONS.md](../KEY_RATE_PUBLICATIONS.md) — §2 (запрет переписывания), §7 (порядок прогона), §9 (чек-лист).
-- [KEY_RATE_CHANNELS.md](../KEY_RATE_CHANNELS.md) — §3, 11 каналов и веса.
-- [KEY_RATE_MODEL.md](../KEY_RATE_MODEL.md) — §4/§6, треки и бенчмарки.
+- [KEY_RATE_CHANNELS.md](https://github.com/kmlebedev/bi-ml-models/blob/main/docs/models/key-rate-channels.md) — §3, 11 каналов и веса.
+- [KEY_RATE_MODEL.md](https://github.com/kmlebedev/bi-ml-models/blob/main/docs/models/key-rate.md) — §4/§6, треки и бенчмарки.
 - [2026-10-18-key-rate.md](../publications/2026-10-18-key-rate.md) — статья #191.
 - [2026-10-18/checklist.md](../publications/2026-10-18/checklist.md) — чек-лист приёмки.
 - [ROADMAP_INDEX.md](../ROADMAP_INDEX.md) — реестр и трекер.

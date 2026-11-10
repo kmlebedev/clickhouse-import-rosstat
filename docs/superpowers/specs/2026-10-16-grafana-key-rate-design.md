@@ -1,6 +1,6 @@
 # Дашборд «Ключевая ставка — публикации» (Grafana): контур ставки как код — design
 
-**Дата:** 2026-10-16. **Пункт:** [ROADMAP_KEY_RATE.md](../../ROADMAP_KEY_RATE.md) §6 фаза 4 — «панель Grafana `key-rate.json`» (она же — отложенный подпункт «графики (Grafana, картинки)» спеки [2026-10-15-key-rate-model-v0-design.md](2026-10-15-key-rate-model-v0-design.md) §161). **Ветка:** `feat/grafana-key-rate`.
+**Дата:** 2026-10-16. **Пункт:** [ROADMAP_KEY_RATE.md](../../ROADMAP_KEY_RATE.md) §6 фаза 4 — «панель Grafana `key-rate.json`» (она же — отложенный подпункт «графики (Grafana, картинки)» спеки [2026-10-15-key-rate-model-v0-design.md](https://github.com/kmlebedev/bi-ml-models/blob/main/docs/specs/2026-10-15-key-rate-model-v0-design.md) §161). **Ветка:** `feat/grafana-key-rate`.
 **Приёмка (кратко):** дашборд `key-rate-publications` собран кодом (grafana-foundation-sdk) в артефакт `dashboard/key-rate-publications.json`; 19 панелей покрывают все данные [KEY_RATE_PUBLICATIONS.md](../../KEY_RATE_PUBLICATIONS.md) §4/§6/§8; каждый запрос читает только витрины `v_*` (проверено живьём через MCP); SQL-идиомы и визуальные конвенции выведены из UI-экспорта `grafana_dashboard_rosstat` (разведка 2026-10-16); CI собирает, диффит и линтит оба артефакта; локальный деплой + smoke; статья получает раздел «Иллюстрации»; README/ARCHITECTURE/ROADMAP синхронны. Детали — §8.
 
 ## 1. Пробел и место в роадмапе

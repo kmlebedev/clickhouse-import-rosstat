@@ -4,7 +4,7 @@
 **Дата:** 21 октября 2026 г.
 **Роль:** `role:go`.
 **Зависимости:** T1 #276 (`rosstat_ppi_ved`), T2 #277 (`rosstat_ppi_product`, `rosstat_ppi_weights`), T4 #279 (`ppi_sa`) — закрыты/смержены.
-**Спека T4:** [2026-10-21-ppi-sa-design.md](2026-10-21-ppi-sa-design.md); [план T5](2026-10-21-rosstat-ppi-view.md).
+**Спека T4:** [2026-10-21-ppi-sa-design.md](https://github.com/kmlebedev/bi-ml-models/blob/main/docs/specs/2026-10-21-ppi-sa-design.md); [план T5](2026-10-21-rosstat-ppi-view.md).
 
 ## 1. Контекст и границы
 
@@ -107,6 +107,6 @@ LIMIT 12;
 
 ## 10. Ссылки
 
-- [Спека T4](2026-10-21-ppi-sa-design.md), [план T5](2026-10-21-rosstat-ppi-view.md).
+- [Спека T4](https://github.com/kmlebedev/bi-ml-models/blob/main/docs/specs/2026-10-21-ppi-sa-design.md), [план T5](2026-10-21-rosstat-ppi-view.md).
 - [ARCHITECTURE.md §6.3](../../../ARCHITECTURE.md), [IMPORTER_PACKAGE_STANDARD.md §10](../IMPORTER_PACKAGE_STANDARD.md).
 - [ROADMAP_KEY_RATE.md](../../ROADMAP_KEY_RATE.md).

@@ -210,4 +210,4 @@ curl -sS -X POST 'https://bi.rosstat.gov.ru/biportal/grid' \
 # v_cbr_mp_public_panel: 77 517 строк, 87 кодов, 33 различные серии
 ```
 
-Связанные документы: [2026-10-18-cb-comp-archive.md](2026-10-18-cb-comp-archive.md), [2026-10-20-cb-comp-external-data-audit.md](2026-10-20-cb-comp-external-data-audit.md), [2026-10-16-cpi-weekly-pre2022-probe.md](2026-10-16-cpi-weekly-pre2022-probe.md), [2026-10-19-cpi-public-data-audit.md](2026-10-19-cpi-public-data-audit.md).
+Связанные документы: [2026-10-18-cb-comp-archive.md](https://github.com/kmlebedev/bi-ml-models/blob/main/docs/research/2026-10-18-cb-comp-archive.md), [2026-10-20-cb-comp-external-data-audit.md](2026-10-20-cb-comp-external-data-audit.md), [2026-10-16-cpi-weekly-pre2022-probe.md](https://github.com/kmlebedev/bi-ml-models/blob/main/docs/research/2026-10-16-cpi-weekly-pre2022-probe.md), [2026-10-19-cpi-public-data-audit.md](https://github.com/kmlebedev/bi-ml-models/blob/main/docs/research/2026-10-19-cpi-public-data-audit.md).
