@@ -1,6 +1,6 @@
 # Общие хелперы пакета `grafana/` — дизайн
 
-**Пункт роадмапа:** `infra/5.16` в [ROADMAP_INFRA.md](../../ROADMAP_INFRA.md).
+**Пункт роадмапа:** `infra/5.16` в [ROADMAP_INFRA.md](../../ROADMAP_INFRA.md), issue #560.
 
 ## Проблема
 
