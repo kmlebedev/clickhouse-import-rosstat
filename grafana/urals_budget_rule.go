@@ -385,15 +385,6 @@ return {
   ]
 };`
 
-// uralsBudgetStatDefaults — общие настройки stat-панелей: одно значение последней строки
-// (lastNotNull), без списка значений. Подписи полей приходят из алиасов SQL.
-func uralsBudgetStatDefaults(builder *stat.PanelBuilder) *stat.PanelBuilder {
-	return builder.
-		Datasource(datasourceRef()).
-		ReduceOptions(common.NewReduceDataOptionsBuilder().Calcs([]string{"lastNotNull"}).Values(false)).
-		TextMode(common.BigValueTextModeAuto)
-}
-
 // NewUralsBudgetRule собирает дашборд «Urals: реальная цена и бюджетное правило» (спека §3–§4):
 // 7 панелей в 2 рядах. Ряд 21 «Реальная цена Urals и бюджетное правило» — два ECharts-графика во
 // всю ширину: реальная цена в постоянных рублях (П1) и бюджетное правило $59 (П2). Ряд 22
@@ -461,7 +452,7 @@ func uralsBudgetRulePanel() *dashboard.PanelBuilder {
 
 // uralsBudgetSpotPanel — панель 3: снимок последнего опубликованного месяца, $/барр.
 func uralsBudgetSpotPanel() *stat.PanelBuilder {
-	return uralsBudgetStatDefaults(stat.NewPanelBuilder()).
+	return statDefaults(stat.NewPanelBuilder()).
 		Id(3).
 		Title("Urals, $/барр. — последний опубликованный месяц").
 		Description("Снимок последнего опубликованного месяца: средняя цена Urals, $/барр. " +
@@ -477,7 +468,7 @@ func uralsBudgetSpotPanel() *stat.PanelBuilder {
 
 // uralsBudgetFxPanel — панель 4: снимок среднего курса ЦБ за тот же месяц, ₽/$.
 func uralsBudgetFxPanel() *stat.PanelBuilder {
-	return uralsBudgetStatDefaults(stat.NewPanelBuilder()).
+	return statDefaults(stat.NewPanelBuilder()).
 		Id(4).
 		Title("Курс ЦБ, ₽/$ — последний опубликованный месяц").
 		Description("Средний за последний опубликованный месяц Urals курс ЦБ (v_cbr_macro, series = " +
@@ -497,7 +488,7 @@ func uralsBudgetFxPanel() *stat.PanelBuilder {
 // Панельная единица — plain number (units.Number): currencyRUB SI-скейлит ≥1000 («₽8.42K»),
 // а единица уже стоит в заголовке «₽/барр.»; у процентных колонок — override percent по имени поля.
 func uralsBudgetRealSnapshotPanel() *stat.PanelBuilder {
-	return uralsBudgetStatDefaults(stat.NewPanelBuilder()).
+	return statDefaults(stat.NewPanelBuilder()).
 		Id(5).
 		Title("Urals в рублях, ₽/барр. — последний опубликованный месяц").
 		Description("Urals в рублях за последний опубликованный месяц: цена $/барр. × средний курс ЦБ "+
@@ -520,7 +511,7 @@ func uralsBudgetRealSnapshotPanel() *stat.PanelBuilder {
 // Панельная единица — plain number (units.Number): currencyRUB SI-скейлит ≥1000 («₽5.47K»), а
 // «млрд ₽» уже стоит в заголовке; у колонки темпа — override percent.
 func uralsBudgetOilGasYtdPanel() *stat.PanelBuilder {
-	return uralsBudgetStatDefaults(stat.NewPanelBuilder()).
+	return statDefaults(stat.NewPanelBuilder()).
 		Id(6).
 		Title("Нефтегазовые доходы, млрд ₽ — янв–сен 2026").
 		Description("Нефтегазовые доходы федерального бюджета, млрд ₽: сумма января–сентября 2026 "+

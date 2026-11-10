@@ -16,9 +16,6 @@ const TransaqTradesUID = "transaq-trades"
 // сделает артефакт неотличимым от кода.
 const firstTransaqTradesRowID = 21
 
-// spanFull — ширина графиков во всю сетку Grafana (24 колонки).
-const spanFull = 24
-
 // Запросы панелей 1–2 читают ДНЕВНУЮ витрину: top-10 за диапазон — это сумма по дням, и
 // сканировать минуты незачем (time-series практика «зерно под задачу», спека §7). $__dateFilter —
 // макрос плагина для Date-колонки; $__timeFilter здесь дал бы неявный каст Date → DateTime.
@@ -356,27 +353,13 @@ func NewTransaqTrades() *dashboard.DashboardBuilder {
 		WithPanel(ttOfzVolumesPanel())
 }
 
-// ttPanelDefaults — визуальные конвенции графиков: палитра classic, легенда снизу таблицей с
-// calcs, tooltip по одной серии, линия шириной 1 без заливки, градиента и соединения разрывов.
-// SpanNulls=false — пропуск в витрине (нет сделок или разрыв ленты) честно остаётся разрывом:
-// нули не подставляются, иначе отсутствие данных читалось бы как нулевой объём.
+// ttPanelDefaults — конвенции графиков: база timeseriesDefaults (SpanNulls=false — пропуск в витрине,
+// то есть нет сделок или разрыв ленты, честно остаётся разрывом: нули не подставляются, иначе
+// отсутствие данных читалось бы как нулевой объём) с легендой сумма/среднее/максимум, сглаженная
+// линия, рубли без дробной части.
 func ttPanelDefaults(builder *timeseries.PanelBuilder) *timeseries.PanelBuilder {
-	return builder.
-		Datasource(datasourceRef()).
-		ColorScheme(dashboard.NewFieldColorBuilder().Mode(dashboard.FieldColorModeIdPaletteClassic)).
-		Legend(common.NewVizLegendOptionsBuilder().
-			ShowLegend(true).
-			Placement(common.LegendPlacementBottom).
-			DisplayMode(common.LegendDisplayModeTable).
-			Calcs([]string{"sum", "mean", "max"})).
-		Tooltip(common.NewVizTooltipOptionsBuilder().
-			Mode(common.TooltipDisplayModeSingle).
-			Sort(common.SortOrderNone)).
-		LineWidth(1).
+	return timeseriesDefaults(builder, "sum", "mean", "max").
 		LineInterpolation(common.LineInterpolationSmooth).
-		FillOpacity(0).
-		GradientMode(common.GraphGradientModeNone).
-		SpanNulls(common.BoolOrFloat64{Bool: ptr(false)}).
 		Unit(units.Rubles).
 		Decimals(0)
 }
