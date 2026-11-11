@@ -101,7 +101,7 @@ DAGU_VERSION     ?= v2.18.2
 MKDOCS_VERSION ?= 9.7.7
 MKDOCS := uv run --with mkdocs-material==$(MKDOCS_VERSION) --python 3.12 mkdocs
 
-.PHONY: BINARY BUILD_DIR TARGET CH_DATA CH_PID CH_LOG GF_PREFIX GF_PID GF_LOG GF_PLUGINS DASHBOARDS MCP_CMD MCP_PUBLIC_URL MCP_SMOKE_CURL MKDOCS all lint fmt vet test build run ch-up ch-down ch-status ch-sql dev-check env-check STATS_key_rate_sources STATS_gold_thesis_sources STATS_rosstat_sources import mp-llm-eval archive-registry archive-list archive-restore build-ingest run-ingest mcp-run mcp-user edisclosure-login edisclosure-collect mcp-check grafana-mcp-run grafana-mcp-check mcp-auth-test staging-precheck deploy-staging-binary deps clean DAGU_URL deploy-staging-dagu-base deploy-staging-dagu deploy-staging-mcp deploy-staging-mcp-grafana deploy-staging-mlflow deploy-staging-data deploy deploy-staging deploy-staging-preflight deploy-staging-mcp-cert deploy-staging-smoke deploy-staging-notify-test upgrade-staging mcp-user-staging grafana-build grafana-validate grafana-up grafana-down grafana-deploy-test grafana-check grafana-test-token grafana-provision-staging grafana-provision-alerting-staging grafana-deploy-staging info docs-check docs-build docs-serve
+.PHONY: BINARY BUILD_DIR TARGET CH_DATA CH_PID CH_LOG GF_PREFIX GF_PID GF_LOG GF_PLUGINS DASHBOARDS MCP_CMD MCP_PUBLIC_URL MCP_SMOKE_CURL MKDOCS all lint fmt vet test build run ch-up ch-down ch-status ch-sql dev-check env-check STATS_key_rate_sources STATS_gold_thesis_sources STATS_rosstat_sources import mp-llm-eval archive-registry archive-list archive-restore build-ingest run-ingest mcp-run mcp-user edisclosure-login edisclosure-collect mcp-check grafana-mcp-run grafana-mcp-check mcp-auth-test staging-precheck deploy-staging-binary deps clean DAGU_URL deploy-staging-dagu-base deploy-staging-dagu deploy-staging-mcp deploy-staging-mcp-grafana deploy-staging-mlflow deploy-staging-data deploy deploy-staging deploy-staging-preflight deploy-staging-mcp-cert deploy-staging-smoke deploy-staging-notify-test upgrade-staging mcp-user-staging grafana-build grafana-validate grafana-up grafana-down grafana-deploy-test grafana-check grafana-test-token grafana-provision-staging grafana-provision-alerting-staging grafana-deploy-staging info docs-check docs-build docs-serve graphify-update
 
 all: lint test build build-ingest
 
@@ -971,4 +971,17 @@ docs-build:
 docs-serve:
 	python3 scripts/docs_build.py --out build/site-docs
 	$(MKDOCS) serve -f build/mkdocs.yml
+
+# Обновление графового индекса graphify (graphify-out/): инкрементальная переэкстракция
+# новых/изменённых/удалённых файлов. Запускать после pull main с влитым PR. Команда
+# `graphify update` — code-only (AST по коду, без LLM и ключей); семантика документов
+# обновляется только полным прогоном скилла graphify. Первый индекс строится полным
+# прогоном скилла, эта цель — только обновление существующего graphify-out/graph.json.
+# `make graphify-update ARGS=--force` — перезаписать graph.json, даже если узлов стало
+# меньше (после массовых удалений файлов).
+ARGS ?=
+graphify-update:
+	@command -v graphify >/dev/null 2>&1 || { echo "graphify не найден: установите uv tool install graphifyy"; exit 1; }
+	@test -f graphify-out/graph.json || { echo "индекс graphify-out/ не построен: выполните полный прогон скилла graphify"; exit 1; }
+	graphify update . $(ARGS)
 

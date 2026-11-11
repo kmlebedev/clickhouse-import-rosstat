@@ -28,6 +28,7 @@
 | `make docs-check` | проверить манифест docs-портала и прогнать офлайн-тесты генератора (`scripts/docs_build_test.py`) |
 | `make docs-build` | собрать docs-портал в `build/site` (генератор + `mkdocs build --strict`, mkdocs-material 9.7.7 через `uv`) |
 | `make docs-serve` | локальный просмотр docs-портала (`mkdocs serve`, http://localhost:8000) |
+| `make graphify-update` | обновить графовый индекс graphify (`graphify-out/`): инкрементальная переэкстракция новых/изменённых/удалённых файлов, code-only без LLM. Запускать после pull main с влитым PR; первичный индекс — полным прогоном скилла `graphify` |
 | `make mcp-run` | запустить MCP-сервер `mcp-clickhouse` в stdio вручную (нужен `CLICKHOUSE_PASSWORD`) |
 | `make mcp-user` | создать пользователя `kimi_reader` и выдать `GRANT SELECT` на витрины из `sql/mcp_kimi_reader.sql` (нужен `CLICKHOUSE_PASSWORD`, запущенный ClickHouse) |
 | `make mcp-check` | smoke-проверка MCP: инструменты, витрины, отказ на сырые таблицы; отдельно — артефакты фаз 3 и wgc-контура: витрины `v_gold_forecasts`, `v_gold_etf_flows` и `v_cb_gold_dynamics`, каталоги `webbridge` (20 рядов) и `wgc` (34 ряда), резолв `v_forecast_accuracy` и запрет сырой `gold_forecasts` (нужен `CLICKHOUSE_PASSWORD`, запущенный ClickHouse). Адрес переопределяется: `MCP_CHECK_HOST`/`MCP_CHECK_PORT` — для проверки staging через туннель |
@@ -60,6 +61,8 @@
 | Research-инженер | [`research-engineer`](../.kimi-code/skills/research-engineer/SKILL.md) | разведка источника, аудит, research-документ |
 
 Общий роутер — [AGENTS.md](../AGENTS.md); диспатч — [`subagent-dispatch`](../.kimi-code/skills/subagent-dispatch/SKILL.md).
+
+Инструментальный скилл [`graphify`](../.kimi-code/skills/graphify/SKILL.md) — графовый индекс кодовой базы: вопросы по архитектуре/связям файлов — запросами к `graphify-out/` (обновляется `make graphify-update`).
 
 Модельные скрипты, бэктесты и их офлайн-тесты вынесены в [`kmlebedev/bi-ml-models`](https://github.com/kmlebedev/bi-ml-models): там `models/`, `bi_ml/`, `tools/`, `testdata/` и `make test` (все наборы, без ClickHouse и сети; R-тесты пропускаются без `Rscript`). Здесь остаются Go-проверки (`make all`) и офлайн-тесты платформенных Python-инструментов:
 

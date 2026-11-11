@@ -150,6 +150,7 @@ ClickHouse — аналитическая реплика MLflow: run'ы эксп
 | `make docs-check` / `make docs-build` | проверка и сборка docs-портала |
 | `make mcp-check` | MCP ClickHouse end-to-end (витрины, сырые таблицы закрыты) |
 | `make grafana-mcp-check` | MCP Grafana end-to-end |
+| `make graphify-update` | обновление графового индекса graphify (`graphify-out/`) после влива PR в main; code-only, без LLM |
 | `make deploy` / `make deploy-staging` | деплой на staging: бинарник, dagu, mcp-clickhouse, mcp-grafana, mlflow |
 
 Модели, бэктесты, gate, MLflow-клиент и live-проверки живут в отдельном репозитории [`kmlebedev/bi-ml-models`](https://github.com/kmlebedev/bi-ml-models): `make cpi-nowcast`, `make key-rate-model`, `make key-rate-forecast-log`, `make ml-gate`, `make ml-live-check`, `make mlflow-*`, `make cb-comp-*`, `make ppi-*`, `make ppi-sa-*`. Здесь остаются ingest-endpoint `forecast_log`, схема `ml_runs`/`ml_predictions`, витрины `v_ml_*`, резолвер `forecast_resolve` и staging-сервис MLflow.
@@ -166,6 +167,8 @@ ClickHouse — аналитическая реплика MLflow: run'ы эксп
 | Главный редактор | [`editor-in-chief`](.kimi-code/skills/editor-in-chief/SKILL.md) |
 
 Общий роутер — [AGENTS.md](AGENTS.md); диспатч субагентов — [`subagent-dispatch`](.kimi-code/skills/subagent-dispatch/SKILL.md). Скилы не отменяют Go-стандарт для DDL/импортёров.
+
+Инструментальный скилл [`graphify`](.kimi-code/skills/graphify/SKILL.md) — графовый индекс кодовой базы: вопросы по архитектуре/связям файлов обрабатываются запросами к `graphify-out/` (индекс обновляется `make graphify-update` после влива PR в main).
 
 ### Подключение как плагин LLM-клиента
 
