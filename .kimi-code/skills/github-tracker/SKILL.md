@@ -24,6 +24,8 @@ whenToUse: When starting, updating, or closing a roadmap item; creating sub-issu
 
 Пункт живёт ровно в одном роадмапе. Если работа упомянута в двух файлах, issue заводится у владельца, а второй файл получает ссылку на этот issue. Следующий новый роадмап не заводится без решения владельца.
 
+**Где живёт issue.** Issue ML-пунктов (`role:ml`) с 2026-11-12 открываются в [`kmlebedev/bi-ml-models`](https://github.com/kmlebedev/bi-ml-models) — там же их Q&A и PR; файл роадмапа и Project V2 «clickhouse-import-rosstat — Roadmap» остаются здесь, и статус пункта по-прежнему каноничен в файле. Остальные роли (`go`, `python`, `research`, `mixed`, `shared`) — issue в этом репозитории. Нативный `gh issue transfer` сохраняет комментарии, assignee, labels (по имени) и milestone (по имени и due date) и редиректит старый URL на новый, поэтому исторические ссылки в `docs/` не переписываются.
+
 ## 2. Создание issue
 
 Заголовок: `[<slug>/<item-id>] <короткое имя пункта>` — слаг обязателен, он снимает коллизию одинаковых номеров.
