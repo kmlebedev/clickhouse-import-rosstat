@@ -45,11 +45,13 @@
 
 ## Task 5. Проверка
 
-- [ ] `make all` — gofmt, golangci-lint, `go vet`, `go test -race`, обе сборки.
-- [x] `make docs-check`.
-- [ ] Живой прогон `make import STAT=cbr_mt_forecast` (dev-ClickHouse поднимает владелец):
-      `Imported 64 rows` за выпуск 2026-11-05, повтор — no-op, spot `key_rate_avg` 2026 = 14.6/14.6.
-      Если ClickHouse не поднят — «не проверено», прогон оставить владельцу.
+- [x] `make all` — gofmt, golangci-lint, `go vet`, `go test -race`, обе сборки (exit 0).
+- [x] `make docs-check` — 48 страниц, 33 теста OK.
+- [x] Живой прогон (dev-ClickHouse): `make import STAT=cbr_mt_forecast` — выпуск 2026-11-05,
+      `импортировано 64 точек`, `Imported 64 rows`; повтор — no-op («новых выпусков нет
+      (комментариев 12: страниц 3, PDF 9; прогнозов 12; в таблице 24 выпусков)», `Imported 0 rows`);
+      spot в `v_cbr_mt_forecast`: `key_rate_avg` 2026 `release_date = 2026-11-05` → 14.6/14.6,
+      точек у выпуска 64, показателей 16.
 
 ## Task 6. PR
 
