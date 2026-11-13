@@ -286,5 +286,11 @@
     "page": "research-2026-11-06-rosstat-source-availability.md",
     "title": "Доступность Росстата: проверка рядов на dev",
     "section": "Исследования"
+  },
+  {
+    "source": "docs/research/2026-11-13-cpr-tov-rf-2026-availability.md",
+    "page": "research-2026-11-13-cpr-tov-rf-2026-availability.md",
+    "title": "Товарная книга весов ИПЦ 2026: где взять при 404",
+    "section": "Исследования"
   }
 ]

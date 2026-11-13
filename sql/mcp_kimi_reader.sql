@@ -26,6 +26,9 @@ GRANT SELECT ON default.v_rosstat_ppi TO kimi_reader;
 -- Месячная структура расходов и индексы ИПЦ по позициям (P0.4a #569): сырая
 -- rosstat_cpi_spr агенту не выдана — только витрина.
 GRANT SELECT ON default.v_rosstat_cpi_spr TO kimi_reader;
+-- Веса ИПЦ из книг Росстата (P0.4 #479): сырая rosstat_cpi_weights агенту не выдана —
+-- только витрина с комментариями таблицы и колонок.
+GRANT SELECT ON default.v_rosstat_cpi_weights TO kimi_reader;
 -- Недельный SA-агрегат ИПЦ (пункт key-rate/phase-4-weekly-sa-aggregate, #353):
 -- производный ряд weekly_cpi_sa; сырая таблица агенту не выдана — только витрина.
 GRANT SELECT ON default.v_weekly_cpi_sa TO kimi_reader;
