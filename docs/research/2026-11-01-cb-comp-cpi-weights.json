@@ -8,7 +8,10 @@
   "status": "in_progress_live_pending_source",
   "source": {
     "page": "https://rosstat.gov.ru/statistics/price",
-    "files": ["CPR_Tov_RF_2004-2026.xlsx", "CPR_Gr-tov-RF_2001-2026.xlsx"],
+    "files": [
+      "CPR_Tov_RF_2004-2026.xlsx",
+      "CPR_Gr-tov-RF_2001-2026.xlsx"
+    ],
     "selectors": {
       "items": "a[href*=\"cpr_tov_rf_2004-\" i]",
       "groups": "a[href*=\"cpr_gr-tov-rf_2001-\" i]",
@@ -18,7 +21,17 @@
       "page": "200, 877415 байт, все четыре книги CPR_* перечислены",
       "files": "404 на всех CPR_* (CPR_Tov_RF_2004-2026, CPR_Gr-tov-RF_2001-2026, CPR_Sub_2026), 682001 байт HTML-404",
       "control": "ipc_mes_09-2026.xlsx с той же страницы — 200, 37940 байт XLSX",
-      "variants_tried": ["CPR_tov_RF_2004-2026", "CPR_Gr-Tov-RF_2001-2026", "CPR_gr-tov-RF_2001-2026", "CPR_Gr-tov-rf_2001-2026", "cpr_tov_rf_2004-2026", "www.rosstat.gov.ru", "cookie-jar", "Referer", "браузерные заголовки"]
+      "variants_tried": [
+        "CPR_tov_RF_2004-2026",
+        "CPR_Gr-Tov-RF_2001-2026",
+        "CPR_gr-tov-RF_2001-2026",
+        "CPR_Gr-tov-rf_2001-2026",
+        "cpr_tov_rf_2004-2026",
+        "www.rosstat.gov.ru",
+        "cookie-jar",
+        "Referer",
+        "браузерные заголовки"
+      ]
     },
     "live_probe_2026_11_01": "failed: 502/timeout на странице и файлах",
     "wayback_snapshots": {
@@ -28,9 +41,13 @@
         "bytes": 559485,
         "sheets": "Содержание + 2001–2026 + 2022 (до 01.04) + 2022 (с 01.04)",
         "layout": "2016–2024: Наименование | СПР (без кодов); 2025–2026: Локальный код | Наименование | СПР",
-        "sample": {"2024_Мясопродукты": 9.072, "2026_code_10": 8.821},
+        "sample": {
+          "2024_Мясопродукты": 9.072,
+          "2026_code_10": 8.821
+        },
         "combined_group": "Воздушный и железнодорожный транспорт 0.859 % (2024); отдельные 9260/9290 не публикуются",
-        "rows_2024": 748
+        "rows_2024": 748,
+        "snapshot_url_date": "2026-09-09"
       },
       "items": {
         "file": "CPR_Tov_RF_2004-2025.xlsx",
@@ -42,7 +59,8 @@
         "sum_2025": 99.157,
         "items_2024": 559,
         "items_2025": 549,
-        "note": "не дотягивает до 100 на объединённую группу транспорта 0.859/0.843 %"
+        "note": "не дотягивает до 100 на объединённую группу транспорта 0.859/0.843 %",
+        "snapshot_url_date": "2025-04-04"
       },
       "items_2024_vintage": {
         "layout": "4 колонки N п/п | Код | Наименование | СПР, доли (0.00648), сумма 1.0 — нормируется к процентам по сумме листа"
@@ -52,10 +70,22 @@
   "importer": {
     "name": "rosstat_cpi_weights",
     "package": "rosstat/",
-    "files": ["rosstat/cpi_weights.go", "rosstat/cpi_weights_parse.go", "rosstat/cpi_weights_test.go"],
+    "files": [
+      "rosstat/cpi_weights.go",
+      "rosstat/cpi_weights_parse.go",
+      "rosstat/cpi_weights_test.go"
+    ],
     "table": "rosstat_cpi_weights",
     "key": "(year, variant, source_file, code)",
-    "columns": ["year UInt16", "variant LowCardinality(String)", "source_file LowCardinality(String)", "level UInt8", "code LowCardinality(String)", "name LowCardinality(String)", "weight Float64"],
+    "columns": [
+      "year UInt16",
+      "variant LowCardinality(String)",
+      "source_file LowCardinality(String)",
+      "level UInt8",
+      "code LowCardinality(String)",
+      "name LowCardinality(String)",
+      "weight Float64"
+    ],
     "engine": "ReplacingMergeTree",
     "view": "v_rosstat_cpi_weights",
     "catalog": "cpi-weight:<код>:<items|groups>",
@@ -68,14 +98,22 @@
     "validation": {
       "rows_items_min": 400,
       "rows_groups_min": 50,
-      "items_sum_range": [90.0, 100.5],
+      "items_sum_range": [
+        90.0,
+        100.5
+      ],
       "min_horizon_year": 2024,
       "duplicate_code": "ошибка при другом весе",
       "non_numeric_weight": "ошибка",
-      "dash_ellipsis": "пропуск"
+      "dash_ellipsis": "пропуск",
+      "codeless_rows": "строка без кода вне итоговой получает code='name:<название>' (групповой файл 2016–2024 целиком; 2025–2026 — объединённая группа транспорта)"
     },
-    "tests": 13,
-    "fixtures": ["rosstat/testdata/cpi_weights_items.xlsx", "rosstat/testdata/cpi_weights_groups.xlsx", "rosstat/testdata/price_page_cpr_case.html"]
+    "tests": 14,
+    "fixtures": [
+      "rosstat/testdata/cpi_weights_items.xlsx",
+      "rosstat/testdata/cpi_weights_groups.xlsx",
+      "rosstat/testdata/price_page_cpr_case.html"
+    ]
   },
   "gate": {
     "parse_and_years": "13 офлайн-тестов: оба макета, 2022 (два листа), дубль, сумма, отсутствие года, пустой лист, реальные фикстуры",
@@ -97,9 +135,53 @@
     "input": "v_rosstat_cpi_weights"
   },
   "not_verified": [
-    "живой импорт 2026-винтажа: файлы CPR_* — 404 на 2026-11-13",
-    "суммы 2026 и непрерывность годов в живом файле",
+    "живой импорт: файлы CPR_* — 404 на 2026-11-13",
+    "макет товарного листа 2026: книги CPR_Tov_RF_2004-2026.xlsx нет в Wayback",
+    "сумма товарного листа 2026 и её пара с объединённой группой (0.78 %)",
     "make mcp-check: витрина пуста до первого импорта",
     "годовая книга CPR_Gr-tov-RF_2026.xlsx: селектор её исключает, содержимое не исследовано"
+  ],
+  "full_books_probe": {
+    "date": "2026-11-13",
+    "method": "parseCPIWeights на полных книгах из Wayback (не урезанные фикстуры)",
+    "items_2025": {
+      "file": "CPR_Tov_RF_2004-2025.xlsx",
+      "snapshot": "2025-04-04",
+      "bytes": 487356,
+      "sheets": 23,
+      "points": 11106,
+      "years": "2004–2025",
+      "sums": {
+        "2004-2023": 100.0,
+        "2024": 99.141,
+        "2025": 99.157
+      },
+      "rows_by_year": "446→567",
+      "code_803_since": 2023
+    },
+    "groups_2026": {
+      "file": "CPR_Gr-tov-RF_2001-2026.xlsx",
+      "snapshot": "2026-09-09",
+      "bytes": 559485,
+      "sheets": 28,
+      "points": 18412,
+      "years": "2001–2026",
+      "layout": "2016–2024 — без кодов; 2025–2026 — локальные коды (737/743 строки); 930.АГ есть; 9260/9290 нет",
+      "combined_transport": {
+        "2024": 0.859,
+        "2025": 0.843,
+        "2026": 0.78,
+        "note": "единственная строка без кода в 2025–2026; хранится как name:…"
+      },
+      "variants_2022": [
+        "before-2022-04-01",
+        "from-2022-04-01"
+      ]
+    },
+    "items_2026": "нет в Wayback ни в одном написании (CPR_Tov_RF_2004-2026.xlsx, CPR_Sub_2026.xlsx)"
+  },
+  "fixes": [
+    "регистронезависимые селекторы ссылок ( i) — живая страница 2026-11-13 пишет CPR_Tov_RF_…/CPR_Gr-tov-RF_…",
+    "строка без кода в книге с кодами (объединённая группа транспорта 2025–2026) больше не теряется: code='name:…'"
   ]
 }
