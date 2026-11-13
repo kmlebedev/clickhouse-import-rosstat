@@ -1,6 +1,6 @@
 # Реестр роадмапов и правила GitHub-трекера
 
-> **2026-11-10.** ML-контур (модели, бэктесты, gate, MLflow-клиент, live-проверки) вынесен в [`kmlebedev/bi-ml-models`](https://github.com/kmlebedev/bi-ml-models). Команды `make cpi-*`, `make cb-comp-*`, `make key-rate-model`, `make ml-*`, `make ppi-*` и пути `scripts/models/...` ниже — исторические протоколы приёмки; актуальные команды и model cards — в README нового репозитория. Issue, Project V2 и статусы пунктов остаются здесь.
+> **2026-11-10.** ML-контур (модели, бэктесты, gate, MLflow-клиент, live-проверки) вынесен в [`kmlebedev/bi-ml-models`](https://github.com/kmlebedev/bi-ml-models). Команды `make cpi-*`, `make cb-comp-*`, `make key-rate-model`, `make ml-*`, `make ppi-*` и пути `scripts/models/...` ниже — исторические протоколы приёмки; актуальные команды и model cards — в README нового репозитория. Issue ML-пунктов (`role:ml`) с 2026-11-12 открываются в [`kmlebedev/bi-ml-models`](https://github.com/kmlebedev/bi-ml-models); файлы роадмапов, Project V2 и статусы пунктов остаются здесь, старые URL перенесённых issue редиректят на новые.
 
 
 **Дата:** 17 октября 2026 г.

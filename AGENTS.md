@@ -22,7 +22,7 @@
 
 Скилы не отменяют правила 1–12 и [стандарт пакета импортёров](docs/IMPORTER_PACKAGE_STANDARD.md). Смешанный пункт (например, #184) делится по ролям в спеке/плане; Go-часть ревьюит Go-разработчик, ML-часть — ML-инженер; приёмка гейта и смена базы — ML-инженер-тимлид.
 
-**ML-разработка вынесена.** Модели, бэктесты, gate, MLflow-клиент и live-проверки живут в [`kmlebedev/bi-ml-models`](https://github.com/kmlebedev/bi-ml-models); здесь остаются схема `ml_runs`/`ml_predictions`, `forecast_log`, `forecast_resolve`, витрины `v_ml_*`, DAG, дашборды и staging-деплой MLflow. ML-задача начинается в том репозитории, а issue/роадмап — здесь.
+**ML-разработка вынесена.** Модели, бэктесты, gate, MLflow-клиент и live-проверки живут в [`kmlebedev/bi-ml-models`](https://github.com/kmlebedev/bi-ml-models); здесь остаются схема `ml_runs`/`ml_predictions`, `forecast_log`, `forecast_resolve`, витрины `v_ml_*`, DAG, дашборды и staging-деплой MLflow. ML-задача начинается в том репозитории; issue ML-пунктов (`role:ml`) с 2026-11-12 открываются там же (`#565`), а файлы роадмапов, Project V2 и статусы пунктов — здесь.
 
 Плагин: скилы `.kimi-code/skills/` — для сессий в этом репозитории и плагином не публикуются. LLM-плагин даёт MCP `rosstat-staging` к витринам `v_*` и один скил `rosstat-sql` (правила запросов к ним; общий источник для `dashboard-migration` и `editor-in-chief`) и живёт в отдельном репозитории [`kmlebedev/rosstat-mcp`](https://github.com/kmlebedev/rosstat-mcp).
 
