@@ -3,7 +3,7 @@
 > **Пункт:** `key-rate/phase-4-cb-comp-88-groups-live` P0.4, зонтик [#419](https://github.com/kmlebedev/clickhouse-import-rosstat/issues/419), issue [#479](https://github.com/kmlebedev/clickhouse-import-rosstat/issues/479), `role:go`.
 > **Статус:** протокол до кода. Приёмка не пересматривается после результатов.
 > **Связанные:** стандарт [IMPORTER_PACKAGE_STANDARD.md](../../IMPORTER_PACKAGE_STANDARD.md) §14; [ARCHITECTURE.md](../../../ARCHITECTURE.md) §6.1–§6.3; отчёт [2026-11-01-cb-comp-cpi-weights.md](../../research/2026-11-01-cb-comp-cpi-weights.md).
-> **ML-часть вынесена.** Потребитель весов (live `load_weights`, сверка с архивом, покрытие) живёт в [`kmlebedev/bi-ml-models`](https://github.com/kmlebedev/bi-ml-models) — отдельная задача со ссылкой на эту витрину. Здесь — только публикация данных: таблица, каталог, витрина, грант.
+> **ML-часть вынесена.** Потребитель весов (live `load_weights`, сверка с архивом, покрытие) живёт в [`kmlebedev/bi-ml-models`](https://github.com/kmlebedev/bi-ml-models) — [issue #25](https://github.com/kmlebedev/bi-ml-models/issues/25), вход — витрина из этого PR. Здесь — только публикация данных: таблица, каталог, витрина, грант.
 
 ## 1. Гипотеза
 
