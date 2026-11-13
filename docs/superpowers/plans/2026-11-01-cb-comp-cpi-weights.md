@@ -15,7 +15,7 @@
 
 - [x] `rosstat/cpi_weights.go`: DDL `rosstat_cpi_weights`, внешний `Import()` (страница → две ссылки → два XLSX → два батча), per-file HEAD-префлайт, отказ restore, `AfterImport` (каталог + витрина).
 - [x] `rosstat/cpi_weights_parse.go`: разбор листов-годов, товарный и групповой макеты, `variant` 2022, `level`, синтетический `code='name:…'`, валидация §4 спеки.
-- [x] `rosstat/cpi_weights_test.go` + `testdata/cpi_weights_{items,groups}.xlsx`: 14 тестов — оба макета, 2022, дубль-конфликт, мусор, сумма, отсутствие года, пустой лист, реальные фикстуры.
+- [x] `rosstat/cpi_weights_test.go` + `testdata/cpi_weights_{items,groups}.xlsx`: 15 тестов — оба макета, 2022, дубль-конфликт, мусор, сумма, отсутствие года, пустой лист, реальные фикстуры.
 - [x] Селекторы регистронезависимы (`a[href*="cpr_tov_rf_2004-" i]`, `a[href*="cpr_gr-tov-rf_2001-" i]`); `TestCPIWeightsFindLink` — на `price_page.html` и `price_page_cpr_case.html`, групповая книга горизонта `2001-`, а не годовая.
 - [x] Реестр `rosstat/importers.go` (12-я запись), `dagu/rosstat.yaml` (12-й шаг в хвосте), энфорсер в `importers_test.go`.
 - [x] Витрина `v_rosstat_cpi_weights` (комментарии таблицы и колонок), каталог `cpi-weight:<code>:<items|groups>`, грант в `sql/mcp_kimi_reader.sql`, проверка в `scripts/mcp_check.py`.
