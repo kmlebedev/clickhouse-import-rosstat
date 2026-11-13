@@ -228,11 +228,12 @@ func cpiWeightValue(cell string) (float64, bool, error) {
 // cpiWeightIsTotal — итоговая строка «Все товары и услуги» (код 1 или подпись):
 // в сумму товарного листа она не входит, иначе лист дал бы 200 %.
 func cpiWeightIsTotal(point cpiWeightPoint) bool {
-	if point.code == "1" {
-		return true
-	}
-	name := strings.ToLower(strings.TrimSpace(point.name))
-	return strings.HasPrefix(name, "все товары")
+	return point.code == "1" || cpiWeightTotalName(point.name)
+}
+
+// cpiWeightTotalName — подпись итоговой строки книги.
+func cpiWeightTotalName(name string) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(name)), "все товары")
 }
 
 // cpiWeightsNameCode — синтетический ключ строки без кода: нормализованное
@@ -284,9 +285,9 @@ func parseCPIWeightsSheet(rows, formattedRows [][]string, sheet, file string, ye
 		case columns.combined:
 			code, name = cpiWeightSplitCodeName(cpiWeightCell(formatted, columns.name))
 		case columns.code < 0:
-			// Групповой файл 2016–2024: кода в источнике нет. Синтетический ключ
+			// Групповой файл 2016–2024: кода в источнике нет вовсе. Синтетический ключ
 			// `name:<нормализованное название>` держит строку в ключе таблицы и явно
-			// говорит, что это не код Росстата; модель читает только товарный файл.
+			// говорит, что это не код Росстата.
 			name = cpiWeightCell(formatted, columns.name)
 			code = cpiWeightsNameCode(name)
 		default:
@@ -294,6 +295,14 @@ func parseCPIWeightsSheet(rows, formattedRows [][]string, sheet, file string, ye
 			name = cpiWeightCell(formatted, columns.name)
 			if code == "" && name != "" {
 				code, name = cpiWeightSplitCodeName(name)
+			}
+			// В книге с кодами отдельные строки всё равно публикуются без кода: в
+			// групповом файле 2025–2026 так идёт объединённая группа «Воздушный и
+			// железнодорожный транспорт» (0,843 % в 2025, 0,78 % в 2026) — её вес нужен
+			// для сверки суммы пары файлов, а не только для чтения модели. Итоговая
+			// строка «Все товары и услуги» остаётся служебной и пропускается.
+			if code == "" && name != "" && file == cpiWeightsFileGroups && !cpiWeightTotalName(name) {
+				code = cpiWeightsNameCode(name)
 			}
 		}
 		if code == "" || name == "" {

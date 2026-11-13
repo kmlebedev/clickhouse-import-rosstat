@@ -274,6 +274,40 @@ func TestCPIWeightsGroupsAllLevels(t *testing.T) {
 	}
 }
 
+func TestCPIWeightsGroupsCodelessRowKept(t *testing.T) {
+	// В книге с кодами отдельные строки всё равно публикуются без кода: в групповом
+	// файле 2025–2026 так идёт объединённая группа «Воздушный и железнодорожный
+	// транспорт» (0,843 % в 2025, 0,78 % в 2026). Её вес нужен для сверки суммы
+	// пары файлов, поэтому строка получает синтетический ключ, а не теряется.
+	rows := cpiWeightsGroupsRows(false, 1.5)
+	rows = append(rows, []string{"", "Воздушный и железнодорожный транспорт", "0.859"})
+	rows = append(rows, []string{"", "Все товары и услуги", "100"})
+	book := cpiWeightsTestBook(t, map[string][][]string{
+		"2024": rows,
+		"2025": rows,
+		"2026": rows,
+	})
+	points, err := parseCPIWeights(book, cpiWeightsFileGroups)
+	if err != nil {
+		t.Fatalf("parseCPIWeights: %v", err)
+	}
+	found := 0
+	for _, point := range points {
+		if strings.HasPrefix(strings.ToLower(point.name), "все товары") {
+			t.Errorf("итоговая строка попала в точки: %+v", point)
+		}
+		if point.code == "name:воздушный и железнодорожный транспорт" {
+			found++
+			if point.weight != 0.859 {
+				t.Errorf("%d: вес %v, ожидалось 0,859", point.year, point.weight)
+			}
+		}
+	}
+	if found != 3 {
+		t.Errorf("строка без кода найдена %d раз, ожидалось 3 (по году)", found)
+	}
+}
+
 func TestCPIWeightsSmallSheetRejected(t *testing.T) {
 	rows := cpiWeightsItemsRows(false, 0.25)[:100]
 	book := cpiWeightsTestBook(t, map[string][][]string{
