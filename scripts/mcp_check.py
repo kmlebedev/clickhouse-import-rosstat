@@ -1385,10 +1385,13 @@ async def check(params, server_log):
             # равенством 169: односторонний контракт §11.4 стандарта требует описания
             # каждого разобранного ряда, а меньше 169 значит ни разу не отработавший
             # импортёр. T2-ряды исключены из базового запроса префиксами, иначе
-            # точное 169 перестало бы сходиться на любом живом прогоне.
+            # точное 169 перестало бы сходиться на любом живом прогоне. P0.4a (#569)
+            # добавляет cpi-spr:<код>:<метрика> — месячную структуру расходов и индексы;
+            # эти ряды исключены тем же префиксом.
             rosstat_catalog = text(await session.call_tool("run_query", {"query":
                 "SELECT count() AS n FROM v_series_catalog WHERE source = 'rosstat' "
-                "AND NOT startsWith(series, 'okpd2:') AND NOT startsWith(series, 'ved-weight:')"}))
+                "AND NOT startsWith(series, 'okpd2:') AND NOT startsWith(series, 'ved-weight:') "
+                "AND NOT startsWith(series, 'cpi-spr:')"}))
             rosstat_catalog_rows = result_rows(rosstat_catalog)
             rosstat_catalog_n = rosstat_catalog_rows[0].get("n") if rosstat_catalog_rows else None
             if rosstat_catalog_rows is None:
@@ -1432,6 +1435,36 @@ async def check(params, server_log):
                                           "прогнать make import STAT=rosstat_ppi_weights")
             failed += not expect("каталог rosstat_ppi_weights полон", rosstat_weights_n == 76, rosstat_weights_detail)
 
+            # P0.4a (#569): месячная публикация «Индексы потребительских цен и структура
+            # потребительских расходов» (ipc_spr_MM-YYYY.xlsx). Витрина — снимок по
+            # (год, месяц, код): структура расходов (вес ИПЦ) и три индекса; в файле все
+            # уровни, поэтому сумма листа ~987–989, а не 100. Точное число строк растёт
+            # с каждым выпуском, поэтому проверяются непустота, покрытие кодов и месяцев
+            # и горизонт, а не равенство.
+            cpi_spr_view = text(await session.call_tool("run_query", {"query":
+                "SELECT count() AS rows, uniqExact(code) AS codes, uniqExact(year * 100 + month) AS months, "
+                "min(year) AS mn, max(year) AS mx FROM v_rosstat_cpi_spr"}))
+            cpi_spr_rows = result_rows(cpi_spr_view)
+            cpi_spr_n = cpi_spr_rows[0].get("rows") if cpi_spr_rows else None
+            cpi_spr_codes = cpi_spr_rows[0].get("codes") if cpi_spr_rows else None
+            cpi_spr_months = cpi_spr_rows[0].get("months") if cpi_spr_rows else None
+            cpi_spr_mx = cpi_spr_rows[0].get("mx") if cpi_spr_rows else None
+            cpi_spr_ok = ((cpi_spr_n or 0) >= 15000 and (cpi_spr_codes or 0) >= 700
+                          and (cpi_spr_months or 0) >= 20 and (cpi_spr_mx or 0) >= 2026)
+            cpi_spr_detail = (f"строк: {cpi_spr_n}, кодов: {cpi_spr_codes}, месяцев: {cpi_spr_months}, "
+                              f"последний год: {cpi_spr_mx}")
+            if not cpi_spr_ok:
+                cpi_spr_detail += " — прогнать make import STAT=rosstat_cpi_spr"
+            failed += not expect("витрина v_rosstat_cpi_spr непуста", cpi_spr_ok, cpi_spr_detail)
+
+            cpi_spr_catalog = text(await session.call_tool("run_query", {"query":
+                "SELECT count() AS n FROM v_series_catalog WHERE source = 'rosstat' AND startsWith(series, 'cpi-spr:')"}))
+            cpi_spr_catalog_rows = result_rows(cpi_spr_catalog)
+            cpi_spr_catalog_n = cpi_spr_catalog_rows[0].get("n") if cpi_spr_catalog_rows else None
+            failed += not expect("каталог rosstat_cpi_spr непуст", (cpi_spr_catalog_n or 0) >= 3000,
+                                 f"рядов cpi-spr: {cpi_spr_catalog_n}, want >= 3000 — "
+                                 "прогнать make import STAT=rosstat_cpi_spr")
+
             # Сырые таблицы контура агенту не выданы — как macro_series и
             # cbr_households_b_mes: витрина — единственное место, где агент читает ряды
             # (единицы и привязка даты различаются между рядами и описаны в v_series_catalog).
@@ -1447,7 +1480,8 @@ async def check(params, server_log):
                                  ("rosstat_bi_cpi_weekly", "недельный агрегат ИПЦ из BI"),
                                  ("rosstat_ppi_ved", "ИЦП по ВЭД"),
                                  ("rosstat_ppi_product", "ИЦП по товарам/ОКПД2"),
-                                 ("rosstat_ppi_weights", "веса ИЦП по ВЭД")):
+                                 ("rosstat_ppi_weights", "веса ИЦП по ВЭД"),
+                                 ("rosstat_cpi_spr", "структура расходов и индексы ИПЦ по месяцам")):
                 raw = text(await session.call_tool("run_query", {"query": f"SELECT count() FROM {table}"}))
                 denied = "ACCESS_DENIED" in raw or "Not enough privileges" in raw
                 failed += not expect(f"сырая {table} закрыта ({label})", denied,

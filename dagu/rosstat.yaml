@@ -110,3 +110,15 @@ steps:
       limit: 3
       interval_sec: 300
 
+
+  # Тринадцатый шаг — месячная публикация «Индексы потребительских цен и структура
+  # потребительских расходов» (ipc_spr): структура расходов (веса ИПЦ) и индексы по
+  # позициям. Файл месячный, шаг недельный, поэтому будничный прогон — HEAD-префлайт
+  # и no-op. Шаг в хвосте цепочки.
+  - id: rosstat_cpi_spr
+    run: "$ROSSTAT_IMPORT_BIN"
+    env:
+      - CLICKHOUSE_IMPORT_STAT=rosstat_cpi_spr
+    retry_policy:
+      limit: 3
+      interval_sec: 300
