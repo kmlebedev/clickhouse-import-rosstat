@@ -6,7 +6,7 @@
 
 - [x] Issue #569, claim-комментарий, Project V2: `In Progress`, `Branch`, `Item`, `Phase`, `Priority`.
 - [x] Спека (первый коммит), план (второй коммит).
-- [x] Research по доступности книги 2026 — [2026-11-13-cpr-tov-rf-2026-availability.md](../../research/2026-11-13-cpr-tov-rf-2026-availability.md).
+- [x] Research по доступности книги 2026 — issue [#481](https://github.com/kmlebedev/clickhouse-import-rosstat/issues/481).
 
 ## 1. Код
 
@@ -19,7 +19,7 @@
 ## 2. Документы
 
 - [ ] `ARCHITECTURE.md` §2/§6.1/§6.2/§6.3/§7, `README.md`, `docs/IMPORTERS.md`, `docs/LIMITATIONS.md`, строка P0.4a в `docs/ROADMAP_KEY_RATE.md`.
-- [ ] Research-документ P0.4a не нужен: сверки уже в [2026-11-13-cpr-tov-rf-2026-availability.md](../../research/2026-11-13-cpr-tov-rf-2026-availability.md).
+- [ ] Research-документ P0.4a не нужен: сверки уже в research по доступности книги 2026 (issue [#481](https://github.com/kmlebedev/clickhouse-import-rosstat/issues/481)).
 
 ## 3. Прогоны
 

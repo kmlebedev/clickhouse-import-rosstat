@@ -2,7 +2,7 @@
 
 > **Пункт:** `key-rate/phase-4-cb-comp-88-groups-live` P0.4a, зонтик [#419](https://github.com/kmlebedev/clickhouse-import-rosstat/issues/419), issue [#569](https://github.com/kmlebedev/clickhouse-import-rosstat/issues/569), `role:go`.
 > **Статус:** протокол до кода. Критерий приёмки не пересматривается после результатов.
-> **Связанные:** research [2026-11-13-cpr-tov-rf-2026-availability.md](../../research/2026-11-13-cpr-tov-rf-2026-availability.md); импортёр книг — P0.4 [#479](https://github.com/kmlebedev/clickhouse-import-rosstat/issues/479); стандарт [IMPORTER_PACKAGE_STANDARD.md](../../IMPORTER_PACKAGE_STANDARD.md) §14; [ARCHITECTURE.md](../../../ARCHITECTURE.md) §6.2/§6.3.
+> **Связанные:** research по доступности книги 2026 (issue [#481](https://github.com/kmlebedev/clickhouse-import-rosstat/issues/481)); импортёр книг — P0.4 [#479](https://github.com/kmlebedev/clickhouse-import-rosstat/issues/479); стандарт [IMPORTER_PACKAGE_STANDARD.md](../../IMPORTER_PACKAGE_STANDARD.md) §14; [ARCHITECTURE.md](../../../ARCHITECTURE.md) §6.2/§6.3.
 
 ## 1. Гипотеза
 
