@@ -23,6 +23,9 @@ GRANT SELECT ON default.v_rosstat_macro TO kimi_reader;
 -- ИЦП: сырые ряды по ВЭД, товарам/ОКПД2, веса и производный SA-слой (T5 #280).
 -- Сырые rosstat_ppi_ved/product/weights и ppi_sa агенту не выданы — только витрина.
 GRANT SELECT ON default.v_rosstat_ppi TO kimi_reader;
+-- Месячная структура расходов и индексы ИПЦ по позициям (P0.4a #569): сырая
+-- rosstat_cpi_spr агенту не выдана — только витрина.
+GRANT SELECT ON default.v_rosstat_cpi_spr TO kimi_reader;
 -- Недельный SA-агрегат ИПЦ (пункт key-rate/phase-4-weekly-sa-aggregate, #353):
 -- производный ряд weekly_cpi_sa; сырая таблица агенту не выдана — только витрина.
 GRANT SELECT ON default.v_weekly_cpi_sa TO kimi_reader;
