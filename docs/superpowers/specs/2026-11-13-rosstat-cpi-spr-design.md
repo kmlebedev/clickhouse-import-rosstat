@@ -54,7 +54,7 @@ ORDER BY (year, month, code);
 
 **Идемпотентность.** HEAD-отпечаток файла (`util.HeadFingerprint`) + `util.PublicationKnown`/`SavePublication` (source `rosstat_cpi_spr`, name — имя файла) + `count() FROM rosstat_cpi_spr FINAL`: тот же файл и тот же счёт → no-op без скачивания; новый выпуск (новое имя) — полный импорт, который перезаписывает совпавшие месяцы по ключу и добавляет новый.
 
-**Регистрация/обвязка:** `rosstat/importers.go` (13-я запись + энфорсер), 13-й шаг в хвосте `dagu/rosstat.yaml`, `GRANT SELECT ON default.v_rosstat_cpi_spr`, проверка в `scripts/mcp_check.py`, `docs/IMPORTERS.md`, `ARCHITECTURE.md` §2/§6.1/§6.2/§6.3/§7, `README.md`, `docs/LIMITATIONS.md`, строка P0.4a в `docs/ROADMAP_KEY_RATE.md`.
+**Регистрация/обвязка:** `rosstat/importers.go` (12-я запись + энфорсер), 12-й шаг в хвосте `dagu/rosstat.yaml`, `GRANT SELECT ON default.v_rosstat_cpi_spr`, проверка в `scripts/mcp_check.py`, `docs/IMPORTERS.md`, `ARCHITECTURE.md` §2/§6.1/§6.2/§6.3/§7, `README.md`, `docs/LIMITATIONS.md`, строка P0.4a в `docs/ROADMAP_KEY_RATE.md`.
 
 ## 4. Валидация (fail-fast, до записи)
 
