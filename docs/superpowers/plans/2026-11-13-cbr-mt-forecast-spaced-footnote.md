@@ -41,7 +41,7 @@
 - [x] Спека [2026-10-17-cbr-mt-forecast-design.md](../specs/2026-10-17-cbr-mt-forecast-design.md):
       §3.3 — вторая форма сноски; §3.9 — третья фикстура; §4 — файл фикстуры.
 - [x] [ROADMAP_KEY_RATE.md](../../ROADMAP_KEY_RATE.md) §4.2 — пункт со статусом и ссылками.
-- [ ] Issue #567 — статус, `Closes #567` в PR (вне backticks), протокол приёмки — комментарием в PR.
+- [x] Issue #567 — статус In Progress → In Review, `Closes #567` в PR (вне backticks), протокол приёмки — в описании PR.
 
 ## Task 5. Проверка
 
@@ -55,5 +55,5 @@
 
 ## Task 6. PR
 
-- [ ] Один PR: пункт, `Closes #567`, источник, улика, запуск, протокол приёмки комментарием.
+- [x] Один PR: пункт, `Closes #567`, источник, улика, запуск, протокол приёмки — [#568](https://github.com/kmlebedev/clickhouse-import-rosstat/pull/568).
 - [ ] Staging после мержа и деплоя — действие владельца.
