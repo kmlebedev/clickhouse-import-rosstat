@@ -225,15 +225,20 @@ func cpiWeightValue(cell string) (float64, bool, error) {
 	return value, true, nil
 }
 
-// cpiWeightIsTotal — итоговая строка «Все товары и услуги» (код 1 или подпись):
-// в сумму товарного листа она не входит, иначе лист дал бы 200 %.
+// cpiWeightIsTotal — итоговая строка «Все товары и услуги»: в сумму листа она не
+// входит (иначе лист дал бы 200 %), а в таблицу не пишется вовсе.
 func cpiWeightIsTotal(point cpiWeightPoint) bool {
-	return point.code == "1" || cpiWeightTotalName(point.name)
+	return cpiWeightTotalName(point.name)
 }
 
-// cpiWeightTotalName — подпись итоговой строки книги.
+// cpiWeightTotalName — подпись итоговой строки книги: «Все товары и услуги»
+// (2009+ и товарный файл 2017+) или «Все товары и платные услуги» (более ранние
+// книги). Сравнение точное, а не по префиксу: «Все товары» (71,774 % в 2026),
+// «Все товары без алкогольных напитков», «Все товары необязательного пользования»,
+// БИПЦ-варианты — реальные агрегаты структуры, и выбрасывать их нельзя.
 func cpiWeightTotalName(name string) bool {
-	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(name)), "все товары")
+	normalized := strings.ToLower(strings.Join(strings.Fields(name), " "))
+	return normalized == "все товары и услуги" || normalized == "все товары и платные услуги"
 }
 
 // cpiWeightsNameCode — синтетический ключ строки без кода: нормализованное
@@ -311,6 +316,13 @@ func parseCPIWeightsSheet(rows, formattedRows [][]string, sheet, file string, ye
 			continue
 		}
 		if strings.EqualFold(code, "код") || strings.HasPrefix(strings.ToLower(name), "наименование") {
+			continue
+		}
+		if cpiWeightIsTotal(cpiWeightPoint{code: code, name: name}) {
+			// Итоговая строка «Все товары и услуги» — служебная: она не позиция
+			// структуры расходов, её вес всегда 100 и в витрине он удваивал бы сумму
+			// года (99,141 + 100). Проверки суммы её и так исключают, а каталог
+			// получал бы фиктивный ряд cpi-weight:1.
 			continue
 		}
 		level, err := cpiWeightLevel(cpiWeightCell(formatted, columns.level), i+1)

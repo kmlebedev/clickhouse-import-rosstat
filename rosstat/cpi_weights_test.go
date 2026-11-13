@@ -145,8 +145,8 @@ func TestCPIWeightsItemsSeparateLayout(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseCPIWeights: %v", err)
 	}
-	if len(points) != 3*401 {
-		t.Fatalf("точек %d, ожидалось %d", len(points), 3*401)
+	if len(points) != 3*400 {
+		t.Fatalf("точек %d, ожидалось %d", len(points), 3*400)
 	}
 	variants := map[string]bool{}
 	byCode := map[string]cpiWeightPoint{}
@@ -159,10 +159,13 @@ func TestCPIWeightsItemsSeparateLayout(t *testing.T) {
 	if len(variants) != 1 || !variants[""] {
 		t.Errorf("варианты %v, ожидался только пустой", variants)
 	}
-	for _, code := range []string{"803", "930.АГ", "1002", "1"} {
+	for _, code := range []string{"803", "930.АГ", "1002"} {
 		if _, ok := byCode[code]; !ok {
 			t.Errorf("в 2026 нет кода %s", code)
 		}
+	}
+	if _, ok := byCode["1"]; ok {
+		t.Error("итоговая строка попала в точки")
 	}
 	if got := byCode["803"].name; got != "Масло подсолнечное, л" {
 		t.Errorf("название 803 = %q", got)
@@ -212,8 +215,8 @@ func TestCPIWeights2022Variants(t *testing.T) {
 			variants[point.variant]++
 		}
 	}
-	if variants[cpiWeightsVariantBefore] != 401 || variants[cpiWeightsVariantFrom] != 401 {
-		t.Errorf("варианты 2022: %v, ожидалось по 401", variants)
+	if variants[cpiWeightsVariantBefore] != 400 || variants[cpiWeightsVariantFrom] != 400 {
+		t.Errorf("варианты 2022: %v, ожидалось по 400", variants)
 	}
 }
 
@@ -308,6 +311,39 @@ func TestCPIWeightsGroupsCodelessRowKept(t *testing.T) {
 	}
 }
 
+func TestCPIWeightsAggregatesKeptTotalsDropped(t *testing.T) {
+	// В групповой книге рядом с итогом «Все товары и услуги» (100 %) стоят реальные
+	// агрегаты структуры: «Все товары» (71,774 % в 2026), «Все товары без алкогольных
+	// напитков», «Все товары и платные услуги» прежних лет (это итог, а не агрегат).
+	// Итог в витрину не пишется (иначе сумма года удваивалась бы), агрегаты — пишутся.
+	rows := cpiWeightsGroupsRows(false, 1.5)
+	rows = append(rows,
+		[]string{"2", "Все товары", "71.774"},
+		[]string{"7", "Все товары без алкогольных напитков", "67.2"},
+		[]string{"", "Все товары и услуги", "100"},
+	)
+	book := cpiWeightsTestBook(t, map[string][][]string{"2026": rows})
+	points, err := parseCPIWeights(book, cpiWeightsFileGroups)
+	if err != nil {
+		t.Fatalf("parseCPIWeights: %v", err)
+	}
+	byCode := map[string]cpiWeightPoint{}
+	for _, point := range points {
+		byCode[point.code] = point
+	}
+	if _, ok := byCode["2"]; !ok {
+		t.Error("агрегат «Все товары» (код 2) потерян")
+	}
+	if _, ok := byCode["7"]; !ok {
+		t.Error("агрегат «Все товары без алкогольных напитков» (код 7) потерян")
+	}
+	for code, point := range byCode {
+		if cpiWeightIsTotal(point) {
+			t.Errorf("итоговая строка попала в точки: %s %q", code, point.name)
+		}
+	}
+}
+
 func TestCPIWeightsSmallSheetRejected(t *testing.T) {
 	rows := cpiWeightsItemsRows(false, 0.25)[:100]
 	book := cpiWeightsTestBook(t, map[string][][]string{
@@ -365,9 +401,8 @@ func TestCPIWeightsGroupFileFixture(t *testing.T) {
 	if coded.weight != 8.821 {
 		t.Errorf("2026 код 10 = %v, ожидалось 8.821", coded.weight)
 	}
-	total := byKey[cpiWeightKey{year: 2024, file: cpiWeightsFileGroups, code: "name:все товары и услуги"}]
-	if total.weight != 100 {
-		t.Errorf("2024 итоговая строка = %v, ожидалось 100", total.weight)
+	if _, ok := byKey[cpiWeightKey{year: 2024, file: cpiWeightsFileGroups, code: "name:все товары и услуги"}]; ok {
+		t.Error("итоговая строка группового файла попала в точки")
 	}
 }
 
@@ -398,11 +433,15 @@ func TestCPIWeightsItemsFileFixture(t *testing.T) {
 	if got := byKey[cpiWeightKey{year: 2025, file: cpiWeightsFileItems, code: "111"}].weight; got != 0.627 {
 		t.Errorf("2025 код 111 = %v, ожидалось 0.627", got)
 	}
-	if got := byKey[cpiWeightKey{year: 2024, file: cpiWeightsFileItems, code: "1"}].weight; got != 100 {
-		t.Errorf("2024 итоговая строка = %v, ожидалось 100", got)
+	if _, ok := byKey[cpiWeightKey{year: 2024, file: cpiWeightsFileItems, code: "1"}]; ok {
+		t.Error("итоговая строка «Все товары и услуги» попала в точки")
+	}
+	byYear := make(map[uint16]bool, len(points))
+	for _, point := range points {
+		byYear[point.year] = true
 	}
 	for year := uint16(2004); year <= 2025; year++ {
-		if _, ok := byKey[cpiWeightKey{year: year, file: cpiWeightsFileItems, code: "1"}]; !ok {
+		if !byYear[year] {
 			t.Errorf("нет листа за %d", year)
 		}
 	}
@@ -431,7 +470,7 @@ func TestCPIWeightsSharesLayout(t *testing.T) {
 	if got := byKey[cpiWeightKey{year: 2024, file: cpiWeightsFileItems, code: "1000"}].weight; got != 0.25 {
 		t.Errorf("2024 код 1000 = %v, ожидалось 0.25 после приведения долей к процентам", got)
 	}
-	if got := byKey[cpiWeightKey{year: 2024, file: cpiWeightsFileItems, code: "1"}].weight; got != 100 {
-		t.Errorf("2024 итоговая строка = %v, ожидалось 100", got)
+	if _, ok := byKey[cpiWeightKey{year: 2024, file: cpiWeightsFileItems, code: "1"}]; ok {
+		t.Error("итоговая строка попала в точки")
 	}
 }
