@@ -138,6 +138,12 @@ GRANT SELECT ON default.v_ml_live_accuracy TO kimi_reader;
 GRANT SELECT ON default.v_rosstat_okved2 TO kimi_reader;
 GRANT SELECT ON default.v_cbr_mp_bsu_map TO kimi_reader;
 GRANT SELECT ON default.v_cbr_mp_public_panel TO kimi_reader;
+-- Контур ключевой ставки (2026-11-14): ставки денежного рынка по срокам, ликвидность
+-- банковского сектора и винтажные прогнозы ЦБ из ОНДКП. Сырые cbr_mirac/cbr_liquidity/
+-- cbr_ondkp_forecast агенту не выданы — только витрины с комментариями.
+GRANT SELECT ON default.v_cbr_mirac TO kimi_reader;
+GRANT SELECT ON default.v_cbr_liquidity TO kimi_reader;
+GRANT SELECT ON default.v_cbr_ondkp_forecast TO kimi_reader;
 
 -- Рыночные ряды MOEX (пункт key-rate/phase-2-brent, #113): Brent-фронт-месяц.
 -- Сырая moex_market агенту не выдана — только витрина.

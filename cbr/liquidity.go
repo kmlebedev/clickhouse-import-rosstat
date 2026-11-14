@@ -33,6 +33,23 @@ const (
 	cbrLiquidityDailyFrom = "2014-01-01"
 	cbrLiquidityAvgFrom   = "2018-01-10"
 
+	// cbrLiquidityRevisionDays — перекрытие инкремента, дней. Источник ревизует уже
+	// опубликованные точки: дневная форма до окончания периода усреднения считает баланс
+	// по прогнозной величине УОР и после публикации факта уточняет его за период с начала
+	// периода усреднения (сноска *** формы), а форма усреднения пересчитывает первый день
+	// периода. max(date)+1 эти даты не перечитывает, поэтому инкремент начинается на
+	// 35 дней раньше последней точки: повтор прогона остаётся идемпотентным (ключ
+	// ReplacingMergeTree тот же), а ревизия попадает в таблицу следующим прогоном.
+	cbrLiquidityRevisionDays = 35
+
+	// cbrLiquidityAvgPadDays — запас окна формы усреднения, дней. Форма фильтрует строки
+	// по концу периода (или по полному покрытию окна), а не по первому дню: период,
+	// начинающийся на границе чанков, иначе не попадал ни в предыдущее окно (его конец
+	// больше To), ни в текущее (фильтр keep отбрасывал дату меньше begin). Запрос с
+	// запасом и keep от begin−35 гарантированно возвращает straddling-период; дубли
+	// схлопывает ReplacingMergeTree.
+	cbrLiquidityAvgPadDays = 35
+
 	// cbrLiquidityChunkPause — пауза между окнами: серия запросов к одной форме не должна
 	// упираться в троттлинг ЦБ. Длина окна — та же, что у КБД (zcycChunks, 4 года): лимита
 	// диапазона у формы нет (13 лет отдаются целиком), окна по 4 года выбраны как у КБД,
@@ -239,13 +256,10 @@ var cbrLiquiditySources = []struct {
 // Точки вне запрошенного окна отбрасываются — ЦБ на пустой/будущий диапазон отдаёт
 // последнюю строку.
 //
-// Ограничение инкремента (сознательно не меняется): max(date)+1 не перечитывает уже
-// записанные даты, поэтому уточнения источника не подхватываются. У дневной формы после
-// публикации фактического значения УОР ЦБ уточняет баланс ликвидности за период с начала
-// текущего периода усреднения (сноска *** формы), а у формы усреднения пересчитывается
-// первый день периода; эти даты уже записаны — повтор их пропустит. Повтор прогона при
-// этом остаётся no-op-контрактом; перекрытие окна (ручной бэкфилл/отдельный пункт) —
-// единственный способ забрать ревизию.
+// Ревизии источника подхватываются перекрытием: инкремент начинается на
+// cbrLiquidityRevisionDays раньше последней точки (см. комментарий константы), поэтому
+// уточнения УОР и первый день периода усреднения попадают в таблицу следующим прогоном,
+// а ключ ReplacingMergeTree сохраняет идемпотентность повтора.
 func cbrLiquidityCraw(_ string, conn driver.Conn) (count int64, err error) {
 	var all []cbrLiquidityPoint
 	for _, source := range cbrLiquiditySources {
@@ -261,7 +275,10 @@ func cbrLiquidityCraw(_ string, conn driver.Conn) (count int64, err error) {
 		firstRun := last.Before(historyFrom)
 		start := historyFrom
 		if !firstRun {
-			start = last.AddDate(0, 0, 1)
+			start = last.AddDate(0, 0, -cbrLiquidityRevisionDays)
+			if start.Before(historyFrom) {
+				start = historyFrom
+			}
 		}
 		to := zcycDateUTC(time.Now())
 		if start.After(to) {
@@ -275,8 +292,9 @@ func cbrLiquidityCraw(_ string, conn driver.Conn) (count int64, err error) {
 				time.Sleep(cbrLiquidityChunkPause)
 			}
 			begin, end := chunk[0], chunk[1]
+			queryBegin, keepFrom := cbrLiquidityWindowBounds(source.kind, begin)
 			window := begin.Format("2006-01-02") + ".." + end.Format("2006-01-02")
-			url, err := util.UniDbQueryURL(source.url, begin, end)
+			url, err := util.UniDbQueryURL(source.url, queryBegin, end)
 			if err != nil {
 				return 0, fmt.Errorf("%s: окно %s: %w", cbrLiquidityTable, window, err)
 			}
@@ -288,7 +306,7 @@ func cbrLiquidityCraw(_ string, conn driver.Conn) (count int64, err error) {
 			if err != nil {
 				return 0, fmt.Errorf("%s: окно %s, %s: %w", cbrLiquidityTable, window, url, err)
 			}
-			kept := cbrLiquidityPointsInRange(points, begin, end)
+			kept := cbrLiquidityPointsInRange(points, keepFrom, end)
 			if len(kept) == 0 && i < len(chunks)-1 {
 				return 0, fmt.Errorf("%s: пустое историческое окно %s (%s): нет точек в диапазоне", cbrLiquidityTable, window, url)
 			}
@@ -325,6 +343,20 @@ func cbrLiquidityCraw(_ string, conn driver.Conn) (count int64, err error) {
 	return count, nil
 }
 
+// cbrLiquidityWindowBounds — границы запроса и фильтра keep для окна бэкфилла. Дневная
+// форма фильтрует строки по самой дате, поэтому окно совпадает с чанком. Форма усреднения
+// фильтрует по концу периода (или полному покрытию окна), а дата строки — первый день
+// периода: период, начинающийся на границе чанков, иначе не попал бы ни в предыдущее окно
+// (конец больше To), ни в текущее (дата меньше begin). Запрос с запасом и keep от той же
+// даты возвращает straddling-период; дубли схлопывает ReplacingMergeTree.
+func cbrLiquidityWindowBounds(kind string, begin time.Time) (queryBegin, keepFrom time.Time) {
+	if kind == cbrLiquidityKindAvg {
+		queryBegin = begin.AddDate(0, 0, -cbrLiquidityAvgPadDays)
+		return queryBegin, queryBegin
+	}
+	return begin, begin
+}
+
 // cbrLiquidityPointsInRange оставляет точки окна [from, to] включительно: ЦБ на пустой
 // диапазон отдаёт последнюю доступную строку, и она не является точкой этого окна.
 func cbrLiquidityPointsInRange(points []cbrLiquidityPoint, from, to time.Time) []cbrLiquidityPoint {
@@ -350,4 +382,5 @@ var cbrLiquidityImporter = &cbrLiquidity{ClickHouseImport: util.ClickHouseImport
 	CreateTable: []string{cbrLiquidityDdl},
 	DataUrl:     cbrLiquidityDailyUrl,
 	CrawFunc:    cbrLiquidityCraw,
+	AfterImport: afterCbrSeries(cbrLiquiditySeriesMeta, cbrLiquidityView),
 }}

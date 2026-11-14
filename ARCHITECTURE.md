@@ -150,10 +150,24 @@ cbr/               — ЦБ РФ, все источники cbr.ru: key_rate, cu
                      витрины v_cbr_macro/v_cbr_bop/v_cbr_survey/v_cbr_mo_br/v_cbr_dip_bulletin/v_cbr_mt_forecast/v_cbr_psk)
                      публикует сам шаблон через AfterImport, а витрину v_cbr_form101 — собственный Import() импортёра
                      (no-op-путь `cbr_dip_bulletin` производные не публикует, а `cbr_mt_forecast` публикует их в начале своего Import() — §8 п. 13).
-                     Единая точка регистрации импортёров — реестр cbr/importers.go, 34 записи (§3)
+                     Единая точка регистрации импортёров — реестр cbr/importers.go, 38 записей (§3)
                      Публичный кроссворд 87 BSU-кодов → отраслевые листы mp_survey_data.xlsx —
                      cbr_mp_bsu_map → таблица cbr_mp_bsu_map, витрины v_cbr_mp_bsu_map и
                      v_cbr_mp_public_panel (Task 7 #248; свой Import без сети, §6.1–§6.3)
+                     Контур ключевой ставки (2026-11-14, план docs/superpowers/plans/2026-11-14-key-rate-coverage-swarm.md):
+                     ставки денежного рынка cbr_mirac (mirac.go, разбор mirac_parse.go — три таблицы формы
+                     UniDbQuery /hd_base/mkr/mkr_base, 18 рядов, MIACR с 2000-08-01, каталог mirac_meta.go)
+                     → таблица cbr_mirac и витрина v_cbr_mirac; ликвидность банковского сектора cbr_liquidity
+                     (liquidity.go — две формы /hd_base/bliquidity и /hd_base/BSliquidityMA, ключ kind,
+                     25 рядов, инкремент с перекрытием 35 дней из-за ревизии УОР) → таблица cbr_liquidity и
+                     витрина v_cbr_liquidity; корпус ОНДКП cbr_ondkp (ondkp.go, разбор ondkp_parse.go —
+                     PDF через util.PDFText, ZIP-эпоха только метаданные) → реестр cbr_ondkp (28 выпусков
+                     2000–2027) и прогнозные точки cbr_ondkp_forecast (66 строк у 8 выпусков 2020–2027,
+                     каталог ondkp_meta.go), витрина v_cbr_ondkp_forecast; история инфляционных ожиданий
+                     cbr_infl_exp_hist (infl_exp_hist.go) пишет в общую cbr_infl_exp — статистическое
+                     приложение волны stat_Infl_exp_*.xlsx (машиночитаемо с 2010-04) плюс таблица бюллетеня,
+                     гейт по множеству дат; витрины и каталог публикует afterCbrSeries(meta, view) на каждом
+                     прогоне, включая no-op
 minfin/            — Минфин: fedbud_mes, fedbud_mesyats (исполнение федерального и консолидированного бюджета; общий шаблон minfinFileImporter, общий разбор листа «месяц», value Float64), oil_gas_mes (нефтегазовые доходы и НДПИ; Float64) и долговой контур ОФЗ — ofz_auction (годовые XLSX аукционов 2023–2026, свой Import() по набору файлов), debt_stock (внутренний .xls + внешний .xlsx + месячная структура ОФЗ; legacy .xls через xlsReader) и debt_service (бюджетная строка 2.13 + indicatorsBudget) → series_catalog (source='minfin', 'minfin_mesyats', 'minfin_oil_gas', 'minfin_ofz_auction', 'minfin_debt_stock', 'minfin_debt_service'), витрины v_minfin_budget и v_ofz_stress
 minec/             — Минэк: средняя за отчётный месяц цена нефти сорта «Юралс» (долл. США за баррель, 2018-01 … 2026-10; в источнике нет 2018-06/07) → macro_series (source='minec'), витрина v_minec_macro
 fns/               — ФНС: поступления налогов и сборов по форме № 1-НМ (месячные архивы `1nm<as-of>reg.zip`, внутренний лист `11О` «поступление налогов по территориям»): 47 рядов (вид налога × уровень бюджета) × 94 территории (РФ, 8 федеральных округов, 85 субъектов) × 70 месяцев 2020-01 … 2026-08; хранится опубликованное — накопленным итогом с начала года, тыс. руб., помесячное считает витрина → таблица fns_budget_revenue, каталог source='fns_budget_revenue', витрины v_fns_budget_revenue и v_fns_budget_revenue_monthly, DAG dagu/fns.yaml
@@ -1270,6 +1284,66 @@ CREATE TABLE IF NOT EXISTS cbr_zcyc (
     yield Float64                  -- доходность, % годовых
 ) ENGINE = ReplacingMergeTree ORDER BY (date, tenor);
 
+-- cbr/mirac.go — ставки денежного рынка MIACR/MIACR-IG/MIACR-B по срокам, импортёр
+-- cbr_mirac (пункт key-rate/phase-2-mirac, issue #576): три HTML-таблицы формы
+-- UniDbQuery /hd_base/mkr/mkr_base, 6 теноров, MIACR с 2000-08-01 (июль 2000 у формы
+-- пуст), MIACR-IG/B с 2010-01-11. Одна точка — ставка на торговый день и тенор: name —
+-- инструмент источника, tenor — канонический срок (1d/2-7d/8-30d/31-90d/91-180d/181d-1y),
+-- value — % годовых. Прочерк источника точкой не становится. Ключ (name, tenor, date);
+-- точки контроля публикации нет (URL окна содержит сегодняшнюю дату).
+CREATE TABLE IF NOT EXISTS cbr_mirac (
+    name LowCardinality(String),   -- MIACR / MIACR-IG / MIACR-B
+    tenor LowCardinality(String),  -- 1d, 2-7d, 8-30d, 31-90d, 91-180d, 181d-1y
+    date Date,                     -- торговый день
+    value Float64                  -- средневзвешенная фактическая ставка, % годовых
+) ENGINE = ReplacingMergeTree ORDER BY (name, tenor, date);
+
+-- cbr/liquidity.go — ликвидность банковского сектора, импортёр cbr_liquidity (пункт
+-- key-rate/phase-2-bank-liquidity, issue #577): две HTML-формы UniDbQuery —
+-- /hd_base/bliquidity (дневной срез, 14 рядов, с 2014-01-01) и /hd_base/BSliquidityMA
+-- (периоды усреднения, 11 рядов, с 2018-01-10, дата — первый день периода). Ключ
+-- (kind, series, date); kind различает дневную точку и первый день периода. Знак
+-- структурной позиции — дефицит (+), профицит (−); единицы — млрд руб., кроме
+-- key_rate_change_bp и ruonia_spread_bp (базисные пункты). Инкремент с перекрытием
+-- 35 дней: источник ревизует УОР и пересчитывает первый день периода.
+CREATE TABLE IF NOT EXISTS cbr_liquidity (
+    kind LowCardinality(String),    -- daily | averaging
+    series LowCardinality(String),  -- deficit, deficit_ex_corr, cb_claims*, …, ruonia_debt
+    date Date,                      -- daily: торговый день; averaging: первый день периода
+    value Float64                   -- млрд руб. (кроме *_bp — базисные пункты)
+) ENGINE = ReplacingMergeTree ORDER BY (kind, series, date);
+
+-- cbr/ondkp.go — корпус «Основных направлений единой государственной денежно-кредитной
+-- политики», импортёр cbr_ondkp (пункт key-rate/phase-2-ondkp-vintages, issue #572):
+-- реестр 28 выпусков 2000–2027. release_year — год политики (документ «на 2027»
+-- опубликован 28.10.2026), published_at — дата публикации (Nullable: у страниц
+-- 2021–2027 на индексе её нет, берётся со страницы выпуска), format — pdf | pdf-project |
+-- zip-doc, sha256/bytes — провенанс артефакта, forecast_rows — число прогнозных строк
+-- выпуска (сверяется с cbr_ondkp_forecast после вставки). Ключ release_year; гейт
+-- известности расширен на url: перевыложенный под новым адресом выпуск перечитывается.
+CREATE TABLE IF NOT EXISTS cbr_ondkp (
+    release_year UInt16,               -- год политики
+    published_at Nullable(Date),       -- дата публикации выпуска
+    url String,                        -- артефакт выпуска (PDF или ZIP «Вестника»)
+    format LowCardinality(String),     -- pdf | pdf-project | zip-doc
+    sha256 String,                     -- версия артефакта (провенанс)
+    bytes UInt64,                      -- размер артефакта
+    forecast_rows UInt16               -- число строк прогноза этого выпуска
+) ENGINE = ReplacingMergeTree ORDER BY (release_year);
+
+-- cbr/ondkp_forecast — прогнозные точки базового сценария ОНДКП: машиночитаемая таблица
+-- есть у выпусков 2020–2027 (66 строк: 2020–2021 — только инфляция и ВВП, с 2022 —
+-- плюс среднегодовая ключевая ставка). Одна точка — диапазон показателя на год прогноза;
+-- lo = hi — точечный прогноз. Ключ (release_year, indicator, year) — винтаж, а не
+-- перезапись: один и тот же год встречается в нескольких выпусках.
+CREATE TABLE IF NOT EXISTS cbr_ondkp_forecast (
+    release_year UInt16,               -- винтаж: год политики (as-of)
+    indicator LowCardinality(String),  -- key_rate | inflation | gdp
+    year UInt16,                       -- год прогноза
+    lo Float64,                        -- нижняя граница диапазона, %
+    hi Float64                         -- верхняя граница диапазона, % (lo = hi — точка)
+) ENGINE = ReplacingMergeTree ORDER BY (release_year, indicator, year);
+
 -- cbr/sors_funds.go — средства клиентов банков РФ, импортёр cbr_sors_funds (пункт
 -- key-rate/phase-2-cbr-sors-funds, issue #544): «Сведения о размещенных и привлеченных
 -- средствах», файл 02_01_Funds_all.xlsx — 21 ряд = 7 строк × 3 листа («итого»/«в рублях»/
@@ -2069,6 +2143,7 @@ CREATE TABLE IF NOT EXISTS domrf_price_index (
 - `v_bls_macro` — `macro_series FINAL WHERE source = 'bls'`: ряды BLS (CPI NSA/SA, безработица, NFP, зарплата, PPI, JOLTS)
 - `v_imf_macro` — **реализован** (`views/imf_macro.go`, импортёр `gold_views`): `macro_series FINAL WHERE source = 'imf'` — золотые резервы (monetary gold) из IMF IRFCL; фактически заполнен один ряд `ra_gold_chn` (значение — как отдаёт `IRFCLDT1_IRFCL40_USD`: USD, рыночная стоимость, не тонны; месячная частота, лаг ~2 мес.) — IRFCL через datasource даёт нули/пропуски по POL/CZE/TUR/RUS/KAZ/UZB, покупки ЦБ по ним — WGC/WebBridge (фаза 3 [GOLD_THESIS_DATA_ROADMAP.md](docs/GOLD_THESIS_DATA_ROADMAP.md)); каталог — `sql/imf_ra_gold_catalog.sql`; пишется сессионно через `POST /v1/manual_series` (`source = 'imf'`); дельты — `argMaxIf`/`argMinIf` по датам, тонны — делением на цену золота; грант `kimi_reader`
 - `v_cbr_macro` — ряды ЦБ РФ в единой форме `(source, series, date, value)`: `cbr_key_rate`, `cbr_currency_usd`, `cbr_gold`, `cbr_ruania` (7 метрик RUONIA), `cbr_m2`, `cbr_credit_m2x`, `cbr_bank_int_rate`, `cbr_int_rate_loans`, `cbr_int_rate_loans_ind`, `cbr_mortgage_rate`, `cbr_indicators_cpd`, `cbr_infl_exp`, `cbr_loans_to_individuals`, `cbr_loans_to_corporations`, `cbr_households_b_mes`, `cbr_sors_funds` (средства клиентов банков: счета организаций, депозиты юрлиц, вклады физлиц с учётом эскроу и без, счета эскроу, средства ИП — 21 ряд = 7 строк × 3 листа, коды с суффиксом `_rub`/`_fx`); ставки по кредитам физлицам и ипотека — здесь же; единицы и сдвиги дат — в `v_series_catalog` **RUONIA и Nullable (2026-11-14):** источник публикует пять метрик не в каждой строке (`trans`, `minRate`, `maxRate`, `percentile25`, `Percentile75`; и `vol` — тоже: 17 дней без оборота в фикстуре), поэтому в `cbr_ruania` они объявлены `Nullable(...)`, а витрина отбирает `WHERE <колонка> IS NOT NULL` — в `v_cbr_macro` попадают только реальные значения, ноль за отсутствующую метрику не пишется. Переход с обязательных колонок — `ALTER TABLE … MODIFY COLUMN` в `CreateTable` импортёра (прецедент — `cbr_psk`), история индекса расширена до 2010-01-11 (`FromDate=01/01/2010`, `docs/research/2026-11-14-ruania-history-source.md`).
+- `v_cbr_mirac`, `v_cbr_liquidity`, `v_cbr_ondkp_forecast` — витрины контура ключевой ставки (2026-11-14, `cbr/views.go`): ставки денежного рынка по срокам (3 инструмента × 6 сроков, MIACR с 2000-08-01, MIACR-IG/B с 2010-01-11); ликвидность банковского сектора в длинной форме (`kind` = `daily` с 2014-01-01 / `averaging` с 2018-01-10, знак «дефицит (+)/профицит (-)» — в комментарии колонки); винтажные прогнозы ЦБ из ОНДКП (`release_year` — as-of, `indicator` = `key_rate`/`inflation`/`gdp`, `lo`/`hi`, 66 строк у выпусков 2020–2027). Сырые `cbr_mirac`, `cbr_liquidity`, `cbr_ondkp`, `cbr_ondkp_forecast` агенту не выданы; каталоги — `v_series_catalog` с `source` = имени таблицы (18 + 25 + 3 ряда); гранты — `sql/mcp_kimi_reader.sql`; шаги — в хвосте `dagu/cbr.yaml`.
 - `v_cbr_psk` — **реализован** (`cbr/views.go` (`cbrPskView`), импортёр `cbr_psk`): среднерыночные значения полной стоимости потребительских кредитов (займов) кредитных организаций (тип ko) **dedicated-колонками** `date, category_code, category, psk_avg, psk_max, source_file` — отдельная витрина, а не ветка `v_cbr_macro`: у ПСК иная семантика (законодательный кап, применяемый в следующем квартале, а не ставка выданных кредитов) и широкая форма — обе величины одной строкой (прецеденты расширенных витрин — `v_cbr_mt_forecast`, `v_cbr_dip_bulletin`). `date` — конец квартала расчёта (значение применяется в следующем календарном квартале; сопоставлять по `toStartOfQuarter(date)`), `psk_max = psk_avg × 4/3` — кап по ч. 11 ст. 6 Федерального закона № 353-ФЗ, NULL — в выпуске предельное значение не публиковалось (а не ноль). Код категории не стабилен между редакциями таксономии: идентичность ряда — код вместе с наименованием. Комментарии таблицы и каждой колонки ставит `util.CreateView` из `cbrPskView`; грант `kimi_reader` — `sql/mcp_kimi_reader.sql`, проверки — `scripts/mcp_check.py` (витрина непуста, ипотечная категория 6.1.1, каталог «ПСК …», отказ 497 на сырой `cbr_psk`); сырая `cbr_psk` агенту **не выдана**
 - `v_cbr_bop` — **реализован** (`cbr/views.go` (`cbrBopView`), импортёры `cbr_bop_est` и `cbr_bop_standard`): платёжный баланс РФ в единой long-форме `source, series, date, value` — объединение (`UNION ALL`) двух выгрузок ЦБ, у которых **разные единицы**: оценки ключевых агрегатов (`source = 'cbr_bop_est'`, 51 ряд = 17 агрегатов × {месяц, квартал, накопленным итогом}, **млрд долларов США**, 170 точек на выпуск 15.10.2026 и 238 у прежнего 14.09.2026) и стандартной презентации (`source = 'cbr_bop_standard'`, 34 ряда = те же 17 верхних агрегатов × {квартал с 1 кв. 1994, год 1994–2025}, **млн долларов США**, 2 754 точки на винтаже 30.09.2026). Отдельная витрина, а не ветка `v_cbr_macro` (прецеденты — `v_cbr_survey`, `v_cbr_mo_br`): имена рядов двух выгрузок совпадают («Счет текущих операций»), а в общей витрине источник — литерал `'cbr'`, и ряды столкнулись бы; поэтому `source` здесь — **имя таблицы** (как у `v_bank_sber_spending`), и по нему различаются и ряды, и единицы. Дата точки: последний день отчётного месяца, квартала или года; у накопленного итога — последний день последнего покрытого месяца (сопоставлять по `toStartOfMonth(date)`, `toStartOfQuarter(date)` или `toYear(date)`). ⚠️ Ноль — **настоящее значение** (сальдо нулевое), а не пропуск данных; пустая ячейка источника точкой не становится (пропусков в текущих винтажах нет). Значения оценки ЦБ ревизуются следующим выпуском, ключ `(name, date)` перезаписывает точку. Комментарии таблицы и каждой колонки ставит `util.CreateView` из `cbrBopView` (`cbr/views.go`) — канонический текст комментариев живёт в коде и здесь не дублируется (в отличие от `v_keyrate_expectations`, чья копия приведена ниже); грант `kimi_reader` — `sql/mcp_kimi_reader.sql`, проверки — `scripts/mcp_check.py`; сырые `cbr_bop_est` и `cbr_bop_standard` агенту **не выданы**
 - `v_cbr_dip_bulletin` — **реализован** (`cbr/views.go` (`cbrDipView`), импортёр `cbr_dip_bulletin`): приложения ДИП в long-форме **с винтажными колонками** `source, series, date, value, release, release_id, publication_date` — отдельная витрина, а не ветка `v_cbr_macro` (прецеденты `v_cbr_bop`, `v_cbr_survey`): агент читает точку как «значение, каким его опубликовал выпуск `release` от `publication_date`», и один месяц лежит в ней столько раз, сколько выпусков его напечатало. `release` — номер выпуска («26-07»), `release_id` — id из URL приложения и часть ключа таблицы (гейт импортёра, §6.1); «последнее значение» без `release`/`publication_date` не определено, потому что **сезонно сглаженные ряды ДИП ревизуются между выпусками** (SA-безработица за 2023-11 равна 2.885274 в выпуске 24-01 и 2.916127 в 26-06), а число строк витрины — «сколько точек набрано», а не «сколько месяцев наблюдений» (см. «Ограничения» README). Комментарии таблицы и каждой колонки ставит `util.CreateView` из `cbrDipView` (`cbr/views.go`) — канонический текст комментариев живёт в коде и здесь не дублируется; грант `kimi_reader` — `sql/mcp_kimi_reader.sql`, проверки — `scripts/mcp_check.py` (витрина непуста, каталог 8 рядов, отказ 497 на сырой таблице); сырая `cbr_dip_bulletin` агенту **не выдана**
