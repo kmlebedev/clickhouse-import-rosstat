@@ -29,7 +29,7 @@ type ruoniaRow struct {
 // 2010–2018 — три значения (date, ruo, vol), 2017–2019 — четыре (последнее — метка
 // времени выгрузки), с 2020 — все одиннадцать (date, ruo, vol, trans, C, MinRate,
 // P25, P75, MaxRate, StatusXML, DateUpdate). Проверено 2026-11-14 на выгрузке
-// FromDate=01/01/2010 (research/2026-11-14-ruania-history-source.md §4).
+// FromDate=01/01/2010 (docs/research/2026-11-14-ruania-history-source.md §4).
 // Короткая строка — не ошибка: исторические метрики источник не публикует, и писать
 // за них ноль значило бы выдумать данные.
 func ruoniaParseRow(row []string) (ruoniaRow, error) {
@@ -163,7 +163,7 @@ func ruoniaImport(xlsx *excelize.File, batch driver.Batch) error {
 // индекса RUONIA устанавливается для 11 января 2010 года». До 2026-11-14 выгрузка
 // начиналась с 01/01/2019, и девять лет денежного рынка (2010–2018) — ровно цикл
 // ужесточения 2014–2015 — в БД отсутствовали, хотя источник их отдаёт
-// (research/2026-11-14-ruania-history-source.md, проба 2026-11-14: 4 150 строк,
+// (docs/research/2026-11-14-ruania-history-source.md, проба 2026-11-14: 4 150 строк,
 // 2010-01-11 … 2026-11-12 при FromDate=01/01/2010).
 const cbrRuoniaHistoryFrom = "2010-01-11"
 

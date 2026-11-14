@@ -140,7 +140,15 @@ func TestCbrRuaniaFixtureRows(t *testing.T) {
 	}
 	newest, oldest := time.Date(2026, time.October, 12, 0, 0, 0, 0, time.UTC), time.Date(2019, time.January, 9, 0, 0, 0, 0, time.UTC)
 	got := dates["cbr_ruania_ruo"]
-	if len(got) == 0 || !got[0].Equal(newest) || !got[len(got)-1].Equal(oldest) {
+	// Пустой ряд — отдельная диагностика: ниже сравниваются первый и последний элементы,
+	// и без этого guard'а проверка крайних дат паниковала бы на got[0] вместо понятного
+	// «ряда нет вовсе» (число строк разбора в сообщении отличает пустой прогон от
+	// разбора без метрики ставки).
+	if len(got) == 0 {
+		t.Errorf("ряд ставки cbr_ruania_ruo пуст: 0 точек при %d строках разбора — крайние даты сверять не по чему", len(rows))
+		return
+	}
+	if !got[0].Equal(newest) || !got[len(got)-1].Equal(oldest) {
 		t.Errorf("ряд ставки не 2026-10-12..2019-01-09: %v..%v (порядок файла — от свежей к старой)", got[0], got[len(got)-1])
 	}
 }
@@ -200,7 +208,7 @@ func TestCbrRuaniaEmptySheetFails(t *testing.T) {
 // TestCbrRuaniaUrlStartsAtHistoryStart: выгрузка начинается с начала индекса RUONIA
 // (11.01.2010), а не с 2019 года. До 2026-11-14 вечером FromDate в URL стоял 01/01/2019,
 // и девять лет денежного рынка терялись только из-за этой константы: источник отдаёт
-// историю с 2010-01-11 (research/2026-11-14-ruania-history-source.md).
+// историю с 2010-01-11 (docs/research/2026-11-14-ruania-history-source.md).
 func TestCbrRuaniaUrlStartsAtHistoryStart(t *testing.T) {
 	if got, want := cbrRuoniaFromDate, "01/01/2010"; got != want {
 		t.Errorf("FromDate выгрузки RUONIA = %q, want %q", got, want)
@@ -237,6 +245,67 @@ func TestRuoniaParseRowLegacy(t *testing.T) {
 	if row.trans != nil || row.minRate != nil || row.maxRate != nil || row.p25 != nil || row.p75 != nil {
 		t.Errorf("метрики исторической строки должны быть nil: trans=%v min=%v max=%v p25=%v p75=%v",
 			row.trans, row.minRate, row.maxRate, row.p25, row.p75)
+	}
+}
+
+// TestRuoniaParseRowFourValueRow — строка переходной эпохи 2017–2019: четыре значения,
+// где четвёртое — метка времени выгрузки (Excel-serial), а не число сделок. Ширина
+// меньше девяти колонок, поэтому разбор обязан остановиться на дате, ставке и объёме.
+// Фикстура этого случая не даёт: в закоммиченном testdata/ruonia.xlsx (выгрузка
+// FromDate=01/01/2019) все 1 908 строк шириной в 11 колонок, а четырёхколоночные
+// строки приносит только история 2017–2019 (ширина колонок выгрузки — контракт из
+// docs/research/2026-11-14-ruania-history-source.md §4). Если 42917.5 уедет в trans, ряд
+// cbr_ruania_trans наполнится метками времени вместо числа сделок — ловится здесь.
+func TestRuoniaParseRowFourValueRow(t *testing.T) {
+	row, err := ruoniaParseRow([]string{"06-01-17", "7.0000", "120.0", "42917.5"})
+	if err != nil {
+		t.Fatalf("разбор строки переходной эпохи: %v", err)
+	}
+	if got, want := row.date.Format("2006-01-02"), "2017-06-01"; got != want {
+		t.Errorf("дата %q, want %q", got, want)
+	}
+	if row.ruo != 7 {
+		t.Errorf("ставка %v, want 7", row.ruo)
+	}
+	if row.vol == nil || *row.vol != 120 {
+		t.Errorf("объём %v, want 120", row.vol)
+	}
+	if row.trans != nil || row.minRate != nil || row.maxRate != nil || row.p25 != nil || row.p75 != nil {
+		t.Errorf("метрики переходной эпохи должны быть nil (метка времени выгрузки — не trans): trans=%v min=%v max=%v p25=%v p75=%v",
+			row.trans, row.minRate, row.maxRate, row.p25, row.p75)
+	}
+}
+
+// TestRuoniaNumber: эвристика десятичного разделителя, на которой держится разбор обеих
+// эпох. Современные ячейки приходят с точкой как десятичной и запятой как разделителем
+// тысяч («1,073.1000»), исторические — с одиночной запятой как десятичной («13,92») или
+// с точкой («2.9800»); пробелы по краям не значимы. Правила зафиксированы примерами из
+// выгрузки FromDate=01/01/2010 (docs/research/2026-11-14-ruania-history-source.md): неверная
+// интерпретация запятой сдвигает ставку в 1000 раз, и ошибка молчаливая — разбор
+// проходит, ряд просто врёт.
+func TestRuoniaNumber(t *testing.T) {
+	for name, tc := range map[string]struct {
+		raw        string
+		normalized string
+		want       float32
+	}{
+		"одинокая запятая — десятичная": {"13,92", "13.92", 13.92},
+		"запятая и точка — тысячи":      {"1,073.1000", "1073.1000", 1073.1},
+		"точка как десятичная":          {"2.9800", "2.9800", 2.98},
+		"пробелы по краям":              {" 64,56 ", "64.56", 64.56},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := ruoniaNumber(tc.raw); got != tc.normalized {
+				t.Errorf("ruoniaNumber(%q) = %q, want %q", tc.raw, got, tc.normalized)
+			}
+			got, err := ruoniaFloat(tc.raw, "ruo")
+			if err != nil {
+				t.Fatalf("ruoniaFloat(%q): %v", tc.raw, err)
+			}
+			if got != tc.want {
+				t.Errorf("ruoniaFloat(%q) = %v, want %v", tc.raw, got, tc.want)
+			}
+		})
 	}
 }
 

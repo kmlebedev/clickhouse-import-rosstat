@@ -8,6 +8,14 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+// cbrMacroView — общая витрина макрорядов ЦБ (правило 11). Колонка value обязана
+// оставаться Float64, а не Nullable(Float64): это обещано её комментарием («Значение
+// ряда (Float64)») и читается агентами как контракт «пустой точки в витрине нет».
+// Поэтому шесть Nullable-метрик RUONIA (vol, trans, minRate, maxRate, percentile25,
+// Percentile75) разворачиваются assumeNotNull под фильтром IS NOT NULL: сам фильтр
+// убирает пустые строки, а assumeNotNull лишь сообщает движку то, что из него следует.
+// Без него toFloat64(Nullable(Float32)) даёт Nullable(Float64), и тип распространяется
+// на весь UNION ALL — то есть на все ряды витрины, включая ключевую ставку.
 var cbrMacroView = util.View{
 	Name: "v_cbr_macro",
 	Tables: []string{
@@ -21,12 +29,12 @@ var cbrMacroView = util.View{
 UNION ALL SELECT 'cbr', 'cbr_currency_usd', date, toFloat64(price) FROM cbr_currency_usd FINAL
 UNION ALL SELECT 'cbr', 'cbr_gold', date, toFloat64(price) FROM cbr_gold FINAL
 UNION ALL SELECT 'cbr', 'cbr_ruania_ruo', date, toFloat64(ruo) FROM cbr_ruania FINAL
-UNION ALL SELECT 'cbr', 'cbr_ruania_vol', date, toFloat64(vol) FROM cbr_ruania FINAL WHERE vol IS NOT NULL
-UNION ALL SELECT 'cbr', 'cbr_ruania_trans', date, toFloat64(trans) FROM cbr_ruania FINAL WHERE trans IS NOT NULL
-UNION ALL SELECT 'cbr', 'cbr_ruania_min_rate', date, toFloat64(minRate) FROM cbr_ruania FINAL WHERE minRate IS NOT NULL
-UNION ALL SELECT 'cbr', 'cbr_ruania_max_rate', date, toFloat64(maxRate) FROM cbr_ruania FINAL WHERE maxRate IS NOT NULL
-UNION ALL SELECT 'cbr', 'cbr_ruania_p25', date, toFloat64(percentile25) FROM cbr_ruania FINAL WHERE percentile25 IS NOT NULL
-UNION ALL SELECT 'cbr', 'cbr_ruania_p75', date, toFloat64(Percentile75) FROM cbr_ruania FINAL WHERE Percentile75 IS NOT NULL
+UNION ALL SELECT 'cbr', 'cbr_ruania_vol', date, toFloat64(assumeNotNull(vol)) FROM cbr_ruania FINAL WHERE vol IS NOT NULL
+UNION ALL SELECT 'cbr', 'cbr_ruania_trans', date, toFloat64(assumeNotNull(trans)) FROM cbr_ruania FINAL WHERE trans IS NOT NULL
+UNION ALL SELECT 'cbr', 'cbr_ruania_min_rate', date, toFloat64(assumeNotNull(minRate)) FROM cbr_ruania FINAL WHERE minRate IS NOT NULL
+UNION ALL SELECT 'cbr', 'cbr_ruania_max_rate', date, toFloat64(assumeNotNull(maxRate)) FROM cbr_ruania FINAL WHERE maxRate IS NOT NULL
+UNION ALL SELECT 'cbr', 'cbr_ruania_p25', date, toFloat64(assumeNotNull(percentile25)) FROM cbr_ruania FINAL WHERE percentile25 IS NOT NULL
+UNION ALL SELECT 'cbr', 'cbr_ruania_p75', date, toFloat64(assumeNotNull(Percentile75)) FROM cbr_ruania FINAL WHERE Percentile75 IS NOT NULL
 UNION ALL SELECT 'cbr', toString(name), date, toFloat64(balance) FROM cbr_m2 FINAL
 UNION ALL SELECT 'cbr', toString(name), date, toFloat64(value) FROM cbr_credit_m2x FINAL
 UNION ALL SELECT 'cbr', toString(name), date, toFloat64(rate) FROM cbr_bank_int_rate FINAL
