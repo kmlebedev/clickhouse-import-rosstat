@@ -3,7 +3,9 @@
 **Дата:** 14 ноября 2026 г. **Пункт:** `key-rate/phase-2-infl-exp-history`, issue
 [#575](https://github.com/kmlebedev/clickhouse-import-rosstat/issues/575). **План:**
 [2026-11-14-infl-exp-history-completion.md](../plans/2026-11-14-infl-exp-history-completion.md).
-**PR:** [#587](https://github.com/kmlebedev/clickhouse-import-rosstat/pull/587). **Статус:**
+**PR:** [#588](https://github.com/kmlebedev/clickhouse-import-rosstat/pull/588)
+(старая PDF-версия [#587](https://github.com/kmlebedev/clickhouse-import-rosstat/pull/587) закрыта
+как заменённая). **Статус:**
 спека завершения; код импортёра уже в `main` (PR #586) и не переписывается.
 
 ## 1. Зачем

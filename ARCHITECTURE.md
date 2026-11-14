@@ -166,7 +166,7 @@ cbr/               — ЦБ РФ, все источники cbr.ru: key_rate, cu
                      каталог ondkp_meta.go), витрина v_cbr_ondkp_forecast; история инфляционных ожиданий
                      cbr_infl_exp_hist (infl_exp_hist.go) пишет в общую cbr_infl_exp — статистическое
                      приложение волны stat_Infl_exp_*.xlsx (машиночитаемо с 2010-04) плюс таблица бюллетеня,
-                     гейт по множеству дат; витрины и каталог публикует afterCbrSeries(meta, view) на каждом
+                     гейт по множеству пар (ряд, дата); витрины и каталог публикует afterCbrSeries(meta, view) на каждом
                      прогоне, включая no-op
 minfin/            — Минфин: fedbud_mes, fedbud_mesyats (исполнение федерального и консолидированного бюджета; общий шаблон minfinFileImporter, общий разбор листа «месяц», value Float64), oil_gas_mes (нефтегазовые доходы и НДПИ; Float64) и долговой контур ОФЗ — ofz_auction (годовые XLSX аукционов 2023–2026, свой Import() по набору файлов), debt_stock (внутренний .xls + внешний .xlsx + месячная структура ОФЗ; legacy .xls через xlsReader) и debt_service (бюджетная строка 2.13 + indicatorsBudget) → series_catalog (source='minfin', 'minfin_mesyats', 'minfin_oil_gas', 'minfin_ofz_auction', 'minfin_debt_stock', 'minfin_debt_service'), витрины v_minfin_budget и v_ofz_stress
 minec/             — Минэк: средняя за отчётный месяц цена нефти сорта «Юралс» (долл. США за баррель, 2018-01 … 2026-10; в источнике нет 2018-06/07) → macro_series (source='minec'), витрина v_minec_macro
