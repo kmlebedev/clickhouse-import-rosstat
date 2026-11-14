@@ -1,6 +1,8 @@
 package cbr
 
 import (
+	"context"
+	"fmt"
 	"math"
 	"os"
 	"slices"
@@ -8,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
 	"github.com/xuri/excelize/v2"
 )
@@ -337,4 +340,114 @@ func TestCbrInflExpHistAnnexIgnoresSubgroups(t *testing.T) {
 		t.Fatalf("точек по рядам %v, want по 2: подгруппы не должны попадать в основной ряд", counts)
 	}
 	inflExpHistAnnexCheck(t, rows, inflExpObservedName, "2019-01-14", 10.1)
+}
+
+// inflExpHistKnownPoint — пара (ряд, дата) ответа гейта: те же две колонки, что читает
+// cbrInflExpKnownDates.
+type inflExpHistKnownPoint struct {
+	series string
+	date   time.Time
+}
+
+// inflExpHistFakeRows — ответ гейта cbrInflExpKnownDates. Объявлены только методы, которые
+// гейт вызывает, — Next, Scan, Err и Close; остальные унаследованы nil-заглушками driver.Rows
+// (вызов — паника: фейк их не обещал; модель — dipFakeRows, cbr/dip_bulletin_test.go).
+// Дата приходит тем же time.Time, что вернул бы clickhouse-go: полночь в таймзоне сессии.
+type inflExpHistFakeRows struct {
+	driver.Rows
+	points  []inflExpHistKnownPoint
+	pos     int
+	scanErr error
+	err     error
+	closed  bool
+}
+
+func (r *inflExpHistFakeRows) Next() bool {
+	if r.pos >= len(r.points) {
+		return false
+	}
+	r.pos++
+	return true
+}
+
+func (r *inflExpHistFakeRows) Scan(dest ...any) error {
+	if r.scanErr != nil {
+		return r.scanErr
+	}
+	if r.pos == 0 {
+		return fmt.Errorf("фейковая строка гейта: Scan без Next")
+	}
+	if len(dest) != 2 {
+		return fmt.Errorf("фейковая строка гейта: приёмников %d, ожидалось два (name, date)", len(dest))
+	}
+	name, ok := dest[0].(*string)
+	if !ok {
+		return fmt.Errorf("фейковая строка гейта: приёмник %T, ожидался *string (name)", dest[0])
+	}
+	date, ok := dest[1].(*time.Time)
+	if !ok {
+		return fmt.Errorf("фейковая строка гейта: приёмник %T, ожидался *time.Time (date)", dest[1])
+	}
+	point := r.points[r.pos-1]
+	*name = point.series
+	*date = point.date
+	return nil
+}
+
+func (r *inflExpHistFakeRows) Err() error { return r.err }
+
+func (r *inflExpHistFakeRows) Close() error {
+	r.closed = true
+	return nil
+}
+
+// TestCbrInflExpKnownDatesPairAndTimezone — гейт cbrInflExpKnownDates держит ключ (ряд, дата)
+// и календарный день даты. Два дефекта, которые поймал живой прогон 2026-11-14:
+//
+//  1. clickhouse-go возвращает Date в таймзоне сессии (Asia/Yekaterinburg, UTC+5): полночь
+//     14-го числа — это 2020-03-13T19:00Z, и .UTC() сдвинул бы ключ на предыдущие сутки.
+//     Гейт перестал бы узнавать уже импортированные месяцы и перекачивал весь архив заново.
+//  2. Гейт по одной дате отбрасывал второй ряд периода, когда приложение волны дало только
+//     первый: месяц, известный лишь у одного ряда, обязан дать ключ только этого ряда.
+func TestCbrInflExpKnownDatesPairAndTimezone(t *testing.T) {
+	zone := time.FixedZone("UTC+5", 5*3600)
+	rows := &inflExpHistFakeRows{points: []inflExpHistKnownPoint{
+		{series: inflExpObservedName, date: time.Date(2020, time.March, 14, 0, 0, 0, 0, zone)},
+		{series: inflExpExpectedName, date: time.Date(2020, time.March, 14, 0, 0, 0, 0, zone)},
+		{series: inflExpObservedName, date: time.Date(2020, time.February, 14, 0, 0, 0, 0, zone)},
+	}}
+	conn := &dipFakeConn{rows: rows}
+	known, err := cbrInflExpKnownDates(context.Background(), conn)
+	if err != nil {
+		t.Fatalf("cbrInflExpKnownDates: %v", err)
+	}
+	if len(conn.queries) != 1 || conn.queries[0] != cbrInflExpHistKnownQuery {
+		t.Errorf("запросы гейта = %v, ожидался один %q", conn.queries, cbrInflExpHistKnownQuery)
+	}
+	if !rows.closed {
+		t.Error("строки гейта не закрыты: соединение течёт на каждом прогоне")
+	}
+	// Ключ — тот же календарный день, что и у даты в UTC; сдвиг на 13-е — дефект таймзоны.
+	for _, series := range []string{inflExpObservedName, inflExpExpectedName} {
+		want := inflExpHistKey(series, time.Date(2020, time.March, 14, 0, 0, 0, 0, time.UTC))
+		if !known[want] {
+			t.Errorf("ключ %q не найден: дата в UTC+5 обязана остаться календарным днём", want)
+		}
+		shifted := inflExpHistKey(series, time.Date(2020, time.March, 13, 0, 0, 0, 0, time.UTC))
+		if known[shifted] {
+			t.Errorf("ключ %q найден: дата сдвинута на предыдущие сутки (потеря .UTC())", shifted)
+		}
+	}
+	// Месяц только у наблюдаемой инфляции: ключ ожидаемой не появляется.
+	februaryObserved := inflExpHistKey(inflExpObservedName, time.Date(2020, time.February, 14, 0, 0, 0, 0, time.UTC))
+	februaryExpected := inflExpHistKey(inflExpExpectedName, time.Date(2020, time.February, 14, 0, 0, 0, 0, time.UTC))
+	if !known[februaryObserved] {
+		t.Errorf("ключ %q не найден: месяц, известный у одного ряда, обязан остаться в множестве", februaryObserved)
+	}
+	if known[februaryExpected] {
+		t.Errorf("ключ %q найден, хотя у ожидаемой инфляции февраля 2020 нет: гейт по одной дате снова склеил ряды", februaryExpected)
+	}
+	if len(known) != 3 {
+		t.Errorf("известных ключей %d, want 3 (два ряда марта + один ряд февраля)", len(known))
+	}
 }
