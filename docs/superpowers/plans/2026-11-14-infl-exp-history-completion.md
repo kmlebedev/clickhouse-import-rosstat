@@ -3,7 +3,8 @@
 **Дата:** 14 ноября 2026 г.
 **Спека:** [2026-11-14-infl-exp-history-completion-design.md](../specs/2026-11-14-infl-exp-history-completion-design.md).
 **Пункт:** `key-rate/phase-2-infl-exp-history` (issue [#575](https://github.com/kmlebedev/clickhouse-import-rosstat/issues/575)).
-**PR:** [#587](https://github.com/kmlebedev/clickhouse-import-rosstat/pull/587).
+**PR:** [#588](https://github.com/kmlebedev/clickhouse-import-rosstat/pull/588) (PDF-версия
+[#587](https://github.com/kmlebedev/clickhouse-import-rosstat/pull/587) закрыта как заменённая).
 **Ветка:** `feat/infl-exp-history-completion`, worktree `.worktrees/infl-exp-history`, база `9601046`.
 
 ---
@@ -49,9 +50,12 @@
 
 ## Task 6. Проверка
 
-- [ ] `go test -race -count=1 ./cbr/ -run 'CbrInflExp'` — зелёный.
-- [ ] `make all` — gofmt, golangci-lint, `go vet`, `go test -race`, сборка.
-- [ ] `make docs-check`.
-- [ ] `dagu validate dagu/cbr.yaml`.
-- [ ] `make import STAT=cbr_infl_exp_hist` **не запускается**: живую приёмку делает
-      координатор после ревью (на живой прогон уже опирается приёмка T3).
+Прогнано координатором на итоговом дереве, см. протокол PR #588: `go test -race -count=1
+./cbr/ -run 'CbrInflExp'` — ok; `make all` — зелёный; `make docs-check` — 33 теста OK;
+`dagu validate dagu/cbr.yaml` — exit 0. `make import STAT=cbr_infl_exp_hist` запускает
+координатор: живая приёмка опирается на прогон T3.
+
+- [x] `go test -race -count=1 ./cbr/ -run 'CbrInflExp'` — зелёный.
+- [x] `make all` — gofmt, golangci-lint, `go vet`, `go test -race`, сборка.
+- [x] `make docs-check`.
+- [x] `dagu validate dagu/cbr.yaml`.

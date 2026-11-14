@@ -2,6 +2,7 @@ package cbr
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"os"
@@ -213,12 +214,13 @@ func TestCbrInflExpHistAnnexHorizontalShiftedDates(t *testing.T) {
 
 // TestCbrInflExpHistAnnexReal2409 — production-приложение волны 24-09 целиком: реальный файл
 // ЦБ `stat_Infl_exp_24-09.xlsx` (скачан браузерным UA байт-в-байт, не урезан — в отличие от
-// фикстур 17-01 и 19-11). Это доказательство приёмки #575: свежее приложение кумулятивно и
-// содержит всю историю ряда, поэтому именно его разбирает живой импортёр.
+// фикстур 17-01 и 19-11). Это доказательство приёмки #575: свежее приложение содержит историю
+// окна догона целиком (2017-01 … 2024-09) и именно его разбирает живой импортёр; до 2017 ряд в
+// приложении с пробелами, но окно начинается с 2017-01.
 //
-// Точек в окне догона считается по уникальным (ряд, дата): приложение повторяет хвост ряда
-// на нескольких листах («Данные для графиков», «Таблица», «Данные за все годы»), и импортёр
-// снимает повторы ключом гейта. 93 месяца окна минус четыре отсутствующих = 89 точек на ряд.
+// Точек в окне догона считается по уникальным (ряд, дата): приложение повторяет хвост ряда на
+// нескольких листах («Данные для графиков», «Данные за все годы»), и импортёр снимает повторы
+// ключом гейта. 93 месяца окна минус четыре отсутствующих = 89 точек на ряд.
 func TestCbrInflExpHistAnnexReal2409(t *testing.T) {
 	rows, err := inflExpHistAnnexRows(inflExpHistAnnexFixture(t, "testdata/infl_exp_hist_annex_24-09.xlsx"))
 	if err != nil {
@@ -275,6 +277,18 @@ func TestCbrInflExpHistAnnexReal2409(t *testing.T) {
 	inflExpHistAnnexCheck(t, rows, inflExpExpectedName, "2020-03-14", 7.8881)
 	inflExpHistAnnexCheck(t, rows, inflExpObservedName, "2020-08-14", 9.1901)
 	inflExpHistAnnexCheck(t, rows, inflExpExpectedName, "2020-08-14", 8.8231)
+
+	// Повторы хвоста на разных листах обязаны совпадать по значению: иначе побеждает первый
+	// лист, и расхождение источника осталось бы незамеченным.
+	values := map[string]float64{}
+	for _, row := range rows {
+		key := inflExpHistKey(row.Series, row.Date)
+		if previous, ok := values[key]; ok && math.Abs(previous-row.Value) > 1e-6 {
+			t.Errorf("%s на %s: значение %v на одном листе и %v на другом", row.Series,
+				row.Date.Format("2006-01-02"), previous, row.Value)
+		}
+		values[key] = row.Value
+	}
 }
 
 // inflExpHistAnnexCounts — число точек по рядам: ловит тихую потерю половины таблицы.
@@ -449,6 +463,27 @@ func TestCbrInflExpKnownDatesPairAndTimezone(t *testing.T) {
 	}
 	if len(known) != 3 {
 		t.Errorf("известных ключей %d, want 3 (два ряда марта + один ряд февраля)", len(known))
+	}
+}
+
+// TestCbrInflExpKnownDatesScanError — сбой чтения точки не проглатывается: гейт обязан вернуть
+// ошибку, иначе импортёр молча посчитает таблицу пустой и перезапишет весь архив.
+func TestCbrInflExpKnownDatesScanError(t *testing.T) {
+	conn := &dipFakeConn{rows: &inflExpHistFakeRows{
+		// Строка нужна, чтобы Next() вернул true и дошло до Scan: пустой ответ — штатное
+		// «известных точек нет», а не сбой чтения.
+		points:  []inflExpHistKnownPoint{{series: inflExpObservedName, date: time.Date(2020, time.March, 14, 0, 0, 0, 0, time.UTC)}},
+		scanErr: errors.New("битая строка"),
+	}}
+	known, err := cbrInflExpKnownDates(context.Background(), conn)
+	if err == nil {
+		t.Fatal("сбой Scan не вернул ошибку: гейт проглотил ошибку чтения")
+	}
+	if known != nil {
+		t.Errorf("известные ключи %v при ошибке, want nil", known)
+	}
+	if !strings.Contains(err.Error(), "чтение точки") {
+		t.Errorf("ошибка %q не называет шаг «чтение точки»", err)
 	}
 }
 
