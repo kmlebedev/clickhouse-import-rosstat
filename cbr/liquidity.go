@@ -31,11 +31,10 @@ const (
 	cbrLiquidityDailyFrom = "2014-01-01"
 	cbrLiquidityAvgFrom   = "2018-01-10"
 
-	// cbrLiquidityChunkYears — длина окна запроса: у форм ЦБ есть ограничение диапазона
-	// (у КБД ≈5 лет), поэтому бэкфилл режется на смежные окна, как у cbr_zcyc.
-	cbrLiquidityChunkYears = 4
 	// cbrLiquidityChunkPause — пауза между окнами: серия запросов к одной форме не должна
-	// упираться в троттлинг ЦБ.
+	// упираться в троттлинг ЦБ. Длина окна — общая с КБД (cbrZcycChunkYears, 4 года):
+	// у форм ЦБ один и тот же лимит диапазона, и zcycChunks уже режет бэкфилл.
+
 	cbrLiquidityChunkPause = 500 * time.Millisecond
 
 	cbrLiquidityTableSelector = "table.data"
@@ -278,4 +277,6 @@ var cbrLiquidityImporter = &cbrLiquidity{ClickHouseImport: util.ClickHouseImport
 	CreateTable: []string{cbrLiquidityDdl},
 	DataUrl:     cbrLiquidityDailyUrl,
 	CrawFunc:    cbrLiquidityCraw,
+	// Каталог 25 рядов и витрина v_cbr_liquidity публикуются на каждом прогоне.
+	AfterImport: afterCbrSeries(cbrLiquiditySeriesMeta, cbrLiquidityView),
 }}

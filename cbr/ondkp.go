@@ -317,7 +317,13 @@ func (s *cbrOndkp) Import(ctx context.Context, conn driver.Conn) (count int64, e
 		}
 		fresh = append(fresh, release)
 	}
+	// Производные (каталог трёх рядов прогноза и витрина) публикуются и на no-op-пути:
+	// сбой каталога или витрины лечится следующим прогоном (ARCHITECTURE §8 п. 13).
+	publishDerived := afterCbrSeries(cbrOndkpSeriesMeta, cbrOndkpForecastView)
 	if len(fresh) == 0 {
+		if err = publishDerived(ctx, conn); err != nil {
+			return 0, err
+		}
 		log.Infof("%s: новых выпусков нет (%d в корпусе)", cbrOndkpTable, len(known))
 		return 0, nil
 	}
@@ -328,6 +334,9 @@ func (s *cbrOndkp) Import(ctx context.Context, conn driver.Conn) (count int64, e
 		if err = ondkpInsertForecasts(ctx, conn, forecasts); err != nil {
 			return 0, err
 		}
+	}
+	if err = publishDerived(ctx, conn); err != nil {
+		return 0, err
 	}
 	log.Infof("%s: %d выпусков, %d прогнозных строк", cbrOndkpTable, len(fresh), len(forecasts))
 	return int64(len(fresh)), nil

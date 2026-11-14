@@ -3288,6 +3288,71 @@ async def check(params, server_log):
             failed += not expect("сырая cbr_zcyc закрыта", denied,
                                  "отказ ClickHouse 497 на cbr_zcyc (ожидаемо)" if denied else raw[:200])
 
+            # Контур ключевой ставки (2026-11-14): ставки денежного рынка по срокам,
+            # ликвидность банковского сектора и винтажные прогнозы ЦБ. Сырые cbr_mirac,
+            # cbr_liquidity и cbr_ondkp_forecast агенту не выданы — только витрины:
+            # комментарии таблиц и колонок есть у них, единицы и знак — в v_series_catalog.
+            # Числа проверяются, а не непустота: витрина, созданная DDL, но без данных —
+            # неотработавший шаг dagu/cbr.yaml.
+            for view in ("v_cbr_mirac", "v_cbr_liquidity", "v_cbr_ondkp_forecast"):
+                failed += not expect(f"витрина {view} видна", view in tables, "list_tables default")
+
+            mirac = result_rows(text(await session.call_tool("run_query", {
+                "query": "SELECT count() AS n, uniqExact(name) AS instruments, "
+                         "min(date) AS min_date, max(date) AS max_date FROM v_cbr_mirac"})))
+            mirac_n = mirac[0].get("n") if mirac else None
+            mirac_inst = mirac[0].get("instruments") if mirac else None
+            mirac_min = mirac[0].get("min_date") if mirac else None
+            failed += not expect("витрина v_cbr_mirac: три инструмента и история с 2000",
+                                 (mirac_n or 0) > 0 and mirac_inst == 3,
+                                 f"строк: {mirac_n}, инструментов: {mirac_inst}, {mirac_min} — прогнать "
+                                 "make import STAT=cbr_mirac")
+            mirac_catalog = result_rows(text(await session.call_tool("run_query", {
+                "query": "SELECT count() AS n FROM v_series_catalog WHERE source = 'cbr_mirac'"})))
+            mirac_catalog_n = mirac_catalog[0].get("n") if mirac_catalog else None
+            failed += not expect("каталог cbr_mirac описывает 18 рядов",
+                                 mirac_catalog_n == 18,
+                                 f"рядов: {mirac_catalog_n}, want 18 — прогнать make import STAT=cbr_mirac")
+
+            liquidity = result_rows(text(await session.call_tool("run_query", {
+                "query": "SELECT count() AS n, uniqExact(series) AS series, "
+                         "min(date) AS min_date FROM v_cbr_liquidity"})))
+            liquidity_n = liquidity[0].get("n") if liquidity else None
+            liquidity_series = liquidity[0].get("series") if liquidity else None
+            liquidity_min = liquidity[0].get("min_date") if liquidity else None
+            failed += not expect("витрина v_cbr_liquidity: 25 рядов с 2014-01-01",
+                                 (liquidity_n or 0) > 0 and liquidity_series == 25,
+                                 f"строк: {liquidity_n}, рядов: {liquidity_series}, {liquidity_min} — прогнать "
+                                 "make import STAT=cbr_liquidity")
+            liquidity_catalog = result_rows(text(await session.call_tool("run_query", {
+                "query": "SELECT count() AS n FROM v_series_catalog WHERE source = 'cbr_liquidity'"})))
+            liquidity_catalog_n = liquidity_catalog[0].get("n") if liquidity_catalog else None
+            failed += not expect("каталог cbr_liquidity описывает 25 рядов",
+                                 liquidity_catalog_n == 25,
+                                 f"рядов: {liquidity_catalog_n}, want 25 — прогнать make import STAT=cbr_liquidity")
+
+            ondkp = result_rows(text(await session.call_tool("run_query", {
+                "query": "SELECT count() AS n, uniqExact(release_year) AS releases, "
+                         "countIf(lo = hi) AS points FROM v_cbr_ondkp_forecast"})))
+            ondkp_n = ondkp[0].get("n") if ondkp else None
+            ondkp_releases = ondkp[0].get("releases") if ondkp else None
+            failed += not expect("витрина v_cbr_ondkp_forecast: 66 строк у 8 выпусков",
+                                 ondkp_n == 66 and ondkp_releases == 8,
+                                 f"строк: {ondkp_n}, выпусков: {ondkp_releases} — прогнать "
+                                 "make import STAT=cbr_ondkp")
+            ondkp_catalog = result_rows(text(await session.call_tool("run_query", {
+                "query": "SELECT count() AS n FROM v_series_catalog WHERE source = 'cbr_ondkp_forecast'"})))
+            ondkp_catalog_n = ondkp_catalog[0].get("n") if ondkp_catalog else None
+            failed += not expect("каталог cbr_ondkp_forecast описывает 3 ряда",
+                                 ondkp_catalog_n == 3,
+                                 f"рядов: {ondkp_catalog_n}, want 3 — прогнать make import STAT=cbr_ondkp")
+
+            for raw_table in ("cbr_mirac", "cbr_liquidity", "cbr_ondkp_forecast"):
+                raw_answer = text(await session.call_tool("run_query", {"query": f"SELECT count() FROM {raw_table}"}))
+                raw_denied = "ACCESS_DENIED" in raw_answer or "Not enough privileges" in raw_answer
+                failed += not expect(f"сырая {raw_table} закрыта", raw_denied,
+                                     f"отказ ClickHouse 497 на {raw_table} (ожидаемо)" if raw_denied else raw_answer[:200])
+
             # Макропруденциальные требования (key-rate/phase-2-ccyb, #115): три витрины —
             # АЦН-индикаторы, матрицы надбавок и МПЛ. Сырые cbr_ccyb_indicators,
             # cbr_risk_weight_addons и cbr_mpl агенту не выданы: читать контур он обязан

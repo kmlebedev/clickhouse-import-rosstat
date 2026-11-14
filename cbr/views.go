@@ -867,3 +867,83 @@ FROM series_publication FINAL`,
 		"source_url":   "Страница версии релиза (date/exact_time) либо индекс архива (fallback)",
 	},
 }
+
+// --- Контур ключевой ставки: MIACR, ликвидность, прогноз ОНДКП (2026-11-14) ---
+
+// cbrMiracView — ставки денежного рынка MIACR/MIACR-IG/MIACR-B по срокам. Длинная форма,
+// чтобы агент сравнивал RUONIA и MIACR в одном запросе.
+var cbrMiracView = util.View{
+	Name:   "v_cbr_mirac",
+	Tables: []string{cbrMiracTable},
+	Select: "SELECT name, tenor, date, value FROM cbr_mirac FINAL",
+	Comment: "Ставки денежного рынка ЦБ по сделкам МБК: MIACR (все московские банки), " +
+		"MIACR-IG (банки с высоким кредитным рейтингом), MIACR-B (спекулятивный рейтинг), " +
+		"% годовых по шести срокам. История MIACR — с 2000-08-01, MIACR-IG и MIACR-B — " +
+		"с 2010-01-11: отсутствие точки означает, что источник её не публиковал, а не ноль. " +
+		"Значения в форме ЦБ печатаются с прочерком, если за день сделок срока не было — " +
+		"такие точки не пишутся. Обороты сделок (млн руб.) в витрину не входят.",
+	Columns: map[string]string{
+		"name":  "Инструмент: MIACR (все московские банки), MIACR-IG (высокий кредитный рейтинг), MIACR-B (спекулятивный)",
+		"tenor": "Срок кредита: 1d (1 день), 2-7d, 8-30d, 31-90d, 91-180d, 181d-1y (181 день — 1 год)",
+		"date":  "Торговый день, за который рассчитана средневзвешенная ставка",
+		"value": "Средневзвешенная фактическая ставка, % годовых. Нет строки — не было сделок срока за день, а не нулевая ставка",
+	},
+}
+
+// cbrLiquidityView — ликвидность банковского сектора: дневной срез и периоды усреднения.
+var cbrLiquidityView = util.View{
+	Name:   "v_cbr_liquidity",
+	Tables: []string{cbrLiquidityTable},
+	Select: "SELECT kind, series, date, value FROM cbr_liquidity FINAL",
+	Comment: "Ликвидность банковского сектора ЦБ: kind='daily' — дневной срез (с 2014-01-01), " +
+		"kind='averaging' — показатели периода усреднения (с 2018-01-10, дата — первый день периода). " +
+		"Знак структурной позиции: дефицит (+), профицит (-) — переход к структурному дефициту " +
+		"ЦБ называет автономным фактором решения по ставке. Ряды daily/* — млрд руб., кроме " +
+		"явно базисных пунктов; averaging/key_rate_change_bp и averaging/ruonia_spread_bp — " +
+		"базисные пункты. Единицы и смысл каждого ряда — в v_series_catalog (source='cbr_liquidity').",
+	Columns: map[string]string{
+		"kind":   "Вид ряда: daily — дневной срез формы /hd_base/bliquidity; averaging — период усреднения /hd_base/BSliquidityMA",
+		"series": "Имя ряда: deficit, deficit_ex_corr, cb_claims*, cb_liabilities*, nonstandard_repo, corr_accounts, required_reserves, structural_deficit, liquidity_need, *_auctions, standing_net, special_net, ruonia_debt (расшифровка — title в v_series_catalog)",
+		"date":   "Дата: для daily — торговый день; для averaging — первый день периода усреднения",
+		"value":  "Значение, млрд руб. (кроме key_rate_change_bp и ruonia_spread_bp — базисные пункты). Знак «дефицит (+) / профицит (-)» — как в заголовке формы ЦБ",
+	},
+}
+
+// cbrOndkpForecastView — прогнозы ЦБ из винтажей ОНДКП.
+var cbrOndkpForecastView = util.View{
+	Name:   "v_cbr_ondkp_forecast",
+	Tables: []string{cbrOndkpForecastTable, cbrOndkpTable},
+	// FINAL идёт после алиаса: «FROM t AS f FINAL» — так требует грамматика ClickHouse
+	// (после FINAL алиас уже нельзя).
+	Select: "SELECT f.release_year, f.indicator, f.year, f.lo, f.hi, o.published_at, o.url " +
+		"FROM cbr_ondkp_forecast AS f FINAL LEFT JOIN cbr_ondkp AS o FINAL ON f.release_year = o.release_year",
+	Comment: "Прогнозы Банка России из «Основных направлений единой государственной " +
+		"денежно-кредитной политики»: винтаж (release_year — год политики), индикатор, год " +
+		"прогноза и границы lo/hi (lo = hi — точка). Это винтажный ряд: один и тот же год " +
+		"встречается в нескольких выпусках, as-of — release_year и published_at, а не год " +
+		"прогноза. Машиночитаемая таблица базового сценария есть только у выпусков 2020–2027: " +
+		"у 2000–2019 прогноз изложен прозой (см. docs/LIMITATIONS.md), поэтому строк за них нет. " +
+		"Цель по инфляции с 2015 года — 4 %, прогноз старших винтажей в годы шоков от неё отклоняется.",
+	Columns: map[string]string{
+		"release_year": "Винтаж: год, на который принят документ (документ «на 2027» опубликован 28.10.2026). As-of по этому полю",
+		"indicator":    "key_rate — среднегодовая ключевая ставка; inflation — инфляция в среднем за год; gdp — прирост ВВП",
+		"year":         "Год прогноза (release_year, release_year+1, release_year+2)",
+		"lo":           "Нижняя граница диапазона, %; при lo = hi — точечный прогноз",
+		"hi":           "Верхняя граница диапазона, %",
+		"published_at": "Дата публикации выпуска (Nullable: у страниц 2021–2027 на индексе её нет)",
+		"url":          "Артефакт выпуска: PDF документа (или ZIP «Вестника» для 2000–2009)",
+	},
+}
+
+// afterCbrSeries — производные импортёров с собственной длинной таблицей: каталог рядов и
+// одна витрина. Публикуются на каждом прогоне, включая no-op: сбой каталога или витрины
+// лечится следующим прогоном, а не ручной правкой (ARCHITECTURE §8 п. 13).
+func afterCbrSeries(meta []util.SeriesMeta, view util.View) func(context.Context, driver.Conn) error {
+	return func(ctx context.Context, conn driver.Conn) error {
+		if err := util.UpsertSeriesCatalog(ctx, conn, meta); err != nil {
+			return err
+		}
+		_, err := util.CreateView(ctx, conn, view)
+		return err
+	}
+}

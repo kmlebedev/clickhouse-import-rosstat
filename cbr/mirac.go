@@ -299,4 +299,6 @@ var cbrMiracImporter = &cbrMirac{ClickHouseImport: util.ClickHouseImport{
 	CreateTable: []string{cbrMiracDdl},
 	DataUrl:     cbrMiracBaseUrl,
 	CrawFunc:    cbrMiracCraw,
+	// Каталог 18 рядов и витрина v_cbr_mirac публикуются на каждом прогоне, включая no-op.
+	AfterImport: afterCbrSeries(cbrMiracSeriesMeta, cbrMiracView),
 }}
