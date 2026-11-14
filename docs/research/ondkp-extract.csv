@@ -20,7 +20,7 @@ release_year,indicator,year,lo,hi
 2022,key_rate,2022,7.3,8.3
 2022,key_rate,2023,5.5,6.5
 2022,key_rate,2024,5,6
-2023,gdp,2023,1,4
+2023,gdp,2023,-4,-1
 2023,gdp,2024,1.5,2.5
 2023,gdp,2025,1.5,2.5
 2023,inflation,2023,4.5,6.4
