@@ -104,6 +104,10 @@ var cbrImporters = []cbrImporter{
 	{cbrMtForecastImporter, "cbr_mt_forecast", "SELECT count() FROM cbr_mt_forecast FINAL"},
 	{cbrForm101Importer, "cbr_form101", "SELECT count() FROM cbr_form101 FINAL"},
 	{cbrZcycImporter, "cbr_zcyc", ""},
+	// cbr_liquidity — две HTML-формы (дневная и периоды усреднения) в одной таблице:
+	// префлайта нет по той же причине, что у cbr_zcyc и cbr_ruania — URL окна содержит
+	// сегодняшнюю дату, а инкремент держит max(date) по виду ряда.
+	{cbrLiquidityImporter, "cbr_liquidity", ""},
 	// cbr_mirac — MIACR/MIACR-IG/MIACR-B по срокам: префлайта нет, инкремент по max(date),
 	// форма сама клампит начало истории к 13.07.2000.
 	{cbrMiracImporter, "cbr_mirac", ""},
