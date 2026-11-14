@@ -3,6 +3,7 @@ package cbr
 import (
 	"math"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -205,6 +206,72 @@ func TestCbrInflExpHistAnnexHorizontalShiftedDates(t *testing.T) {
 	inflExpHistAnnexCheck(t, rows, inflExpObservedName, "2022-01-14", 16.705)
 	inflExpHistAnnexCheck(t, rows, inflExpObservedName, "2022-02-14", 17.1443)
 	inflExpHistAnnexCheck(t, rows, inflExpExpectedName, "2022-01-14", 13.7279)
+}
+
+// TestCbrInflExpHistAnnexReal2409 — production-приложение волны 24-09 целиком: реальный файл
+// ЦБ `stat_Infl_exp_24-09.xlsx` (скачан браузерным UA байт-в-байт, не урезан — в отличие от
+// фикстур 17-01 и 19-11). Это доказательство приёмки #575: свежее приложение кумулятивно и
+// содержит всю историю ряда, поэтому именно его разбирает живой импортёр.
+//
+// Точек в окне догона считается по уникальным (ряд, дата): приложение повторяет хвост ряда
+// на нескольких листах («Данные для графиков», «Таблица», «Данные за все годы»), и импортёр
+// снимает повторы ключом гейта. 93 месяца окна минус четыре отсутствующих = 89 точек на ряд.
+func TestCbrInflExpHistAnnexReal2409(t *testing.T) {
+	rows, err := inflExpHistAnnexRows(inflExpHistAnnexFixture(t, "testdata/infl_exp_hist_annex_24-09.xlsx"))
+	if err != nil {
+		t.Fatalf("разбор приложения 24-09: %v", err)
+	}
+	from := time.Date(2017, time.January, 14, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2024, time.September, 14, 0, 0, 0, 0, time.UTC)
+	dates := map[string]map[string]bool{
+		inflExpObservedName: {},
+		inflExpExpectedName: {},
+	}
+	for _, row := range rows {
+		if row.Date.Before(from) || row.Date.After(to) {
+			continue // до 2017-01 ряд есть в приложении, но это вне окна догона
+		}
+		known, ok := dates[row.Series]
+		if !ok {
+			t.Fatalf("в приложении разобран неизвестный ряд %q на %s", row.Series, row.Date.Format("2006-01-02"))
+		}
+		known[row.Date.Format("2006-01-02")] = true
+	}
+	for _, series := range []string{inflExpObservedName, inflExpExpectedName} {
+		if got := len(dates[series]); got != 89 {
+			t.Errorf("%s: точек в 2017-01-14 … 2024-09-14 %d, want 89", series, got)
+		}
+	}
+	for date := range dates[inflExpObservedName] {
+		if !dates[inflExpExpectedName][date] {
+			t.Errorf("дата %s есть только у наблюдаемой инфляции: наборы дат рядов обязаны совпадать", date)
+		}
+	}
+	for date := range dates[inflExpExpectedName] {
+		if !dates[inflExpObservedName][date] {
+			t.Errorf("дата %s есть только у ожидаемой инфляции: наборы дат рядов обязаны совпадать", date)
+		}
+	}
+	// Пропуск — документированный разрыв источника: апрель–июль 2020 г. ЦБ провёл по
+	// телефону и объявил результаты несопоставимыми (сноска к таблице 1 Infl_exp_20-09.pdf),
+	// поэтому этих колонок нет ни в приложении, ни в PDF (LIMITATIONS.md).
+	var missing []string
+	for month := time.Date(2017, time.January, 1, 0, 0, 0, 0, time.UTC); !month.After(time.Date(2024, time.September, 1, 0, 0, 0, 0, time.UTC)); month = month.AddDate(0, 1, 0) {
+		date := time.Date(month.Year(), month.Month(), 14, 0, 0, 0, 0, time.UTC).Format("2006-01-02")
+		if !dates[inflExpObservedName][date] {
+			missing = append(missing, date)
+		}
+	}
+	want := []string{"2020-04-14", "2020-05-14", "2020-06-14", "2020-07-14"}
+	if !slices.Equal(missing, want) {
+		t.Errorf("пропущенные месяцы %v, want ровно %v", missing, want)
+	}
+	inflExpHistAnnexCheck(t, rows, inflExpObservedName, "2017-01-14", 13.9828)
+	inflExpHistAnnexCheck(t, rows, inflExpExpectedName, "2017-01-14", 11.4855)
+	inflExpHistAnnexCheck(t, rows, inflExpObservedName, "2020-03-14", 8.3108)
+	inflExpHistAnnexCheck(t, rows, inflExpExpectedName, "2020-03-14", 7.8881)
+	inflExpHistAnnexCheck(t, rows, inflExpObservedName, "2020-08-14", 9.1901)
+	inflExpHistAnnexCheck(t, rows, inflExpExpectedName, "2020-08-14", 8.8231)
 }
 
 // inflExpHistAnnexCounts — число точек по рядам: ловит тихую потерю половины таблицы.
