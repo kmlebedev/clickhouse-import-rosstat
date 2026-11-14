@@ -16,9 +16,6 @@ import (
 // файлом, что отдал ЦБ.
 const ruoniaFixture = "testdata/ruonia.xlsx"
 
-// ruoniaFixtureRows — строк данных в фикстуре: 1909 строк листа минус строка заголовка.
-const ruoniaFixtureRows = 1908
-
 // ruoniaCatalogColumns — метрики каталога cbr_ruania в порядке колонок Append у
 // ruoniaImport (date, ruo, vol, trans, minRate, maxRate, p25, p75) — тот же порядок, что в
 // DDL cbr_ruania и в раскладке views.go. Таблица широкая, колонки name у неё нет,
@@ -53,7 +50,22 @@ func (b ruoniaNamedBatch) Append(v ...any) error {
 		return fmt.Errorf("дата RUONIA пришла как %T, ожидался time.Time", v[0])
 	}
 	for i, name := range ruoniaCatalogColumns {
-		if err := b.rec.Append(name, date, v[i+1]); err != nil {
+		value := v[i+1]
+		// Метрики, которых нет в исторической строке, приходят указателями (Nullable в
+		// DDL): nil — значения нет, и строки каталога у такой точки быть не должно.
+		switch typed := value.(type) {
+		case *uint16:
+			if typed == nil {
+				continue
+			}
+			value = uint64(*typed)
+		case *float32:
+			if typed == nil {
+				continue
+			}
+			value = float64(*typed)
+		}
+		if err := b.rec.Append(name, date, value); err != nil {
 			return err
 		}
 	}
@@ -97,33 +109,47 @@ func TestCbrRuaniaSeriesMetaCoversParsedRows(t *testing.T) {
 	})
 }
 
-// TestCbrRuaniaFixtureRows: разбор фикстуры даёт по 1908 точек на каждую из 7 метрик
-// (1909 строк листа минус заголовок) в порядке файла — от свежей к старой, от 2026-10-12 до
-// 2019-01-09. В baseline T1 было 1906 точек начиная с 2019-01-09; фикстура скачана
-// 13.10.2026 и несёт ещё два торговых дня (09.10.2026 и 12.10.2026). Число строк и порядок
-// пинят фикстуру: молчаливая потеря или переворот части листа «RC» не пройдёт.
+// TestCbrRuaniaFixtureRows: разбор фикстуры даёт 1908 точек ставки и меньше — по
+// остальным метрикам: источник публикует их не в каждой строке (17 дней без оборота,
+// 496 — без min/max/перцентилей и числа сделок). Ноль за отсутствующую метрику не
+// пишется: до перевода на Nullable (2026-11-14) эти 496 строк уезжали в БД нулями —
+// нулевая минимальная ставка читалась как «0 % годовых».
+// Числа и порядок пинят фикстуру: молчаливая потеря или переворот части листа «RC» не пройдёт.
 func TestCbrRuaniaFixtureRows(t *testing.T) {
-	rows := ruoniaRows(t)
-	if len(rows) != len(ruoniaCatalogColumns)*ruoniaFixtureRows {
-		t.Errorf("строк разбора %d, want %d (7 метрик × %d строк фикстуры)",
-			len(rows), len(ruoniaCatalogColumns)*ruoniaFixtureRows, ruoniaFixtureRows)
+	want := map[string]int{
+		"cbr_ruania_ruo":      1908,
+		"cbr_ruania_vol":      1891,
+		"cbr_ruania_trans":    1412,
+		"cbr_ruania_min_rate": 1412,
+		"cbr_ruania_max_rate": 1412,
+		"cbr_ruania_p25":      1412,
+		"cbr_ruania_p75":      1412,
 	}
-	newest, oldest := time.Date(2026, time.October, 12, 0, 0, 0, 0, time.UTC), time.Date(2019, time.January, 9, 0, 0, 0, 0, time.UTC)
+	rows := ruoniaRows(t)
 	dates := map[string][]time.Time{}
 	for _, row := range rows {
 		dates[row.name] = append(dates[row.name], row.date)
 	}
-	for _, name := range ruoniaCatalogColumns {
-		got := dates[name]
-		if len(got) != ruoniaFixtureRows {
-			t.Errorf("метрика %q: точек %d, want %d", name, len(got), ruoniaFixtureRows)
-			continue
+	if len(rows) != 10859 {
+		t.Errorf("строк разбора %d, want 10859 (1908 ставок + 1891 объёмов + 5 × 1412 метрик)", len(rows))
+	}
+	for name, count := range want {
+		if got := len(dates[name]); got != count {
+			t.Errorf("метрика %q: точек %d, want %d", name, got, count)
 		}
-		if !got[0].Equal(newest) || !got[len(got)-1].Equal(oldest) {
-			t.Errorf("метрика %q: ряд %s..%s, want %s..%s (порядок файла — от свежей к старой)", name,
-				got[0].Format("2006-01-02"), got[len(got)-1].Format("2006-01-02"),
-				newest.Format("2006-01-02"), oldest.Format("2006-01-02"))
-		}
+	}
+	newest, oldest := time.Date(2026, time.October, 12, 0, 0, 0, 0, time.UTC), time.Date(2019, time.January, 9, 0, 0, 0, 0, time.UTC)
+	got := dates["cbr_ruania_ruo"]
+	// Пустой ряд — отдельная диагностика: ниже сравниваются первый и последний элементы,
+	// и без этого guard'а проверка крайних дат паниковала бы на got[0] вместо понятного
+	// «ряда нет вовсе» (число строк разбора в сообщении отличает пустой прогон от
+	// разбора без метрики ставки).
+	if len(got) == 0 {
+		t.Errorf("ряд ставки cbr_ruania_ruo пуст: 0 точек при %d строках разбора — крайние даты сверять не по чему", len(rows))
+		return
+	}
+	if !got[0].Equal(newest) || !got[len(got)-1].Equal(oldest) {
+		t.Errorf("ряд ставки не 2026-10-12..2019-01-09: %v..%v (порядок файла — от свежей к старой)", got[0], got[len(got)-1])
 	}
 }
 
@@ -176,5 +202,144 @@ func TestCbrRuaniaEmptySheetFails(t *testing.T) {
 	}
 	if len(rec.raw) != 0 {
 		t.Errorf("при ошибке записано %d строк, want 0", len(rec.raw))
+	}
+}
+
+// TestCbrRuaniaUrlStartsAtHistoryStart: выгрузка начинается с начала индекса RUONIA
+// (11.01.2010), а не с 2019 года. До 2026-11-14 вечером FromDate в URL стоял 01/01/2019,
+// и девять лет денежного рынка терялись только из-за этой константы: источник отдаёт
+// историю с 2010-01-11 (docs/research/2026-11-14-ruania-history-source.md).
+func TestCbrRuaniaUrlStartsAtHistoryStart(t *testing.T) {
+	if got, want := cbrRuoniaFromDate, "01/01/2010"; got != want {
+		t.Errorf("FromDate выгрузки RUONIA = %q, want %q", got, want)
+	}
+	if got, want := cbrRuoniaHistoryFrom, "2010-01-11"; got != want {
+		t.Errorf("начало индекса RUONIA = %q, want %q (методология ЦБ)", got, want)
+	}
+	url := fmt.Sprintf(cbrRuoniaUrl, "02.11.2026")
+	if !strings.Contains(url, "FromDate="+cbrRuoniaFromDate) {
+		t.Errorf("URL выгрузки %q не содержит FromDate=%s", url, cbrRuoniaFromDate)
+	}
+	if !strings.Contains(url, "ToDate=02.11.2026") {
+		t.Errorf("URL выгрузки %q не подставляет ToDate: экспорт с ToDate в прошлом отдаёт пустой лист", url)
+	}
+	if strings.Contains(url, "FromDate=01/01/2019") {
+		t.Errorf("URL выгрузки %q всё ещё начинается с 2019 года — потеряны 2010–2018", url)
+	}
+}
+
+// TestRuoniaParseRowLegacy — историческая строка выгрузки (2010–2018) приходит с тремя
+// значениями: дата, ставка, объём. Пять метрик источника нет, и они обязаны остаться nil,
+// а не нулями: нулевой minRate выглядел бы как настоящая ставка 0 % годовых.
+func TestRuoniaParseRowLegacy(t *testing.T) {
+	row, err := ruoniaParseRow([]string{"01-11-10", "2.9800", "64.5600"})
+	if err != nil {
+		t.Fatalf("разбор исторической строки: %v", err)
+	}
+	if got, want := row.date.Format("2006-01-02"), "2010-01-11"; got != want {
+		t.Errorf("дата %q, want %q", got, want)
+	}
+	if row.ruo != 2.98 || row.vol == nil || *row.vol != 64.56 {
+		t.Errorf("ставка/объём %v/%v, want 2.98/64.56", row.ruo, row.vol)
+	}
+	if row.trans != nil || row.minRate != nil || row.maxRate != nil || row.p25 != nil || row.p75 != nil {
+		t.Errorf("метрики исторической строки должны быть nil: trans=%v min=%v max=%v p25=%v p75=%v",
+			row.trans, row.minRate, row.maxRate, row.p25, row.p75)
+	}
+}
+
+// TestRuoniaParseRowFourValueRow — строка переходной эпохи 2017–2019: четыре значения,
+// где четвёртое — метка времени выгрузки (Excel-serial), а не число сделок. Ширина
+// меньше девяти колонок, поэтому разбор обязан остановиться на дате, ставке и объёме.
+// Фикстура этого случая не даёт: в закоммиченном testdata/ruonia.xlsx (выгрузка
+// FromDate=01/01/2019) все 1 908 строк шириной в 11 колонок, а четырёхколоночные
+// строки приносит только история 2017–2019 (ширина колонок выгрузки — контракт из
+// docs/research/2026-11-14-ruania-history-source.md §4). Если 42917.5 уедет в trans, ряд
+// cbr_ruania_trans наполнится метками времени вместо числа сделок — ловится здесь.
+func TestRuoniaParseRowFourValueRow(t *testing.T) {
+	row, err := ruoniaParseRow([]string{"06-01-17", "7.0000", "120.0", "42917.5"})
+	if err != nil {
+		t.Fatalf("разбор строки переходной эпохи: %v", err)
+	}
+	if got, want := row.date.Format("2006-01-02"), "2017-06-01"; got != want {
+		t.Errorf("дата %q, want %q", got, want)
+	}
+	if row.ruo != 7 {
+		t.Errorf("ставка %v, want 7", row.ruo)
+	}
+	if row.vol == nil || *row.vol != 120 {
+		t.Errorf("объём %v, want 120", row.vol)
+	}
+	if row.trans != nil || row.minRate != nil || row.maxRate != nil || row.p25 != nil || row.p75 != nil {
+		t.Errorf("метрики переходной эпохи должны быть nil (метка времени выгрузки — не trans): trans=%v min=%v max=%v p25=%v p75=%v",
+			row.trans, row.minRate, row.maxRate, row.p25, row.p75)
+	}
+}
+
+// TestRuoniaNumber: эвристика десятичного разделителя, на которой держится разбор обеих
+// эпох. Современные ячейки приходят с точкой как десятичной и запятой как разделителем
+// тысяч («1,073.1000»), исторические — с одиночной запятой как десятичной («13,92») или
+// с точкой («2.9800»); пробелы по краям не значимы. Правила зафиксированы примерами из
+// выгрузки FromDate=01/01/2010 (docs/research/2026-11-14-ruania-history-source.md): неверная
+// интерпретация запятой сдвигает ставку в 1000 раз, и ошибка молчаливая — разбор
+// проходит, ряд просто врёт.
+func TestRuoniaNumber(t *testing.T) {
+	for name, tc := range map[string]struct {
+		raw        string
+		normalized string
+		want       float32
+	}{
+		"одинокая запятая — десятичная": {"13,92", "13.92", 13.92},
+		"запятая и точка — тысячи":      {"1,073.1000", "1073.1000", 1073.1},
+		"точка как десятичная":          {"2.9800", "2.9800", 2.98},
+		"пробелы по краям":              {" 64,56 ", "64.56", 64.56},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := ruoniaNumber(tc.raw); got != tc.normalized {
+				t.Errorf("ruoniaNumber(%q) = %q, want %q", tc.raw, got, tc.normalized)
+			}
+			got, err := ruoniaFloat(tc.raw, "ruo")
+			if err != nil {
+				t.Fatalf("ruoniaFloat(%q): %v", tc.raw, err)
+			}
+			if got != tc.want {
+				t.Errorf("ruoniaFloat(%q) = %v, want %v", tc.raw, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestRuoniaParseRowModern — полная строка выгрузки (с 2020) разбирается по колонкам
+// DDL: trans=4-я, minRate=6-я, p25=7-я, p75=8-я, maxRate=9-я. Перестановка p25/p75 или
+// min/max ловится здесь.
+func TestRuoniaParseRowModern(t *testing.T) {
+	row, err := ruoniaParseRow([]string{"01-30-26", "13,92", "987,57", "84", "5", "13,65", "13,80", "14,05", "14,15", "", "46142"})
+	if err != nil {
+		t.Fatalf("разбор полной строки: %v", err)
+	}
+	if row.trans == nil || *row.trans != 84 {
+		t.Errorf("trans=%v, want 84", row.trans)
+	}
+	want := map[string]struct {
+		got *float32
+		val float32
+	}{
+		"minRate": {row.minRate, 13.65}, "p25": {row.p25, 13.80}, "p75": {row.p75, 14.05}, "maxRate": {row.maxRate, 14.15},
+	}
+	for name, pair := range want {
+		if pair.got == nil || *pair.got != pair.val {
+			t.Errorf("%s=%v, want %v", name, pair.got, pair.val)
+		}
+	}
+}
+
+// TestRuoniaParseRowRejectsShortRow — строка короче трёх значений не является точкой:
+// импортёр обязан упасть с понятным сообщением, а не молча пропустить день.
+func TestRuoniaParseRowRejectsShortRow(t *testing.T) {
+	if _, err := ruoniaParseRow([]string{"01-11-10", "2.9800"}); err == nil {
+		t.Fatal("строка из двух значений разобрана без ошибки")
+	}
+	if _, err := ruoniaParseRow([]string{"01-11-10", "", "64.5600"}); err == nil {
+		t.Fatal("пустая ставка разобрана без ошибки")
 	}
 }
