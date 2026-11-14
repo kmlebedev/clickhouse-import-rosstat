@@ -1,6 +1,7 @@
 package cbr
 
 import (
+	"bytes"
 	"os"
 	"testing"
 )
@@ -110,5 +111,22 @@ func TestCbrMiracNoTable(t *testing.T) {
 	}
 	if _, err := cbrMiracRows([]byte("<html><body>captcha</body></html>")); err == nil {
 		t.Error("чужая страница без таблицы разобрана без ошибки")
+	}
+}
+
+// TestCbrMiracMissingInstrumentFails — пропавшая подпись одного инструмента на непустой
+// странице: форма рендерит три таблицы ставок всегда, и потеря MIACR-B иначе прошла бы
+// молча — остальные инструменты двигали бы max(date), а шесть рядов выпали навсегда.
+func TestCbrMiracMissingInstrumentFails(t *testing.T) {
+	body, err := os.ReadFile("testdata/mirac_2026_01.html")
+	if err != nil {
+		t.Fatalf("чтение фикстуры: %v", err)
+	}
+	broken := bytes.ReplaceAll(body, []byte("MIACR-B - Moscow InterBank Actual Credit Rate - B-Grade"), []byte("XRATED"))
+	if bytes.Equal(broken, body) {
+		t.Fatal("подпись MIACR-B в фикстуре не найдена — тест перестал проверять то, ради чего написан")
+	}
+	if _, err = cbrMiracRows(broken); err == nil {
+		t.Fatal("страница без MIACR-B разобрана без ошибки")
 	}
 }

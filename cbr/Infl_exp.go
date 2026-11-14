@@ -49,8 +49,14 @@ const cbrInflExpDdl = `CREATE TABLE IF NOT EXISTS %s (
 
 // cbrInflExpKnownDatesQuery — гейт резервного PDF-импортёра: даты, уже лежащие в общей
 // таблице. Множество, а не max(date): общий util.Fallback лечит и пропущенную середину.
+// Запрос обязан возвращать одну колонку — его читает FallbackKnownDates.
 // Общая таблица создаётся книгой cbr_infl_exp; у PDF-шага своего DDL нет.
 const cbrInflExpKnownDatesQuery = "SELECT DISTINCT date FROM cbr_infl_exp FINAL"
+
+// cbrInflExpHistKnownQuery — гейт импортёра истории: пара (ряд, дата), потому что
+// приложение волны и PDF могут дать только один ряд периода, и гейт по дате молча
+// отбросил бы второй.
+const cbrInflExpHistKnownQuery = "SELECT DISTINCT name, date FROM cbr_infl_exp FINAL"
 
 // inflExpLinkSelector — ссылка на актуальный XLSX в блоке версий. Имена файлов и id
 // меняются при каждом обновлении (Infl_exp_ГГ-ММ.xlsx), ссылки идут от свежей к старой.

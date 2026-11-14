@@ -140,6 +140,11 @@ func TestCbrOndkpReleases(t *testing.T) {
 	if byYear[2010].format != cbrOndkpFormatPDF || byYear[2010].pageUrl != "" {
 		t.Errorf("выпуск 2010: %+v, want прямое PDF (артефакт лучше ZIP)", byYear[2010])
 	}
+	// Дата документа — строка «Вестника» (выпуск), а не дата карточки на текущей странице:
+	// у 2010 карточка говорит 19.11.2009, выпуск — 26.11.2009.
+	if byYear[2010].publishedAt == nil || byYear[2010].publishedAt.Format("2006-01-02") != "2009-11-26" {
+		t.Errorf("дата публикации 2010 = %v, want 2009-11-26 (дата «Вестника», а не карточки)", byYear[2010].publishedAt)
+	}
 	if byYear[2022].pageUrl == "" {
 		t.Errorf("выпуск 2022: pageUrl пуст, want страницу выпуска (проект документа лежит на ней, формат уточняется в Import)")
 	}
@@ -317,4 +322,20 @@ func itoa(value int) string {
 		value /= 10
 	}
 	return string(digits)
+}
+
+// TestCbrOndkpAnalyzeReleaseZipNotZip — HTML-заглушка на ссылке «Вестника» не становится
+// версией выпуска: ZIP-эпоха не разбирается, но сигнатура PK обязательна, иначе гейт по url
+// не перепроверит подменённый файл никогда.
+func TestCbrOndkpAnalyzeReleaseZipNotZip(t *testing.T) {
+	release := ondkpRelease{
+		year:   2009,
+		url:    "https://www.cbr.ru/Queries/XsltBlock/File/1/-1/0",
+		format: cbrOndkpFormatZipDoc,
+	}
+	if _, _, err := ondkpAnalyzeRelease(context.Background(), release, []byte(`<html><body>Доступ ограничен</body></html>`)); err == nil {
+		t.Fatal("HTML вместо ZIP разобран без ошибки: выпуск запишется версией навсегда")
+	} else if !strings.Contains(err.Error(), "не ZIP") {
+		t.Errorf("ошибка %q не называет подмену архива", err)
+	}
 }

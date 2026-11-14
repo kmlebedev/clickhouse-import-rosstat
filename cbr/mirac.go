@@ -134,6 +134,20 @@ func cbrMiracRows(body []byte) ([]cbrMiracPoint, error) {
 	if len(instruments) == 0 {
 		return nil, fmt.Errorf("cbr_mirac: ни одной таблицы MIACR со ставками — подписи таблиц изменились")
 	}
+	// Три таблицы ставок форма рендерит всегда (R4 §2): пропавшая подпись одного
+	// инструмента иначе осталась бы незамеченной — остальные два двигали бы max(date),
+	// а шесть рядов выпавшего инструмента перестали бы обновляться без ошибки.
+	if len(points) > 0 {
+		have := make(map[string]bool, len(instruments))
+		for _, name := range instruments {
+			have[name] = true
+		}
+		for _, want := range []string{"MIACR", "MIACR-IG", "MIACR-B"} {
+			if !have[want] {
+				return nil, fmt.Errorf("cbr_mirac: форма отдала данные, но таблицы %s нет — подпись таблицы изменилась, ряд выпал бы молча", want)
+			}
+		}
+	}
 	return points, nil
 }
 

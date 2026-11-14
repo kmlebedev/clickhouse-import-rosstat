@@ -338,3 +338,25 @@ func TestCbrLiquidityValue(t *testing.T) {
 		}
 	}
 }
+
+// TestCbrLiquidityWindowBounds — окно бэкфилла и фильтр keep. Дневная форма датирует
+// строку самим днём, поэтому запас не нужен. Форма усреднения датирует строку первым днём
+// периода, а фильтрует по концу периода: без запаса период, начинающийся на границе
+// чанков, не попадал ни в одно окно и терялся навсегда.
+func TestCbrLiquidityWindowBounds(t *testing.T) {
+	begin := time.Date(2022, time.January, 10, 0, 0, 0, 0, time.UTC)
+	queryBegin, keepFrom := cbrLiquidityWindowBounds(cbrLiquidityKindDaily, begin)
+	if !queryBegin.Equal(begin) || !keepFrom.Equal(begin) {
+		t.Errorf("дневное окно: query=%s keep=%s, want %s без запаса",
+			queryBegin.Format("2006-01-02"), keepFrom.Format("2006-01-02"), begin.Format("2006-01-02"))
+	}
+	queryBegin, keepFrom = cbrLiquidityWindowBounds(cbrLiquidityKindAvg, begin)
+	want := begin.AddDate(0, 0, -cbrLiquidityAvgPadDays)
+	if !queryBegin.Equal(want) || !keepFrom.Equal(want) {
+		t.Errorf("окно усреднения: query=%s keep=%s, want %s (запас %d дн.)",
+			queryBegin.Format("2006-01-02"), keepFrom.Format("2006-01-02"), want.Format("2006-01-02"), cbrLiquidityAvgPadDays)
+	}
+	if cbrLiquidityRevisionDays < 21 || cbrLiquidityRevisionDays > 60 {
+		t.Errorf("перекрытие инкремента %d дн. вне разумного диапазона 21–60", cbrLiquidityRevisionDays)
+	}
+}
