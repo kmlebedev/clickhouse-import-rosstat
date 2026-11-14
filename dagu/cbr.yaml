@@ -308,3 +308,40 @@ steps:
     retry_policy:
       limit: 3
       interval_sec: 300
+
+  # Ставки денежного рынка MIACR/MIACR-IG/MIACR-B по срокам (пункт key-rate/phase-2-mirac,
+  # #576): форма /hd_base/mkr/mkr_base, история MIACR с 2000-08-01, MIACR-IG/B с 2010-01-11,
+  # 18 рядов (3 инструмента × 6 сроков), % годовых. Бэкфилл окнами по 4 года, инкремент по
+  # max(date). Шаг в хвосте: сбой нового шага не лишает данных проверенные.
+  - id: cbr_mirac
+    run: "$ROSSTAT_IMPORT_BIN"
+    env:
+      - CLICKHOUSE_IMPORT_STAT=cbr_mirac
+    retry_policy:
+      limit: 3
+      interval_sec: 300
+
+  # Ликвидность банковского сектора (пункт key-rate/phase-2-bank-liquidity, #577): две
+  # формы — дневной срез /hd_base/bliquidity (с 2014-01-01, 14 рядов) и периоды усреднения
+  # /hd_base/BSliquidityMA (с 2018-01-10, 11 рядов), млрд руб. и б.п. Знак структурной
+  # позиции: дефицит (+) / профицит (-). Окна по 4 года, инкремент по max(date) вида.
+  - id: cbr_liquidity
+    run: "$ROSSTAT_IMPORT_BIN"
+    env:
+      - CLICKHOUSE_IMPORT_STAT=cbr_liquidity
+    retry_policy:
+      limit: 3
+      interval_sec: 300
+
+  # Корпус ОНДКП (пункт key-rate/phase-2-ondkp-vintages, #572): 28 выпусков 2000–2027 в
+  # cbr_ondkp и прогнозные точки базового сценария в cbr_ondkp_forecast (66 строк у
+  # выпусков 2020–2027). Артефакт — набор из 28 документов (ZIP+PDF, ~40 МБ), поэтому
+  # известность выпуска держит реестр по году: повторный прогон в сеть за файлами не идёт.
+  # Шаг в хвосте и с запасом по времени: бэкфилл первого прогона скачивает 28 файлов.
+  - id: cbr_ondkp
+    run: "$ROSSTAT_IMPORT_BIN"
+    env:
+      - CLICKHOUSE_IMPORT_STAT=cbr_ondkp
+    retry_policy:
+      limit: 2
+      interval_sec: 600
