@@ -129,9 +129,9 @@ func ondkpYearColumns(lines []string, from int) ([]ondkpYearColumn, int, error) 
 		columns := make([]ondkpYearColumn, 0, len(matches))
 		ascending := true
 		for k, match := range matches {
-			year, err := strconv.Atoi(lines[j][match[0]:match[1]])
+			year, err := ondkpYearOf(lines[j][match[0]:match[1]])
 			if err != nil {
-				return nil, 0, fmt.Errorf("cbr_ondkp: год %q: %w", lines[j][match[0]:match[1]], err)
+				return nil, 0, fmt.Errorf("cbr_ondkp: строка годов %q: %w", lines[j], err)
 			}
 			if k > 0 && year <= columns[k-1].year {
 				ascending = false

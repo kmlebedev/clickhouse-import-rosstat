@@ -1,8 +1,13 @@
 package cbr
 
 import (
+	"context"
+	"math"
 	"os"
+	"strings"
 	"testing"
+
+	"github.com/kmlebedev/clickhouse-import-rosstat/util"
 )
 
 // cbrOndkpFixture — прочитанный файл фикстуры корпуса ОНДКП.
@@ -149,6 +154,156 @@ func TestCbrOndkpReleases(t *testing.T) {
 	tuple := byYear[2001]
 	if tuple.publishedAt == nil || tuple.publishedAt.Format("2006-01-02") != "2001-01-05" {
 		t.Errorf("дата публикации 2001 = %v, want 2001-01-05", tuple.publishedAt)
+	}
+}
+
+// TestCbrOndkpYearU16 — границы года: 1990..2100 проходит, всё вне диапазона — ошибка, а не
+// завёрнутый UInt16. 1999 лежит внутри диапазона 1990..2100 (корпус начинается с 2000, но
+// границы взяты с запасом) и проходит.
+func TestCbrOndkpYearU16(t *testing.T) {
+	for _, year := range []int{ondkpYearMin, 1999, 2027, 2099, ondkpYearMax} {
+		got, err := ondkpYearU16(year)
+		if err != nil {
+			t.Errorf("ondkpYearU16(%d): %v, want nil", year, err)
+			continue
+		}
+		if int(got) != year {
+			t.Errorf("ondkpYearU16(%d) = %d, want %d", year, got, year)
+		}
+	}
+	for _, year := range []int{ondkpYearMin - 1, ondkpYearMax + 1, 70000, -1, math.MaxInt} {
+		if _, err := ondkpYearU16(year); err == nil {
+			t.Errorf("ondkpYearU16(%d): nil error, want ошибку диапазона %d–%d", year, ondkpYearMin, ondkpYearMax)
+		}
+	}
+}
+
+// TestCbrOndkpYearOf — год из группы регулярного выражения: Atoi с проверкой диапазона.
+// Переполнение Atoi и мусор — ошибка, а не ноль.
+func TestCbrOndkpYearOf(t *testing.T) {
+	for _, c := range []struct {
+		digits string
+		want   int
+	}{
+		{"1990", 1990},
+		{"2027", 2027},
+		{"2099", 2099},
+		{"2100", 2100},
+	} {
+		year, err := ondkpYearOf(c.digits)
+		if err != nil {
+			t.Errorf("ondkpYearOf(%q): %v, want nil", c.digits, err)
+			continue
+		}
+		if year != c.want {
+			t.Errorf("ondkpYearOf(%q) = %d, want %d", c.digits, year, c.want)
+		}
+	}
+	for _, digits := range []string{"1989", "2101", "70000", "-1", "99999999999999999999", "20x7", ""} {
+		if _, err := ondkpYearOf(digits); err == nil {
+			t.Errorf("ondkpYearOf(%q): nil error, want ошибку", digits)
+		}
+	}
+}
+
+// TestCbrOndkpCountU16 — forecast_rows перед вставкой: диапазон UInt16 и отрицательные
+// значения проверяются до приведения.
+func TestCbrOndkpCountU16(t *testing.T) {
+	for _, c := range []struct {
+		count int
+		want  uint16
+	}{
+		{0, 0},
+		{9, 9},
+		{math.MaxUint16, math.MaxUint16},
+	} {
+		got, err := ondkpCountU16(c.count)
+		if err != nil {
+			t.Errorf("ondkpCountU16(%d): %v, want nil", c.count, err)
+			continue
+		}
+		if got != c.want {
+			t.Errorf("ondkpCountU16(%d) = %d, want %d", c.count, got, c.want)
+		}
+	}
+	for _, count := range []int{-1, math.MaxUint16 + 1} {
+		if _, err := ondkpCountU16(count); err == nil {
+			t.Errorf("ondkpCountU16(%d): nil error, want ошибку", count)
+		}
+	}
+}
+
+// TestCbrOndkpAnalyzeReleasePDFTextFailure — сбой извлечения текста PDF (нет pdftotext) —
+// ошибка выпуска, а не проглоченное предупреждение: иначе выпуск попал бы в реестр с
+// forecast_rows=0, а гейт по release_year заморозил бы дыру навсегда. Тест на уровне ветки
+// разбора артефакта: реальный pdftotext не нужен, утилита подменена отсутствующим именем.
+func TestCbrOndkpAnalyzeReleasePDFTextFailure(t *testing.T) {
+	previous := util.PDFTool
+	util.PDFTool = "cbr-ondkp-pdftotext-missing"
+	t.Cleanup(func() { util.PDFTool = previous })
+	release := ondkpRelease{
+		year:   2027,
+		url:    "https://www.cbr.ru/Content/Document/File/1/on_2027(2028-2029).pdf",
+		format: cbrOndkpFormatPDF,
+	}
+	analyzed, rows, err := ondkpAnalyzeRelease(context.Background(), release, []byte("%PDF-1.4\n1 0 obj\n"))
+	if err == nil {
+		t.Fatal("сбой pdftotext проглочен: выпуск разобран без ошибки")
+	}
+	if rows != nil {
+		t.Errorf("строк %d, want 0: при сбое извлечения прогноза быть не должно", len(rows))
+	}
+	if analyzed != (ondkpRelease{}) {
+		t.Errorf("выпуск %+v, want нулевой: при ошибке выпуск не регистрируется", analyzed)
+	}
+	if !strings.Contains(err.Error(), "извлечение текста PDF") {
+		t.Errorf("ошибка %q не называет извлечение текста PDF", err)
+	}
+	if !strings.Contains(err.Error(), util.PDFTool) {
+		t.Errorf("ошибка %q не называет утилиту %q", err, util.PDFTool)
+	}
+}
+
+// TestCbrOndkpAnalyzeReleaseNotPDF — WAF/HTML вместо файла: util.PDFText распознаёт подмену
+// до exec, и это тоже ошибка выпуска, а не «0 строк».
+func TestCbrOndkpAnalyzeReleaseNotPDF(t *testing.T) {
+	release := ondkpRelease{
+		year:   2027,
+		url:    "https://www.cbr.ru/Content/Document/File/1/on_2027(2028-2029).pdf",
+		format: cbrOndkpFormatPDF,
+	}
+	_, _, err := ondkpAnalyzeRelease(context.Background(), release, []byte(`<html><body>Доступ ограничен</body></html>`))
+	if err == nil {
+		t.Fatal("HTML-заглушка принята за PDF: ошибки нет")
+	}
+	if !strings.Contains(err.Error(), "не PDF") {
+		t.Errorf("ошибка %q не называет подмену файла", err)
+	}
+}
+
+// TestCbrOndkpAnalyzeReleaseZipDoc — ZIP с .doc разбирать нечем по формату: прогноза нет,
+// ошибки нет, pdftotext не вызывается (подмена отсутствующим бинарником это доказывает).
+func TestCbrOndkpAnalyzeReleaseZipDoc(t *testing.T) {
+	previous := util.PDFTool
+	util.PDFTool = "cbr-ondkp-pdftotext-missing"
+	t.Cleanup(func() { util.PDFTool = previous })
+	release := ondkpRelease{
+		year:   2009,
+		url:    "https://www.cbr.ru/Queries/XsltBlock/File/1/-1/0",
+		format: cbrOndkpFormatZipDoc,
+	}
+	analyzed, rows, err := ondkpAnalyzeRelease(context.Background(), release, []byte("PK\x03\x04"))
+	if err != nil {
+		t.Fatalf("ZIP-выпуск: %v, want nil: у zip-doc нет прогнозной таблицы по формату", err)
+	}
+	if rows != nil {
+		t.Errorf("строк %d, want 0", len(rows))
+	}
+	if analyzed.forecastRows != 0 || analyzed.bytes != 4 {
+		t.Errorf("выпуск %+v: want forecastRows=0, bytes=4", analyzed)
+	}
+	if analyzed.sha256 == "" {
+		t.Error("sha256 не посчитан: атрибуты артефакта обязаны заполняться и для ZIP")
 	}
 }
 

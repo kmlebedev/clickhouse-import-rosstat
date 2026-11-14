@@ -39,9 +39,6 @@ const (
 	// с фактической первой даты, чтобы не запрашивать заведомо пустое окно.
 	cbrMiracHistoryFrom = "2000-08-01"
 
-	// cbrMiracChunkYears — длина окна запроса: у форм ЦБ есть ограничение диапазона,
-	// бэкфилл режется на смежные окна (как у cbr_zcyc и cbr_liquidity).
-	cbrMiracChunkYears = 4
 	cbrMiracChunkPause = 500 * time.Millisecond
 
 	cbrMiracTimeLayout = "02.01.2006"
@@ -196,10 +193,11 @@ func cbrMiracTablePoints(table *goquery.Selection, name string) ([]cbrMiracPoint
 	return points, nil
 }
 
-// cbrMiracCraw — инкрементальный импорт: max(date) → окна → один батч. Все окна
-// разбираются до PrepareBatch: пустое историческое окно не должно записать частичный
-// бэкфилл. Точки вне окна отбрасываются: на пустой/будущий диапазон форма отдаёт
-// последнюю доступную строку.
+// cbrMiracCraw — инкрементальный импорт: max(date) → окна → один батч. Окна режет
+// общий zcycChunks по cbrZcycChunkYears (4 года), как у cbr_zcyc: своего переключателя
+// длины окна у MIACR нет. Все окна разбираются до PrepareBatch: пустое историческое окно
+// не должно записать частичный бэкфилл. Точки вне окна отбрасываются: на пустой/будущий
+// диапазон форма отдаёт последнюю доступную строку.
 func cbrMiracCraw(_ string, conn driver.Conn) (count int64, err error) {
 	var last time.Time
 	if err = conn.QueryRow(ctx, "SELECT max(date) FROM "+cbrMiracTable+" FINAL").Scan(&last); err != nil {
