@@ -67,6 +67,12 @@ func (s *cbrCcybStat) Import(ctx context.Context, conn driver.Conn) (count int64
 	if err = afterCbrCcyb(cbrCcybSeriesMeta)(ctx, conn); err != nil {
 		return int64(written), err
 	}
+	// Сторож свежести: ряд не обновляется с 2024-10, и без предупреждения это видно только
+	// в аудите. Ошибка чтения max(date) не отменяет импорт — она лишь лишает прогон
+	// диагностики, поэтому логируется, а не возвращается.
+	if staleErr := warnCbrCcybStale(ctx, conn, time.Now()); staleErr != nil {
+		log.Warnf("%s: проверка свежести не выполнена: %v", cbrCcybTable, staleErr)
+	}
 	if written == 0 {
 		log.Infof("%s: новых данных нет", cbrCcybTable)
 	}
@@ -100,3 +106,48 @@ var cbrCcybImporter = &cbrCcybStat{ClickHouseImport: util.ClickHouseImport{
 	DataUrl:                cbrCcybUrl,
 	PublicationCountPoints: cbrCcybCountPoints,
 }}
+
+// cbrCcybStaleLimit — порог предупреждения о замороженном ряде, в днях. Файл ЦБ
+// обновляется раз в месяц-квартал, поэтому 120 дней — это больше двух пропущенных
+// публикаций; меньше — ложные срабатывания на нормальном лаге.
+const cbrCcybStaleLimit = 120
+
+// cbrCcybStaleDays — разрыв между последней точкой ряда и сегодняшним днём в днях.
+// Считается по календарным компонентам дат, а не через .UTC()/.Truncate: clickhouse-go
+// отдаёт Date в таймзоне сессии (Asia/Yekaterinburg, UTC+5), поэтому
+// 2024-10-01T00:00+05:00 после .UTC() становится 2024-09-30T19:00Z и разрыв выходит на
+// день больше земляного dateDiff('day', max(date), today()) — на границе порога
+// предупреждение выстреливало бы на день раньше. Та же нормализация по календарным
+// компонентам уже есть в пакете: cbr/zcyc.go (zcycDateUTC) и cbr/mp_summary.go (mpDay).
+// Отрицательный разрыв (точка «из будущего») даёт 0.
+func cbrCcybStaleDays(last, now time.Time) int {
+	lastDay := time.Date(last.Year(), last.Month(), last.Day(), 0, 0, 0, 0, time.UTC)
+	nowDay := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	days := int(nowDay.Sub(lastDay).Hours() / 24)
+	if days < 0 {
+		return 0
+	}
+	return days
+}
+
+// warnCbrCcybStale пишет предупреждение, если ряд не обновлялся дольше порога. Обрыв
+// задокументирован в docs/IMPORTERS.md (файл не обновлялся с декабря 2024, последняя
+// точка 2024-10-01) и в issue #578; проверка измеряет только max(date), поэтому причину
+// в логе формулирует как гипотезу. Данные и схема не меняются: предупреждение делает
+// обрыв видимым в каждом прогоне, а не только в аудите.
+func warnCbrCcybStale(ctx context.Context, conn driver.Conn, now time.Time) error {
+	var last time.Time
+	if err := conn.QueryRow(ctx, "SELECT max(date) FROM "+cbrCcybTable+" FINAL").Scan(&last); err != nil {
+		return fmt.Errorf("%s: max(date): %w", cbrCcybTable, err)
+	}
+	// max(date) по пустой Date-колонке ClickHouse возвращает 1970-01-01, а не NULL,
+	// поэтому IsZero() сам по себе пустую таблицу не отсекает.
+	if last.IsZero() || last.Year() <= 1970 {
+		return nil
+	}
+	if days := cbrCcybStaleDays(last, now); days > cbrCcybStaleLimit {
+		log.Warnf("%s: последняя точка %s — %d дн. назад (порог %d); гипотеза: файл источника не обновлялся с 12.2024 — см. docs/IMPORTERS.md; проверьте Last-Modified",
+			cbrCcybTable, last.Format("2006-01-02"), days, cbrCcybStaleLimit)
+	}
+	return nil
+}
