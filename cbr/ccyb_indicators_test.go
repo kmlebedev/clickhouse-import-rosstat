@@ -70,8 +70,8 @@ func TestWarnCbrCcybStaleEmptyTable(t *testing.T) {
 }
 
 // TestWarnCbrCcybStaleMessage — предупреждение содержит факты (дату, разрыв 774, порог) и
-// реальные указатели: docs/IMPORTERS.md и гипотезу про Last-Modified, а не отсутствующий
-// docs/LIMITATIONS.md.
+// реальные указатели: docs/IMPORTERS.md и гипотезу про Last-Modified. Обрыв CCYB
+// фиксируется и в docs/LIMITATIONS.md (issue #578), поэтому слово LIMITATIONS не запрещено.
 func TestWarnCbrCcybStaleMessage(t *testing.T) {
 	var logged bytes.Buffer
 	prevOut := log.StandardLogger().Out
@@ -88,14 +88,12 @@ func TestWarnCbrCcybStaleMessage(t *testing.T) {
 	for _, want := range []string{
 		"последняя точка 2024-10-01 — 774 дн. назад (порог 120)",
 		"docs/IMPORTERS.md",
+		"гипотеза:",
 		"проверьте Last-Modified",
 	} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("предупреждение не содержит %q: %s", want, msg)
 		}
-	}
-	if strings.Contains(msg, "LIMITATIONS") {
-		t.Errorf("предупреждение ссылается на несуществующий docs/LIMITATIONS.md: %s", msg)
 	}
 }
 

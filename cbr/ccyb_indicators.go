@@ -117,9 +117,9 @@ const cbrCcybStaleLimit = 120
 // отдаёт Date в таймзоне сессии (Asia/Yekaterinburg, UTC+5), поэтому
 // 2024-10-01T00:00+05:00 после .UTC() становится 2024-09-30T19:00Z и разрыв выходит на
 // день больше земляного dateDiff('day', max(date), today()) — на границе порога
-// предупреждение выстреливало бы на день раньше. Так же нормализована дата в
-// cbr/infl_exp_hist.go (cbrInflExpKnownDates). Отрицательный разрыв (точка «из
-// будущего») даёт 0.
+// предупреждение выстреливало бы на день раньше. Та же нормализация по календарным
+// компонентам уже есть в пакете: cbr/zcyc.go (zcycDateUTC) и cbr/mp_summary.go (mpDay).
+// Отрицательный разрыв (точка «из будущего») даёт 0.
 func cbrCcybStaleDays(last, now time.Time) int {
 	lastDay := time.Date(last.Year(), last.Month(), last.Day(), 0, 0, 0, 0, time.UTC)
 	nowDay := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
