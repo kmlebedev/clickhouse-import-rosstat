@@ -43,6 +43,9 @@ var sharedMacroSeriesOwners = map[string]bool{
 // переименования (стандарт §8.2/§8.3, скил go-engineer §5.1).
 var sharedTableOwners = map[string]string{
 	"cbr_infl_exp_op": "cbr_infl_exp",
+	// cbr_infl_exp_hist — история ожиданий из архива бюллетеней: пишет в ту же общую
+	// cbr_infl_exp, что книга и оперативный PDF, и различается только ключом версии.
+	"cbr_infl_exp_hist": "cbr_infl_exp",
 }
 
 // expectedPublicationCountPoints — запросы количественного чека (спека §3.5) для
