@@ -451,3 +451,18 @@ func TestCbrInflExpKnownDatesPairAndTimezone(t *testing.T) {
 		t.Errorf("известных ключей %d, want 3 (два ряда марта + один ряд февраля)", len(known))
 	}
 }
+
+// TestCbrInflExpHistRowsProse2026 — прозаическая волна 2026 года: числа напечатаны прозой и на
+// графиках, строки «ФОМ (медиана)» в тексте нет. Разбор обязан вернуть 0 строк и nil: это не
+// сбой и не смена вёрстки, а граница корпуса PDF (машиночитаемая история — приложение волны),
+// и она закреплена, чтобы фикстура не оставалась неиспользуемой. Месяц влияет только на дату
+// точки, а точек нет.
+func TestCbrInflExpHistRowsProse2026(t *testing.T) {
+	rows, err := inflExpHistRows(cbrInflExpHistFixture(t, "testdata/infl_exp_hist_2026_prose.txt"), time.Date(2026, time.December, 1, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("разбор прозы 2026: %v, want nil", err)
+	}
+	if len(rows) != 0 {
+		t.Errorf("строк %d, want 0: в прозаической волне таблицы нет", len(rows))
+	}
+}
