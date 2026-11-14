@@ -1,0 +1,1081 @@
+
+<!DOCTYPE html>
+<html>
+<head>
+    
+
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+<meta name="format-detection" content="telephone=no" />
+<meta name="zoom:lang" content="ru" />
+    <meta name="zoom:last-modified" content="Wed, 28 Oct 2026 13:50:00 GMT" />
+<title>Основные направления единой государственной денежно-кредитной политики | Банк России</title>
+
+
+
+    <meta property="og:image" content="/common/images/share-1.jpg" />
+
+    
+
+
+            <link rel="stylesheet" type="text/css" href="/common/libs/jquery-ui/jquery-ui.min.css?v=v478607061" media="all">
+
+            <!--[if IE 9]><link rel="stylesheet" type="text/css" href="/common/style/main-ie9.css?v=v1337212920" media="all"><![endif]-->
+
+            <!--[if gt IE 9]><!--><link rel="stylesheet" type="text/css" href="/common/style/main.min.css?v=v659153854" media="all"><!--<![endif]-->
+
+
+        <script type="text/javascript" src="/common/libs/jquery-3.7.1.min.js?v=v735956814"></script>
+
+
+
+        <script type="text/javascript" src="/common/libs/jquery-ui/jquery-ui.min.js?v=v478607061"></script>
+
+        <script type="text/javascript" src="/common/libs/jquery.inputmask.min.js?v=v478607061"></script>
+
+
+        <script type="text/javascript" src="/common/scripts/vendor.js?v=v4270970564"></script>
+
+        <script type="text/javascript" src="/common/libs/jquery.floatThead.min.js?v=v478607061"></script>
+
+
+
+
+
+
+
+
+        <script type="text/javascript" src="/common/libs/popper.js?v=v478607061"></script>
+
+        <script type="text/javascript" src="/common/libs/tippy.js?v=v478607061"></script>
+
+        <script type="text/javascript" src="/common/scripts/main.min.js?v=v1337212920"></script>
+
+
+        <script type="text/javascript" src="/common/libs/localization-ru.js?v=v712023859"></script>
+        <script type="text/javascript" src="/js/jquery.ui.autocomplete-ru.js?v=v1043438991"></script>
+
+        <script type="text/javascript" src="/js/jquery.cookie.min.js?v=v4260771145"></script>
+
+        <script type="text/javascript" src="/js/site.js?v=v2848633841"></script>
+
+
+
+<link href="/Modules/Migration/Content/migration-ui.css?v=v3116962712" rel="stylesheet" type="text/css" />
+
+
+    <script type="text/javascript">
+        $(function () {
+            var $menu = $('[data-menu]'),
+                $menuItemBtn = $menu.find('[data-menu-item-btn]'),
+                $menuShow = $('[data-menu-show],.header_burger-big'),
+                $menuClose = $('[data-menu-close]');
+            var config = $menu.data('config');
+
+            $menuShow.on('click.cms_loadwholesite mouseenter.cms_loadwholesite', function (event) {
+                loadWholeSite();
+            });
+
+            var xhr = null;
+            function loadWholeSite() {
+                if (xhr === null) {
+                    $('.menu_wrap .networks-circle').html($('.networks-circle.footer_networks').html());
+                    $('.menu_wrap .header_search').html($('.header .offsetMenu .header_search').html());
+
+                    $('[data-cms-wholesite-placeholder]').addClass('with-centered-loader').empty();
+                    xhr = $.ajax(config.url, {
+                        dataType: "html",
+                        method: "get",
+                        success: function (html) {
+                            $('[data-cms-wholesite-placeholder]').replaceWith(html);
+
+                            $menu.find('.menu_tab[data-tabs-tab]').each(function () {
+                                var tab = $(this).data('tabs-tab');
+                                $(this).toggle($menu.find('[data-tabs-content="' + tab + '"]').length != 0);
+                            });
+
+                            $menu.trigger('new-html');
+
+                            for (var i in config.catalogPath) {
+                                $menu.find('li[data-catalog-id="' + config.catalogPath[i] + '"]')
+                                    .addClass("_active");
+                                $menu.find('li[data-catalog-id="' + config.catalogPath[i] + '"]')
+                                    .closest('[data-tabs-content]')
+                                    .trigger('open-anchor');
+                            }
+
+                            $menuShow.off('click.cms_loadwholesite mouseenter.cms_loadwholesite');
+                        },
+                        error: function () {
+                            $('[data-cms-wholesite-placeholder]').removeClass('with-centered-loader')
+                                .append('<div class="menu_content offset-md-1">' +
+                                    '<span class="group-error field-validation-error">Не удалось загрузить карту сайта. <a href="#">Попробуйте еще раз.</a></span>' +
+                                    '</div>')
+                                .find('a')
+                                .on('click', function () { loadWholeSite(); });
+                        },
+                        complete: function () {
+                            xhr = null;
+                        }
+                    });
+                }
+            }
+        });
+    </script>
+
+
+<script>
+    if (window.localStorage) {
+        if (localStorage.getItem('vision-impaired'))
+            document.getElementsByTagName('html')[0].className += ' vision-impaired';
+    }
+</script>
+<script>
+    document.documentElement.style.setProperty('--scrollbar-width', '17px');
+    setTimeout(function () {
+        
+        var div = document.createElement('div');
+
+        div.style.overflowY = 'scroll';
+        div.style.width = '50px';
+        div.style.height = '50px';
+
+        
+        div.style.visibility = 'hidden';
+
+        document.body.appendChild(div);
+        var scrollWidth = Math.max(div.offsetWidth - div.clientWidth, 0.15); 
+        document.body.removeChild(div);
+        
+        document.documentElement.style.setProperty('--scrollbar-width', scrollWidth + 'px');
+    }, 0);
+</script>
+
+
+
+
+    
+</head>
+<body class="page-v3 page-v3-inside">
+
+
+<!-- Yandex.Metrika counter -->
+<script type="text/javascript" >
+    (function(m,e,t,r,i,k,a){m[i]=m[i]||function(){(m[i].a=m[i].a||[]).push(arguments)};
+    m[i].l=1*new Date();
+    for (var j = 0; j < document.scripts.length; j++) {if (document.scripts[j].src === r) { return; }}
+    k=e.createElement(t),a=e.getElementsByTagName(t)[0],k.async=1,k.src=r,a.parentNode.insertBefore(k,a)})
+    (window, document, "script", "https://mc.yandex.ru/metrika/tag.js", "ym");
+
+    ym(5774506, "init", {
+        clickmap:true,
+        trackLinks:true,
+        accurateTrackBounce:true,
+        webvisor:true
+    });
+</script>
+<noscript><div><img src="https://mc.yandex.ru/watch/5774506" style="position:absolute; left:-9999px;" alt="" /></div></noscript>    
+<!-- /Yandex.Metrika counter -->
+        
+    
+
+    <div class="header-print">
+    <div class="offsetMenu">
+        <div class="header-print_inner">
+            <img class="header-print_logo" alt="cbr" src="/common/images/logo.svg">
+            <ul class="header-print_contacts">
+<li>107016, Москва, ул. Неглинная, д.&nbsp;12, к. В, Банк России</li>
+<li><nobr class="phone">8 800 300-30-00</nobr></li>
+<li>www.cbr.ru</li>
+</ul>
+
+        </div>
+    </div>
+</div>
+
+    <header class="header" id="header">
+        <div class="top-line" data-top-line="">
+            <div class="header_burger-big"></div>
+            <div class="offsetMenu">
+                <div class="col-md-23 header_margin-left">
+                    <div class="top-line_inner header_inner">
+                        
+
+<div class="row">
+    <div class="col-xl-4 col-md-6">
+        <div class="header_left pr-0">
+                <div class="header_menu" data-menu-show=""></div>
+            <a class="header_logo" href="/"></a>
+                <a class="header_search_btn d-flex d-md-none" href="#" data-search-form-show="" aria-label="Поиск по сайту"><div class="header_search_icon"></div></a>
+            <a class="d-flex d-md-none" href="#" data-tooltip="" data-tooltip-content="Версия для слабовидящих" data-tooltip-class="mobile-hide"><div class="header_visual-impaired_item"></div></a>
+        </div>
+    </div>
+    <div class="col-xl-17 col-md-13 offset-md-1 header_block">
+        <div class="d-none d-md-block">
+            <div class="header_right">
+                <div class="networks header_link header_networks"><a class="header_appeal-link" href="/contactBR/" data-tooltip="" data-tooltip-content="Обратиться в Банк России" data-tooltip-class="mobile-hide"></a></div>
+                <div class="networks header_networks header_visual-impaired header_visual-impaired_inner"><a href="#" data-tooltip="" data-tooltip-content="Версия для слабовидящих" data-tooltip-class="mobile-hide" aria-label="Версия для слабовидящих"><div class="header_visual-impaired_item"></div></a></div>
+                <div class="header_lang header_lang_inner header_networks">
+    <a href="/Localization/SwitchLanguage?url=%2Fabout_br%2Fpubl%2Fondkp%2F&amp;from=ru-RU&amp;to=en-CB"><!--noindex-->EN<!--/noindex--></a>
+</div>
+                    <div class="header_networks header_search header_search_inner">
+                        <a class="header_search_btn" href="#" data-search-form-show="" aria-label="Поиск по сайту"><div class="header_search_icon"></div><span aria-hidden="true">Поиск по сайту</span></a>
+                    </div>
+            </div>
+        </div>
+    </div>
+</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="offsetMenu">
+            <div class="col-md-23 offset-md-1 header_margin-left">
+                <div class="header_inner">
+                    
+<div class="row">
+    <div class="col-xl-5 col-md-6">
+        <div class="header_left pr-0">
+            <div class="header_menu" data-menu-show=""></div>
+            <a class="header_logo" href="/"></a>
+            <a class="header_search_btn d-flex d-md-none" href="#" data-search-form-show="" aria-label="Поиск по сайту">
+                <div class="header_search_icon"></div>
+            </a>
+            <a class="d-flex d-md-none" href="#" data-tooltip data-tooltip-content="Версия для слабовидящих" data-tooltip-class="mobile-hide">
+                <div class="header_visual-impaired_item"></div>
+            </a>
+        </div>
+    </div>
+    <div class="col-xl-17 col-md-13 offset-md-1 header_block justify-content-end">
+        <div class="d-none d-md-block">
+            <div class="header_right">
+                <div class="networks header_link header_networks"><a class="header_appeal-link" href="/contactBR/" data-tooltip="" data-tooltip-content="Обратиться в Банк России" data-tooltip-class="mobile-hide"></a></div>
+                <div class="networks header_networks header_visual-impaired header_visual-impaired_inner">
+                    <a href="#" data-tooltip data-tooltip-content="Версия для слабовидящих" data-tooltip-class="mobile-hide" aria-label="Версия для слабовидящих">
+                        <div class="header_visual-impaired_item"></div>
+                    </a>
+                </div>
+                <div class="header_lang header_lang_inner header_networks">
+    <a href="/Localization/SwitchLanguage?url=%2Fabout_br%2Fpubl%2Fondkp%2F&amp;from=ru-RU&amp;to=en-CB"><!--noindex-->EN<!--/noindex--></a>
+</div>
+                <div class="header_networks header_search header_search_inner">
+                    <a class="header_search_btn" href="#" data-search-form-show="" aria-label="Поиск по сайту">
+                        <div class="header_search_icon"></div><span aria-hidden="true">Поиск по сайту</span>
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+                </div>
+            </div>
+        </div>
+    </header>
+    <form action="/search/" method="get" class="search-form" data-search-form=""
+      data-api-url="/Content/SearchSuggest/Suggest"
+      data-api-top-url="">
+    <div class="offsetMenu">
+        <div class="col-md-23 offset-md-1">
+            <div class="search-form_inner">
+                <div class="search-form_title">Что вы хотите найти?<img class="search-form_title-close" src="/common/images/icons/menu-close-dark-grey.svg"></div>
+                <div class="search-form_content">
+                    <div class="search-form_block">
+                        <div class="search-form_icon"></div>
+                        <div class="search-form_field">
+                            <input name="text" type="text" autocomplete="off" placeholder="Начните писать" data-search-form-input="" />
+                        </div>
+                    </div>
+                    <div class="search-form_clear" data-search-form-clear-btn=""><img src="/common/images/icons/menu-close-gray.svg"></div>
+                    <div class="search-form_btn">
+                        <button class="b-btn _blue" data-search-form-btn="">Искать</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</form>
+
+
+<div class="menu_wrap" data-menu="" data-config="{&quot;catalogPath&quot;:[19518,17672,15717],&quot;url&quot;:&quot;/Catalog/SiteMap/GetWholeSiteHtml?blockId=59191&quot;}">
+    <div class="offsetMenu">
+        <div class="header_menu _close menu_close d-none d-md-block" data-menu-close=""></div>
+        <div class="header_inner top-line_inner d-block d-md-none">
+            <div class="row">
+                <div class="col-xl-5 col-md-9">
+                    <div class="header_left pr-0">
+                        <div class="header_menu _close" role="button" tabindex="0" aria-label="Закрыть меню" data-menu-close=""></div>
+                        <a class="header_logo" href="/"></a>
+                        <a class="header_search_btn" href="#" data-search-form-show="data-search-form-show" aria-label="Поиск по сайту"><div class="header_search_icon"></div></a>
+                        <a href="#" data-tooltip="data-tooltip" data-tooltip-content="Версия для слабовидящих" data-tooltip-class="mobile-hide"><div class="header_visual-impaired_item"></div></a>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="menu row" data-tabs="data-tabs">
+            <div class="menu_quick col-md-7">
+                <div role="tablist" class="menu_quick_tabs">
+    <a role="tab" id="menu_tab_Activity" aria-controls="menu_content_Activity" aria-selected="true" class="menu_tab _active" href="#" data-tabs-tab="Activity">Деятельность</a>
+    <a role="tab" id="menu_tab_FinancialMarkets" aria-controls="menu_content_FinancialMarkets" aria-selected="false" class="menu_tab" href="#" data-tabs-tab="FinancialMarkets">Финансовые рынки</a>
+    <a role="tab" id="menu_tab_Documents" aria-controls="menu_content_Documents" aria-selected="false" class="menu_tab" href="#" data-tabs-tab="Documents">Документы и данные</a>
+    <a role="tab" id="menu_tab_AboutBank" aria-controls="menu_content_AboutBank" aria-selected="false" class="menu_tab" href="#" data-tabs-tab="AboutBank">О Банке России</a>
+    <a role="tab" id="menu_tab_Services" aria-controls="menu_content_Services" aria-selected="false" class="menu_tab" href="#" data-tabs-tab="Services">Сервисы</a>
+</div>
+<div class="menu_quick_links">
+    <div class="inner_links"><a href="/support_measures/" title="Меры зашиты финансового рынка" style="color:red">Меры защиты финансового рынка</a>
+  </div>
+<div class="phones"><a class="menu_phone_val" href="tel:+74993003000">
+<div class="plus">+</div>7 499 300-30-00</a><a class="menu_phone_val" href="tel:88003003000">8 800 300-30-00</a><a class="menu_phone_val" href="tel:300">300</a><span>Бесплатно для звонков с мобильных телефонов</span></div>
+<div class="inner_links">
+  <a href="/news/" title="Новости">Новости</a>
+  <a href="/rbr/" title="Решения Банка России">Решения Банка России</a>
+  <a href="/contacts/" title="Контактная информация">Контактная информация</a>
+  <a href="/sitemap" title="Карта сайта">Карта сайта</a>
+  <a href="/about/" title="О сайте">О сайте</a>
+  </div>
+<div class="networks-circle">
+  <a class="networks-circle_item _vk" href="https://vk.com/cbr_official" title="ВКонтакте"></a>
+  <a class="networks-circle_item _yt" href="https://www.youtube.com/user/BankofRussia" title="Youtube"></a>
+  <a class="networks-circle_item _tg" href="https://telegram.me/centralbank_russia" title="Telegram"></a>
+  <a class="networks-circle_item _ydzen" href="https://zen.yandex.ru/id/622372d6a565892091994ea9" title="Яндекс Дзен"></a>
+  <a class="networks-circle_item _ok" href="https://ok.ru/group/68858679787580" title="Одноклассники"></a>
+  <a class="networks-circle_item _rt" href="https://rutube.ru/channel/23873201/" title="RUTUBE"></a>
+  <a class="networks-circle_item _max" href="https://max.ru/cbr_official" title="Макс"></a>
+</div>
+</div>
+            </div>
+            <div class="d-md-none link-above">
+                <div class="header_right">
+                    <div class="header_link"><a href="/contactBR/">Обратиться в&nbsp;Банк России</a></div>
+                    <div class="header_lang">
+            <div class="header_lang_item _active"><span><!--noindex-->RU<!--/noindex--></span></div>
+            <div class="header_lang_item"><a href="/Localization/SwitchLanguage?url=%2Fabout_br%2Fpubl%2Fondkp%2F&amp;from=ru-RU&amp;to=en-CB"><!--noindex-->EN<!--/noindex--></a></div>
+</div>
+                </div>
+<div class="header_right"><div class="header_link"><a href="/about_br/">О Банке России</a></div></div>
+<div class="header_right"><div class="header_link"><a href="/finorg/">Проверить участника финансового рынка</a></div></div>
+<div class="header_right"><div class="header_link"><a href="/PSystem/dr/">Цифровой рубль</a></div></div>
+<div class="header_right"><div class="header_link"><a href="/beware/">Осторожно: мошенники!</a></div></div>            </div>
+            <div class="menu_content_container col-md" data-cms-wholesite-placeholder="">
+            </div>
+        </div>
+    </div>
+</div>
+
+    <main id="content">
+        <div class="offsetMenu ">
+            <div class="container-fluid">
+                <div class="col-md-23 offset-md-1">
+                        <script type='application/ld+json'>{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"item":{"@id":"https://www.cbr.ru/","name":"Главная страница"}},{"@type":"ListItem","position":2,"item":{"@id":"https://www.cbr.ru/about_br/","name":"О Банке России"}},{"@type":"ListItem","position":3,"item":{"@id":"https://www.cbr.ru/about_br/publ/","name":"Издания Банка России"}},{"@type":"ListItem","position":4,"item":{"@id":"https://www.cbr.ru/about_br/publ/ondkp/","name":"Основные направления единой государственной денежно-кредитной политики"}}]}</script>
+    <div class="breadcrumbs">
+        <div class="breadcrumbs_item"><a class="breadcrumbs_home" href="/"></a></div>
+            <div class="breadcrumbs_item">
+                <a href="/about_br/"><!--noindex-->О&#160;Банке России<!--/noindex--></a>
+            </div>
+            <div class="breadcrumbs_item">
+                <a href="/about_br/publ/"><!--noindex-->Издания Банка России<!--/noindex--></a>
+            </div>
+    </div>
+
+                    <!--index-->
+<h1><span class="referenceable">Основные направления единой государственной денежно-кредитной политики</span>
+</h1>
+                                        
+
+
+
+
+
+
+                                                                                
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_left_icon"></div>
+                    </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/about_br/publ/ondkp/on_2027_2029/" id="a_195228page">                        <span class="document-regular_name_visible">Основные направления единой государственной денежно-кредитной политики на&nbsp;2027&nbsp;год и&nbsp;период 2028 и&nbsp;2029 годов</span>
+</a>
+                                    </div>
+                
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_left_icon"></div>
+                    </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/about_br/publ/ondkp/list_note_2027_2028-2029/" id="a_198481page">                        <span class="document-regular_name_visible">Перечень изменений, внесенных в Основные направления единой государственной денежно-кредитной политики на 2027 год и период 2028 и 2029 годов</span>
+</a>
+                                    </div>
+                
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_left_icon"></div>
+                    </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/about_br/publ/ondkp/on_2026_2028/" id="a_180637page">                        <span class="document-regular_name_visible">Основные направления единой государственной денежно-кредитной политики на&nbsp;2026&nbsp;год и&nbsp;период 2027 и&nbsp;2028 годов</span>
+</a>
+                                    </div>
+                
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_left_icon"></div>
+                    </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/about_br/publ/ondkp/on_2025_2027/" id="a_150440page">                        <span class="document-regular_name_visible">Основные направления единой государственной денежно-кредитной политики на 2025 год и период 2026 и 2027 годов</span>
+</a>
+                                    </div>
+                
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_left_icon"></div>
+                    </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/about_br/publ/ondkp/on_2024_2026/" id="a_162530page">                        <span class="document-regular_name_visible">Основные направления единой государственной денежно-кредитной политики на 2024 год и период 2025 и 2026 годов </span>
+</a>
+                                    </div>
+                
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_left_icon"></div>
+                    </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/about_br/publ/ondkp/on_2023_2025/" id="a_139402page">                        <span class="document-regular_name_visible">Основные направления единой государственной денежно-кредитной политики на 2023 год и период 2024 и 2025 годов</span>
+</a>
+                                    </div>
+                
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_left_icon"></div>
+                    </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/about_br/publ/ondkp/on_2022_2024/" id="a_126044link">                        <span class="document-regular_name_visible">Основные направления единой государственной денежно-кредитной политики на 2022 год и период 2023 и 2024 годов</span>
+</a>
+                                    </div>
+                
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_left_icon"></div>
+                    </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/about_br/publ/ondkp/on_2021_2023/" id="a_112384link">                        <span class="document-regular_name_visible">Основные направления единой государственной денежно-кредитной политики на 2021 год и период 2022 и 2023 годов</span>
+</a>
+                                    </div>
+                
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_left_icon"></div>
+                            <div class="document-regular_date">21.02.2020</div>
+        </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/about_br/publ/ondkp/on_2020_2022/" id="a_87361link">                        <span class="document-regular_name_visible">Основные направления единой государственной денежно-кредитной политики на 2020 год и период 2021 и 2022 годов</span>
+</a>
+                                    </div>
+                
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+
+
+
+
+<div class="dropdown">
+<a aria-controls="DropDown_content" aria-expanded="false" class="dropdown_title referenceable" data-zone-code="/block103683/zone" id="a_103683" role="button" tabindex="0">Предыдущие публикации</a>
+
+    <div id="DropDown_content" role="region" aria-labelledby="a_103683" class="dropdown_content">
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_format icon-pdf"></div>
+                            <div class="document-regular_date">20.02.2020</div>
+        </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/Content/Document/File/112392/on_2020(2021-2022).pdf" id="a_112392file" target="_blank">                        <span class="document-regular_name_visible">Основные направления единой государственной денежно-кредитной политики на 2020 год и период 2021 и 2022 годов</span>
+</a>
+                                    </div>
+                
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_format icon-pdf"></div>
+                            <div class="document-regular_date">26.10.2018</div>
+        </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/Content/Document/File/87362/on_2019(2020-2021).pdf" id="a_87362file" target="_blank">                        <span class="document-regular_name_visible">Основные направления единой государственной денежно-кредитной политики на 2019 год и период 2020 и 2021 годов</span>
+</a>
+                                    </div>
+                
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_format icon-pdf"></div>
+                            <div class="document-regular_date">12.12.2017</div>
+        </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/Content/Document/File/87367/on_2018(2019-2020).pdf" id="a_87367file" target="_blank">                        <span class="document-regular_name_visible">Основные направления единой государственной денежно-кредитной политики на 2018 год и период 2019 и 2020 годов</span>
+</a>
+                                    </div>
+                
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_format icon-pdf"></div>
+                            <div class="document-regular_date">14.11.2016</div>
+        </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/Content/Document/File/87369/on_2017(2018-2019).pdf" id="a_87369file" target="_blank">                        <span class="document-regular_name_visible">Основные направления единой государственной денежно-кредитной политики на 2017 год и период 2018 и 2019 годов</span>
+</a>
+                                    </div>
+                
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_format icon-pdf"></div>
+                            <div class="document-regular_date">11.11.2015</div>
+        </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/Content/Document/File/87371/on_2016(2017-2018).pdf" id="a_87371file" target="_blank">                        <span class="document-regular_name_visible">Основные направления единой государственной денежно-кредитной политики на 2016 год и период 2017 и 2018 годов</span>
+</a>
+                                    </div>
+                
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_format icon-pdf"></div>
+                            <div class="document-regular_date">10.11.2014</div>
+        </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/Content/Document/File/87372/on_2015(2016-2017).pdf" id="a_87372file" target="_blank">                        <span class="document-regular_name_visible">Основные направления единой государственной денежно-кредитной политики на 2015 год и период 2016 и 2017 годов </span>
+</a>
+                                    </div>
+                
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_format icon-pdf"></div>
+                            <div class="document-regular_date">11.11.2013</div>
+        </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/Content/Document/File/87373/on_2014(2015-2016).pdf" id="a_87373file" target="_blank">                        <span class="document-regular_name_visible">Основные направления единой государственной денежно-кредитной политики на 2014 год и период 2015 и 2016 годов </span>
+</a>
+                                    </div>
+                
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_format icon-pdf"></div>
+                            <div class="document-regular_date">07.11.2012</div>
+        </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/Content/Document/File/87374/on_2013(2014-2015).pdf" id="a_87374file" target="_blank">                        <span class="document-regular_name_visible">Основные направления единой государственной денежно-кредитной политики на 2013 год и период 2014 и 2015 годов </span>
+</a>
+                                    </div>
+                
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_format icon-pdf"></div>
+                            <div class="document-regular_date">03.11.2011</div>
+        </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/Content/Document/File/87375/on_2012(2013-2014).pdf" id="a_87375file" target="_blank">                        <span class="document-regular_name_visible">Основные направления единой государственной денежно-кредитной политики на 2012 год и период 2013 и 2014 годов </span>
+</a>
+                                    </div>
+                
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_format icon-pdf"></div>
+                            <div class="document-regular_date">16.11.2010</div>
+        </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/Content/Document/File/87376/on_2011(2012-2013).pdf" id="a_87376file" target="_blank">                        <span class="document-regular_name_visible">Основные направления единой государственной денежно-кредитной политики на 2011 год и период 2012 и 2013 годов</span>
+</a>
+                                    </div>
+                
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_format icon-pdf"></div>
+                            <div class="document-regular_date">19.11.2009</div>
+        </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/Content/Document/File/87377/on_2010(2011-2012).pdf" id="a_87377file" target="_blank">                        <span class="document-regular_name_visible">Основные направления единой государственной денежно-кредитной политики на 2010 год и период 2011 и 2012 годов</span>
+</a>
+                                    </div>
+                
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+
+    </div>
+</div>
+<div class="title-container"><div class="block-title"><h3><span class="referenceable" id="a_87384">Основные направления единой государственной денежно кредитной политики, опубликованные в «Вестнике Банка России»</span></h3></div><table class="data">
+<thead>
+<tr style="height: 41px;">
+<th width="58%" style="height: 41px;">Основные направления единой государственной денежно-кредитной политики</th>
+<th width="42%" style="height: 41px;">&laquo;Вестник Банка России&raquo;</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>на&nbsp;2023&nbsp;год&nbsp;и&nbsp;период 2024 и&nbsp;2025 годов</td>
+<td>&#8470;&nbsp;<a href="/Queries/XsltBlock/File/131643/-1/2390-2391" target="_blank" rel="noopener"><nobr>58&ndash;59</nobr> <nobr>(2390&ndash;2391)</nobr></a> от&nbsp;30.11.2022</td>
+</tr>
+<tr>
+<td>на&nbsp;2022&nbsp;год&nbsp;и&nbsp;период 2023 и&nbsp;2024 годов</td>
+<td>&#8470;&nbsp;<a href="/Queries/XsltBlock/File/117713/0/2324-2325" target="_blank" rel="noopener"><nobr>84&ndash;85</nobr> <nobr>(2324&ndash;2325)</nobr></a> от&nbsp;08.12.2021</td>
+</tr>
+<tr style="height: 40px;">
+<td style="height: 40px;">на&nbsp;2021&nbsp;год&nbsp;и&nbsp;период 2022 и&nbsp;2023 годов</td>
+<td style="height: 40px;">&#8470;&nbsp;<a href="/Queries/XsltBlock/File/97324?fileId=-1&amp;scope=2230-2231" target="_blank" rel="noopener"><nobr>  94-95</nobr> <nobr>(2230-2231)</nobr></a> от&nbsp;02.12.2020</td>
+</tr>
+<tr style="height: 40px;">
+<td style="height: 40px;">на&nbsp;2020&nbsp;год&nbsp;и&nbsp;период 2021 и&nbsp;2022 годов</td>
+<td style="height: 40px;">&#8470;&nbsp;<a href="/Queries/XsltBlock/File/86302?fileId=-1&amp;scope=2129-2130" target="_blank" rel="noopener"><nobr>77-78</nobr> <nobr>(2129-2130)</nobr></a> от&nbsp;10.12.2019</td>
+</tr>
+<tr style="height: 40px;">
+<td style="height: 40px;">на&nbsp;2019&nbsp;год&nbsp;и&nbsp;период 2020 и&nbsp;2021 годов</td>
+<td style="height: 40px;">&#8470;&nbsp;<a href="/Queries/XsltBlock/File/86301?fileId=-1&amp;scope=2043-2044" target="_blank" rel="noopener"><nobr>89-90</nobr> <nobr>(2043-2044)</nobr></a> от&nbsp;14.12.2018</td>
+</tr>
+<tr style="height: 40px;">
+<td style="height: 40px;">на&nbsp;2018&nbsp;год&nbsp;и&nbsp;период 2019 и&nbsp;2020 годов</td>
+<td style="height: 40px;">&#8470;&nbsp;<a href="/Queries/XsltBlock/File/86097/-1/1943-1944" target="_blank" rel="noopener"><nobr>109&ndash;110</nobr> <nobr>(1943&ndash;1944)</nobr></a> от&nbsp;19.12.2017</td>
+</tr>
+<tr style="height: 40px;">
+<td style="height: 40px;">на&nbsp;2017&nbsp;год&nbsp;и&nbsp;период 2018 и&nbsp;2019 годов</td>
+<td style="height: 40px;">&#8470;&nbsp;<a target="_blank" href="/Queries/XsltBlock/File/86097/-1/1826" rel="noopener">108&nbsp;(1826)</a>&nbsp;от&nbsp;09.12.2016</td>
+</tr>
+<tr style="height: 40px;">
+<td style="height: 40px;">на&nbsp;2016&nbsp;год&nbsp;и&nbsp;период 2017 и&nbsp;2018 годов</td>
+<td style="height: 40px;">&#8470;&nbsp;<a target="_blank" href="/Queries/XsltBlock/File/86097/-1/1704" rel="noopener">108 (1704)</a>&nbsp;от&nbsp;30.11.2015</td>
+</tr>
+<tr style="height: 40px;">
+<td style="height: 40px;">на&nbsp;2015&nbsp;год&nbsp;и&nbsp;период 2016 и&nbsp;2017 годов</td>
+<td style="height: 40px;">&#8470;&nbsp;<a target="_blank" href="/Queries/XsltBlock/File/86097/-1/1584" rel="noopener">106&nbsp;(1584)</a>&nbsp;от&nbsp;01.12.2014</td>
+</tr>
+<tr style="height: 40px;">
+<td style="height: 40px;">на&nbsp;2014&nbsp;год&nbsp;и&nbsp;период 2015 и&nbsp;2016 годов</td>
+<td style="height: 40px;">&#8470;&nbsp;<a target="_blank" href="/Queries/XsltBlock/File/86097/-1/1463" rel="noopener">67&nbsp;(1463)</a>&nbsp;от&nbsp;26.11.2013</td>
+</tr>
+<tr style="height: 40px;">
+<td style="height: 40px;">на&nbsp;2013&nbsp;год&nbsp;и&nbsp;период 2014 и&nbsp;2015 годов</td>
+<td style="height: 40px;">&#8470;&nbsp;<a target="_blank" href="/Queries/XsltBlock/File/86097/-1/1385" rel="noopener">67&nbsp;(1385)</a> от&nbsp;28.11.2012</td>
+</tr>
+<tr style="height: 40px;">
+<td style="height: 40px;">на&nbsp;2012&nbsp;год&nbsp;и&nbsp;период 2013 и&nbsp;2014 годов</td>
+<td style="height: 40px;">&#8470;&nbsp;<a target="_blank" href="/Queries/XsltBlock/File/86097/-1/1308" rel="noopener">65&nbsp;(1308)</a> от&nbsp;24.11.2011</td>
+</tr>
+<tr style="height: 40px;">
+<td style="height: 40px;">на&nbsp;2011&nbsp;год&nbsp;и&nbsp;период 2012 и&nbsp;2013 годов</td>
+<td style="height: 40px;">&#8470;&nbsp;<a href="/Queries/XsltBlock/File/86097/-1/1236" target="_blank" rel="noopener">67&nbsp;(1236)</a> от&nbsp;09.12.2010</td>
+</tr>
+<tr style="height: 40px;">
+<td style="height: 40px;">на&nbsp;2010&nbsp;год&nbsp;и&nbsp;период 2011 и&nbsp;2012 годов</td>
+<td style="height: 40px;">&#8470;&nbsp;<a target="_blank" href="/Queries/XsltBlock/File/86097/-1/1159" rel="noopener">68&nbsp;(1159)</a> от&nbsp;26.11.2009</td>
+</tr>
+<tr style="height: 40px;">
+<td style="height: 40px;">на&nbsp;2009&nbsp;год&nbsp;и&nbsp;период 2010 и&nbsp;2011 годов</td>
+<td style="height: 40px;">&#8470;&nbsp;<a href="/Queries/XsltBlock/File/86097/-1/1082" target="_blank" rel="noopener">66&nbsp;(1082)</a> от&nbsp;14.11.2008</td>
+</tr>
+<tr style="height: 40px;">
+<td style="height: 40px;">на&nbsp;2008&nbsp;год</td>
+<td style="height: 40px;">&#8470;&nbsp;<a href="/Queries/XsltBlock/File/86097/-1/991" target="_blank" rel="noopener">47&nbsp;(991)</a> от&nbsp;22.08.2007</td>
+</tr>
+<tr style="height: 40px;">
+<td style="height: 40px;">на&nbsp;2007&nbsp;год</td>
+<td style="height: 40px;">&#8470;&nbsp;<a href="/Queries/XsltBlock/File/86097/-1/936" target="_blank" rel="noopener">66&nbsp;(936)</a> от&nbsp;30.11.2006</td>
+</tr>
+<tr style="height: 40px;">
+<td style="height: 40px;">на&nbsp;2006&nbsp;год</td>
+<td style="height: 40px;">&#8470;&nbsp;<a target="_blank" href="/Queries/XsltBlock/File/86097/-1/863" rel="noopener">65&nbsp;(863)</a> от&nbsp;08.12.2005</td>
+</tr>
+<tr style="height: 40px;">
+<td style="height: 40px;">на&nbsp;2005&nbsp;год</td>
+<td style="height: 40px;">&#8470;&nbsp;<a target="_blank" href="/Queries/XsltBlock/File/86097/-1/795" rel="noopener">71&nbsp;(795)</a> от&nbsp;16.12.2004</td>
+</tr>
+<tr style="height: 40px;">
+<td style="height: 40px;">на&nbsp;2004&nbsp;год</td>
+<td style="height: 40px;">&#8470;&nbsp;<a target="_blank" href="/Queries/XsltBlock/File/86097/-1/718" rel="noopener">66&nbsp;(718)</a> от&nbsp;04.12.2003</td>
+</tr>
+<tr style="height: 40px;">
+<td style="height: 40px;">на&nbsp;2003&nbsp;год</td>
+<td style="height: 40px;">&#8470;&nbsp;<a target="_blank" href="/Queries/XsltBlock/File/86097/-1/646" rel="noopener">68&nbsp;(646)</a> от&nbsp;17.12.2002</td>
+</tr>
+<tr style="height: 40px;">
+<td style="height: 40px;">на&nbsp;2002&nbsp;год</td>
+<td style="height: 40px;">&#8470;&nbsp;<a target="_blank" href="/Queries/XsltBlock/File/86097/-1/579" rel="noopener">1&nbsp;(579)</a> от&nbsp;03.01.2002</td>
+</tr>
+<tr style="height: 40px;">
+<td style="height: 40px;">на&nbsp;2001&nbsp;год</td>
+<td style="height: 40px;">&#8470;&nbsp;<a target="_blank" href="/Queries/XsltBlock/File/86097/-1/501" rel="noopener">1&nbsp;(501)</a> от&nbsp;05.01.2001</td>
+</tr>
+<tr style="height: 40px;">
+<td style="height: 40px;">на&nbsp;2000&nbsp;год</td>
+<td style="height: 40px;">&#8470;&nbsp;<a href="/Queries/XsltBlock/File/86091/-1/420" target="_blank" rel="noopener">76&nbsp;(420)</a> от&nbsp;09.12.1999</td>
+</tr>
+</tbody>
+</table></div><a class=" btn_with-icon title_18" href="/about_br/publ/anketa/?OpCode=ondkp"><img class="btn_with-icon_image" src="/common/images/icons/icon_list.svg">Пройти опрос</a>
+
+                    
+                    <!--/index-->
+
+    <div class="page-info">
+        <!--noindex-->
+        
+
+
+<div class="page-info_helpful"
+     data-page-feedback=""
+     data-feedback-url="/Content/PageInfo/RegisterFeedback">
+    <!--noindex-->
+    <div class="helpful" data-helpful="">
+        Страница была полезной?
+        <div class="helpful_btns">
+            <button class="helpful_btn _yes" data-helpful-btn="yes"><i class="helpful_icon"></i><span>Да</span></button>
+            <button class="helpful_btn _no" data-helpful-btn="no"><i class="helpful_icon"></i><span>Нет</span></button>
+        </div>
+    </div>
+    <!--/noindex-->
+</div>
+
+            <div class="page-info_last-update">Последнее обновление страницы: 28.10.2026</div>
+        <!--/noindex-->
+    </div>
+                </div>
+            </div>
+    </main>
+
+    <footer class="footer" id="footer">
+    <div class="offsetMenu footer_margin-left">
+        <div class="footer_main">
+            <div class="col-md-23 col-xl-22 offset-md-1 offset-xl-2 footer-size">
+                <div class="footer_top">
+                    <a class="footer_logo" href="/"></a>
+                    <div class="footer_up gotoUp">
+                        <div class="footer_up_title">Наверх</div>
+                        <div class="footer_up_icon"></div>
+                    </div>
+                </div>
+                
+<div class="footer_contacts">
+<div class="footer_address">107016, Москва, ул. Неглинная, д.&nbsp;12, к. В, Банк
+России</div>
+<div class="footer_phones">
+<div class="footer_phone"><a class="footer_phone_val" href="tel:300">300</a><span>(круглосуточно, бесплатно для&nbsp;звонков с&nbsp;мобильных телефонов)</span></div>
+<div class="footer_phone"><a class="footer_phone_val" href="tel:88003003000">8&nbsp;800 300-30-00</a><span>(круглосуточно, бесплатно для&nbsp;звонков из&nbsp;регионов России)</span></div>
+<div class="footer_phone"><a class="footer_phone_val" href="tel:+74993003000">+7&nbsp;499 300-30-00</a><span>(круглосуточно, в&nbsp;соответствии с&nbsp;тарифами вашего оператора)</span></div>
+
+</div>
+</div>
+<div class="footer_main_block">
+<div class="footer_left-menu">
+<div class="footer_left-menu_item"><a href="/lk_uio/">Личный кабинет участника информационного обмена</a></div>
+<div class="footer_left-menu_item"><a href="/about_br/irp/">Отношения с&nbsp;инвесторами</a></div>
+<div class="footer_left-menu_item"><a href="/rbr/list_inside/">Перечень инсайдерской информации Банка России</a></div>
+<div class="footer_left-menu_item"><a href="/analytics/na_vr/">Официальное опубликование нормативных актов Банка России</a></div>
+<div class="footer_left-menu_item"><a href="/project_na/">Проекты нормативных актов Банка России</a></div>
+<div class="footer_left-menu_item"><a href="/other/holidays/">Перечень нерабочих праздничных дней и&nbsp;перенесенных выходных дней</a></div>
+</div>
+<div class="networks-circle footer_networks">
+<a class="networks-circle_item _vk" href="https://vk.com/cbr_official"></a>
+<a class="networks-circle_item _yt" href="https://www.youtube.com/user/BankofRussia"></a>
+<a class="networks-circle_item _tg" href="https://telegram.me/centralbank_russia" title="Telegram"></a>
+<a class="networks-circle_item _ydzen" href="https://dzen.ru/cbr" title="Яндекс Дзен"></a>
+<a class="networks-circle_item _ok" href="https://ok.ru/group/68858679787580" title="Одноклассники"></a>
+<a class="networks-circle_item _rt" href="https://rutube.ru/channel/23873201/" title="RUTUBE"></a>
+<a class="networks-circle_item _max" href="https://max.ru/cbr_official" title="Макс"></a>
+</div>
+</div>
+<div class="footer_menu">
+<div class="footer_menu_items">
+<div class="footer_menu_item"><a href="/about/">О&nbsp;сайте</a></div>
+<div class="footer_menu_item"><a href="/contacts/">Контакты</a></div>
+<div class="footer_menu_item"><a href="/about_br/anticor/">Противодействие коррупции</a></div>
+<div class="footer_menu_item"><a href="/development/">Технические ресурсы</a></div>
+</div>
+<a class="footer_menu_item _visually-impaired" href="#" title="Версия для слабовидящих">
+	<div class="footer_visually-impaired-icon"></div>
+	<div><span class="visually-impaired-on">Версия для&nbsp;слабовидящих</span><span class="visually-impaired-off">Обычная версия</span></div>
+</a>
+</div>
+
+            </div>
+        </div>
+        <div class="footer_bottom">
+            <div class="col-md-23 col-xl-23 offset-md-1 offset-xl-2 row footer_bottom-container">
+                <div class="footer_bottom_text col-md-11 col-xl-11">&#169; Банк России, 2000–2026.</div>
+<div class="footer_bottom_aic col-md-12 col-xl-11">Дизайн сайта — <a href="https://aic.ru" target="_blank"><img src="/common/images/icons/aic-logo.svg" /></a></div>
+
+            </div>
+        </div>
+    </div>
+</footer>
+
+    
+    
+
+        <div class="popup-cookies" data-popup-cookies>
+            <div class="popup-cookies_title">
+                На сайте Банка России используются файлы cookie
+            </div>
+            <div class="popup-cookies_subtitle">
+                Оставаясь на <a href="/">www.cbr.ru</a>, вы принимаете
+                <a href='/user_agreement/'>пользовательское соглашение</a>
+            </div>
+            <button class="btn _medium _blue " data-popup-cookies-btn>
+                Подтвердить
+            </button>
+        </div>
+
+    
+<!--[if IE 9]><script>$('body').addClass('ie9')</script><![endif]-->
+<script src="/Modules/Content/Scripts/PageInfo.js?v=v3116962712" type="text/javascript"></script>
+    <script type="text/javascript">
+        $(function () {
+            Content_PageInfo.init($('[data-page-feedback]'));
+        });
+    </script>
+
+
+
+</body>
+</html>

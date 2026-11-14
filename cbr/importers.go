@@ -104,6 +104,10 @@ var cbrImporters = []cbrImporter{
 	{cbrMtForecastImporter, "cbr_mt_forecast", "SELECT count() FROM cbr_mt_forecast FINAL"},
 	{cbrForm101Importer, "cbr_form101", "SELECT count() FROM cbr_form101 FINAL"},
 	{cbrZcycImporter, "cbr_zcyc", ""},
+	// cbr_ondkp — корпус ОНДКП (28 винтажей) и вторая таблица cbr_ondkp_forecast: у
+	// импортёра свой Import, префлайта нет — известность выпуска держит реестр по году,
+	// а не HEAD одного файла (артефакт — набор из 28 документов).
+	{cbrOndkpImporter, "cbr_ondkp", ""},
 	// cbr_liquidity — две HTML-формы (дневная и периоды усреднения) в одной таблице:
 	// префлайта нет по той же причине, что у cbr_zcyc и cbr_ruania — URL окна содержит
 	// сегодняшнюю дату, а инкремент держит max(date) по виду ряда.
