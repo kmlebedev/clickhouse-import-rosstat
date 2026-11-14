@@ -298,5 +298,35 @@
     "page": "research-2026-11-14-key-rate-data-coverage-audit.md",
     "title": "Полнота и свежесть данных контура ключевой ставки на dev",
     "section": "Исследования"
+  },
+  {
+    "source": "docs/research/2026-11-14-ondkp-extraction.md",
+    "page": "research-2026-11-14-ondkp-extraction.md",
+    "title": "ОНДКП: извлечение чисел из 28 винтажей",
+    "section": "Исследования"
+  },
+  {
+    "source": "docs/research/2026-11-14-ruania-history-source.md",
+    "page": "research-2026-11-14-ruania-history-source.md",
+    "title": "RUONIA: история с 2010",
+    "section": "Исследования"
+  },
+  {
+    "source": "docs/research/2026-11-14-infl-exp-history-source.md",
+    "page": "research-2026-11-14-infl-exp-history-source.md",
+    "title": "Инфляционные ожидания: история с 2017",
+    "section": "Исследования"
+  },
+  {
+    "source": "docs/research/2026-11-14-cbr-html-tables-recon.md",
+    "page": "research-2026-11-14-cbr-html-tables-recon.md",
+    "title": "MIACR и ликвидность: HTML-таблицы ЦБ",
+    "section": "Исследования"
+  },
+  {
+    "source": "docs/research/2026-11-14-ccyb-gap.md",
+    "page": "research-2026-11-14-ccyb-gap.md",
+    "title": "АЦН: почему ряд стоит на 2024-10",
+    "section": "Исследования"
   }
 ]
