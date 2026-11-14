@@ -16,9 +16,6 @@ import (
 // файлом, что отдал ЦБ.
 const ruoniaFixture = "testdata/ruonia.xlsx"
 
-// ruoniaFixtureRows — строк данных в фикстуре: 1909 строк листа минус строка заголовка.
-const ruoniaFixtureRows = 1908
-
 // ruoniaCatalogColumns — метрики каталога cbr_ruania в порядке колонок Append у
 // ruoniaImport (date, ruo, vol, trans, minRate, maxRate, p25, p75) — тот же порядок, что в
 // DDL cbr_ruania и в раскладке views.go. Таблица широкая, колонки name у неё нет,
