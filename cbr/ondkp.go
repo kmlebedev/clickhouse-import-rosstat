@@ -5,7 +5,9 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
+	"math"
 	"regexp"
 	"sort"
 	"strconv"
@@ -30,6 +32,17 @@ const (
 	cbrOndkpInsert         = "INSERT INTO " + cbrOndkpTable
 	cbrOndkpForecastInsert = "INSERT INTO " + cbrOndkpForecastTable
 	cbrOndkpDateFormat     = "02.01.2006"
+
+	// ondkpForecastCountsQuery — сверка записи: число строк прогноза по каждому выпуску после
+	// вставки. FINAL обязателен — иначе count() увидел бы несмёрженные дубли, а группировка по
+	// release_year отвечает на вопрос «все ли строки выпуска записаны» одним запросом.
+	ondkpForecastCountsQuery = "SELECT release_year, count() FROM " + cbrOndkpForecastTable + " FINAL GROUP BY release_year"
+
+	// Допустимый диапазон годов выпуска и прогноза. Корпус — 2000–2027, границы взяты с
+	// запасом: вне диапазона не выпуск, а мусор разбора (ноль, обрезанный год). Значение
+	// проверяется до приведения к UInt16, поэтому ошибка не становится переполнением.
+	ondkpYearMin = 1990
+	ondkpYearMax = 2100
 
 	// Форматы артефактов: прямое PDF (2010–2020), страница выпуска с PDF (2021–2027),
 	// проект документа (2022 — только он), ZIP с .doc в выпуске «Вестника» (2000–2009).
@@ -94,6 +107,38 @@ func ondkpRank(format string) int {
 	return 2
 }
 
+// ondkpYearU16 проверяет год выпуска или прогноза и приводит его к типу колонки UInt16.
+// Диапазон ondkpYearMin..ondkpYearMax уже, чем UInt16: голое приведение пропустило бы мусор
+// разбора (отрицательный или обрезанный год) и завернуло бы его в правдоподобное число.
+func ondkpYearU16(year int) (uint16, error) {
+	if year < ondkpYearMin || year > ondkpYearMax {
+		return 0, fmt.Errorf("год %d вне диапазона %d–%d", year, ondkpYearMin, ondkpYearMax)
+	}
+	return uint16(year), nil
+}
+
+// ondkpYearOf разбирает год, захваченный регулярным выражением, и проверяет тот же диапазон.
+// Переполнение Atoi (слишком длинная цифровая группа) — ошибка разбора, а не ноль.
+func ondkpYearOf(digits string) (int, error) {
+	year, err := strconv.Atoi(digits)
+	if err != nil {
+		return 0, fmt.Errorf("год %q: %w", digits, err)
+	}
+	if _, err = ondkpYearU16(year); err != nil {
+		return 0, err
+	}
+	return year, nil
+}
+
+// ondkpCountU16 проверяет число прогнозных строк release.forecastRows перед приведением к
+// UInt16: без верхней границы значение завернулось бы молча (замечание CodeQL к вставке).
+func ondkpCountU16(count int) (uint16, error) {
+	if count < 0 || count > math.MaxUint16 {
+		return 0, fmt.Errorf("число прогнозных строк %d вне диапазона 0–%d", count, math.MaxUint16)
+	}
+	return uint16(count), nil
+}
+
 // ondkpReleases собирает реестр корпуса со страницы индекса: 20 карточек документов
 // (страницы 2020–2027 и PDF 2010–2020) плюс таблица «Вестника» (ZIP 2000–2009). Один
 // выпуск может быть представлен двумя артефактами (2010 — ZIP и PDF), берётся лучший по
@@ -104,6 +149,7 @@ func ondkpReleases(page []byte) ([]ondkpRelease, error) {
 		return nil, fmt.Errorf("cbr_ondkp: разбор страницы индекса: %w", err)
 	}
 	best := map[int]ondkpRelease{}
+	var parseErr error
 	add := func(candidate ondkpRelease) {
 		if current, ok := best[candidate.year]; ok && ondkpRank(current.format) >= ondkpRank(candidate.format) {
 			return
@@ -111,17 +157,28 @@ func ondkpReleases(page []byte) ([]ondkpRelease, error) {
 		best[candidate.year] = candidate
 	}
 	doc.Find("div.document-regular").Each(func(_ int, block *goquery.Selection) {
+		if parseErr != nil {
+			return
+		}
 		href, ok := block.Find("a[href]").First().Attr("href")
 		if !ok {
 			return
 		}
 		title := strings.Join(strings.Fields(block.Find(".document-regular_name_visible").First().Text()), " ")
 		dateText := block.Find(".document-regular_date").First().Text()
-		if candidate, ok := ondkpCandidate(href, title, dateText); ok {
+		candidate, ok, candidateErr := ondkpCandidate(href, title, dateText)
+		if candidateErr != nil {
+			parseErr = candidateErr
+			return
+		}
+		if ok {
 			add(candidate)
 		}
 	})
 	doc.Find("tr").Each(func(_ int, row *goquery.Selection) {
+		if parseErr != nil {
+			return
+		}
 		href, ok := row.Find("a[href]").First().Attr("href")
 		if !ok || !ondkpVestnikRe.MatchString(href) {
 			return
@@ -132,8 +189,9 @@ func ondkpReleases(page []byte) ([]ondkpRelease, error) {
 		if yearMatch == nil {
 			return
 		}
-		year, convErr := strconv.Atoi(yearMatch[1])
-		if convErr != nil {
+		year, yearErr := ondkpYearOf(yearMatch[1])
+		if yearErr != nil {
+			parseErr = fmt.Errorf("cbr_ondkp: строка «Вестника» %q: %w", rowText, yearErr)
 			return
 		}
 		add(ondkpRelease{
@@ -143,6 +201,9 @@ func ondkpReleases(page []byte) ([]ondkpRelease, error) {
 			format:      cbrOndkpFormatZipDoc,
 		})
 	})
+	if parseErr != nil {
+		return nil, parseErr
+	}
 	if len(best) == 0 {
 		return nil, fmt.Errorf("cbr_ondkp: на странице индекса не найден ни один выпуск — разметка изменилась")
 	}
@@ -155,14 +216,16 @@ func ondkpReleases(page []byte) ([]ondkpRelease, error) {
 }
 
 // ondkpCandidate разбирает одну карточку документа: год из заголовка («на 2027 год»),
-// формат и ссылку. Карточки не про ОНДКП (перечень изменений, брошюры) отбрасываются.
-func ondkpCandidate(href, title, dateText string) (ondkpRelease, bool) {
+// формат и ссылку. Карточки не про ОНДКП (перечень изменений, брошюры) отбрасываются
+// (ok = false); неразбираемый или выпавший из диапазона год — ошибка: это порча разметки,
+// а не повод молча пропустить выпуск.
+func ondkpCandidate(href, title, dateText string) (ondkpRelease, bool, error) {
 	href = strings.TrimSpace(href)
 	if !strings.HasPrefix(href, "/") {
-		return ondkpRelease{}, false
+		return ondkpRelease{}, false, nil
 	}
 	if strings.Contains(href, "Brochure") || strings.Contains(href, "list_note") {
-		return ondkpRelease{}, false
+		return ondkpRelease{}, false, nil
 	}
 	format := ""
 	switch {
@@ -174,15 +237,15 @@ func ondkpCandidate(href, title, dateText string) (ondkpRelease, bool) {
 			format = cbrOndkpFormatPDFProject
 		}
 	default:
-		return ondkpRelease{}, false
+		return ondkpRelease{}, false, nil
 	}
 	yearMatch := ondkpYearInTitleRe.FindStringSubmatch(strings.Join(strings.Fields(title), " "))
 	if yearMatch == nil {
-		return ondkpRelease{}, false
+		return ondkpRelease{}, false, nil
 	}
-	year, err := strconv.Atoi(yearMatch[1])
+	year, err := ondkpYearOf(yearMatch[1])
 	if err != nil {
-		return ondkpRelease{}, false
+		return ondkpRelease{}, false, fmt.Errorf("cbr_ondkp: карточка %q: %w", href, err)
 	}
 	release := ondkpRelease{year: year, format: format, url: cbrUrl + href}
 	if ondkpYearPageRe.MatchString(href) {
@@ -191,7 +254,7 @@ func ondkpCandidate(href, title, dateText string) (ondkpRelease, bool) {
 		release.url = ""
 	}
 	release.publishedAt = ondkpDateOf(dateText)
-	return release, true
+	return release, true, nil
 }
 
 // ondkpDateOf вытаскивает дату публикации из текста карточки/строки. Нет даты — nil.
@@ -250,6 +313,11 @@ func (s *cbrOndkp) Name() string { return cbrOndkpName }
 // скачать артефакт, посчитать sha256, для PDF — разобрать прогнозную таблицу → записать.
 // Известность выпуска держит таблица cbr_ondkp (release_year), а не HEAD-префлайт:
 // артефакт — набор из 28 файлов, и count() у известной версии не сошёлся бы.
+//
+// Ошибки выпусков копятся errors.Join (эталон — cbr_mt_forecast): выпуски независимы, и один
+// 404 или битый PDF не отменяет остальные 27 скачиваний. Прогон при этом красный, а успешные
+// выпуски записаны. PDF без извлекаемого текста — ошибка выпуска, а не регистрация с
+// forecast_rows=0: гейт по release_year не перечитывает известный выпуск и заморозил бы дыру.
 func (s *cbrOndkp) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
 	for table, ddl := range map[string]string{cbrOndkpTable: cbrOndkpDdl, cbrOndkpForecastTable: cbrOndkpForecastDdl} {
 		if err = conn.Exec(ctx, fmt.Sprintf(ddl, table)); err != nil {
@@ -270,6 +338,7 @@ func (s *cbrOndkp) Import(ctx context.Context, conn driver.Conn) (count int64, e
 	}
 	var fresh []ondkpRelease
 	var forecasts []ondkpForecastRow
+	var errs []error
 	for _, release := range releases {
 		if known[release.year] {
 			continue
@@ -278,59 +347,94 @@ func (s *cbrOndkp) Import(ctx context.Context, conn driver.Conn) (count int64, e
 		if artifactURL == "" && release.pageUrl != "" {
 			pageHTML, pageErr := util.GetPage(release.pageUrl)
 			if pageErr != nil {
-				return 0, fmt.Errorf("cbr_ondkp: %s: %w", release.pageUrl, pageErr)
+				errs = append(errs, fmt.Errorf("cbr_ondkp: выпуск %d: %s: %w", release.year, release.pageUrl, pageErr))
+				continue
 			}
-			if artifactURL, err = ondkpYearPagePDF(pageHTML, release.year); err != nil {
-				return 0, err
+			var linkErr error
+			if artifactURL, linkErr = ondkpYearPagePDF(pageHTML, release.year); linkErr != nil {
+				errs = append(errs, linkErr)
+				continue
 			}
 		}
 		if artifactURL == "" {
-			return 0, fmt.Errorf("cbr_ondkp: у выпуска %d нет артефакта — разметка страницы изменилась", release.year)
+			errs = append(errs, fmt.Errorf("cbr_ondkp: у выпуска %d нет артефакта — разметка страницы изменилась", release.year))
+			continue
 		}
 		// Артефакт, найденный на странице выпуска, может оказаться проектом документа
 		// (2022 — на странице только он): формат уточняется по имени файла.
 		if strings.Contains(artifactURL, "on_project_") {
 			release.format = cbrOndkpFormatPDFProject
 		}
-		body, err := util.GetFileBytes(artifactURL)
-		if err != nil {
-			return 0, fmt.Errorf("cbr_ondkp: выпуск %d, %s: %w", release.year, artifactURL, err)
+		body, bodyErr := util.GetFileBytes(artifactURL)
+		if bodyErr != nil {
+			errs = append(errs, fmt.Errorf("cbr_ondkp: выпуск %d, %s: %w", release.year, artifactURL, bodyErr))
+			continue
 		}
-		sum := sha256.Sum256(body)
 		release.url = artifactURL
-		release.sha256 = hex.EncodeToString(sum[:])
-		release.bytes = len(body)
-		if release.format != cbrOndkpFormatZipDoc {
-			text, textErr := util.PDFText(ctx, body, util.PDFLayout)
-			if textErr != nil {
-				// Скан без текстового слоя не отменяет регистрацию выпуска: метаданные
-				// полезны, а пропуск чисел фиксируется forecast_rows=0 и предупреждением.
-				log.Warnf("cbr_ondkp: выпуск %d: %v — прогноз не разобран", release.year, textErr)
-			} else {
-				rows, parseErr := ondkpForecastRows(text, release.year)
-				if parseErr != nil {
-					return 0, fmt.Errorf("cbr_ondkp: выпуск %d: %w", release.year, parseErr)
-				}
-				forecasts = append(forecasts, rows...)
-				release.forecastRows = len(rows)
-			}
+		analyzed, rows, analyzeErr := ondkpAnalyzeRelease(ctx, release, body)
+		if analyzeErr != nil {
+			errs = append(errs, analyzeErr)
+			continue
 		}
-		fresh = append(fresh, release)
+		forecasts = append(forecasts, rows...)
+		fresh = append(fresh, analyzed)
 	}
 	if len(fresh) == 0 {
+		if len(errs) > 0 {
+			return 0, errors.Join(errs...)
+		}
 		log.Infof("%s: новых выпусков нет (%d в корпусе)", cbrOndkpTable, len(known))
 		return 0, nil
 	}
-	if err = ondkpInsertReleases(ctx, conn, fresh); err != nil {
-		return 0, err
-	}
+	// Порядок записи — часть контракта: прогноз раньше реестра. Реестр — гейт прогона, и,
+	// записав его первым, сбой второго батча оставил бы forecast_rows≠факт навсегда (выпуск
+	// больше не скачается). При обратном порядке сбой оставляет только строки прогноза без
+	// реестра: следующий прогон повторит вставку идемпотентно (ключ ReplacingMergeTree тот же).
 	if len(forecasts) > 0 {
-		if err = ondkpInsertForecasts(ctx, conn, forecasts); err != nil {
-			return 0, err
+		if insertErr := ondkpInsertForecasts(ctx, conn, forecasts); insertErr != nil {
+			errs = append(errs, insertErr)
+			return 0, errors.Join(errs...)
 		}
 	}
+	if insertErr := ondkpInsertReleases(ctx, conn, fresh); insertErr != nil {
+		errs = append(errs, insertErr)
+		return 0, errors.Join(errs...)
+	}
+	// Сверка после записи: forecast_rows реестра обязан совпасть с числом строк прогноза,
+	// записанных по этому выпуску (прецедент — mtForecastReleaseWritten). ReplacingMergeTree
+	// схлопывает строки с одинаковым ключом (release_year, indicator, year), поэтому Send без
+	// сверки мог бы записать меньше строк, чем обещает реестр.
+	if verifyErr := ondkpVerifyForecastCounts(ctx, conn, fresh); verifyErr != nil {
+		errs = append(errs, verifyErr)
+		return 0, errors.Join(errs...)
+	}
 	log.Infof("%s: %d выпусков, %d прогнозных строк", cbrOndkpTable, len(fresh), len(forecasts))
-	return int64(len(fresh)), nil
+	return int64(len(fresh)), errors.Join(errs...)
+}
+
+// ondkpAnalyzeRelease дополняет выпуск атрибутами скачанного артефакта (sha256 и размер;
+// URL уже проставлен вызывающим) и разбирает прогнозную таблицу. Ошибка PDFText — ошибка
+// выпуска, а не предупреждение: сентинела «штатная нечитаемость» util.PDFText не объявляет, а
+// весь корпус 2000–2027 приходит с текстовым слоем, поэтому любой сбой извлечения означает
+// подменённый/нечитаемый файл или отсутствие pdftotext. ZIP с .doc текстового слоя не имеет по
+// формату: прогноза у него нет, и это не ошибка.
+func ondkpAnalyzeRelease(ctx context.Context, release ondkpRelease, body []byte) (ondkpRelease, []ondkpForecastRow, error) {
+	sum := sha256.Sum256(body)
+	release.sha256 = hex.EncodeToString(sum[:])
+	release.bytes = len(body)
+	if release.format == cbrOndkpFormatZipDoc {
+		return release, nil, nil
+	}
+	text, err := util.PDFText(ctx, body, util.PDFLayout)
+	if err != nil {
+		return ondkpRelease{}, nil, fmt.Errorf("cbr_ondkp: выпуск %d, %s: извлечение текста PDF: %w", release.year, release.url, err)
+	}
+	rows, err := ondkpForecastRows(text, release.year)
+	if err != nil {
+		return ondkpRelease{}, nil, fmt.Errorf("cbr_ondkp: выпуск %d: %w", release.year, err)
+	}
+	release.forecastRows = len(rows)
+	return release, rows, nil
 }
 
 // ondkpKnownYears — годы, уже записанные в реестр: повторный прогон артефакты не качает.
@@ -351,40 +455,103 @@ func ondkpKnownYears(ctx context.Context, conn driver.Conn) (map[int]bool, error
 	return known, rows.Err()
 }
 
-// ondkpInsertReleases пишет реестр выпусков одним батчем.
+// ondkpInsertReleases пишет реестр выпусков одним батчем. Год и forecast_rows проверяются
+// перед приведением к UInt16: голое приведение молча завернуло бы значение вне диапазона
+// колонки (замечание CodeQL).
 func ondkpInsertReleases(ctx context.Context, conn driver.Conn, releases []ondkpRelease) error {
 	batch, err := conn.PrepareBatch(ctx, cbrOndkpInsert)
 	if err != nil {
 		return err
 	}
 	for _, release := range releases {
-		if err = batch.Append(uint16(release.year), release.publishedAt, release.url, release.format,
-			release.sha256, uint64(release.bytes), uint16(release.forecastRows)); err != nil {
-			if abortErr := batch.Abort(); abortErr != nil {
-				log.Warnf("%s: не удалось закрыть батч после ошибки Append: %v", cbrOndkpTable, abortErr)
-			}
-			return fmt.Errorf("%s: Append (%d): %w", cbrOndkpTable, release.year, err)
+		year, yearErr := ondkpYearU16(release.year)
+		if yearErr != nil {
+			return ondkpAbortBatch(batch, cbrOndkpTable, fmt.Errorf("%s: %w", cbrOndkpTable, yearErr))
+		}
+		forecastRows, rowsErr := ondkpCountU16(release.forecastRows)
+		if rowsErr != nil {
+			return ondkpAbortBatch(batch, cbrOndkpTable,
+				fmt.Errorf("%s: выпуск %d: %w", cbrOndkpTable, release.year, rowsErr))
+		}
+		if err = batch.Append(year, release.publishedAt, release.url, release.format,
+			release.sha256, uint64(release.bytes), forecastRows); err != nil {
+			return ondkpAbortBatch(batch, cbrOndkpTable,
+				fmt.Errorf("%s: Append (%d): %w", cbrOndkpTable, release.year, err))
 		}
 	}
 	return batch.Send()
 }
 
-// ondkpInsertForecasts пишет прогнозные точки одним батчем.
+// ondkpInsertForecasts пишет прогнозные точки одним батчем. Годы выпуска и прогноза
+// проверяются перед приведением к UInt16 (замечание CodeQL).
 func ondkpInsertForecasts(ctx context.Context, conn driver.Conn, rows []ondkpForecastRow) error {
 	batch, err := conn.PrepareBatch(ctx, cbrOndkpForecastInsert)
 	if err != nil {
 		return err
 	}
 	for _, row := range rows {
-		if err = batch.Append(uint16(row.releaseYear), row.indicator, uint16(row.year), row.lo, row.hi); err != nil {
-			if abortErr := batch.Abort(); abortErr != nil {
-				log.Warnf("%s: не удалось закрыть батч после ошибки Append: %v", cbrOndkpForecastTable, abortErr)
-			}
-			return fmt.Errorf("%s: Append (%d, %s, %d): %w", cbrOndkpForecastTable, row.releaseYear,
-				row.indicator, row.year, err)
+		releaseYear, releaseErr := ondkpYearU16(row.releaseYear)
+		if releaseErr != nil {
+			return ondkpAbortBatch(batch, cbrOndkpForecastTable,
+				fmt.Errorf("%s: %w", cbrOndkpForecastTable, releaseErr))
+		}
+		year, yearErr := ondkpYearU16(row.year)
+		if yearErr != nil {
+			return ondkpAbortBatch(batch, cbrOndkpForecastTable,
+				fmt.Errorf("%s: выпуск %d, %s: %w", cbrOndkpForecastTable, row.releaseYear, row.indicator, yearErr))
+		}
+		if err = batch.Append(releaseYear, row.indicator, year, row.lo, row.hi); err != nil {
+			return ondkpAbortBatch(batch, cbrOndkpForecastTable,
+				fmt.Errorf("%s: Append (%d, %s, %d): %w", cbrOndkpForecastTable, row.releaseYear,
+					row.indicator, row.year, err))
 		}
 	}
 	return batch.Send()
+}
+
+// ondkpAbortBatch закрывает батч после ошибки: без Abort соединение останется в пуле
+// (стандарт §5.3). Сбой Abort — предупреждение, а не замена первопричины (прецедент —
+// mpAbortBatch в cbr/mp_summary.go).
+func ondkpAbortBatch(batch driver.Batch, table string, cause error) error {
+	if abortErr := batch.Abort(); abortErr != nil {
+		log.Warnf("%s: не удалось закрыть батч после ошибки: %v", table, abortErr)
+	}
+	return cause
+}
+
+// ondkpVerifyForecastCounts сверяет forecast_rows реестра с числом строк, реально записанных в
+// cbr_ondkp_forecast по этому выпуску: после вставки реестр не должен обещать строк, которых
+// нет (прецедент — mtForecastReleaseWritten). Одного успешного Send мало: ReplacingMergeTree
+// схлопывает совпавшие ключи (release_year, indicator, year), и прогноз с дублем записался бы
+// меньшим числом строк, чем обещает реестр. FINAL обязателен — иначе count() увидел бы
+// несмёрженные дубли. Ошибка запроса — тоже ошибка прогона: «считаем, что сошлось» скрыло бы
+// расхождение.
+func ondkpVerifyForecastCounts(ctx context.Context, conn driver.Conn, releases []ondkpRelease) error {
+	rows, err := conn.Query(ctx, ondkpForecastCountsQuery)
+	if err != nil {
+		return fmt.Errorf("cbr_ondkp: сверка %s: %w", cbrOndkpForecastTable, err)
+	}
+	defer func() { _ = rows.Close() }()
+	written := make(map[int]int)
+	for rows.Next() {
+		var year uint16
+		var count uint64
+		if err = rows.Scan(&year, &count); err != nil {
+			return fmt.Errorf("cbr_ondkp: чтение сверки %s: %w", cbrOndkpForecastTable, err)
+		}
+		written[int(year)] = int(count)
+	}
+	if err = rows.Err(); err != nil {
+		return fmt.Errorf("cbr_ondkp: сверка %s не дочитана: %w", cbrOndkpForecastTable, err)
+	}
+	var errs []error
+	for _, release := range releases {
+		if got := written[release.year]; got != release.forecastRows {
+			errs = append(errs, fmt.Errorf("cbr_ondkp: выпуск %d: в %s записано %d строк, forecast_rows=%d — реестр и прогноз разошлись",
+				release.year, cbrOndkpForecastTable, got, release.forecastRows))
+		}
+	}
+	return errors.Join(errs...)
 }
 
 // cbrOndkpImporter — реестр выпусков ОНДКП; регистрируется в cbr/importers.go.
