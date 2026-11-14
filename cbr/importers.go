@@ -112,6 +112,9 @@ var cbrImporters = []cbrImporter{
 	// префлайта нет по той же причине, что у cbr_zcyc и cbr_ruania — URL окна содержит
 	// сегодняшнюю дату, а инкремент держит max(date) по виду ряда.
 	{cbrLiquidityImporter, "cbr_liquidity", ""},
+	// cbr_mirac — MIACR/MIACR-IG/MIACR-B по срокам: префлайта нет, инкремент по max(date),
+	// форма сама клампит начало истории к 13.07.2000.
+	{cbrMiracImporter, "cbr_mirac", ""},
 	{cbrCcybImporter, "cbr_ccyb_indicators", "SELECT count() FROM cbr_ccyb_indicators FINAL"},
 	{cbrRiskWeightAddonsImporter, "cbr_risk_weight_addons", "SELECT count() FROM cbr_risk_weight_addons FINAL"},
 	{cbrMPLImporter, "cbr_mpl", "SELECT count() FROM cbr_mpl FINAL"},
