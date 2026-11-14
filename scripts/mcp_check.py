@@ -959,6 +959,47 @@ async def check(params, server_log):
             failed += not expect("сырая cbr_sors_funds закрыта", denied,
                                  "отказ ClickHouse 497 на cbr_sors_funds (ожидаемо)" if denied else raw[:200])
 
+            # RUONIA (импортёр cbr_ruania, пункт key-rate/phase-2-ruania-history, #574): семь
+            # метрик денежного рынка агент читает только через v_cbr_macro. Сверяются три
+            # числа сразу. Рядов ровно 7 — ставка, оборот и пять метрик распределения;
+            # потеря любой ветки UNION ALL оставляет шесть, и LIKE здесь не помеха:
+            # «_» — wildcard, но состав рядов пинится именно числом. Ставка начинается с
+            # 2010-01-11 — методологическое начало индекса по ЦБ (до расширения истории
+            # выгрузка шла с FromDate=01/01/2019, и девять лет, включая цикл ужесточения
+            # 2014–2015, в БД отсутствовали). NULL в value нет ни одного — это и есть смысл
+            # перевода метрик в Nullable: пустых значений в витрине нет, потому что они
+            # отфильтрованы WHERE, а не потому, что за отсутствие написался ноль (до
+            # 2026-11-14 пять метрик 2010–2018 годов уезжали в БД нулями, и minRate = 0
+            # читалась как настоящая «0 % годовых»).
+            ruonia_view = text(await session.call_tool("run_query", {"query":
+                "SELECT uniqExact(series) AS n_series, minIf(date, series = 'cbr_ruania_ruo') AS min_ruo, "
+                "countIf(value IS NULL) AS n_null FROM v_cbr_macro WHERE series LIKE 'cbr_ruania_%'"}))
+            ruonia_view_rows = result_rows(ruonia_view)
+            ruonia_view_n = ruonia_view_rows[0].get("n_series") if ruonia_view_rows else None
+            ruonia_view_min = str(ruonia_view_rows[0].get("min_ruo")) if ruonia_view_rows else None
+            ruonia_view_nulls = ruonia_view_rows[0].get("n_null") if ruonia_view_rows else None
+            ruonia_view_ok = (ruonia_view_n == 7 and ruonia_view_min == "2010-01-11"
+                              and ruonia_view_nulls == 0)
+            if ruonia_view_rows is None:
+                ruonia_view_detail = f"витрина не читается: {ruonia_view[:200]}"
+            elif ruonia_view_ok:
+                ruonia_view_detail = ("рядов cbr_ruania в v_cbr_macro: 7, ставка с 2010-01-11, "
+                                      "NULL в value: 0")
+            else:
+                ruonia_view_detail = (f"рядов cbr_ruania в v_cbr_macro: {ruonia_view_n} (want 7), ставка с "
+                                      f"{ruonia_view_min} (want 2010-01-11), NULL в value: "
+                                      f"{ruonia_view_nulls} (want 0) — прогнать "
+                                      "make import STAT=cbr_ruania (витрину пересоздаёт прогон)")
+            failed += not expect("ряды cbr_ruania видны в v_cbr_macro", ruonia_view_ok, ruonia_view_detail)
+
+            # Сырая cbr_ruania агенту не выдана — как cbr_sors_funds и cbr_households_b_mes:
+            # ряды денежного рынка читаются только через витрину. Таблицу создаёт DDL-прогон
+            # импортёра, поэтому UNKNOWN_TABLE здесь — провал, а не успех.
+            raw = text(await session.call_tool("run_query", {"query": "SELECT count() FROM cbr_ruania"}))
+            denied = "ACCESS_DENIED" in raw or "Not enough privileges" in raw
+            failed += not expect("сырая cbr_ruania закрыта", denied,
+                                 "отказ ClickHouse 497 на cbr_ruania (ожидаемо)" if denied else raw[:200])
+
             # Ставки по кредитам нефинансовым организациям в рублях (импортёр
             # cbr_int_rate_loans, шаг 4.2 #8 роадмапа): ряды контура агент читает только
             # через общую витрину v_cbr_macro (проверка выше), а сырая таблица ему не
