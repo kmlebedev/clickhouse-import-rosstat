@@ -67,6 +67,12 @@ func (s *cbrCcybStat) Import(ctx context.Context, conn driver.Conn) (count int64
 	if err = afterCbrCcyb(cbrCcybSeriesMeta)(ctx, conn); err != nil {
 		return int64(written), err
 	}
+	// Сторож свежести: ряд не обновляется с 2024-10, и без предупреждения это видно только
+	// в аудите. Ошибка чтения max(date) не отменяет импорт — она лишь лишает прогон
+	// диагностики, поэтому логируется, а не возвращается.
+	if staleErr := warnCbrCcybStale(ctx, conn, time.Now()); staleErr != nil {
+		log.Warnf("%s: проверка свежести не выполнена: %v", cbrCcybTable, staleErr)
+	}
 	if written == 0 {
 		log.Infof("%s: новых данных нет", cbrCcybTable)
 	}
@@ -100,3 +106,38 @@ var cbrCcybImporter = &cbrCcybStat{ClickHouseImport: util.ClickHouseImport{
 	DataUrl:                cbrCcybUrl,
 	PublicationCountPoints: cbrCcybCountPoints,
 }}
+
+// cbrCcybStaleLimit — порог предупреждения о замороженном ряде, в днях. Файл ЦБ
+// обновляется раз в месяц-квартал, поэтому 120 дней — это больше двух пропущенных
+// публикаций; меньше — ложные срабатывания на нормальном лаге.
+const cbrCcybStaleLimit = 120
+
+// cbrCcybStaleDays — разрыв между последней точкой ряда и сегодняшним днём в днях.
+// Считается по календарным суткам UTC, как и даты таблицы; отрицательный разрыв
+// (точка «из будущего») даёт 0.
+func cbrCcybStaleDays(last, now time.Time) int {
+	days := int(now.UTC().Truncate(24*time.Hour).Sub(last.UTC().Truncate(24*time.Hour)).Hours() / 24)
+	if days < 0 {
+		return 0
+	}
+	return days
+}
+
+// warnCbrCcybStale пишет предупреждение, если ряд не обновлялся дольше порога: источник
+// перестал публиковать файл (проверено 2026-11-14: Last-Modified файлов 09.12.2024,
+// последняя точка 2024-10-01 — research/2026-11-14-ccyb-gap.md). Данные и схема не
+// меняются: предупреждение делает обрыв видимым в каждом прогоне, а не только в аудите.
+func warnCbrCcybStale(ctx context.Context, conn driver.Conn, now time.Time) error {
+	var last time.Time
+	if err := conn.QueryRow(ctx, "SELECT max(date) FROM "+cbrCcybTable+" FINAL").Scan(&last); err != nil {
+		return fmt.Errorf("%s: max(date): %w", cbrCcybTable, err)
+	}
+	if last.IsZero() {
+		return nil
+	}
+	if days := cbrCcybStaleDays(last, now); days > cbrCcybStaleLimit {
+		log.Warnf("%s: последняя точка %s — %d дн. назад (порог %d): источник не обновляет файл, ряд заморожен; см. docs/LIMITATIONS.md",
+			cbrCcybTable, last.Format("2006-01-02"), days, cbrCcybStaleLimit)
+	}
+	return nil
+}
