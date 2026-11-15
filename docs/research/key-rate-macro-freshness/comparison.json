@@ -1,0 +1,56 @@
+{
+  "forecast_unchanged": true,
+  "stale_before": 16,
+  "stale_after": 6,
+  "series_changes": {
+    "v_cbr_macro": {
+      "changed_series": 2,
+      "net_points_added": 10
+    },
+    "v_rosstat_macro": {
+      "changed_series": 113,
+      "net_points_added": 113
+    },
+    "v_minfin_budget": {
+      "changed_series": 9,
+      "net_points_added": 9
+    },
+    "v_cbr_bop": {
+      "changed_series": 0,
+      "net_points_added": 0
+    },
+    "v_cbr_survey": {
+      "changed_series": 0,
+      "net_points_added": 0
+    },
+    "v_moex_market": {
+      "changed_series": 1,
+      "net_points_added": 5
+    },
+    "ofz": {
+      "changed_series": 5,
+      "net_points_added": 11
+    },
+    "keyrate": {
+      "changed_series": 2,
+      "net_points_added": 10
+    },
+    "weekly": {
+      "changed_series": 3,
+      "net_points_added": 0
+    }
+  },
+  "repeat_results_unchanged": {
+    "dashboard": true,
+    "v_cbr_macro": true,
+    "v_rosstat_macro": true,
+    "v_minfin_budget": true,
+    "v_cbr_bop": true,
+    "v_cbr_survey": true,
+    "v_moex_market": true,
+    "ofz": true,
+    "keyrate": true,
+    "forecast": true,
+    "weekly": true
+  }
+}

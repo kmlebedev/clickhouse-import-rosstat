@@ -1,0 +1,44 @@
+{
+  "mcp_check": {
+    "exit_code": 2,
+    "failures": [
+      "FAIL bootstrap-разметка новых каналов: каналов: 6/6, неполно: ['ifax_go: 63/107', 'markettwits: 101/132', 'newssmartlab: 77/123', 'russianmacro: 36/56', 'MarketOverview: 48/83', 'mozgovikresearch: 45/78'] — прогнать NEWS_LLM_PROFILE=glm NEWS_LLM_BACKLOG_LIMIT=500 make import STAT=news_watch",
+      "FAIL каталог fedstat полон: рядов fedstat: 1734, want 1727 — прогнать импортёры fedstat_* (каталог перепубликовывается прогоном)",
+      "FAIL витрина v_fedstat_ipc (ИПЦ 31074) непуста и полна: строк: 204101, рядов: 1112, регионов: 2; want 204038 / 1105 / 2 — прогнать соответствующий fedstat_*-импортёр"
+    ],
+    "target_passes": [
+      "OK   витрина v_key_rate_dashboard существует и непуста: строк: 24",
+      "OK   витрина v_key_rate_dashboard содержит 5 фиксированных контуров: контуров: 6 ['calendar', 'spot', 'forecast', 'fundamental', 'market', 'divergence']",
+      "OK   forecast-треки в v_key_rate_dashboard: треков: 3",
+      "OK   колонка error_bp читается агентом: SELECT error_bp FROM v_key_rate_dashboard",
+      "OK   staged-метрики не входят в forecast-контур v_key_rate_dashboard: staged-строк: 0",
+      "OK   витрина v_cbr_survey существует и читается: строк: 104481",
+      "OK   витрина v_cbr_survey содержит отраслевые ряды: строк: 102384",
+      "OK   витрина v_cbr_macro существует и читается: строк: 57151",
+      "OK   ряды cbr_sors_funds видны в v_cbr_macro: рядов cbr_sors_funds в v_cbr_macro: 21",
+      "OK   ряды cbr_ruania видны в v_cbr_macro: рядов cbr_ruania в v_cbr_macro: 7, ставка с 2010-01-11, NULL в value: 0",
+      "OK   витрина v_cbr_bop существует и непуста: строк: 2924",
+      "OK   витрина v_rosstat_macro непуста: строк: 52986, рядов: 165",
+      "OK   витрина v_weekly_cpi_sa непуста и полна: строк: 633, рядов: 3",
+      "OK   nowcast-строка weekly_cpi_sa: nowcast-строк: 3 (ожидалось 0 или 3 — 3 ряда × 1 месяц)",
+      "OK   каталог weekly_cpi_sa описывает 5 рядов: записей: 5 (3 месячных + 2 квартальных)",
+      "OK   сырая weekly_cpi_sa закрыта: отказ ClickHouse 497 на weekly_cpi_sa (ожидаемо)",
+      "OK   витрина v_minfin_budget существует и непуста: строк: 2181",
+      "OK   v_minfin_budget: нефтегазовые доходы и НДПИ: точек: 212 (want >= 210), рядов: 2 (want 2)",
+      "OK   витрина v_ofz_stress: аукционы и четыре метрики: строк: 426, покрытие: 338, спред: 364, обслуживание: 318, запас ОФЗ: 334, 2023-01-11 … 2026-10-28",
+      "OK   каталог ОФЗ-контура полон: рядов контура: 20 (5 аукцион + 10 долг + 5 обслуживание)",
+      "OK   сырая minfin_ofz_auction закрыта (аукционы ОФЗ): отказ ClickHouse 497 на minfin_ofz_auction (ожидаемо)",
+      "OK   сырая minfin_debt_stock закрыта (запас внутреннего/внешнего долга и ОФЗ): отказ ClickHouse 497 на minfin_debt_stock (ожидаемо)",
+      "OK   витрина v_weekly_cpi_quarterly: 3к26 в коридоре, 4к26 = среднему месячных: 3к26: 7.34 (want -100..100), 4к26: 6.75 (want avg 6.75 ± 0.02), partial: 1 (want 1), full_months/months: 1/2 — прогнать make import STAT=weekly_cpi_sa",
+      "OK   витрина v_weekly_cpi_rolling3m: последняя в коридоре, первые две NULL: последняя: 6.48 (want -100..200), NULL: 2 (want 2) — прогнать make import STAT=weekly_cpi_sa"
+    ]
+  },
+  "code_changed": false,
+  "make_all": "not rerun: operational docs only; make import builds existing binary",
+  "independent_review": "PASS: gpt-6.1-terra; independently compared all 11 SQL/results pairs and import/repeat membership",
+  "docs_check": {
+    "pages": 63,
+    "tests": 33,
+    "result": "PASS"
+  }
+}

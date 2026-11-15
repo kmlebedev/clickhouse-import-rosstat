@@ -1,0 +1,253 @@
+[
+  {
+    "stat": "cbr_key_rate",
+    "returncode": 0,
+    "seconds": 4.94,
+    "command": "make import STAT=cbr_key_rate",
+    "log_lines": [
+      "go build -o build/clickhouse-import-rosstat-native .",
+      "CLICKHOUSE_IMPORT_STAT=\"cbr_key_rate\" ./build/clickhouse-import-rosstat-native",
+      "time=\"2026-11-15T18:08:02+05:00\" level=info msg=\"Connected to clickhouse\"",
+      "time=\"2026-11-15T18:08:02+05:00\" level=info msg=\"cbr_key_rate: 3300 точек\"",
+      "time=\"2026-11-15T18:08:02+05:00\" level=info msg=\"Imported 3300 rows of cbr_key_rate\""
+    ]
+  },
+  {
+    "stat": "ofz_curve",
+    "returncode": 0,
+    "seconds": 0.92,
+    "command": "make import STAT=ofz_curve",
+    "log_lines": [
+      "go build -o build/clickhouse-import-rosstat-native .",
+      "CLICKHOUSE_IMPORT_STAT=\"ofz_curve\" ./build/clickhouse-import-rosstat-native",
+      "time=\"2026-11-15T18:08:03+05:00\" level=info msg=\"Connected to clickhouse\"",
+      "time=\"2026-11-15T18:08:03+05:00\" level=info msg=\"Fetched RGBI candles and G-curve yields from MOEX ISS, 11 rows total\"",
+      "time=\"2026-11-15T18:08:03+05:00\" level=info msg=\"Imported 11 rows of ofz_curve\""
+    ]
+  },
+  {
+    "stat": "keyrate_futures",
+    "returncode": 0,
+    "seconds": 0.73,
+    "command": "make import STAT=keyrate_futures",
+    "log_lines": [
+      "go build -o build/clickhouse-import-rosstat-native .",
+      "CLICKHOUSE_IMPORT_STAT=\"keyrate_futures\" ./build/clickhouse-import-rosstat-native",
+      "time=\"2026-11-15T18:08:03+05:00\" level=info msg=\"Connected to clickhouse\"",
+      "time=\"2026-11-15T18:08:04+05:00\" level=info msg=\"Собрано 10 дней по 2 сериям KEYRATE\"",
+      "time=\"2026-11-15T18:08:04+05:00\" level=info msg=\"Imported 10 rows of keyrate_futures\""
+    ]
+  },
+  {
+    "stat": "cbr_mp_survey",
+    "returncode": 0,
+    "seconds": 1.3,
+    "command": "make import STAT=cbr_mp_survey",
+    "log_lines": [
+      "go build -o build/clickhouse-import-rosstat-native .",
+      "CLICKHOUSE_IMPORT_STAT=\"cbr_mp_survey\" ./build/clickhouse-import-rosstat-native",
+      "time=\"2026-11-15T18:08:04+05:00\" level=info msg=\"Connected to clickhouse\"",
+      "time=\"2026-11-15T18:08:05+05:00\" level=info msg=\"cbr_mp_survey: no-op, версия be103476b2808a10313d70b3e552e57f уже импортирована, 104481 точек на месте\"",
+      "time=\"2026-11-15T18:08:05+05:00\" level=info msg=\"Imported 104481 rows of cbr_mp_survey\""
+    ]
+  },
+  {
+    "stat": "cbr_indicators_cpd",
+    "returncode": 0,
+    "seconds": 1.64,
+    "command": "make import STAT=cbr_indicators_cpd",
+    "log_lines": [
+      "go build -o build/clickhouse-import-rosstat-native .",
+      "CLICKHOUSE_IMPORT_STAT=\"cbr_indicators_cpd\" ./build/clickhouse-import-rosstat-native",
+      "time=\"2026-11-15T18:08:06+05:00\" level=info msg=\"Connected to clickhouse\"",
+      "time=\"2026-11-15T18:08:06+05:00\" level=info msg=\"cbr_indicators_cpd: no-op, версия 8aa55076d0456d9dabd6854f24cf30a3 уже импортирована, 592 точек на месте\"",
+      "time=\"2026-11-15T18:08:07+05:00\" level=info msg=\"Imported 592 rows of cbr_indicators_cpd\""
+    ]
+  },
+  {
+    "stat": "rosstat_ipc_mes",
+    "returncode": 0,
+    "seconds": 8.96,
+    "command": "make import STAT=rosstat_ipc_mes",
+    "log_lines": [
+      "go build -o build/clickhouse-import-rosstat-native .",
+      "CLICKHOUSE_IMPORT_STAT=\"rosstat_ipc_mes\" ./build/clickhouse-import-rosstat-native",
+      "time=\"2026-11-15T18:08:07+05:00\" level=info msg=\"Connected to clickhouse\"",
+      "time=\"2026-11-15T18:08:10+05:00\" level=info msg=\"Get xlsx file https://rosstat.gov.ru/storage/mediabank/ipc_mes_09-2026.xlsx\"",
+      "time=\"2026-11-15T18:08:16+05:00\" level=info msg=\"Imported 1716 rows of rosstat_ipc_mes\""
+    ]
+  },
+  {
+    "stat": "cbr_currency_usd",
+    "returncode": 0,
+    "seconds": 0.98,
+    "command": "make import STAT=cbr_currency_usd",
+    "log_lines": [
+      "go build -o build/clickhouse-import-rosstat-native .",
+      "CLICKHOUSE_IMPORT_STAT=\"cbr_currency_usd\" ./build/clickhouse-import-rosstat-native",
+      "time=\"2026-11-15T18:08:16+05:00\" level=info msg=\"Connected to clickhouse\"",
+      "time=\"2026-11-15T18:08:17+05:00\" level=info msg=\"cbr_currency_usd: 3422 точек\"",
+      "time=\"2026-11-15T18:08:17+05:00\" level=info msg=\"Imported 3422 rows of cbr_currency_usd\""
+    ]
+  },
+  {
+    "stat": "moex_market",
+    "returncode": 0,
+    "seconds": 2.97,
+    "command": "make import STAT=moex_market",
+    "log_lines": [
+      "go build -o build/clickhouse-import-rosstat-native .",
+      "CLICKHOUSE_IMPORT_STAT=\"moex_market\" ./build/clickhouse-import-rosstat-native",
+      "time=\"2026-11-15T18:08:17+05:00\" level=info msg=\"Connected to clickhouse\"",
+      "time=\"2026-11-15T18:08:20+05:00\" level=info msg=\"moex_market: BR: 20 contracts, 2079 bars, 284 points\"",
+      "time=\"2026-11-15T18:08:20+05:00\" level=info msg=\"moex_market: brent_front: 284 points since 2025-10-02\"",
+      "time=\"2026-11-15T18:08:20+05:00\" level=info msg=\"Imported 284 rows of moex_market\"",
+      "time=\"2026-11-15T18:08:20+05:00\" level=info msg=\"Imported 284 rows of moex_market\""
+    ]
+  },
+  {
+    "stat": "rosstat_labour_force_mes",
+    "returncode": 2,
+    "seconds": 4.16,
+    "command": "make import STAT=rosstat_labour_force_mes",
+    "log_lines": [
+      "go build -o build/clickhouse-import-rosstat-native .",
+      "CLICKHOUSE_IMPORT_STAT=\"rosstat_labour_force_mes\" ./build/clickhouse-import-rosstat-native",
+      "time=\"2026-11-15T18:08:20+05:00\" level=info msg=\"Connected to clickhouse\"",
+      "time=\"2026-11-15T18:08:23+05:00\" level=warning msg=\"rosstat_labour_force_mes: HEAD https://rosstat.gov.ru/storage/mediabank/trud-1_15-s.xlsx недоступен (HEAD https://rosstat.gov.ru/storage/mediabank/trud-1_15-s.xlsx: статус 404) — полный импорт без записи версии\"",
+      "time=\"2026-11-15T18:08:24+05:00\" level=info msg=\"Get xlsx file https://rosstat.gov.ru/storage/mediabank/trud-1_15-s.xlsx\"",
+      "time=\"2026-11-15T18:08:24+05:00\" level=error msg=\"rosstat_labour_force_mes: rosstat_labour_force_mes: excelize zip: not a valid zip file\"",
+      "make: *** [import] Error 1"
+    ]
+  },
+  {
+    "stat": "rosstat_salaries_mes",
+    "returncode": 2,
+    "seconds": 3.53,
+    "command": "make import STAT=rosstat_salaries_mes",
+    "log_lines": [
+      "go build -o build/clickhouse-import-rosstat-native .",
+      "CLICKHOUSE_IMPORT_STAT=\"rosstat_salaries_mes\" ./build/clickhouse-import-rosstat-native",
+      "time=\"2026-11-15T18:08:24+05:00\" level=info msg=\"Connected to clickhouse\"",
+      "time=\"2026-11-15T18:08:26+05:00\" level=warning msg=\"rosstat_salaries_mes: HEAD https://rosstat.gov.ru/storage/mediabank/tab1-zpl_12-2025.xlsx недоступен (HEAD https://rosstat.gov.ru/storage/mediabank/tab1-zpl_12-2025.xlsx: статус 404) — полный импорт без записи версии\"",
+      "time=\"2026-11-15T18:08:27+05:00\" level=info msg=\"Get xlsx file https://rosstat.gov.ru/storage/mediabank/tab1-zpl_12-2025.xlsx\"",
+      "time=\"2026-11-15T18:08:27+05:00\" level=error msg=\"rosstat_salaries_mes: rosstat_salaries_mes: excelize zip: not a valid zip file\"",
+      "make: *** [import] Error 1"
+    ]
+  },
+  {
+    "stat": "rosstat_vvp_kvartal",
+    "returncode": 0,
+    "seconds": 8.0,
+    "command": "make import STAT=rosstat_vvp_kvartal",
+    "log_lines": [
+      "go build -o build/clickhouse-import-rosstat-native .",
+      "CLICKHOUSE_IMPORT_STAT=\"rosstat_vvp_kvartal\" ./build/clickhouse-import-rosstat-native",
+      "time=\"2026-11-15T18:08:28+05:00\" level=info msg=\"Connected to clickhouse\"",
+      "time=\"2026-11-15T18:08:30+05:00\" level=info msg=\"Get xlsx file https://rosstat.gov.ru/storage/mediabank/VVP_kvartal_s-1995-2026.xlsx\"",
+      "time=\"2026-11-15T18:08:30+05:00\" level=warning msg=\"vvpKvartal: rosstat_vvp_kvartal: лист \\\"14\\\", колонка 57: метка года \\\"20252)\\\" не больше текущего 2025 — год выведен как 2026\"",
+      "time=\"2026-11-15T18:08:35+05:00\" level=info msg=\"Imported 303 rows of rosstat_vvp_kvartal\""
+    ]
+  },
+  {
+    "stat": "minfin_fed_bud_mes",
+    "returncode": 0,
+    "seconds": 1.19,
+    "command": "make import STAT=minfin_fed_bud_mes",
+    "log_lines": [
+      "go build -o build/clickhouse-import-rosstat-native .",
+      "CLICKHOUSE_IMPORT_STAT=\"minfin_fed_bud_mes\" ./build/clickhouse-import-rosstat-native",
+      "time=\"2026-11-15T18:08:36+05:00\" level=info msg=\"Connected to clickhouse\"",
+      "time=\"2026-11-15T18:08:36+05:00\" level=info msg=\"Get xlsx file https://minfin.gov.ru/common/upload/library/2026/11/main/Prilozhenie_3_dannye_109-111_—_mes.xlsx\"",
+      "time=\"2026-11-15T18:08:37+05:00\" level=info msg=\"Imported 1081 rows of minfin_fed_bud_mes\""
+    ]
+  },
+  {
+    "stat": "minfin_fed_bud_mesyats",
+    "returncode": 0,
+    "seconds": 0.92,
+    "command": "make import STAT=minfin_fed_bud_mesyats",
+    "log_lines": [
+      "go build -o build/clickhouse-import-rosstat-native .",
+      "CLICKHOUSE_IMPORT_STAT=\"minfin_fed_bud_mesyats\" ./build/clickhouse-import-rosstat-native",
+      "time=\"2026-11-15T18:08:37+05:00\" level=info msg=\"Connected to clickhouse\"",
+      "time=\"2026-11-15T18:08:37+05:00\" level=info msg=\"Get xlsx file https://minfin.gov.ru/common/upload/library/2026/11/main/Prilozhenie_8_dannye_115-117_—_mesyats.xlsx\"",
+      "time=\"2026-11-15T18:08:37+05:00\" level=info msg=\"Imported 888 rows of minfin_fed_bud_mesyats\""
+    ]
+  },
+  {
+    "stat": "cbr_bop_est",
+    "returncode": 0,
+    "seconds": 1.55,
+    "command": "make import STAT=cbr_bop_est",
+    "log_lines": [
+      "go build -o build/clickhouse-import-rosstat-native .",
+      "CLICKHOUSE_IMPORT_STAT=\"cbr_bop_est\" ./build/clickhouse-import-rosstat-native",
+      "time=\"2026-11-15T18:08:38+05:00\" level=info msg=\"Connected to clickhouse\"",
+      "time=\"2026-11-15T18:08:38+05:00\" level=info msg=\"cbr_bop_est: no-op, версия c5d9559e5d8c5256865bd7665318e40f уже импортирована, 170 точек на месте\"",
+      "time=\"2026-11-15T18:08:39+05:00\" level=info msg=\"Imported 170 rows of cbr_bop_est\""
+    ]
+  },
+  {
+    "stat": "cbr_bop_standard",
+    "returncode": 0,
+    "seconds": 1.09,
+    "command": "make import STAT=cbr_bop_standard",
+    "log_lines": [
+      "go build -o build/clickhouse-import-rosstat-native .",
+      "CLICKHOUSE_IMPORT_STAT=\"cbr_bop_standard\" ./build/clickhouse-import-rosstat-native",
+      "time=\"2026-11-15T18:08:40+05:00\" level=info msg=\"Connected to clickhouse\"",
+      "time=\"2026-11-15T18:08:40+05:00\" level=info msg=\"cbr_bop_standard: no-op, версия 71233df55c10d50739361b0338371882 уже импортирована, 2754 точек на месте\"",
+      "time=\"2026-11-15T18:08:40+05:00\" level=info msg=\"Imported 2754 rows of cbr_bop_standard\""
+    ]
+  },
+  {
+    "stat": "rosstat_ipc_weeks",
+    "returncode": 0,
+    "seconds": 9.8,
+    "command": "make import STAT=rosstat_ipc_weeks",
+    "log_lines": [
+      "go build -o build/clickhouse-import-rosstat-native .",
+      "CLICKHOUSE_IMPORT_STAT=\"rosstat_ipc_weeks\" ./build/clickhouse-import-rosstat-native",
+      "time=\"2026-11-15T18:08:40+05:00\" level=info msg=\"Connected to clickhouse\"",
+      "time=\"2026-11-15T18:08:43+05:00\" level=info msg=\"Get xlsx file https://rosstat.gov.ru/storage/mediabank/nedel_Ipc.xlsx\"",
+      "time=\"2026-11-15T18:08:45+05:00\" level=info msg=\"rosstat_ipc_weeks, PDF-выпуск новостной ленты: в ленте 14 HTML-выпусков — PDF-фолбэк их не покрывает\"",
+      "time=\"2026-11-15T18:08:50+05:00\" level=info msg=\"rosstat_ipc_weeks: резервные периоды на месте (12 документов, 248 дат)\"",
+      "time=\"2026-11-15T18:08:50+05:00\" level=info msg=\"Imported 27166 rows of rosstat_ipc_weeks\""
+    ]
+  },
+  {
+    "stat": "rosstat_bi_cpi_weekly",
+    "returncode": 0,
+    "seconds": 264.04,
+    "command": "make import STAT=rosstat_bi_cpi_weekly",
+    "log_lines": [
+      "go build -o build/clickhouse-import-rosstat-native .",
+      "CLICKHOUSE_IMPORT_STAT=\"rosstat_bi_cpi_weekly\" ./build/clickhouse-import-rosstat-native",
+      "time=\"2026-11-15T18:08:50+05:00\" level=info msg=\"Connected to clickhouse\"",
+      "time=\"2026-11-15T18:10:12+05:00\" level=warning msg=\"rosstat_bi_cpi_weekly: export RPC: попытка 1 из 3: Post \\\"https://bi.rosstat.gov.ru/biportal/grid\\\": EOF — повтор через 2s\"",
+      "time=\"2026-11-15T18:11:35+05:00\" level=warning msg=\"rosstat_bi_cpi_weekly: export RPC: попытка 2 из 3: Post \\\"https://bi.rosstat.gov.ru/biportal/grid\\\": EOF — повтор через 5s\"",
+      "time=\"2026-11-15T18:13:01+05:00\" level=warning msg=\"rosstat_bi_cpi_weekly: BI недоступен (rosstat_bi_cpi_weekly: export RPC: Post \\\"https://bi.rosstat.gov.ru/biportal/grid\\\": EOF (3 попыток)) — пробуем PDF-фолбэк агрегата\"",
+      "time=\"2026-11-15T18:13:03+05:00\" level=info msg=\"rosstat_bi_cpi_weekly, PDF-фолбэк агрегата: в ленте 14 HTML-выпусков — PDF-фолбэк их не покрывает\"",
+      "time=\"2026-11-15T18:13:04+05:00\" level=info msg=\"Get file https://rosstat.gov.ru/storage/mediabank/172_11-11-2026.pdf\"",
+      "time=\"2026-11-15T18:13:14+05:00\" level=info msg=\"rosstat_bi_cpi_weekly: резервный документ 2026-11-09 (https://rosstat.gov.ru/storage/mediabank/172_11-11-2026.pdf): импортировано 1 точек\"",
+      "time=\"2026-11-15T18:13:14+05:00\" level=warning msg=\"rosstat_bi_cpi_weekly: BI недоступен, PDF-фолбэк записал 1 точек\"",
+      "time=\"2026-11-15T18:13:14+05:00\" level=info msg=\"Imported 1 rows of rosstat_bi_cpi_weekly\""
+    ]
+  },
+  {
+    "stat": "weekly_cpi_sa",
+    "returncode": 0,
+    "seconds": 1.6,
+    "command": "make import STAT=weekly_cpi_sa",
+    "log_lines": [
+      "go build -o build/clickhouse-import-rosstat-native .",
+      "CLICKHOUSE_IMPORT_STAT=\"weekly_cpi_sa\" ./build/clickhouse-import-rosstat-native",
+      "time=\"2026-11-15T18:13:15+05:00\" level=info msg=\"Connected to clickhouse\"",
+      "time=\"2026-11-15T18:13:15+05:00\" level=info msg=\"weekly_cpi_sa: X-13 weekly_cpi_sa: 210 rows\"",
+      "time=\"2026-11-15T18:13:15+05:00\" level=info msg=\"weekly_cpi_sa: X-13 weekly_cpi_sa: 211 rows\"",
+      "time=\"2026-11-15T18:13:16+05:00\" level=info msg=\"weekly_cpi_sa: 211 rows, 2009-05-31…2026-11-30, spec weekly-cpi-sa-2026-v1\"",
+      "time=\"2026-11-15T18:13:16+05:00\" level=info msg=\"Imported 211 rows of weekly_cpi_sa\""
+    ]
+  }
+]
