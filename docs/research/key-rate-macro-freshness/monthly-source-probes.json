@@ -1,0 +1,192 @@
+{
+  "scope": "Public official Bank of Russia current landing links and linked XLSX GETs; read-only XML inspection. No imports or DB operations. Derived from original saved observations; no redownload.",
+  "observed_at_utc": "2026-11-15T13:10:31Z",
+  "limitations": [
+    "Only the current official links listed here were checked; no assertion about all possible later publications.",
+    "Workbook values reflect downloaded current revisions, not a vintage/PIT audit.",
+    "Observed times per file use response Date header; overall observation time is the final file response time."
+  ],
+  "sources": {
+    "survey": {
+      "landing_url": "https://www.cbr.ru/statistics/ddkp/mp/",
+      "file_url": "https://www.cbr.ru/Content/Document/File/135603/mp_survey_data.xlsx",
+      "http_status": 200,
+      "observed_at_http_date": "Sun, 15 Nov 2026 13:10:14 GMT",
+      "response_headers": {
+        "content-type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "content-length": "2193461",
+        "date": "Sun, 15 Nov 2026 13:10:14 GMT",
+        "cache-control": "private",
+        "last-modified": "Wed, 14 Oct 2026 15:30:00 GMT",
+        "etag": "\"00026B86\""
+      },
+      "sha256": "c5ad8996bda9f21715a05de3bbe98d1511fb6c160b064f1e9c1090eb501c945b",
+      "landing_link_evidence": {
+        "link_label": "Данные опросов",
+        "page_displayed_date": "14.10.2026",
+        "resolved_link_url": "https://www.cbr.ru/Content/Document/File/135603/mp_survey_data.xlsx",
+        "matches_importer_url": true
+      },
+      "evidence": [
+        {
+          "sheet": "Экономика всего",
+          "cells": {
+            "A4": "Отчетный период",
+            "B4": "Месяц заполнения и сбора анкет (первая декада)",
+            "C4": "Индикатор бизнес-климата Банка России",
+            "A301": "46266",
+            "B301": "46296",
+            "C301": "-0.59810319641681498",
+            "P301": "1.1850362372071599",
+            "W301": "21.043947195364201"
+          },
+          "interpretation": {
+            "A301": "Excel serial 46266 = 2026-09-01: report month September 2026, latest monthly observation.",
+            "B301": "Excel serial 46296 = 2026-10-01: collection month October 2026; this is not an October report-month observation.",
+            "C301": "Raw business-climate indicator value, supporting a populated final observation."
+          }
+        },
+        {
+          "sheet": "Загрузка произв мощностей",
+          "cells": {
+            "A103": "3к26",
+            "B103": "77.0366066168353",
+            "T103": "76.342820956714903"
+          },
+          "interpretation": "Latest report label 3к26 = Q3 2026; importer represents this quarter as 2026-10-01 (first day after quarter). B/T are populated economy-total raw/seasonally-adjusted values."
+        },
+        {
+          "sheet": "Обеспеченность персоналом",
+          "cells": {
+            "A31": "3к26",
+            "B31": "-19.589483594606701",
+            "T31": "-17.4455415608859"
+          },
+          "interpretation": "Latest report label 3к26 = Q3 2026; importer represents this quarter as 2026-10-01 (first day after quarter). B/T are populated economy-total raw/seasonally-adjusted values."
+        },
+        {
+          "sheet": "Ожидания изменения численности",
+          "cells": {
+            "A103": "3к26",
+            "B103": "-0.175780735343187",
+            "T103": "2.1063628430719898"
+          },
+          "interpretation": "Latest report label 3к26 = Q3 2026; importer represents this quarter as 2026-10-01 (first day after quarter). B/T are populated economy-total raw/seasonally-adjusted values."
+        }
+      ]
+    },
+    "cpd": {
+      "landing_url": "https://www.cbr.ru/statistics/ddkp/aipd/",
+      "file_url": "https://www.cbr.ru/Content/Document/File/108632/indicators_cpd.xlsx",
+      "http_status": 200,
+      "observed_at_http_date": "Sun, 15 Nov 2026 13:10:31 GMT",
+      "response_headers": {
+        "content-type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "content-length": "206678",
+        "date": "Sun, 15 Nov 2026 13:10:31 GMT",
+        "cache-control": "private",
+        "last-modified": "Wed, 14 Oct 2026 16:45:00 GMT",
+        "etag": "\"00026BB1\""
+      },
+      "sha256": "b523f9078c66d7482b410c3528007fe515f84f44f25260c1be12600445662bc9",
+      "landing_link_evidence": {
+        "link_label": "Показатели сезонно сглаженной динамики потребительских цен",
+        "page_displayed_last_updated": "14.10.2026",
+        "resolved_link_url": "https://www.cbr.ru/Content/Document/File/108632/indicators_cpd.xlsx",
+        "matches_importer_url": true
+      },
+      "evidence": [
+        {
+          "sheet": "Лист1",
+          "cells": {
+            "KK1": "46235",
+            "KL1": "46266",
+            "A2": "Все товары и услуги",
+            "KL2": "0.5281999339662633",
+            "A3": "- без плодоовощной продукции, нефтепродуктов и ЖКХ",
+            "KL3": "0.55569527970340005"
+          },
+          "interpretation": "Final date column KL1 is Excel serial 46266 = 2026-09-01, September 2026; importer uses month-end 2026-09-30. KL2/KL3 are populated latest values, % change from previous month, seasonally adjusted."
+        }
+      ]
+    },
+    "bop-est": {
+      "landing_url": "https://www.cbr.ru/statistics/macro_itm/external_sector/pb/",
+      "file_url": "https://www.cbr.ru/vfs/statistics/credit_statistics/bop/bop_est.xlsx",
+      "http_status": 200,
+      "observed_at_http_date": "Sun, 15 Nov 2026 13:10:31 GMT",
+      "response_headers": {
+        "content-type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "content-length": "114411",
+        "date": "Sun, 15 Nov 2026 13:10:31 GMT",
+        "cache-control": "private",
+        "last-modified": "Thu, 15 Oct 2026 11:16:03 GMT"
+      },
+      "sha256": "1b87b8d650d744287a038e05e4836c661a8c332477f517036bcc833994fbcfff",
+      "landing_link_evidence": {
+        "link_label": "Оценка платежного баланса Российской Федерации",
+        "page_displayed_date": "15.10.2026",
+        "resolved_link_url": "https://www.cbr.ru/vfs/statistics/credit_statistics/bop/bop_est.xlsx",
+        "matches_importer_url": true
+      },
+      "evidence": [
+        {
+          "sheet": "Оценка ПБ (15.10.2026)",
+          "cells": {
+            "A1": "Оценка ключевых агрегатов платежного баланса Российской Федерации за январь - август 2026 года",
+            "B4": "январь - август\n2026 г.\n(оценка)",
+            "C4": "I квартал \n2026 г. ",
+            "D4": "II квартал \n2026 г. ",
+            "E4": "июль \n2026 г.\n(оценка)",
+            "F4": "август\n2026 г.\n(оценка)",
+            "A6": "Счет текущих операций",
+            "D6": "16.899999999999999",
+            "F6": "3.3"
+          },
+          "interpretation": "Sheet carries release date 15.10.2026. Latest monthly header F4 is August 2026, represented as 2026-08-31; latest quarter D4 is Q2 2026, represented as 2026-06-30. B4 is cumulative January–August, not a later standalone month. Row6 supplies populated current-account values, billion USD."
+        }
+      ]
+    },
+    "bop-standard": {
+      "landing_url": "https://www.cbr.ru/statistics/macro_itm/external_sector/pb/",
+      "file_url": "https://www.cbr.ru/vfs/statistics/credit_statistics/bop/bal_of_payments_standart.xlsx",
+      "http_status": 200,
+      "observed_at_http_date": "Sun, 15 Nov 2026 13:10:29 GMT",
+      "response_headers": {
+        "content-type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "content-length": "462206",
+        "date": "Sun, 15 Nov 2026 13:10:29 GMT",
+        "cache-control": "private",
+        "last-modified": "Wed, 30 Sep 2026 12:23:50 GMT"
+      },
+      "sha256": "0fce4dac404622697bf107af3ad74ea28cf2f3c31c60a9bb8cc34cbbcc789382",
+      "landing_link_evidence": {
+        "link_label": "Платежный баланс Российской Федерации (cтандартные компоненты)",
+        "page_displayed_last_updated": "15.10.2026",
+        "resolved_link_url": "https://www.cbr.ru/vfs/statistics/credit_statistics/bop/bal_of_payments_standart.xlsx",
+        "matches_importer_url": true
+      },
+      "evidence": [
+        {
+          "sheet": "Кварталы",
+          "cells": {
+            "DZ5": "1 квартал 2026 г.",
+            "EA5": "2 квартал 2026 г.",
+            "A6": "Счет текущих операций",
+            "EA6": "16949.240000000002"
+          },
+          "interpretation": "Final quarterly header EA5 = Q2 2026, represented as 2026-06-30; row6 is populated current-account value, million USD."
+        },
+        {
+          "sheet": "Годы",
+          "cells": {
+            "AG5": "2025 г.",
+            "A6": "Счет текущих операций",
+            "AG6": "38588.14"
+          },
+          "interpretation": "Final annual header AG5 = 2025, represented as 2025-12-31; row6 is populated current-account value, million USD."
+        }
+      ]
+    }
+  }
+}

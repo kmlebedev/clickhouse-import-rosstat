@@ -1,0 +1,32 @@
+{
+  "observed_at": "2026-11-15 13:09–13:10 UTC",
+  "method": "Independent gpt-6.1-sol HTTP GET of official listing pages and exact matched workbook links; no import or DB writes",
+  "probes": [
+    {
+      "page_url": "https://rosstat.gov.ru/labour_force",
+      "page_status": 200,
+      "matched_href": "/storage/mediabank/trud-1_15-s.xlsx",
+      "matching_links": 1,
+      "page_label": "321.76 Кб, 25.02.2026",
+      "file_url": "https://rosstat.gov.ru/storage/mediabank/trud-1_15-s.xlsx",
+      "file_status": 404,
+      "file_content_type": "text/html",
+      "file_bytes": 682001,
+      "page_sha256": "3a4c6d2d2c28a8d88e75fb8877e3cd434af4cf59c894e27449be0fb8db635791",
+      "file_sha256": "37565b41c1239f3591359a61c9802be8a30bbdd32ce45ace879002b2ee05e5ab"
+    },
+    {
+      "page_url": "https://rosstat.gov.ru/labor_market_employment_salaries",
+      "page_status": 200,
+      "matched_href": "/storage/mediabank/tab1-zpl_12-2025.xlsx",
+      "matching_links": 1,
+      "page_label": "20.53 Кб, 04.03.2026; title 1991-2025 гг.",
+      "file_url": "https://rosstat.gov.ru/storage/mediabank/tab1-zpl_12-2025.xlsx",
+      "file_status": 404,
+      "file_content_type": "text/html",
+      "file_bytes": 682001,
+      "page_sha256": "e15c98a5b8b79d4ca078c77a7cdd3c6190f2739421a81c4be2659b6d23c969bd",
+      "file_sha256": "3960fcba7fa369d280219aef5815bc67357986c8d2e01837c9fdee2501ab6a69"
+    }
+  ]
+}
