@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"os"
 	"sort"
 	"time"
 
@@ -205,6 +206,9 @@ type mpLLMRunStats struct {
 // отпечатку артефакта, и само-исцеление «известная версия → no-op» здесь заменено
 // проверкой адресов и блоков (спека §3.1).
 func (s *mpSummaryStat) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
+	if mode := os.Getenv(mpPolarityModeEnv); mode != "" {
+		return mpPolarityRepairFromEnv(ctx, conn, mode)
+	}
 	// 1.
 	for _, ddl := range []string{mpSummaryDdl, mpSummaryBlockDdl, mpSummaryChannelDdl} {
 		if err = conn.Exec(ctx, ddl); err != nil {

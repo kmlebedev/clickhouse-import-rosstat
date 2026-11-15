@@ -451,6 +451,22 @@ func init() {
 
 ⚠️ **В env-файле из `GOST_*` держат только `GOST_APP_ID`.** Локальный `~/.config/rosstat/env` подключается Makefile через `-include`, а его переменные объявлены с `export` — поэтому значение из файла перекрывает префикс команды, и `GOST_MODE=full make import STAT=gost_vehicle_safety_certificate` молча прочитает режим из файла. Режимные переменные (`GOST_MODE`/`GOST_FROM`/`GOST_TO`/`GOST_SETTLE_DAYS`) передавайте префиксом команды или в `env` шага DAG (как `GOST_MODE=since` в `dagu/craw.yaml`); на staging их не дублируют в `/etc/clickhouse-import-rosstat.env` — там живёт токен (`deploy/staging/clickhouse-import-rosstat.env.example`). **Ловушка та же у архива, но только в dev-файле:** в `~/.config/rosstat/env` держат только токен `ARCHIVE_YANDEX_TOKEN`, а `ARCHIVE_BACKEND` туда не пишут — как и `GOST_MODE`, это режимная переменная, и `export` из `-include` перекрыл бы префикс команды; в dev бэкенд выбирают аргументом цели: `make import STAT=cbr_m2 ARCHIVE_BACKEND=local ARCHIVE_LOCAL_DIR=build/archive-dev` (README, «Ключи и окружение»). На staging — наоборот: там команду запускает не человек, а расписание, и `ARCHIVE_BACKEND=yandex` задаётся именно в `/etc/clickhouse-import-rosstat.env` рядом с токеном (файл читает `deploy/staging/dagu.service` через `EnvironmentFile`; образец — `deploy/staging/clickhouse-import-rosstat.env.example`).
 
+**Разовый ремонт полярности #594.** `MP_SUMMARY_POLARITY_REPAIR=plan|apply|rollback`
+перехватывается `cbr_mp_summary` до штатных DDL/HTTP/LLM. Дополнительные переменные:
+`MP_SUMMARY_POLARITY_REPAIR_HOST` (совпадает с os.Hostname и ClickHouse hostName,
+DSN только loopback), `MP_SUMMARY_POLARITY_REPAIR_BACKUP` (неперезаписываемый JSON,
+0600). Только 10 фиксированных date/channel/seq/SHA-256, method=regex/model=''/version=0.
+Физические версии читаются без FINAL и проверяются по хешу. Для apply/rollback —
+общая локальная flock-блокировка и запрет при незавершённых мутациях таблицы;
+durable intent-маркер создаётся до первой записи; batch insert нужной версии
+предшествует синхронному удалению старых точных ключей. При неопределённом исходе
+маркер блокирует apply/rollback до ручной проверки operation_id; автоматического
+снятия по таймауту нет. /tmp lock/marker нельзя удалять внешней очисткой до
+завершения операции или ручного разрешения.
+Схема/витрины/гранты не меняются; права MCP-reader не расширяются. Другие писатели
+на время maintenance исключаются. Режим не включается в постоянный env/DAG.
+`MP_CHANNEL_REPLAY_INPUT/OUT` — только файловые пути offline `make mp-channel-replay`.
+
 ## 6. Целевая архитектура (дорожная карта 2026-Q4)
 
 Контур: **Источники → ClickHouse (сырые + витрины) → MCP (read-only) → Kimi-агент → сценарный прогноз золота → DCF → NAV PLZL → model_runs**. Полная версия: [docs/ROADMAP_DCF_POLYUS.md](docs/ROADMAP_DCF_POLYUS.md). Спека контура прогноза и плагина: [docs/superpowers/specs/2026-10-10-gold-nav-plugin-design.md](docs/superpowers/specs/2026-10-10-gold-nav-plugin-design.md).
