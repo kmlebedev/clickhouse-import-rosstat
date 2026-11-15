@@ -14,8 +14,8 @@ import (
 // префикс имени/таблицы, уникальность, регистрация в chimport.Stats, отсутствие
 // точки контроля публикации и полное совпадение с dagu/fedstat.yaml в обе стороны.
 func TestFedstatImportersPrefixedAndRegistered(t *testing.T) {
-	if len(fedstatImporters) != 6 {
-		t.Fatalf("fedstatImporters = %d, want 6", len(fedstatImporters))
+	if len(fedstatImporters) != 7 {
+		t.Fatalf("fedstatImporters = %d, want 7", len(fedstatImporters))
 	}
 	seen := make(map[string]bool, len(fedstatImporters))
 	for _, imp := range fedstatImporters {
@@ -73,6 +73,7 @@ func TestFedstatImportersPrefixedAndRegistered(t *testing.T) {
 		"fedstat_agri":          "fedstat_agri",
 		"fedstat_investment":    "fedstat_investment",
 		"fedstat_ipc":           "fedstat_ipc",
+		"fedstat_labour_hours":  "fedstat_labour_hours",
 	}
 	if len(want) != len(fedstatImporters) {
 		t.Errorf("литеральный набор = %d, реестр — %d", len(want), len(fedstatImporters))

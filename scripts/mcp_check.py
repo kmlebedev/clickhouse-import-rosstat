@@ -1706,6 +1706,20 @@ async def check(params, server_log):
                 failed += not expect(f"сырая {raw_table} закрыта", denied,
                                      f"отказ ClickHouse 497 на {raw_table} (ожидаемо)" if denied else raw[:200])
 
+            # rosstat/1.14: годовые часы имеют отдельный source и три единицы.
+            hours = result_rows(text(await session.call_tool("run_query", {
+                "query": "SELECT count() AS n, uniqExact(series) AS series FROM v_fedstat_labour_hours"
+            })))
+            hours_ok = bool(hours) and hours[0].get("n", 0) >= 2616 and hours[0].get("series") == 3
+            failed += not expect("годовые часы ЕМИСС непусты", hours_ok, str(hours))
+            hours_catalog = result_rows(text(await session.call_tool("run_query", {
+                "query": "SELECT count() AS n FROM v_series_catalog WHERE source = 'fedstat_labour_hours'"
+            })))
+            failed += not expect("каталог часов ЕМИСС полон", bool(hours_catalog) and hours_catalog[0].get("n") == 3, str(hours_catalog))
+            raw = text(await session.call_tool("run_query", {"query": "SELECT count() FROM fedstat_labour_hours"}))
+            denied = "ACCESS_DENIED" in raw or "Not enough privileges" in raw
+            failed += not expect("сырая fedstat_labour_hours закрыта", denied, "отказ 497" if denied else raw[:200])
+
             # Контур Минфина (пункт key-rate/phase-2-minfin-scrape, спека 2026-10-19
             # minfin-deficit-oil-gas §4.2): витрина v_minfin_budget читается агентом и
             # НЕПУСТА, федеральный дефицит идёт отдельным рядом (source = 'minfin'), а новый

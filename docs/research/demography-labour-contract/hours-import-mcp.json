@@ -1,0 +1,133 @@
+[
+  {
+    "query": "SELECT series,unit,count() AS points,min(date) AS first,max(date) AS last,uniqExact(region) AS regions FROM v_fedstat_labour_hours GROUP BY series,unit ORDER BY series",
+    "result": {
+      "columns": [
+        "series",
+        "unit",
+        "points",
+        "first",
+        "last",
+        "regions"
+      ],
+      "rows": [
+        [
+          "59749",
+          "тысяча человек",
+          1188,
+          "2019-01-01",
+          "2024-01-01",
+          2
+        ],
+        [
+          "59751",
+          "час",
+          132,
+          "2019-01-01",
+          "2024-01-01",
+          2
+        ],
+        [
+          "60463",
+          "тысяча человеко-часов",
+          1296,
+          "2017-01-01",
+          "2024-01-01",
+          2
+        ]
+      ]
+    }
+  },
+  {
+    "query": "SELECT source,series,title,unit,frequency FROM v_series_catalog WHERE source='fedstat_labour_hours' ORDER BY series",
+    "result": {
+      "columns": [
+        "source",
+        "series",
+        "title",
+        "unit",
+        "frequency"
+      ],
+      "rows": [
+        [
+          "fedstat_labour_hours",
+          "59749",
+          "Занятые по фактическим недельным часам основной работы",
+          "тысяча человек",
+          "Y"
+        ],
+        [
+          "fedstat_labour_hours",
+          "59751",
+          "Средние фактические недельные часы основной работы",
+          "час",
+          "Y"
+        ],
+        [
+          "fedstat_labour_hours",
+          "60463",
+          "Годовые фактические трудозатраты всех работ",
+          "тысяча человеко-часов",
+          "Y"
+        ]
+      ]
+    }
+  },
+  {
+    "query": "SELECT date,employment_status,value FROM v_fedstat_labour_hours WHERE series='60463' AND startsWith(activity,'101.АГ ') AND date='2024-01-01' ORDER BY employment_status",
+    "result": {
+      "columns": [
+        "date",
+        "employment_status",
+        "value"
+      ],
+      "rows": [
+        [
+          "2024-01-01",
+          "12 Работающий не по найму",
+          23649792.1
+        ],
+        [
+          "2024-01-01",
+          "13 Всего",
+          152767765.5
+        ],
+        [
+          "2024-01-01",
+          "41 Работающие по найму",
+          129117973.4
+        ]
+      ]
+    }
+  },
+  {
+    "query": "SELECT count() AS groups, countIf(abs(total-bins)>0.450001 OR n!=9) AS failed FROM (SELECT region,age,sex,date,count() AS n,sumIf(value,startsWith(hours_band,'14 ')) AS total,sumIf(value,NOT startsWith(hours_band,'14 ')) AS bins FROM v_fedstat_labour_hours WHERE series='59749' GROUP BY region,age,sex,date)",
+    "result": {
+      "columns": [
+        "groups",
+        "failed"
+      ],
+      "rows": [
+        [
+          132,
+          0
+        ]
+      ]
+    }
+  },
+  {
+    "query": "SELECT count() AS groups,countIf(abs(total-hired-other)>0.150001 OR n!=3) AS failed FROM (SELECT region,activity,date,count() AS n,sumIf(value,startsWith(employment_status,'13 ')) AS total,sumIf(value,startsWith(employment_status,'41 ')) AS hired,sumIf(value,startsWith(employment_status,'12 ')) AS other FROM v_fedstat_labour_hours WHERE series='60463' GROUP BY region,activity,date)",
+    "result": {
+      "columns": [
+        "groups",
+        "failed"
+      ],
+      "rows": [
+        [
+          432,
+          0
+        ]
+      ]
+    }
+  }
+]
