@@ -98,6 +98,14 @@ deploy/staging/      артефакты staging
 
 ## Конфигурация
 
+Ремонт полярности резюме ЦБ #594: [протокол и ограничения](docs/research/2026-11-15-key-rate-channel-polarity.md).
+`make mp-channel-replay` сравнивает локальный MCP-экспорт с regex без записи в БД.
+Разовый режим импортёра задаётся `MP_SUMMARY_POLARITY_REPAIR=plan|apply|rollback`,
+`MP_SUMMARY_POLARITY_REPAIR_HOST` и `MP_SUMMARY_POLARITY_REPAIR_BACKUP`; по умолчанию
+выключен, ограничен 10 проверенными идентичностями и локальным сервером. Эти
+переменные не добавляются в постоянный env или расписание.
+
+
 | Переменная | Назначение |
 |---|---|
 | `CLICKHOUSE_URL` | DSN подключения (обязательна) |

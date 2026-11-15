@@ -1,0 +1,809 @@
+{
+  "observed_at": "2026-11-15",
+  "input_sha256": "bc8dcce6fe0e79ec49de3475e78f0a592ee325ea528d78abf889671d803c513a",
+  "scope": "offline regex replay; stored LLM groups only, no inference or DB writes",
+  "results": [
+    {
+      "meeting_date": "2024-02-16",
+      "regex_before": 147,
+      "regex_recomputed": 147,
+      "changes": [
+        {
+          "channel": "output_gap",
+          "seq": 204,
+          "text_sha256": "c74584c35b6d23736a96ac27a2bf54d85b16dab8d7c3e810b949212ee109aebe",
+          "before": "risk_pro",
+          "after": "risk_dez"
+        },
+        {
+          "channel": "current_inflation",
+          "seq": 205,
+          "text_sha256": "e82785828e44b77c91bd124ce5c855b070f1205b96b1de22e014f4f284e31099",
+          "before": "risk_pro",
+          "after": "risk_dez"
+        }
+      ],
+      "stored_groups": [
+        {
+          "method": "llm",
+          "model": "deepseek-chat",
+          "prompt_version": 1,
+          "stored_rows": 40
+        },
+        {
+          "method": "llm",
+          "model": "mimo-v2.6-flash",
+          "prompt_version": 1,
+          "stored_rows": 53
+        },
+        {
+          "method": "llm",
+          "model": "zai-org/GLM-5.3-Flash",
+          "prompt_version": 1,
+          "stored_rows": 36
+        },
+        {
+          "method": "regex",
+          "model": "",
+          "prompt_version": 0,
+          "stored_rows": 147
+        }
+      ]
+    },
+    {
+      "meeting_date": "2024-03-22",
+      "regex_before": 134,
+      "regex_recomputed": 134,
+      "changes": [
+        {
+          "channel": "output_gap",
+          "seq": 152,
+          "text_sha256": "c74584c35b6d23736a96ac27a2bf54d85b16dab8d7c3e810b949212ee109aebe",
+          "before": "risk_pro",
+          "after": "risk_dez"
+        },
+        {
+          "channel": "current_inflation",
+          "seq": 153,
+          "text_sha256": "e82785828e44b77c91bd124ce5c855b070f1205b96b1de22e014f4f284e31099",
+          "before": "risk_pro",
+          "after": "risk_dez"
+        }
+      ],
+      "stored_groups": [
+        {
+          "method": "llm",
+          "model": "deepseek-chat",
+          "prompt_version": 1,
+          "stored_rows": 30
+        },
+        {
+          "method": "llm",
+          "model": "mimo-v2.6-flash",
+          "prompt_version": 1,
+          "stored_rows": 57
+        },
+        {
+          "method": "llm",
+          "model": "zai-org/GLM-5.3-Flash",
+          "prompt_version": 1,
+          "stored_rows": 44
+        },
+        {
+          "method": "regex",
+          "model": "",
+          "prompt_version": 0,
+          "stored_rows": 134
+        }
+      ]
+    },
+    {
+      "meeting_date": "2024-04-26",
+      "regex_before": 151,
+      "regex_recomputed": 151,
+      "changes": [
+        {
+          "channel": "output_gap",
+          "seq": 178,
+          "text_sha256": "c74584c35b6d23736a96ac27a2bf54d85b16dab8d7c3e810b949212ee109aebe",
+          "before": "risk_pro",
+          "after": "risk_dez"
+        },
+        {
+          "channel": "current_inflation",
+          "seq": 179,
+          "text_sha256": "e82785828e44b77c91bd124ce5c855b070f1205b96b1de22e014f4f284e31099",
+          "before": "risk_pro",
+          "after": "risk_dez"
+        }
+      ],
+      "stored_groups": [
+        {
+          "method": "llm",
+          "model": "deepseek-chat",
+          "prompt_version": 1,
+          "stored_rows": 40
+        },
+        {
+          "method": "llm",
+          "model": "mimo-v2.6-flash",
+          "prompt_version": 1,
+          "stored_rows": 21
+        },
+        {
+          "method": "llm",
+          "model": "zai-org/GLM-5.3-Flash",
+          "prompt_version": 1,
+          "stored_rows": 21
+        },
+        {
+          "method": "regex",
+          "model": "",
+          "prompt_version": 0,
+          "stored_rows": 151
+        }
+      ]
+    },
+    {
+      "meeting_date": "2024-06-07",
+      "regex_before": 138,
+      "regex_recomputed": 138,
+      "changes": [],
+      "stored_groups": [
+        {
+          "method": "llm",
+          "model": "deepseek-chat",
+          "prompt_version": 1,
+          "stored_rows": 52
+        },
+        {
+          "method": "llm",
+          "model": "mimo-v2.6-flash",
+          "prompt_version": 1,
+          "stored_rows": 21
+        },
+        {
+          "method": "llm",
+          "model": "zai-org/GLM-5.3-Flash",
+          "prompt_version": 1,
+          "stored_rows": 39
+        },
+        {
+          "method": "regex",
+          "model": "",
+          "prompt_version": 0,
+          "stored_rows": 138
+        }
+      ]
+    },
+    {
+      "meeting_date": "2024-07-26",
+      "regex_before": 156,
+      "regex_recomputed": 156,
+      "changes": [],
+      "stored_groups": [
+        {
+          "method": "llm",
+          "model": "deepseek-chat",
+          "prompt_version": 1,
+          "stored_rows": 54
+        },
+        {
+          "method": "llm",
+          "model": "mimo-v2.6-flash",
+          "prompt_version": 1,
+          "stored_rows": 48
+        },
+        {
+          "method": "llm",
+          "model": "zai-org/GLM-5.3-Flash",
+          "prompt_version": 1,
+          "stored_rows": 43
+        },
+        {
+          "method": "regex",
+          "model": "",
+          "prompt_version": 0,
+          "stored_rows": 156
+        }
+      ]
+    },
+    {
+      "meeting_date": "2024-09-13",
+      "regex_before": 141,
+      "regex_recomputed": 141,
+      "changes": [],
+      "stored_groups": [
+        {
+          "method": "llm",
+          "model": "deepseek-chat",
+          "prompt_version": 1,
+          "stored_rows": 45
+        },
+        {
+          "method": "llm",
+          "model": "mimo-v2.6-flash",
+          "prompt_version": 1,
+          "stored_rows": 51
+        },
+        {
+          "method": "llm",
+          "model": "zai-org/GLM-5.3-Flash",
+          "prompt_version": 1,
+          "stored_rows": 42
+        },
+        {
+          "method": "regex",
+          "model": "",
+          "prompt_version": 0,
+          "stored_rows": 141
+        }
+      ]
+    },
+    {
+      "meeting_date": "2024-10-25",
+      "regex_before": 137,
+      "regex_recomputed": 137,
+      "changes": [],
+      "stored_groups": [
+        {
+          "method": "llm",
+          "model": "deepseek-chat",
+          "prompt_version": 1,
+          "stored_rows": 49
+        },
+        {
+          "method": "llm",
+          "model": "mimo-v2.6-flash",
+          "prompt_version": 1,
+          "stored_rows": 48
+        },
+        {
+          "method": "llm",
+          "model": "zai-org/GLM-5.3-Flash",
+          "prompt_version": 1,
+          "stored_rows": 41
+        },
+        {
+          "method": "regex",
+          "model": "",
+          "prompt_version": 0,
+          "stored_rows": 137
+        }
+      ]
+    },
+    {
+      "meeting_date": "2024-12-20",
+      "regex_before": 152,
+      "regex_recomputed": 152,
+      "changes": [
+        {
+          "channel": "lending_transmission",
+          "seq": 162,
+          "text_sha256": "34eebf7c59a7a9969c32343877e8fd76701655add03042bc6038a159a0b0be26",
+          "before": "risk_pro",
+          "after": "risk_dez"
+        },
+        {
+          "channel": "lending_transmission",
+          "seq": 163,
+          "text_sha256": "99f2e64168321fa1671f2e38486f2c3b0aa98b30d9d1f7e0ddd597663526fd5b",
+          "before": "risk_pro",
+          "after": "risk_dez"
+        },
+        {
+          "channel": "lending_transmission",
+          "seq": 164,
+          "text_sha256": "8abe6fe12a7a289c456f7ed2e3cf0bfb9a5f93af9322c1c9ff2a2c34eb5bcf45",
+          "before": "risk_pro",
+          "after": "risk_dez"
+        },
+        {
+          "channel": "output_gap",
+          "seq": 164,
+          "text_sha256": "8abe6fe12a7a289c456f7ed2e3cf0bfb9a5f93af9322c1c9ff2a2c34eb5bcf45",
+          "before": "risk_pro",
+          "after": "risk_dez"
+        }
+      ],
+      "stored_groups": [
+        {
+          "method": "llm",
+          "model": "deepseek-chat",
+          "prompt_version": 1,
+          "stored_rows": 46
+        },
+        {
+          "method": "llm",
+          "model": "mimo-v2.6-flash",
+          "prompt_version": 1,
+          "stored_rows": 41
+        },
+        {
+          "method": "llm",
+          "model": "zai-org/GLM-5.3-Flash",
+          "prompt_version": 1,
+          "stored_rows": 38
+        },
+        {
+          "method": "regex",
+          "model": "",
+          "prompt_version": 0,
+          "stored_rows": 152
+        }
+      ]
+    },
+    {
+      "meeting_date": "2025-02-14",
+      "regex_before": 159,
+      "regex_recomputed": 159,
+      "changes": [],
+      "stored_groups": [
+        {
+          "method": "llm",
+          "model": "deepseek-chat",
+          "prompt_version": 1,
+          "stored_rows": 58
+        },
+        {
+          "method": "llm",
+          "model": "mimo-v2.6-flash",
+          "prompt_version": 1,
+          "stored_rows": 57
+        },
+        {
+          "method": "llm",
+          "model": "zai-org/GLM-5.3-Flash",
+          "prompt_version": 1,
+          "stored_rows": 42
+        },
+        {
+          "method": "regex",
+          "model": "",
+          "prompt_version": 0,
+          "stored_rows": 159
+        }
+      ]
+    },
+    {
+      "meeting_date": "2025-03-21",
+      "regex_before": 148,
+      "regex_recomputed": 148,
+      "changes": [],
+      "stored_groups": [
+        {
+          "method": "llm",
+          "model": "deepseek-chat",
+          "prompt_version": 1,
+          "stored_rows": 38
+        },
+        {
+          "method": "llm",
+          "model": "mimo-v2.6-flash",
+          "prompt_version": 1,
+          "stored_rows": 21
+        },
+        {
+          "method": "llm",
+          "model": "zai-org/GLM-5.3-Flash",
+          "prompt_version": 1,
+          "stored_rows": 44
+        },
+        {
+          "method": "regex",
+          "model": "",
+          "prompt_version": 0,
+          "stored_rows": 148
+        }
+      ]
+    },
+    {
+      "meeting_date": "2025-04-25",
+      "regex_before": 170,
+      "regex_recomputed": 170,
+      "changes": [],
+      "stored_groups": [
+        {
+          "method": "llm",
+          "model": "deepseek-chat",
+          "prompt_version": 1,
+          "stored_rows": 70
+        },
+        {
+          "method": "llm",
+          "model": "mimo-v2.6-flash",
+          "prompt_version": 1,
+          "stored_rows": 66
+        },
+        {
+          "method": "llm",
+          "model": "zai-org/GLM-5.3-Flash",
+          "prompt_version": 1,
+          "stored_rows": 41
+        },
+        {
+          "method": "regex",
+          "model": "",
+          "prompt_version": 0,
+          "stored_rows": 170
+        }
+      ]
+    },
+    {
+      "meeting_date": "2025-06-06",
+      "regex_before": 185,
+      "regex_recomputed": 185,
+      "changes": [],
+      "stored_groups": [
+        {
+          "method": "llm",
+          "model": "deepseek-chat",
+          "prompt_version": 1,
+          "stored_rows": 55
+        },
+        {
+          "method": "llm",
+          "model": "mimo-v2.6-flash",
+          "prompt_version": 1,
+          "stored_rows": 58
+        },
+        {
+          "method": "llm",
+          "model": "zai-org/GLM-5.3-Flash",
+          "prompt_version": 1,
+          "stored_rows": 40
+        },
+        {
+          "method": "regex",
+          "model": "",
+          "prompt_version": 0,
+          "stored_rows": 185
+        }
+      ]
+    },
+    {
+      "meeting_date": "2025-07-25",
+      "regex_before": 169,
+      "regex_recomputed": 169,
+      "changes": [],
+      "stored_groups": [
+        {
+          "method": "llm",
+          "model": "deepseek-chat",
+          "prompt_version": 1,
+          "stored_rows": 48
+        },
+        {
+          "method": "llm",
+          "model": "mimo-v2.6-flash",
+          "prompt_version": 1,
+          "stored_rows": 41
+        },
+        {
+          "method": "llm",
+          "model": "zai-org/GLM-5.3-Flash",
+          "prompt_version": 1,
+          "stored_rows": 44
+        },
+        {
+          "method": "regex",
+          "model": "",
+          "prompt_version": 0,
+          "stored_rows": 169
+        }
+      ]
+    },
+    {
+      "meeting_date": "2025-09-12",
+      "regex_before": 145,
+      "regex_recomputed": 145,
+      "changes": [],
+      "stored_groups": [
+        {
+          "method": "llm",
+          "model": "deepseek-chat",
+          "prompt_version": 1,
+          "stored_rows": 63
+        },
+        {
+          "method": "llm",
+          "model": "mimo-v2.6-flash",
+          "prompt_version": 1,
+          "stored_rows": 22
+        },
+        {
+          "method": "llm",
+          "model": "zai-org/GLM-5.3-Flash",
+          "prompt_version": 1,
+          "stored_rows": 48
+        },
+        {
+          "method": "regex",
+          "model": "",
+          "prompt_version": 0,
+          "stored_rows": 145
+        }
+      ]
+    },
+    {
+      "meeting_date": "2025-10-24",
+      "regex_before": 163,
+      "regex_recomputed": 163,
+      "changes": [],
+      "stored_groups": [
+        {
+          "method": "llm",
+          "model": "deepseek-chat",
+          "prompt_version": 1,
+          "stored_rows": 44
+        },
+        {
+          "method": "llm",
+          "model": "mimo-v2.6-flash",
+          "prompt_version": 1,
+          "stored_rows": 22
+        },
+        {
+          "method": "llm",
+          "model": "zai-org/GLM-5.3-Flash",
+          "prompt_version": 1,
+          "stored_rows": 41
+        },
+        {
+          "method": "regex",
+          "model": "",
+          "prompt_version": 0,
+          "stored_rows": 163
+        }
+      ]
+    },
+    {
+      "meeting_date": "2025-12-19",
+      "regex_before": 153,
+      "regex_recomputed": 153,
+      "changes": [],
+      "stored_groups": [
+        {
+          "method": "llm",
+          "model": "deepseek-chat",
+          "prompt_version": 1,
+          "stored_rows": 44
+        },
+        {
+          "method": "llm",
+          "model": "mimo-v2.6-flash",
+          "prompt_version": 1,
+          "stored_rows": 21
+        },
+        {
+          "method": "llm",
+          "model": "zai-org/GLM-5.3-Flash",
+          "prompt_version": 1,
+          "stored_rows": 20
+        },
+        {
+          "method": "regex",
+          "model": "",
+          "prompt_version": 0,
+          "stored_rows": 153
+        }
+      ]
+    },
+    {
+      "meeting_date": "2026-02-13",
+      "regex_before": 162,
+      "regex_recomputed": 162,
+      "changes": [],
+      "stored_groups": [
+        {
+          "method": "llm",
+          "model": "deepseek-chat",
+          "prompt_version": 1,
+          "stored_rows": 51
+        },
+        {
+          "method": "llm",
+          "model": "mimo-v2.6-flash",
+          "prompt_version": 1,
+          "stored_rows": 20
+        },
+        {
+          "method": "llm",
+          "model": "zai-org/GLM-5.3-Flash",
+          "prompt_version": 1,
+          "stored_rows": 43
+        },
+        {
+          "method": "regex",
+          "model": "",
+          "prompt_version": 0,
+          "stored_rows": 162
+        }
+      ]
+    },
+    {
+      "meeting_date": "2026-03-20",
+      "regex_before": 173,
+      "regex_recomputed": 173,
+      "changes": [],
+      "stored_groups": [
+        {
+          "method": "llm",
+          "model": "deepseek-chat",
+          "prompt_version": 1,
+          "stored_rows": 51
+        },
+        {
+          "method": "llm",
+          "model": "mimo-v2.6-flash",
+          "prompt_version": 1,
+          "stored_rows": 47
+        },
+        {
+          "method": "llm",
+          "model": "zai-org/GLM-5.3-Flash",
+          "prompt_version": 1,
+          "stored_rows": 45
+        },
+        {
+          "method": "regex",
+          "model": "",
+          "prompt_version": 0,
+          "stored_rows": 173
+        }
+      ]
+    },
+    {
+      "meeting_date": "2026-04-24",
+      "regex_before": 167,
+      "regex_recomputed": 167,
+      "changes": [],
+      "stored_groups": [
+        {
+          "method": "llm",
+          "model": "deepseek-chat",
+          "prompt_version": 1,
+          "stored_rows": 68
+        },
+        {
+          "method": "llm",
+          "model": "mimo-v2.6-flash",
+          "prompt_version": 1,
+          "stored_rows": 43
+        },
+        {
+          "method": "llm",
+          "model": "zai-org/GLM-5.3-Flash",
+          "prompt_version": 1,
+          "stored_rows": 42
+        },
+        {
+          "method": "regex",
+          "model": "",
+          "prompt_version": 0,
+          "stored_rows": 167
+        }
+      ]
+    },
+    {
+      "meeting_date": "2026-06-19",
+      "regex_before": 210,
+      "regex_recomputed": 210,
+      "changes": [],
+      "stored_groups": [
+        {
+          "method": "llm",
+          "model": "deepseek-chat",
+          "prompt_version": 1,
+          "stored_rows": 42
+        },
+        {
+          "method": "llm",
+          "model": "mimo-v2.6-flash",
+          "prompt_version": 1,
+          "stored_rows": 46
+        },
+        {
+          "method": "llm",
+          "model": "zai-org/GLM-5.3-Flash",
+          "prompt_version": 1,
+          "stored_rows": 42
+        },
+        {
+          "method": "regex",
+          "model": "",
+          "prompt_version": 0,
+          "stored_rows": 210
+        }
+      ]
+    },
+    {
+      "meeting_date": "2026-07-24",
+      "regex_before": 170,
+      "regex_recomputed": 170,
+      "changes": [],
+      "stored_groups": [
+        {
+          "method": "llm",
+          "model": "deepseek-chat",
+          "prompt_version": 1,
+          "stored_rows": 53
+        },
+        {
+          "method": "llm",
+          "model": "mimo-v2.6-flash",
+          "prompt_version": 1,
+          "stored_rows": 68
+        },
+        {
+          "method": "llm",
+          "model": "zai-org/GLM-5.3-Flash",
+          "prompt_version": 1,
+          "stored_rows": 42
+        },
+        {
+          "method": "regex",
+          "model": "",
+          "prompt_version": 0,
+          "stored_rows": 170
+        }
+      ]
+    },
+    {
+      "meeting_date": "2026-09-11",
+      "regex_before": 158,
+      "regex_recomputed": 158,
+      "changes": [],
+      "stored_groups": [
+        {
+          "method": "llm",
+          "model": "deepseek-chat",
+          "prompt_version": 1,
+          "stored_rows": 48
+        },
+        {
+          "method": "llm",
+          "model": "mimo-v2.6-flash",
+          "prompt_version": 1,
+          "stored_rows": 52
+        },
+        {
+          "method": "llm",
+          "model": "zai-org/GLM-5.3-Flash",
+          "prompt_version": 1,
+          "stored_rows": 41
+        },
+        {
+          "method": "regex",
+          "model": "",
+          "prompt_version": 0,
+          "stored_rows": 158
+        }
+      ]
+    },
+    {
+      "meeting_date": "2026-10-23",
+      "regex_before": 172,
+      "regex_recomputed": 172,
+      "changes": [],
+      "stored_groups": [
+        {
+          "method": "llm",
+          "model": "deepseek-chat",
+          "prompt_version": 1,
+          "stored_rows": 40
+        },
+        {
+          "method": "regex",
+          "model": "",
+          "prompt_version": 0,
+          "stored_rows": 172
+        }
+      ]
+    }
+  ],
+  "algorithm_source": "cbr/mp_summary_channels.go",
+  "baseline_commit": "bff088b",
+  "algorithm_sha256": "7e7924f5ad5d2ddb7401ae7ab2b0e88a9ae8d3314162fcd317d328c630437530",
+  "algorithm_kind": "candidate polarity fix"
+}

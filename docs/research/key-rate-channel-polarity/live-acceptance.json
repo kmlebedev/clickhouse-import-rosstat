@@ -1,0 +1,89 @@
+{
+  "code_commit": "49053e7",
+  "at": "2026-11-15",
+  "query": "SELECT meeting_date,channel,kind,method,model,prompt_version,seq,text FROM v_cbr_mp_summary_channels ORDER BY meeting_date,method,model,prompt_version,seq,channel,kind",
+  "before_rows": 6592,
+  "after_rows": 6592,
+  "unchanged_rows": 6582,
+  "changed_rows": 10,
+  "changes": [
+    {
+      "meeting_date": "2024-02-16",
+      "channel": "output_gap",
+      "seq": 204,
+      "before": "risk_pro",
+      "after": "risk_dez"
+    },
+    {
+      "meeting_date": "2024-02-16",
+      "channel": "current_inflation",
+      "seq": 205,
+      "before": "risk_pro",
+      "after": "risk_dez"
+    },
+    {
+      "meeting_date": "2024-03-22",
+      "channel": "output_gap",
+      "seq": 152,
+      "before": "risk_pro",
+      "after": "risk_dez"
+    },
+    {
+      "meeting_date": "2024-03-22",
+      "channel": "current_inflation",
+      "seq": 153,
+      "before": "risk_pro",
+      "after": "risk_dez"
+    },
+    {
+      "meeting_date": "2024-04-26",
+      "channel": "output_gap",
+      "seq": 178,
+      "before": "risk_pro",
+      "after": "risk_dez"
+    },
+    {
+      "meeting_date": "2024-04-26",
+      "channel": "current_inflation",
+      "seq": 179,
+      "before": "risk_pro",
+      "after": "risk_dez"
+    },
+    {
+      "meeting_date": "2024-12-20",
+      "channel": "lending_transmission",
+      "seq": 162,
+      "before": "risk_pro",
+      "after": "risk_dez"
+    },
+    {
+      "meeting_date": "2024-12-20",
+      "channel": "lending_transmission",
+      "seq": 163,
+      "before": "risk_pro",
+      "after": "risk_dez"
+    },
+    {
+      "meeting_date": "2024-12-20",
+      "channel": "lending_transmission",
+      "seq": 164,
+      "before": "risk_pro",
+      "after": "risk_dez"
+    },
+    {
+      "meeting_date": "2024-12-20",
+      "channel": "output_gap",
+      "seq": 164,
+      "before": "risk_pro",
+      "after": "risk_dez"
+    }
+  ],
+  "llm_unchanged": 2932,
+  "repeat_apply_rows": 0,
+  "backup_sha256": "4cef21c6193dbbecdeccbbef1780dfc648024263dfd964f655a988198b0a4d45",
+  "backup_permissions": "0o600",
+  "snapshot_sha256": {
+    "before": "b798e74c58f154e51dfb7e60457dc5ade1cdc2b704631e7f00a3749ec443f258",
+    "after": "474b7ea6d3e6c4ad9c49fb781b9214762a10e5f02126924eb9eab3b46a1cf107"
+  }
+}

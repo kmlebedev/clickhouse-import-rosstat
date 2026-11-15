@@ -280,6 +280,11 @@ import:
 	go build -o $(BUILD_DIR)/$(BINARY)-native .
 	CLICKHOUSE_IMPORT_STAT="$(or $(STATS_$(STAT)),$(STAT))" ./$(BUILD_DIR)/$(BINARY)-native
 
+# Offline replay of an explicit MCP export; no database or model calls.
+.PHONY: mp-channel-replay
+mp-channel-replay:
+	go test ./cbr -run '^TestMPChannelPolarityReplay$$' -v -count=1
+
 # Живой harness сравнения LLM-моделей разметки cbr_mp_summary (спека §3.4): читает документы
 # ЦБ и ClickHouse, пишет артефакты в $(CURDIR)/build/mp-llm-eval (MP_LLM_EVAL_OUT).
 # Требует MP_LLM_EVAL=1 и MP_SUMMARY_LLM_MODELS в командной строке make; без первого тест
