@@ -1,0 +1,153 @@
+{
+  "evidence": {
+    "id": "R3-tariff-episodes",
+    "at": "2026-11-15",
+    "query": "SELECT year,month,code,name,weight,index_prev,index_ytd FROM v_rosstat_cpi_spr WHERE (year=2025 AND month IN (6,7) OR year=2026 AND month=1) AND code IN ('9470','9475','0','1','2') ORDER BY year,month,code",
+    "result": {
+      "columns": [
+        "year",
+        "month",
+        "code",
+        "name",
+        "weight",
+        "index_prev",
+        "index_ytd"
+      ],
+      "rows": [
+        [
+          2025,
+          6,
+          "1",
+          "Все товары и услуги",
+          100,
+          100.2,
+          103.77
+        ],
+        [
+          2025,
+          6,
+          "2",
+          "Все товары",
+          72.32,
+          100.05,
+          102.74
+        ],
+        [
+          2025,
+          6,
+          "9470",
+          "Коммунальные услуги",
+          5.711,
+          100,
+          99.99
+        ],
+        [
+          2025,
+          6,
+          "9475",
+          "Услуги по снабжению электроэнергией",
+          1.219,
+          100,
+          100
+        ],
+        [
+          2025,
+          7,
+          "1",
+          "Все товары и услуги",
+          100,
+          100.57,
+          104.36
+        ],
+        [
+          2025,
+          7,
+          "2",
+          "Все товары",
+          72.32,
+          99.73,
+          102.46
+        ],
+        [
+          2025,
+          7,
+          "9470",
+          "Коммунальные услуги",
+          5.711,
+          113.19,
+          113.18
+        ],
+        [
+          2025,
+          7,
+          "9475",
+          "Услуги по снабжению электроэнергией",
+          1.219,
+          113.07,
+          113.07
+        ],
+        [
+          2026,
+          1,
+          "1",
+          "Все товары и услуги",
+          100,
+          101.62,
+          101.62
+        ],
+        [
+          2026,
+          1,
+          "2",
+          "Все товары",
+          71.774,
+          101.34,
+          101.34
+        ],
+        [
+          2026,
+          1,
+          "9470",
+          "Коммунальные услуги",
+          5.747,
+          101.55,
+          101.55
+        ],
+        [
+          2026,
+          1,
+          "9475",
+          "Услуги по снабжению электроэнергией",
+          1.2489999999999999,
+          101.58,
+          101.58
+        ]
+      ]
+    }
+  },
+  "method": "Fixed-basket aggregate reconstruction: contribution_pp = weight_percent * (component_ytd_current - component_ytd_previous) / headline_ytd_previous. January previous indices=100. Uses rounded published national aggregates; indicative arithmetic, not an official exact contribution or causal impact of tariff law.",
+  "episodes": [
+    {
+      "year": 2025,
+      "month": 7,
+      "code": "9470",
+      "weight": 5.711,
+      "component_ytd_current": 113.18,
+      "component_ytd_previous": 99.99,
+      "headline_ytd_previous": 103.77,
+      "contribution_pp": 0.7259139442998948
+    },
+    {
+      "year": 2026,
+      "month": 1,
+      "code": "9470",
+      "weight": 5.747,
+      "component_ytd_current": 101.55,
+      "component_ytd_previous": 100,
+      "headline_ytd_previous": 100,
+      "contribution_pp": 0.0890785
+    }
+  ],
+  "secondary_effect": "not_identified",
+  "warning": "9475 electricity nested in9470; never add aggregate and child. Legal calendar attribution and precise regional aggregation not established."
+}

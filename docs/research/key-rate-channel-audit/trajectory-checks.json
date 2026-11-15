@@ -1,0 +1,107 @@
+{
+  "algorithm": "function calc(year,segments){let start=Date.UTC(year,0,1),end=Date.UTC(year+1,0,1),cursor=start,sum=0;for(let s of segments){let a=Date.parse(s[0]+\"T00:00:00Z\"),b=Date.parse(s[1]+\"T00:00:00Z\");if(a!==cursor||b<=a||b>end)throw Error(\"gap/overlap\");sum+=s[2]*(b-a)/864e5;cursor=b;}if(cursor!==end)throw Error(\"incomplete\");return sum/((end-start)/864e5);}",
+  "cases": [
+    {
+      "name": "constant",
+      "year": 2027,
+      "segments": [
+        [
+          "2027-01-01",
+          "2028-01-01",
+          10
+        ]
+      ],
+      "expected": 10,
+      "actual": 10,
+      "pass": true
+    },
+    {
+      "name": "july",
+      "year": 2027,
+      "segments": [
+        [
+          "2027-01-01",
+          "2027-07-01",
+          10
+        ],
+        [
+          "2027-07-01",
+          "2028-01-01",
+          8
+        ]
+      ],
+      "expected": 8.991780821917809,
+      "actual": 8.991780821917809,
+      "pass": true
+    },
+    {
+      "name": "leap",
+      "year": 2028,
+      "segments": [
+        [
+          "2028-01-01",
+          "2028-07-01",
+          10
+        ],
+        [
+          "2028-07-01",
+          "2029-01-01",
+          8
+        ]
+      ],
+      "expected": 8.994535519125684,
+      "actual": 8.994535519125684,
+      "pass": true
+    },
+    {
+      "name": "effective-not-meeting",
+      "year": 2027,
+      "meeting": "2027-03-10",
+      "segments": [
+        [
+          "2027-01-01",
+          "2027-03-13",
+          10
+        ],
+        [
+          "2027-03-13",
+          "2028-01-01",
+          8
+        ]
+      ],
+      "expected": 8.389041095890411,
+      "actual": 8.389041095890411,
+      "pass": true
+    },
+    {
+      "name": "missing-start",
+      "year": 2027,
+      "segments": [
+        [
+          "2027-03-13",
+          "2028-01-01",
+          8
+        ]
+      ],
+      "expected": null,
+      "actual": null,
+      "error": "gap/overlap",
+      "pass": true
+    },
+    {
+      "name": "missing-end",
+      "year": 2027,
+      "segments": [
+        [
+          "2027-01-01",
+          "2027-07-01",
+          10
+        ]
+      ],
+      "expected": null,
+      "actual": null,
+      "error": "incomplete",
+      "pass": true
+    }
+  ]
+}
