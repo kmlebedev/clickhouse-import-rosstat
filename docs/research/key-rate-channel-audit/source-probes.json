@@ -8,12 +8,22 @@
     "headers": {
       "last-modified": "Wed, 11 Nov 2026 08:08:28 GMT",
       "content-length": "26060",
-      "content-type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+      "content-type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "etag": "not provided",
+      "cache-control": "not provided"
     },
     "body_bytes": 26060,
     "sha256": "8d50172e140b562542b30c28dc00143f5d048a08f05a5e92ec772fe4152df632",
     "source": "independent R2 public curl probe; no retries",
-    "limitations": "single-day probe; license and revision history require separate assessment"
+    "limitations": "single-day probe; license and revision history require separate assessment",
+    "endpoint": "https://www.geostat.ge/media/83986/33-number-of-immigrants-and-emigrants-by-sex-and-citizenship.xlsx",
+    "duration_seconds": 1.484,
+    "curl_exit_code": 0,
+    "retries": 0,
+    "auth": "public; no credentials",
+    "rate_limit": "not measured; one request",
+    "metadata_provenance": "saved R2 reader report and curl headers; not a new probe",
+    "http_status": 200
   },
   {
     "id": "R2-PROBE-geostat-age",
@@ -24,12 +34,22 @@
     "headers": {
       "last-modified": "Wed, 11 Nov 2026 08:08:28 GMT",
       "content-length": "48277",
-      "content-type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+      "content-type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "etag": "not provided",
+      "cache-control": "not provided"
     },
     "body_bytes": 48277,
     "sha256": "c4bd0b3cbbefd40fda2fc92e2917a57071c5a61e518d3fd1a7af7f90df3fcb24",
     "source": "independent R2 public curl probe; no retries",
-    "limitations": "single-day probe; license and revision history require separate assessment"
+    "limitations": "single-day probe; license and revision history require separate assessment",
+    "endpoint": "https://www.geostat.ge/media/83984/32-number-of-immigrants-and-emigrants-by-age-and-sex.xlsx",
+    "duration_seconds": 0.967,
+    "curl_exit_code": 0,
+    "retries": 0,
+    "auth": "public; no credentials",
+    "rate_limit": "not measured; one request",
+    "metadata_provenance": "saved R2 reader report and curl headers; not a new probe",
+    "http_status": 200
   },
   {
     "id": "R2-PROBE-armenia",
@@ -41,12 +61,21 @@
       "content-type": "application/pdf",
       "content-length": "882293",
       "last-modified": "Fri, 29 May 2026 11:30:48 GMT",
-      "etag": "\"a10006-d7675-652f32d220a00\""
+      "etag": "\"a10006-d7675-652f32d220a00\"",
+      "cache-control": "not provided"
     },
     "body_bytes": 882293,
     "sha256": "5b8653e35ab62a934080e0b46e20531e2bc346cb9d8f1b3f4197f8f5a61def70",
     "source": "independent R2 public curl probe; no retries",
-    "limitations": "single-day probe; license and revision history require separate assessment"
+    "limitations": "single-day probe; license and revision history require separate assessment",
+    "endpoint": "https://www.armstat.am/file/article/migration_profile__2024_en.pdf",
+    "duration_seconds": 4.931,
+    "curl_exit_code": 0,
+    "retries": 0,
+    "auth": "public; no credentials",
+    "rate_limit": "not measured; one request",
+    "metadata_provenance": "saved R2 reader report and curl headers; not a new probe",
+    "http_status": 200
   },
   {
     "id": "R2-PROBE-eec",
@@ -64,7 +93,15 @@
     "body_bytes": 548670,
     "sha256": "5131be06a6a607589a5332b3034fd5a5915d8e73a959c1544a0d222598e6b148",
     "source": "independent R2 public curl probe; no retries",
-    "limitations": "single-day probe; license and revision history require separate assessment"
+    "limitations": "single-day probe; license and revision history require separate assessment",
+    "endpoint": "https://eec.eaeunion.org/upload/medialibrary/527/wz9sdpk5ak3xdcrng1zvcduaurcj9vgp/Svedeniya-o-chislennosti-trudyashchikhsya-za-2012-god-_-1-polugodie-2026-goda.pdf",
+    "duration_seconds": 0.507,
+    "curl_exit_code": 0,
+    "retries": 0,
+    "auth": "public; no credentials",
+    "rate_limit": "not measured; one request",
+    "metadata_provenance": "saved R2 reader report and curl headers; not a new probe",
+    "http_status": 200
   },
   {
     "id": "R2-PROBE-rosstat-demo",
@@ -74,12 +111,22 @@
     ],
     "headers": {
       "content-type": "text/html; charset=utf-8",
-      "content-length": "370"
+      "content-length": "370",
+      "etag": "not provided",
+      "cache-control": "not provided"
     },
     "body_bytes": 370,
     "sha256": "2d691170964b7e669cff98a1dff54508a466d1c9f75c1b276790c3c580f8f295",
     "source": "independent R2 public curl probe; no retries",
-    "limitations": "single-day probe; license and revision history require separate assessment"
+    "limitations": "single-day probe; license and revision history require separate assessment",
+    "endpoint": "https://rosstat.gov.ru/folder/12781",
+    "duration_seconds": 0.466,
+    "curl_exit_code": 0,
+    "retries": 0,
+    "auth": "public; no credentials",
+    "rate_limit": "not measured; one request",
+    "metadata_provenance": "saved R2 reader report and curl headers; not a new probe",
+    "http_status": 403
   },
   {
     "id": "R2-PROBE-productivity",
@@ -89,12 +136,22 @@
     ],
     "headers": {
       "content-type": "text/html; charset=utf-8",
-      "content-length": "370"
+      "content-length": "370",
+      "etag": "not provided",
+      "cache-control": "not provided"
     },
     "body_bytes": 370,
     "sha256": "f80530550b6f1f9c1afe380fcb73558e7442975afa94d01fa30906f5368d0ca4",
     "source": "independent R2 public curl probe; no retries",
-    "limitations": "single-day probe; license and revision history require separate assessment"
+    "limitations": "single-day probe; license and revision history require separate assessment",
+    "endpoint": "https://rosstat.gov.ru/storage/mediabank/met80-24022026.pdf",
+    "duration_seconds": 0.318,
+    "curl_exit_code": 0,
+    "retries": 0,
+    "auth": "public; no credentials",
+    "rate_limit": "not measured; one request",
+    "metadata_provenance": "saved R2 reader report and curl headers; not a new probe",
+    "http_status": 403
   },
   {
     "id": "R2-PROBE-cbr-bop",
@@ -106,22 +163,43 @@
       "content-type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
       "content-length": "462206",
       "cache-control": "private",
-      "last-modified": "Wed, 30 Sep 2026 12:23:50 GMT"
+      "last-modified": "Wed, 30 Sep 2026 12:23:50 GMT",
+      "etag": "not provided"
     },
     "body_bytes": 462206,
     "sha256": "0fce4dac404622697bf107af3ad74ea28cf2f3c31c60a9bb8cc34cbbcc789382",
     "source": "independent R2 public curl probe; no retries",
-    "limitations": "single-day probe; license and revision history require separate assessment"
+    "limitations": "single-day probe; license and revision history require separate assessment",
+    "endpoint": "https://www.cbr.ru/vfs/statistics/credit_statistics/bop/bal_of_payments_standart.xlsx",
+    "duration_seconds": 0.399,
+    "curl_exit_code": 0,
+    "retries": 0,
+    "auth": "public; no credentials",
+    "rate_limit": "not measured; one request",
+    "metadata_provenance": "saved R2 reader report and curl headers; not a new probe",
+    "http_status": 200
   },
   {
     "id": "R2-PROBE-defense",
     "at": "2026-11-15",
     "http_status_lines": [],
-    "headers": {},
+    "headers": {
+      "etag": "no response",
+      "cache-control": "no response",
+      "content-type": "no response"
+    },
     "body_bytes": null,
     "sha256": null,
     "source": "independent R2 public curl probe; no retries",
-    "limitations": "single-day probe; license and revision history require separate assessment"
+    "limitations": "single-day probe; license and revision history require separate assessment",
+    "endpoint": "https://duma.gov.ru/media/files/hNuGxHARAS3G5OLmAtFMARtHl06KAtew.pdf",
+    "duration_seconds": 20.004,
+    "curl_exit_code": 28,
+    "retries": 0,
+    "auth": "public; no credentials",
+    "rate_limit": "not measured; one request",
+    "metadata_provenance": "saved R2 reader report and curl headers; not a new probe",
+    "http_status": null
   },
   {
     "id": "R2-PROBE-budget",
@@ -131,31 +209,65 @@
     ],
     "headers": {
       "content-type": "text/html",
-      "content-length": "77"
+      "content-length": "77",
+      "etag": "not provided",
+      "cache-control": "not provided"
     },
     "body_bytes": 77,
     "sha256": "7523ad80085f3590c9f5c2d62a7c32e3c77dd58a33424f8aebacace64ca3c39a",
     "source": "independent R2 public curl probe; no retries",
-    "limitations": "single-day probe; license and revision history require separate assessment"
+    "limitations": "single-day probe; license and revision history require separate assessment",
+    "endpoint": "https://budget.lenobl.ru/upload/iblock/0eb/48pp9eoes7p2lv2uuli925ttc1ulx95e/BDG_2026_Minfin.pdf",
+    "duration_seconds": 0.366,
+    "curl_exit_code": 0,
+    "retries": 0,
+    "auth": "public; no credentials",
+    "rate_limit": "not measured; one request",
+    "metadata_provenance": "saved R2 reader report and curl headers; not a new probe",
+    "http_status": 403
   },
   {
     "id": "R2-PROBE-pravo",
     "at": "2026-11-15",
     "http_status_lines": [],
-    "headers": {},
+    "headers": {
+      "etag": "no response",
+      "cache-control": "no response",
+      "content-type": "no response"
+    },
     "body_bytes": null,
     "sha256": null,
     "source": "independent R2 public curl probe; no retries",
-    "limitations": "single-day probe; license and revision history require separate assessment"
+    "limitations": "single-day probe; license and revision history require separate assessment",
+    "endpoint": "https://publication.pravo.gov.ru/document/0001202511250017",
+    "duration_seconds": 20.006,
+    "curl_exit_code": 28,
+    "retries": 0,
+    "auth": "public; no credentials",
+    "rate_limit": "not measured; one request",
+    "metadata_provenance": "saved R2 reader report and curl headers; not a new probe",
+    "http_status": null
   },
   {
     "id": "R2-PROBE-tariff",
     "at": "2026-11-15",
     "http_status_lines": [],
-    "headers": {},
+    "headers": {
+      "etag": "no response",
+      "cache-control": "no response",
+      "content-type": "no response"
+    },
     "body_bytes": null,
     "sha256": null,
     "source": "independent R2 public curl probe; no retries",
-    "limitations": "single-day probe; license and revision history require separate assessment"
+    "limitations": "single-day probe; license and revision history require separate assessment",
+    "endpoint": "https://www.mos.ru/upload/documents/docs/1262/732-RMtref.pdf",
+    "duration_seconds": 0.666,
+    "curl_exit_code": 60,
+    "retries": 0,
+    "auth": "public; no credentials",
+    "rate_limit": "not measured; one request",
+    "metadata_provenance": "saved R2 reader report and curl headers; not a new probe",
+    "http_status": null
   }
 ]
