@@ -1,0 +1,44 @@
+{
+  "date": "2026-11-15",
+  "code_commit": "749c8e9",
+  "scope": "local dev default via kimi_reader; no staging",
+  "partial_import": {
+    "commit": "2390407",
+    "registry_rows": 3,
+    "forecast_rows": 0,
+    "error": "wrong title for 2024; fixed with actual h1/date fixture"
+  },
+  "retry": {
+    "registry_rows": 1,
+    "forecast_rows": 0,
+    "exit_code": 0
+  },
+  "repeat": {
+    "registry_rows": 0,
+    "exit_code": 0,
+    "full_metadata_snapshot_unchanged": true
+  },
+  "old_66_rows_7_columns_unchanged": true,
+  "announced_forecast_rows": 36,
+  "november_2_2022_rows": 9,
+  "invalid_provenance": 0,
+  "make_all": "pass",
+  "cbr_race_seconds": 85.709,
+  "docs_check": {
+    "pages": 61,
+    "tests": 33,
+    "result": "pass"
+  },
+  "dagu_validate_exit": 0,
+  "mcp_check": {
+    "ondkp": "pass",
+    "overall": "fail",
+    "preexisting_failures": [
+      "FAIL дашборд distillate_stocks свежий: stale=1, as_of=2026-10-30",
+      "FAIL bootstrap-разметка новых каналов: каналов: 6/6, неполно: ['ifax_go: 43/87', 'markettwits: 54/112', 'newssmartlab: 52/103', 'russianmacro: 16/39', 'MarketOverview: 31/65', 'mozgovikresearch: 28/61'] — прогнать NEWS_LLM_PROFILE=glm NEWS_LLM_BACKLOG_LIMIT=500 make import STAT=news_watch",
+      "FAIL каталог fedstat полон: рядов fedstat: 1734, want 1727 — прогнать импортёры fedstat_* (каталог перепубликовывается прогоном)",
+      "FAIL витрина v_fedstat_ipc (ИПЦ 31074) непуста и полна: строк: 204101, рядов: 1112, регионов: 2; want 204038 / 1105 / 2 — прогнать соответствующий fedstat_*-импортёр"
+    ]
+  },
+  "review": "gpt-6.1-terra: initial iterate, fixed changed-URL blocker, source-fixture fix reviewed pass before retry"
+}

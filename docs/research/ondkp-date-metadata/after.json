@@ -1,0 +1,101 @@
+{
+  "observed_at": "2026-11-15",
+  "code_commit": "749c8e9",
+  "old_columns_query": "SELECT release_year,indicator,year,lo,hi,published_at,url FROM v_cbr_ondkp_forecast ORDER BY release_year,indicator,year",
+  "old_columns_equal_before": true,
+  "metadata_query": "SELECT release_year,published_at,announcement_date,announcement_url,artifact_sha256,announcement_evidence,publication_status,count() AS forecast_rows FROM v_cbr_ondkp_forecast GROUP BY release_year,published_at,announcement_date,announcement_url,artifact_sha256,announcement_evidence,publication_status ORDER BY release_year",
+  "result": {
+    "columns": [
+      "release_year",
+      "published_at",
+      "announcement_date",
+      "announcement_url",
+      "artifact_sha256",
+      "announcement_evidence",
+      "publication_status",
+      "forecast_rows"
+    ],
+    "rows": [
+      [
+        2020,
+        "2020-02-21",
+        null,
+        "",
+        "97c2ae1309e5365a7bada19383d846b2c4bb5a4f585720fa28740e1f757d9258",
+        "",
+        "legacy_unverified",
+        6
+      ],
+      [
+        2021,
+        null,
+        null,
+        "",
+        "893b6746928d456318136877f3d890268a731537924ae7014fe2294ed425b18e",
+        "",
+        "unknown",
+        6
+      ],
+      [
+        2022,
+        null,
+        null,
+        "",
+        "a2bdec0b70a4efc4ec674072d4e1f0cd90d9516655bb3f63f2af2caab6e6d0f2",
+        "",
+        "unknown",
+        9
+      ],
+      [
+        2023,
+        null,
+        "2022-11-02",
+        "https://www.cbr.ru/press/event/?id=14277",
+        "09573887e72d0c7e13582479124e2c1706ff901b61a9e030e0ad3fcb160c4069",
+        "{\"version\":1,\"observed_at\":\"2026-11-15T11:18:33.908965Z\",\"artifact_sha256\":\"09573887e72d0c7e13582479124e2c1706ff901b61a9e030e0ad3fcb160c4069\",\"news_sha256\":\"231777e81ed99687d8ebd8afd02a3014e405158ab17c920fe17a3dab78650285\",\"release_page_sha256\":\"e7c918cd8e423cd5af9e696088b0b02add7cfb25fcf5008ad52260d96a6b8305\",\"release_page_url\":\"https://www.cbr.ru/about_br/publ/ondkp/on_2023_2025/\"}",
+        "announcement_only",
+        9
+      ],
+      [
+        2024,
+        null,
+        "2023-11-02",
+        "https://www.cbr.ru/press/event/?id=17174",
+        "4725b4edb15fb829963e719ccc2a1eb6d398d42a144eadf6acdfaa0c00290ac5",
+        "{\"version\":1,\"observed_at\":\"2026-11-15T11:21:56.011975Z\",\"artifact_sha256\":\"4725b4edb15fb829963e719ccc2a1eb6d398d42a144eadf6acdfaa0c00290ac5\",\"news_sha256\":\"2fbe7ec17e20665e376bf3d26c7d4f5fc94c922f1b89a0efda127b85b799f6e5\",\"release_page_sha256\":\"f0ef76816b84bdc43b3f45b48a5a6d8e97b3ac7638b0d1206418b23bfa268dc6\",\"release_page_url\":\"https://www.cbr.ru/about_br/publ/ondkp/on_2024_2026/\"}",
+        "announcement_only",
+        9
+      ],
+      [
+        2025,
+        null,
+        null,
+        "",
+        "881809846011c361965d21c78a54bd0b22b4de5d79ed094ccee6d6751370a8f7",
+        "",
+        "unknown",
+        9
+      ],
+      [
+        2026,
+        null,
+        "2025-10-27",
+        "https://www.cbr.ru/press/event/?id=28050",
+        "81b54084f1354f042376261092ae89a30c6af2f7177f0fdfd5096b9063032c43",
+        "{\"version\":1,\"observed_at\":\"2026-11-15T11:18:36.821249Z\",\"artifact_sha256\":\"81b54084f1354f042376261092ae89a30c6af2f7177f0fdfd5096b9063032c43\",\"news_sha256\":\"fe48fcba0850b66cec813311095ff9b99c3d7fa6b1ca87db548ccd955ec3bc20\",\"release_page_sha256\":\"89893b8d9a0355d8d775412be0596b0a4710febe16077e0cbfecbdbb76c97c77\",\"release_page_url\":\"https://www.cbr.ru/about_br/publ/ondkp/on_2026_2028/\"}",
+        "announcement_only",
+        9
+      ],
+      [
+        2027,
+        null,
+        "2026-10-28",
+        "https://www.cbr.ru/press/event/?id=32941",
+        "7e3b29af616175fd33324aed85d446c4f55e5b7c3c34c938a12610bb65a4a6a9",
+        "{\"version\":1,\"observed_at\":\"2026-11-15T11:18:38.254826Z\",\"artifact_sha256\":\"7e3b29af616175fd33324aed85d446c4f55e5b7c3c34c938a12610bb65a4a6a9\",\"news_sha256\":\"7df6b2fa9c08f7d7a38c1457cfae7c07deeff7790aae6398984e10aa013fe6f2\",\"release_page_sha256\":\"6c53eaefe948d3391933006d74720da172f070fb1068423ffc0d86d704d1c645\",\"release_page_url\":\"https://www.cbr.ru/about_br/publ/ondkp/on_2027_2029/\"}",
+        "announcement_only",
+        9
+      ]
+    ]
+  }
+}
