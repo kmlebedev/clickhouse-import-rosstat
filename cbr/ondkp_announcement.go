@@ -44,7 +44,7 @@ func ondkpAnnouncementDate(page []byte, year int, pageURL string) (*time.Time, e
 		return nil, err
 	}
 	title := strings.Join(strings.Fields(doc.Find("h1").Text()), " ")
-	if !strings.Contains(title, "Основные направления") || !strings.Contains(title, strconv.Itoa(year)) || strings.Contains(strings.ToLower(title), "проект") {
+	if doc.Find("h1").Length() != 1 || !strings.Contains(strings.ToLower(title), "денежно-кредитной политики") || strings.Contains(strings.ToLower(title), "проект") {
 		return nil, fmt.Errorf("ondkp announcement: wrong title for %d", year)
 	}
 	linked := false

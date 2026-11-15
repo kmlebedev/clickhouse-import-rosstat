@@ -26,6 +26,7 @@ func TestOndkpAnnouncementDates(t *testing.T) {
 	good := string(cbrOndkpFixture(t, "testdata/ondkp_announcement_2023.html"))
 	for name, page := range map[string]string{
 		"project title":   strings.Replace(good, "Основные направления", "Проект: Основные направления", 1),
+		"unrelated title": strings.ReplaceAll(good, "денежно-кредитной политики", "банковской статистики"),
 		"wrong year":      strings.ReplaceAll(good, "2023", "2024"),
 		"wrong link":      strings.ReplaceAll(good, "on_2023_2025", "on_2022_2024"),
 		"footer only":     strings.ReplaceAll(good, "news-info-line_date", "page-info_last-update"),
