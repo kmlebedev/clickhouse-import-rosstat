@@ -36,6 +36,8 @@ rosstat/           — Росстат: rosstat_ipc_mes, rosstat_salaries_mes, ro
                      rosstat_ppi_ved (ИЦП по ВЭД, совокупный ряд, 1998+, m/m/ytd/y/y/period — T1 #276),
                      rosstat_ppi_product (ИЦП по товарам/ОКПД2, 1 327 кодов, 2021–2026, 4 типа — T2 #277) и
                      rosstat_ppi_weights (веса ИЦП по ВЭД, 38 кодов, 2017–2026, domestic/domestic_export — T2 #277),
+                     rosstat_census_2020 (ВПН на2021-10-01: counts18agebins+all, 96территорий,
+                     284поселенческих среза,16188точек; отдельная v_rosstat_census_2020),
                      rosstat_cpi_weights (веса ИПЦ: товары и группы, 2001/2004–2026, два файла — P0.4 #479),
                      rosstat_cpi_spr (месячная публикация ipc_spr: структура потребительских расходов — веса ИПЦ — и
                      три индекса ИПЦ по позициям, 2025-01+, P0.4a #569)
@@ -2043,6 +2045,19 @@ ORDER BY (year, month, code);
 -- Сумма товарного листа без итоговой строки — 90…100,5: публикация может не
 -- дотягивать до 100 на объединённую группу «Воздушный и железнодорожный
 -- транспорт» 0,859 %, отдельные 9260/9290 в ней не публикуются.
+-- rosstat/census_2020.go — ВПН-2020, референсная дата 2021-10-01.
+CREATE TABLE IF NOT EXISTS rosstat_census_2020 (
+    territory LowCardinality(String),
+    territory_kind LowCardinality(String),
+    settlement LowCardinality(String),
+    sex LowCardinality(String),
+    age_group LowCardinality(String),
+    reference_date Date,
+    value UInt64,
+    loaded_at DateTime
+) ENGINE = ReplacingMergeTree(loaded_at)
+ORDER BY (territory, settlement, sex, age_group, reference_date);
+
 CREATE TABLE IF NOT EXISTS rosstat_cpi_weights (
     year        UInt16,
     variant     LowCardinality(String),
@@ -2294,6 +2309,22 @@ ALTER TABLE v_keyrate_expectations COMMENT COLUMN expected_change_bp 'То же 
 `v_fedstat_labour_hours` выдаёт FINAL-данные с source/series/date/value, region, age, sex, hours_band, activity, employment_status, unit, frequency=Y. Все колонки имеют комментарии. Пустое измерение неприменимо, а не итог. Каталог содержит три семантики. 643 и 643004.АГ различаются; отрасли и итоги вложены. MCP получает SELECT только на витрину.
 
 Отступление §9.6 стандарта: три POST не проходят GET-шаблон, поэтому custom Import сохраняет те же байты через общий archive.Store/Registry; SHA256 — версия, source_publications под ключами fedstat_labour_hours_ID записывается последней. Каждый прогон скачивает три XLS: HEAD страницы не является версией. Повтор сравнивает ключ и значение, изменённые значения обновляются, удалённые ключи останавливают импорт. Archive restore явно отклоняется. Архив отключён при пустом backend; FirstSeen не published_at. Шаг в хвосте пятничного DAG 13:43 МСК, без изменения расписания.
+
+#### Перепись на 2021-10-01 (rosstat/1.3)
+
+`rosstat_census_2020` — один XLSX Tom2_tab2_VPN-2020.xlsx, стандартный
+util.ClickHouseImport/PublicationCountPoints FINAL/архив. Имя ВПН-2020 не дата:
+reference_date=2021-10-01. 16188 counts UInt64, 96 территорий,284 реальных
+поселенческих блока; Москва/СПб только urban. Ровно18 пятилетних групп+all,
+три пола. Проценты E–H, нормативные/перекрывающиеся возраста и средние исключены.
+Витрина v_rosstat_census_2020: source/series/date/value плюс territory,
+territory_kind,settlement,sex,age_group,loaded_at; все поля комментированы,
+SELECT только на витрину. Source/каталог отдельные, один ряд population.
+RF/FD/subject/composite/exclAO перекрываются: федеральные округа образуют
+разбиение РФ, полный список территорий — нет. Municipality coverage не заявлено,
+остаток #617. Шаг в хвосте четвергового rosstat DAG12:17МСК. FirstSeen/loaded_at
+не published_at; архив сохраняет наблюдаемую версию, исторический PIT не доказан.
+На HEAD+count no-op шаблон возвращает известное число точек, а не число вставок.
 
 ### 6.4 DCF-модель Полюса (ключевые допущения, rev.2 по мировой практике)
 

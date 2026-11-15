@@ -132,3 +132,12 @@ steps:
     retry_policy:
       limit: 3
       interval_sec: 300
+
+  # Перепись на 2021-10-01; неизменная версия пропускается HEAD-префлайтом.
+  - id: rosstat_census_2020
+    run: "$ROSSTAT_IMPORT_BIN"
+    env:
+      - CLICKHOUSE_IMPORT_STAT=rosstat_census_2020
+    retry_policy:
+      limit: 3
+      interval_sec: 300

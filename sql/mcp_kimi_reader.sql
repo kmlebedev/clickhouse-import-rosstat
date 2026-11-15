@@ -181,3 +181,5 @@ GRANT SELECT ON default.v_fns_budget_revenue TO kimi_reader;
 GRANT SELECT ON default.v_fns_budget_revenue_monthly TO kimi_reader;
 
 GRANT SELECT ON default.v_fedstat_labour_hours TO kimi_reader;
+
+GRANT SELECT ON default.v_rosstat_census_2020 TO kimi_reader;

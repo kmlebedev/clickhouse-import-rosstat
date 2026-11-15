@@ -41,6 +41,7 @@ const (
 // отпечаток и строка версии недостижимы (спека §6). У остальных одиннадцати файл обновляется
 // реже прогонов.
 var expectedPublicationCountPoints = map[string]string{
+	"rosstat_census_2020":         "SELECT count() FROM rosstat_census_2020 FINAL",
 	"rosstat_cpi_spr":             "SELECT count() FROM rosstat_cpi_spr FINAL",
 	"rosstat_cpi_weights":         "SELECT count() FROM rosstat_cpi_weights FINAL",
 	"rosstat_ipc_mes":             "SELECT count() FROM rosstat_ipc_mes FINAL",
