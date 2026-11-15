@@ -1,0 +1,76 @@
+{
+  "checked_at": "2026-11-15T15:16:27Z",
+  "note": "Evaluator preflight collected via ClickHouse MCP. Timestamp is the forecast cutoff, not the exact wall time of every query.",
+  "database": "default",
+  "mcp_access": true,
+  "current_rate": {
+    "view": "v_key_rate_dashboard",
+    "indicator": "key_rate",
+    "value": 14.0,
+    "as_of": "2026-11-13"
+  },
+  "meetings": {
+    "view": "v_events_calendar",
+    "dates": [
+      "2026-12-18",
+      "2027-02-12",
+      "2027-03-19",
+      "2027-04-30",
+      "2027-06-11",
+      "2027-07-30",
+      "2027-09-10",
+      "2027-10-22"
+    ]
+  },
+  "households": {
+    "view": "v_cbr_macro",
+    "as_of": "2026-10-14",
+    "expected": 13.199999809265137,
+    "observed": 14.5
+  },
+  "infom_calendar": {
+    "view": "v_cbr_publication_calendar",
+    "entries": [
+      {
+        "publication_date": "2026-10-21",
+        "period": "2026-10",
+        "planned": 0
+      },
+      {
+        "publication_date": "2026-11-19",
+        "period": "2026-11",
+        "planned": 1
+      }
+    ]
+  },
+  "market": {
+    "view": "v_keyrate_expectations",
+    "rows": [
+      {
+        "decision_date": "2026-12-18",
+        "secid": "KKZ6",
+        "implied_rate": 13.94,
+        "volume": 1,
+        "oi": 3926,
+        "as_of": "2026-11-13"
+      },
+      {
+        "decision_date": "2027-02-12",
+        "secid": "KKG7",
+        "implied_rate": 13.86,
+        "volume": 0,
+        "oi": 2,
+        "as_of": "2026-11-13"
+      }
+    ]
+  },
+  "monthly_cpi": {
+    "view": "v_key_rate_dashboard",
+    "indicator": "ipc_yoy",
+    "value": 6.347129813588204,
+    "as_of": "2026-09-30",
+    "stale": 1
+  },
+  "latest_other_tracks_target": "2026-10-23",
+  "test_expectations_checked": "The fixed current-rate, meeting-calendar, inFOM-wave, market-strip and stale-monthly-CPI assertions match the connected views at preflight."
+}

@@ -1,0 +1,90 @@
+{
+  "purpose": "Independent arithmetic controls, not a current economic forecast",
+  "helper": "skill-snapshot/scripts/rate_math.py",
+  "fixture_source": "score/fixture.json",
+  "fixture_assumed_outcome": {
+    "step_bp": 0,
+    "announced_rate": 14.0
+  },
+  "score_command": "python3 -B skill-snapshot/scripts/rate_math.py score --probs '{\"-50\":0.5,\"-25\":0.4,\"0\":0.1}' --market '{\"-25\":0.28,\"0\":0.72}' --outcome 0",
+  "brier": {
+    "own": 1.22,
+    "market": 0.1568,
+    "naive": 0.0
+  },
+  "skill": {
+    "market": -6.7806,
+    "naive": null
+  },
+  "lens_brier": {
+    "prior": 0.285,
+    "cbr": 1.365,
+    "volcker": 0.105,
+    "asymmetry": 0.215,
+    "dissent": 1.455
+  },
+  "closest_lens": "volcker",
+  "paper_rub": -70.0,
+  "annual_controls": [
+    {
+      "args": [
+        "avg",
+        "--year",
+        "2027",
+        "--rate",
+        "10",
+        "--range",
+        "10:10"
+      ],
+      "expected": {
+        "annual_avg": 10.0,
+        "days_rest": 365,
+        "inside_range": true
+      },
+      "status": "PASS"
+    },
+    {
+      "args": [
+        "avg",
+        "--year",
+        "2027",
+        "--rate",
+        "10",
+        "--meeting",
+        "2027-01-01:9"
+      ],
+      "expected": {
+        "annual_avg": 9.0082,
+        "segments": [
+          {
+            "from": "2027-01-01",
+            "days": 3,
+            "rate": 10.0
+          },
+          {
+            "from": "2027-01-04",
+            "days": 362,
+            "rate": 9.0
+          }
+        ]
+      },
+      "status": "PASS"
+    },
+    {
+      "args": [
+        "avg",
+        "--year",
+        "2028",
+        "--rate",
+        "10"
+      ],
+      "expected": {
+        "annual_avg": 10.0,
+        "days_rest": 366
+      },
+      "status": "PASS"
+    }
+  ],
+  "status": "PASS",
+  "scope_limit": "The controls exercise the CLI on fixture and synthetic valid inputs only; they are not an exhaustive validation of rate_math.py. The assumed real-world outcome must be independently confirmed via MCP by the scenario executor."
+}
