@@ -1706,6 +1706,19 @@ async def check(params, server_log):
                 failed += not expect(f"сырая {raw_table} закрыта", denied,
                                      f"отказ ClickHouse 497 на {raw_table} (ожидаемо)" if denied else raw[:200])
 
+            # rosstat/1.3: фиксированный census snapshot, не текущая оценка населения.
+            census = result_rows(text(await session.call_tool("run_query", {
+                "query": "SELECT count() AS n, uniqExact(territory) AS territories FROM v_rosstat_census_2020"
+            })))
+            failed += not expect("перепись: 16188 точек / 96 территорий", bool(census) and census[0].get("n") == 16188 and census[0].get("territories") == 96, str(census))
+            census_meta = result_rows(text(await session.call_tool("run_query", {
+                "query": "SELECT count() AS n FROM v_series_catalog WHERE source = 'rosstat_census_2020' AND series = 'population' AND unit = 'человек'"
+            })))
+            failed += not expect("каталог переписи: население в людях", bool(census_meta) and census_meta[0].get("n") == 1, str(census_meta))
+            raw = text(await session.call_tool("run_query", {"query": "SELECT count() FROM rosstat_census_2020"}))
+            denied = "ACCESS_DENIED" in raw or "Not enough privileges" in raw
+            failed += not expect("сырая rosstat_census_2020 закрыта", denied, "отказ 497" if denied else raw[:200])
+
             # rosstat/1.14: годовые часы имеют отдельный source и три единицы.
             hours = result_rows(text(await session.call_tool("run_query", {
                 "query": "SELECT count() AS n, uniqExact(series) AS series FROM v_fedstat_labour_hours"

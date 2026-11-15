@@ -1,0 +1,26 @@
+{
+  "query": "SELECT count() AS points,uniqExact(territory) AS territories,uniqExact(tuple(territory,settlement)) AS blocks,min(date) AS reference,min(loaded_at) AS first_loaded,max(loaded_at) AS last_loaded,groupBitXor(cityHash64(territory,territory_kind,settlement,sex,age_group,date,value,loaded_at)) AS checksum FROM v_rosstat_census_2020",
+  "result": {
+    "columns": [
+      "points",
+      "territories",
+      "blocks",
+      "reference",
+      "first_loaded",
+      "last_loaded",
+      "checksum"
+    ],
+    "rows": [
+      [
+        16188,
+        96,
+        284,
+        "2021-10-01",
+        "2026-11-15 21:19:30+05:00",
+        "2026-11-15 21:19:30+05:00",
+        "5885691337794177970"
+      ]
+    ]
+  },
+  "unchanged": true
+}

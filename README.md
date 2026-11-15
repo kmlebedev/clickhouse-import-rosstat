@@ -12,6 +12,8 @@ Docs-портал: **https://kmlebedev.github.io/clickhouse-import-rosstat/** �
 
 Годовые часы и трудозатраты: `fedstat_labour_hours` / `v_fedstat_labour_hours` — три показателя ЕМИСС с отдельными единицами и исходными измерениями. Запуск `make import STAT=fedstat_labour_hours`; пятница 13:43 МСК, последний шаг `dagu/fedstat.yaml`. POST-выгрузки архивируются при настроенном backend; исторический PIT не доказан. [Спецификация](docs/superpowers/specs/2026-11-15-labour-hours-design.md).
 
+Перепись: `rosstat_census_2020` / `v_rosstat_census_2020` — 16 188 значений по полу и возрасту на **01.10.2021**, включая РФ, округа и регионы. Это не текущая численность; муниципальный уровень — отдельный #617. `make import STAT=rosstat_census_2020`, четверг 12:17 МСК в хвосте `dagu/rosstat.yaml`; стандартный архив/HEAD no-op. [Контракт](docs/research/2026-11-15-census-2020-source-contract.md).
+
 ## Документация
 
 | Документ | Что внутри |

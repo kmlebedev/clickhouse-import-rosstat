@@ -1,0 +1,766 @@
+{
+  "Российская Федерация": {
+    "kind": "RF",
+    "settlements": [
+      "total",
+      "urban",
+      "rural"
+    ]
+  },
+  "Центральный федеральный округ": {
+    "kind": "FD",
+    "settlements": [
+      "total",
+      "urban",
+      "rural"
+    ]
+  },
+  "Белгородская область": {
+    "kind": "subject",
+    "settlements": [
+      "total",
+      "urban",
+      "rural"
+    ]
+  },
+  "Брянская область": {
+    "kind": "subject",
+    "settlements": [
+      "total",
+      "urban",
+      "rural"
+    ]
+  },
+  "Владимирская область": {
+    "kind": "subject",
+    "settlements": [
+      "total",
+      "urban",
+      "rural"
+    ]
+  },
+  "Воронежская область": {
+    "kind": "subject",
+    "settlements": [
+      "total",
+      "urban",
+      "rural"
+    ]
+  },
+  "Ивановская область": {
+    "kind": "subject",
+    "settlements": [
+      "total",
+      "urban",
+      "rural"
+    ]
+  },
+  "Калужская область": {
+    "kind": "subject",
+    "settlements": [
+      "total",
+      "urban",
+      "rural"
+    ]
+  },
+  "Костромская область": {
+    "kind": "subject",
+    "settlements": [
+      "total",
+      "urban",
+      "rural"
+    ]
+  },
+  "Курская область": {
+    "kind": "subject",
+    "settlements": [
+      "total",
+      "urban",
+      "rural"
+    ]
+  },
+  "Липецкая область": {
+    "kind": "subject",
+    "settlements": [
+      "total",
+      "urban",
+      "rural"
+    ]
+  },
+  "Московская область": {
+    "kind": "subject",
+    "settlements": [
+      "total",
+      "urban",
+      "rural"
+    ]
+  },
+  "Орловская область": {
+    "kind": "subject",
+    "settlements": [
+      "total",
+      "urban",
+      "rural"
+    ]
+  },
+  "Рязанская область": {
+    "kind": "subject",
+    "settlements": [
+      "total",
+      "urban",
+      "rural"
+    ]
+  },
+  "Смоленская область": {
+    "kind": "subject",
+    "settlements": [
+      "total",
+      "urban",
+      "rural"
+    ]
+  },
+  "Тамбовская область": {
+    "kind": "subject",
+    "settlements": [
+      "total",
+      "urban",
+      "rural"
+    ]
+  },
+  "Тверская область": {
+    "kind": "subject",
+    "settlements": [
+      "total",
+      "urban",
+      "rural"
+    ]
+  },
+  "Тульская область": {
+    "kind": "subject",
+    "settlements": [
+      "total",
+      "urban",
+      "rural"
+    ]
+  },
+  "Ярославская область": {
+    "kind": "subject",
+    "settlements": [
+      "total",
+      "urban",
+      "rural"
+    ]
+  },
+  "г. Москва": {
+    "kind": "subject",
+    "settlements": [
+      "urban"
+    ]
+  },
+  "Северо-Западный федеральный округ": {
+    "kind": "FD",
+    "settlements": [
+      "total",
+      "urban",
+      "rural"
+    ]
+  },
+  "Республика Карелия": {
+    "kind": "subject",
+    "settlements": [
+      "total",
+      "urban",
+      "rural"
+    ]
+  },
+  "Республика Коми": {
+    "kind": "subject",
+    "settlements": [
+      "total",
+      "urban",
+      "rural"
+    ]
+  },
+  "Архангельская область": {
+    "kind": "composite",
+    "settlements": [
+      "total",
+      "urban",
+      "rural"
+    ]
+  },
+  "Ненецкий автономный округ": {
+    "kind": "subject",
+    "settlements": [
+      "total",
+      "urban",
+      "rural"
+    ]
+  },
+  "Архангельская область без автономного округа": {
+    "kind": "exclAO",
+    "settlements": [
+      "total",
+      "urban",
+      "rural"
+    ]
+  },
+  "Вологодская область": {
+    "kind": "subject",
+    "settlements": [
+      "total",
+      "urban",
+      "rural"
+    ]
+  },
+  "Калининградская область": {
+    "kind": "subject",
+    "settlements": [
+      "total",
+      "urban",
+      "rural"
+    ]
+  },
+  "Ленинградская область": {
+    "kind": "subject",
+    "settlements": [
+      "total",
+      "urban",
+      "rural"
+    ]
+  },
+  "Мурманская область": {
+    "kind": "subject",
+    "settlements": [
+      "total",
+      "urban",
+      "rural"
+    ]
+  },
+  "Новгородская область": {
+    "kind": "subject",
+    "settlements": [
+      "total",
+      "urban",
+      "rural"
+    ]
+  },
+  "Псковская область": {
+    "kind": "subject",
+    "settlements": [
+      "total",
+      "urban",
+      "rural"
+    ]
+  },
+  "г. Санкт-Петербург": {
+    "kind": "subject",
+    "settlements": [
+      "urban"
+    ]
+  },
+  "Южный федеральный округ": {
+    "kind": "FD",
+    "settlements": [
+      "total",
+      "urban",
+      "rural"
+    ]
+  },
+  "Республика Адыгея": {
+    "kind": "subject",
+    "settlements": [
+      "total",
+      "urban",
+      "rural"
+    ]
+  },
+  "Республика Калмыкия": {
+    "kind": "subject",
+    "settlements": [
+      "total",
+      "urban",
+      "rural"
+    ]
+  },
+  "Республика Крым": {
+    "kind": "subject",
+    "settlements": [
+      "total",
+      "urban",
+      "rural"
+    ]
+  },
+  "Краснодарский край": {
+    "kind": "subject",
+    "settlements": [
+      "total",
+      "urban",
+      "rural"
+    ]
+  },
+  "Астраханская область": {
+    "kind": "subject",
+    "settlements": [
+      "total",
+      "urban",
+      "rural"
+    ]
+  },
+  "Волгоградская область": {
+    "kind": "subject",
+    "settlements": [
+      "total",
+      "urban",
+      "rural"
+    ]
+  },
+  "Ростовская область": {
+    "kind": "subject",
+    "settlements": [
+      "total",
+      "urban",
+      "rural"
+    ]
+  },
+  "г. Севастополь": {
+    "kind": "subject",
+    "settlements": [
+      "total",
+      "urban",
+      "rural"
+    ]
+  },
+  "Северо-Кавказский федеральный округ": {
+    "kind": "FD",
+    "settlements": [
+      "total",
+      "urban",
+      "rural"
+    ]
+  },
+  "Республика Дагестан": {
+    "kind": "subject",
+    "settlements": [
+      "total",
+      "urban",
+      "rural"
+    ]
+  },
+  "Республика Ингушетия": {
+    "kind": "subject",
+    "settlements": [
+      "total",
+      "urban",
+      "rural"
+    ]
+  },
+  "Кабардино-Балкарская Республика": {
+    "kind": "subject",
+    "settlements": [
+      "total",
+      "urban",
+      "rural"
+    ]
+  },
+  "Карачаево-Черкесская Республика": {
+    "kind": "subject",
+    "settlements": [
+      "total",
+      "urban",
+      "rural"
+    ]
+  },
+  "Республика Северная Осетия – Алания": {
+    "kind": "subject",
+    "settlements": [
+      "total",
+      "urban",
+      "rural"
+    ]
+  },
+  "Чеченская Республика": {
+    "kind": "subject",
+    "settlements": [
+      "total",
+      "urban",
+      "rural"
+    ]
+  },
+  "Ставропольский край": {
+    "kind": "subject",
+    "settlements": [
+      "total",
+      "urban",
+      "rural"
+    ]
+  },
+  "Приволжский федеральный округ": {
+    "kind": "FD",
+    "settlements": [
+      "total",
+      "urban",
+      "rural"
+    ]
+  },
+  "Республика Башкортостан": {
+    "kind": "subject",
+    "settlements": [
+      "total",
+      "urban",
+      "rural"
+    ]
+  },
+  "Республика Марий Эл": {
+    "kind": "subject",
+    "settlements": [
+      "total",
+      "urban",
+      "rural"
+    ]
+  },
+  "Республика Мордовия": {
+    "kind": "subject",
+    "settlements": [
+      "total",
+      "urban",
+      "rural"
+    ]
+  },
+  "Республика Татарстан": {
+    "kind": "subject",
+    "settlements": [
+      "total",
+      "urban",
+      "rural"
+    ]
+  },
+  "Удмуртская Республика": {
+    "kind": "subject",
+    "settlements": [
+      "total",
+      "urban",
+      "rural"
+    ]
+  },
+  "Чувашская Республика": {
+    "kind": "subject",
+    "settlements": [
+      "total",
+      "urban",
+      "rural"
+    ]
+  },
+  "Пермский край": {
+    "kind": "subject",
+    "settlements": [
+      "total",
+      "urban",
+      "rural"
+    ]
+  },
+  "Кировская область": {
+    "kind": "subject",
+    "settlements": [
+      "total",
+      "urban",
+      "rural"
+    ]
+  },
+  "Нижегородская область": {
+    "kind": "subject",
+    "settlements": [
+      "total",
+      "urban",
+      "rural"
+    ]
+  },
+  "Оренбургская область": {
+    "kind": "subject",
+    "settlements": [
+      "total",
+      "urban",
+      "rural"
+    ]
+  },
+  "Пензенская область": {
+    "kind": "subject",
+    "settlements": [
+      "total",
+      "urban",
+      "rural"
+    ]
+  },
+  "Самарская область": {
+    "kind": "subject",
+    "settlements": [
+      "total",
+      "urban",
+      "rural"
+    ]
+  },
+  "Саратовская область": {
+    "kind": "subject",
+    "settlements": [
+      "total",
+      "urban",
+      "rural"
+    ]
+  },
+  "Ульяновская область": {
+    "kind": "subject",
+    "settlements": [
+      "total",
+      "urban",
+      "rural"
+    ]
+  },
+  "Уральский федеральный округ": {
+    "kind": "FD",
+    "settlements": [
+      "total",
+      "urban",
+      "rural"
+    ]
+  },
+  "Курганская область": {
+    "kind": "subject",
+    "settlements": [
+      "total",
+      "urban",
+      "rural"
+    ]
+  },
+  "Свердловская область": {
+    "kind": "subject",
+    "settlements": [
+      "total",
+      "urban",
+      "rural"
+    ]
+  },
+  "Тюменская область": {
+    "kind": "composite",
+    "settlements": [
+      "total",
+      "urban",
+      "rural"
+    ]
+  },
+  "Ханты-Мансийский автономный округ – Югра": {
+    "kind": "subject",
+    "settlements": [
+      "total",
+      "urban",
+      "rural"
+    ]
+  },
+  "Ямало-Ненецкий автономный округ": {
+    "kind": "subject",
+    "settlements": [
+      "total",
+      "urban",
+      "rural"
+    ]
+  },
+  "Тюменская область без автономных округов": {
+    "kind": "exclAO",
+    "settlements": [
+      "total",
+      "urban",
+      "rural"
+    ]
+  },
+  "Челябинская область": {
+    "kind": "subject",
+    "settlements": [
+      "total",
+      "urban",
+      "rural"
+    ]
+  },
+  "Сибирский федеральный округ": {
+    "kind": "FD",
+    "settlements": [
+      "total",
+      "urban",
+      "rural"
+    ]
+  },
+  "Республика Алтай": {
+    "kind": "subject",
+    "settlements": [
+      "total",
+      "urban",
+      "rural"
+    ]
+  },
+  "Республика Тыва": {
+    "kind": "subject",
+    "settlements": [
+      "total",
+      "urban",
+      "rural"
+    ]
+  },
+  "Республика Хакасия": {
+    "kind": "subject",
+    "settlements": [
+      "total",
+      "urban",
+      "rural"
+    ]
+  },
+  "Алтайский край": {
+    "kind": "subject",
+    "settlements": [
+      "total",
+      "urban",
+      "rural"
+    ]
+  },
+  "Красноярский край": {
+    "kind": "subject",
+    "settlements": [
+      "total",
+      "urban",
+      "rural"
+    ]
+  },
+  "Иркутская область": {
+    "kind": "subject",
+    "settlements": [
+      "total",
+      "urban",
+      "rural"
+    ]
+  },
+  "Кемеровская область – Кузбасс": {
+    "kind": "subject",
+    "settlements": [
+      "total",
+      "urban",
+      "rural"
+    ]
+  },
+  "Новосибирская область": {
+    "kind": "subject",
+    "settlements": [
+      "total",
+      "urban",
+      "rural"
+    ]
+  },
+  "Омская область": {
+    "kind": "subject",
+    "settlements": [
+      "total",
+      "urban",
+      "rural"
+    ]
+  },
+  "Томская область": {
+    "kind": "subject",
+    "settlements": [
+      "total",
+      "urban",
+      "rural"
+    ]
+  },
+  "Дальневосточный федеральный округ": {
+    "kind": "FD",
+    "settlements": [
+      "total",
+      "urban",
+      "rural"
+    ]
+  },
+  "Республика Бурятия": {
+    "kind": "subject",
+    "settlements": [
+      "total",
+      "urban",
+      "rural"
+    ]
+  },
+  "Республика Саха (Якутия)": {
+    "kind": "subject",
+    "settlements": [
+      "total",
+      "urban",
+      "rural"
+    ]
+  },
+  "Забайкальский край": {
+    "kind": "subject",
+    "settlements": [
+      "total",
+      "urban",
+      "rural"
+    ]
+  },
+  "Камчатский край": {
+    "kind": "subject",
+    "settlements": [
+      "total",
+      "urban",
+      "rural"
+    ]
+  },
+  "Приморский край": {
+    "kind": "subject",
+    "settlements": [
+      "total",
+      "urban",
+      "rural"
+    ]
+  },
+  "Хабаровский край": {
+    "kind": "subject",
+    "settlements": [
+      "total",
+      "urban",
+      "rural"
+    ]
+  },
+  "Амурская область": {
+    "kind": "subject",
+    "settlements": [
+      "total",
+      "urban",
+      "rural"
+    ]
+  },
+  "Магаданская область": {
+    "kind": "subject",
+    "settlements": [
+      "total",
+      "urban",
+      "rural"
+    ]
+  },
+  "Сахалинская область": {
+    "kind": "subject",
+    "settlements": [
+      "total",
+      "urban",
+      "rural"
+    ]
+  },
+  "Еврейская автономная область": {
+    "kind": "subject",
+    "settlements": [
+      "total",
+      "urban",
+      "rural"
+    ]
+  },
+  "Чукотский автономный округ": {
+    "kind": "subject",
+    "settlements": [
+      "total",
+      "urban",
+      "rural"
+    ]
+  }
+}

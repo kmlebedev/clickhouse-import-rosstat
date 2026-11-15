@@ -1,0 +1,134 @@
+{
+  "decision": "Bounded GO for central Tom2table2 regional age-sex snapshot only; municipal sources ITERATE, not proved absent. No repository edits, production code, database writes or imports.",
+  "source_reference_date": "2021-10-01; VPN2020 is census name. Previously verified officiallanding https://rosstat.gov.ru/vpn/2020 in#612; not refetched during this bounded task.",
+  "source_probes": [
+    {
+      "url": "https://rosstat.gov.ru/storage/mediabank/Tom2_tab1_VPN-2020.xlsx",
+      "observed_at_utc": "2026-11-15T16:12:07.088672+00:00",
+      "HTTP": [
+        "HTTP/1.1 200 OK"
+      ],
+      "selected_headers": {
+        "content-type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "content-length": "38362",
+        "date": "Sun, 15 Nov 2026 16:12:07 GMT",
+        "last-modified": "Wed, 26 Apr 2023 12:14:47 GMT",
+        "etag": "\"644915b7-95da\""
+      },
+      "size_bytes": 38362,
+      "sha256": "a497b919f8bf16fdb28b79e8416486d40c435c57364d98b9a8a062c6b7d1826e",
+      "signature": "504b",
+      "xlsx_signature_verified": true,
+      "method": "GET, User-Agent Mozilla/5.0",
+      "retries": 0
+    },
+    {
+      "url": "https://rosstat.gov.ru/storage/mediabank/Tom2_tab2_VPN-2020.xlsx",
+      "observed_at_utc": "2026-11-15T16:12:10.499534+00:00",
+      "HTTP": [
+        "HTTP/1.1 200 OK"
+      ],
+      "selected_headers": {
+        "content-type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "content-length": "632954",
+        "date": "Sun, 15 Nov 2026 16:12:10 GMT",
+        "last-modified": "Wed, 26 Apr 2023 12:15:09 GMT",
+        "etag": "\"644915cd-9a87a\""
+      },
+      "size_bytes": 632954,
+      "sha256": "ad87b6b604af7fe957b63f43d3a6d07b6eabb67e9241a820c43d5472aa6840f3",
+      "signature": "504b",
+      "xlsx_signature_verified": true,
+      "method": "GET, User-Agent Mozilla/5.0",
+      "retries": 0
+    }
+  ],
+  "territory_mapping_file": "territories.json",
+  "source_structure": {
+    "sheet": "таб 2",
+    "columns_B_C_D": "both,male,female, integerpersons; E–H ratios not counts",
+    "territories": {
+      "territories": 96,
+      "levels": {
+        "RF": 1,
+        "FD": 8,
+        "subject": 83,
+        "composite": 2,
+        "exclAO": 2
+      },
+      "settlement_blocks": 284,
+      "selected_count_cells": 16188
+    },
+    "selected_ages": "all_ages plus18disjointbins0–4,5–9,…80–84,85+; exclude overlapping age groups,workingage,mean/median",
+    "Moscow_SPB": "only urban block exists; do not synthesize rural zero/total alias without separate explicit contract",
+    "unknown_age": "No source unknown-age row;18bins exhaust observed totals. Futureunknownage/layoutchange fails closed rather than silentlydropping.",
+    "selected_blanks_or_nonnumeric": 0
+  },
+  "controls": {
+    "selected_row_sex_parity_count": 5396,
+    "all_pass": true,
+    "fully_numeric_age_partition_blocks": 284,
+    "all_pass_age_partition": true,
+    "total_equals_urban_plus_rural_checks": 5358,
+    "all_pass_settlement_partition": true,
+    "geographic_age_sex_partition_checks": 570,
+    "all_pass_geographic_partition": true
+  },
+  "geography_controls": {
+    "RF_allages_persons": 147182123,
+    "sum8FD": 147182123,
+    "sum83_subject_plus2_exclAO_excluding2_composites": 147182123,
+    "disjoint_geographic_parts": 85,
+    "Moscow_SPB_control_selection": "Use only their observed urban block values for geographic sum; this does not create synthetic total or rural observations."
+  },
+  "table1_control": {
+    "purpose": "Independent workbook parity control, not a second recurring importsource",
+    "sheet": "таб 1",
+    "cells": {
+      "B5": 147182123,
+      "C5": 68431580,
+      "D5": 78750543
+    },
+    "male_plus_female_equals_total": true,
+    "matches_table2": true,
+    "prior612hash_match": "Not needed for reference-date acceptance; both downloaded again actual200XLSX."
+  },
+  "municipal_candidates": [
+    {
+      "listing_url": "https://16.rosstat.gov.ru/vpn2020",
+      "target_document": "Том2, Таблица2. Население по возрасту и полу по городским округам и муниципальным районам Республики Татарстан",
+      "indexed_format": "XLSX",
+      "indexed_size_KB": 207.65,
+      "indexed_listing_date": "2023-03-13",
+      "actual_listing_probe": "curl28timeout20seconds; no HTTP response, no numericfile obtained",
+      "direct_file_url": null,
+      "file_bytes_verified": false
+    },
+    {
+      "listing_url": "https://72.rosstat.gov.ru/perepis_nas2020",
+      "target_document": "Том2, Таблица2. Население по возрастным группам и полу по муниципальным образованиям; sectionsХМАО,ЯНАО,Тюменскаяобласть",
+      "indexed_format": "XLSX",
+      "indexed_sizes_KB": [
+        60.03,
+        40.91,
+        68.37
+      ],
+      "indexed_listing_date": "2023-05-26",
+      "actual_listing_probe": "Search index of officiallisting only; no directGET attempted afterboundedtimeoutbudget",
+      "direct_file_url": null,
+      "file_bytes_verified": false
+    }
+  ],
+  "other_bounded_probes": [
+    {
+      "url": "https://21.rosstat.gov.ru/folder/215047",
+      "result": "curl28timeout25seconds; webfetchalsoTimeout; no sourceabsenceconclusion"
+    },
+    {
+      "url": "https://59.rosstat.gov.ru/folder/200657",
+      "result": "curl28timeout25seconds; no sourceabsenceconclusion"
+    }
+  ],
+  "municipal_handoff": "Separate namedresearchfollowup: municipal-census-age-sex. Fetch listed exactTable2from16/72portals, recordresolvedhref/hash/HTTP, establishcode/vintage/settlement/age/sex completeness and at leastonemunicipalcontrol; do not promisefullnationalmunicipalimport fromthesecandidates.",
+  "terms_and_PIT": "No explicit openlicense or historicalvintagearchive verified. Publicaccess alone does not prove either. PinURL/hash/observed_at separately from reference_date; HTTPLastModified not publicationtime."
+}

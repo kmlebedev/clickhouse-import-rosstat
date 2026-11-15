@@ -1,0 +1,3562 @@
+{
+  "source": "https://rosstat.gov.ru/storage/mediabank/Tom2_tab2_VPN-2020.xlsx",
+  "source_sha256": "ad87b6b604af7fe957b63f43d3a6d07b6eabb67e9241a820c43d5472aa6840f3",
+  "normalization": "Whitespace collapsed only; preserve source dash characters in territory labels. No fuzzy alias resolution.",
+  "counts": {
+    "territories": 96,
+    "levels": {
+      "RF": 1,
+      "FD": 8,
+      "subject": 83,
+      "composite": 2,
+      "exclAO": 2
+    },
+    "settlement_blocks": 284,
+    "selected_count_cells": 16188
+  },
+  "territories": [
+    {
+      "source_name": "Российская Федерация",
+      "level": "RF",
+      "source_header_row": 4,
+      "subject_entity": false,
+      "aggregation_role": "aggregate only; never add to children",
+      "settlement_blocks": [
+        {
+          "settlement": "total",
+          "source_total_row": 5,
+          "totals": {
+            "B": "147182123",
+            "C": "68431580",
+            "D": "78750543"
+          }
+        },
+        {
+          "settlement": "urban",
+          "source_total_row": 38,
+          "totals": {
+            "B": "110075322",
+            "C": "50506330",
+            "D": "59568992"
+          }
+        },
+        {
+          "settlement": "rural",
+          "source_total_row": 71,
+          "totals": {
+            "B": "37106801",
+            "C": "17925250",
+            "D": "19181551"
+          }
+        }
+      ],
+      "parent_FD": null
+    },
+    {
+      "source_name": "Центральный федеральный округ",
+      "level": "FD",
+      "source_header_row": 104,
+      "subject_entity": false,
+      "aggregation_role": "aggregate only; never add to children",
+      "settlement_blocks": [
+        {
+          "settlement": "total",
+          "source_total_row": 105,
+          "totals": {
+            "B": "40334532",
+            "C": "18682816",
+            "D": "21651716"
+          }
+        },
+        {
+          "settlement": "urban",
+          "source_total_row": 138,
+          "totals": {
+            "B": "33118003",
+            "C": "15221976",
+            "D": "17896027"
+          }
+        },
+        {
+          "settlement": "rural",
+          "source_total_row": 171,
+          "totals": {
+            "B": "7216529",
+            "C": "3460840",
+            "D": "3755689"
+          }
+        }
+      ],
+      "parent_FD": null
+    },
+    {
+      "source_name": "Белгородская область",
+      "level": "subject",
+      "source_header_row": 204,
+      "subject_entity": true,
+      "aggregation_role": "include in disjoint regional sum",
+      "settlement_blocks": [
+        {
+          "settlement": "total",
+          "source_total_row": 205,
+          "totals": {
+            "B": "1540486",
+            "C": "713518",
+            "D": "826968"
+          }
+        },
+        {
+          "settlement": "urban",
+          "source_total_row": 238,
+          "totals": {
+            "B": "1005116",
+            "C": "455531",
+            "D": "549585"
+          }
+        },
+        {
+          "settlement": "rural",
+          "source_total_row": 271,
+          "totals": {
+            "B": "535370",
+            "C": "257987",
+            "D": "277383"
+          }
+        }
+      ],
+      "parent_FD": "Центральный федеральный округ"
+    },
+    {
+      "source_name": "Брянская область",
+      "level": "subject",
+      "source_header_row": 304,
+      "subject_entity": true,
+      "aggregation_role": "include in disjoint regional sum",
+      "settlement_blocks": [
+        {
+          "settlement": "total",
+          "source_total_row": 305,
+          "totals": {
+            "B": "1169161",
+            "C": "535241",
+            "D": "633920"
+          }
+        },
+        {
+          "settlement": "urban",
+          "source_total_row": 338,
+          "totals": {
+            "B": "812316",
+            "C": "364166",
+            "D": "448150"
+          }
+        },
+        {
+          "settlement": "rural",
+          "source_total_row": 371,
+          "totals": {
+            "B": "356845",
+            "C": "171075",
+            "D": "185770"
+          }
+        }
+      ],
+      "parent_FD": "Центральный федеральный округ"
+    },
+    {
+      "source_name": "Владимирская область",
+      "level": "subject",
+      "source_header_row": 404,
+      "subject_entity": true,
+      "aggregation_role": "include in disjoint regional sum",
+      "settlement_blocks": [
+        {
+          "settlement": "total",
+          "source_total_row": 405,
+          "totals": {
+            "B": "1348134",
+            "C": "611650",
+            "D": "736484"
+          }
+        },
+        {
+          "settlement": "urban",
+          "source_total_row": 438,
+          "totals": {
+            "B": "1045886",
+            "C": "468009",
+            "D": "577877"
+          }
+        },
+        {
+          "settlement": "rural",
+          "source_total_row": 471,
+          "totals": {
+            "B": "302248",
+            "C": "143641",
+            "D": "158607"
+          }
+        }
+      ],
+      "parent_FD": "Центральный федеральный округ"
+    },
+    {
+      "source_name": "Воронежская область",
+      "level": "subject",
+      "source_header_row": 504,
+      "subject_entity": true,
+      "aggregation_role": "include in disjoint regional sum",
+      "settlement_blocks": [
+        {
+          "settlement": "total",
+          "source_total_row": 505,
+          "totals": {
+            "B": "2308792",
+            "C": "1066160",
+            "D": "1242632"
+          }
+        },
+        {
+          "settlement": "urban",
+          "source_total_row": 538,
+          "totals": {
+            "B": "1580511",
+            "C": "721963",
+            "D": "858548"
+          }
+        },
+        {
+          "settlement": "rural",
+          "source_total_row": 571,
+          "totals": {
+            "B": "728281",
+            "C": "344197",
+            "D": "384084"
+          }
+        }
+      ],
+      "parent_FD": "Центральный федеральный округ"
+    },
+    {
+      "source_name": "Ивановская область",
+      "level": "subject",
+      "source_header_row": 604,
+      "subject_entity": true,
+      "aggregation_role": "include in disjoint regional sum",
+      "settlement_blocks": [
+        {
+          "settlement": "total",
+          "source_total_row": 605,
+          "totals": {
+            "B": "927828",
+            "C": "415324",
+            "D": "512504"
+          }
+        },
+        {
+          "settlement": "urban",
+          "source_total_row": 638,
+          "totals": {
+            "B": "760048",
+            "C": "334487",
+            "D": "425561"
+          }
+        },
+        {
+          "settlement": "rural",
+          "source_total_row": 671,
+          "totals": {
+            "B": "167780",
+            "C": "80837",
+            "D": "86943"
+          }
+        }
+      ],
+      "parent_FD": "Центральный федеральный округ"
+    },
+    {
+      "source_name": "Калужская область",
+      "level": "subject",
+      "source_header_row": 704,
+      "subject_entity": true,
+      "aggregation_role": "include in disjoint regional sum",
+      "settlement_blocks": [
+        {
+          "settlement": "total",
+          "source_total_row": 705,
+          "totals": {
+            "B": "1069904",
+            "C": "507146",
+            "D": "562758"
+          }
+        },
+        {
+          "settlement": "urban",
+          "source_total_row": 738,
+          "totals": {
+            "B": "802383",
+            "C": "376033",
+            "D": "426350"
+          }
+        },
+        {
+          "settlement": "rural",
+          "source_total_row": 771,
+          "totals": {
+            "B": "267521",
+            "C": "131113",
+            "D": "136408"
+          }
+        }
+      ],
+      "parent_FD": "Центральный федеральный округ"
+    },
+    {
+      "source_name": "Костромская область",
+      "level": "subject",
+      "source_header_row": 804,
+      "subject_entity": true,
+      "aggregation_role": "include in disjoint regional sum",
+      "settlement_blocks": [
+        {
+          "settlement": "total",
+          "source_total_row": 805,
+          "totals": {
+            "B": "580976",
+            "C": "263828",
+            "D": "317148"
+          }
+        },
+        {
+          "settlement": "urban",
+          "source_total_row": 838,
+          "totals": {
+            "B": "428180",
+            "C": "191293",
+            "D": "236887"
+          }
+        },
+        {
+          "settlement": "rural",
+          "source_total_row": 871,
+          "totals": {
+            "B": "152796",
+            "C": "72535",
+            "D": "80261"
+          }
+        }
+      ],
+      "parent_FD": "Центральный федеральный округ"
+    },
+    {
+      "source_name": "Курская область",
+      "level": "subject",
+      "source_header_row": 904,
+      "subject_entity": true,
+      "aggregation_role": "include in disjoint regional sum",
+      "settlement_blocks": [
+        {
+          "settlement": "total",
+          "source_total_row": 905,
+          "totals": {
+            "B": "1082458",
+            "C": "490910",
+            "D": "591548"
+          }
+        },
+        {
+          "settlement": "urban",
+          "source_total_row": 938,
+          "totals": {
+            "B": "740735",
+            "C": "328530",
+            "D": "412205"
+          }
+        },
+        {
+          "settlement": "rural",
+          "source_total_row": 971,
+          "totals": {
+            "B": "341723",
+            "C": "162380",
+            "D": "179343"
+          }
+        }
+      ],
+      "parent_FD": "Центральный федеральный округ"
+    },
+    {
+      "source_name": "Липецкая область",
+      "level": "subject",
+      "source_header_row": 1004,
+      "subject_entity": true,
+      "aggregation_role": "include in disjoint regional sum",
+      "settlement_blocks": [
+        {
+          "settlement": "total",
+          "source_total_row": 1005,
+          "totals": {
+            "B": "1143224",
+            "C": "523550",
+            "D": "619674"
+          }
+        },
+        {
+          "settlement": "urban",
+          "source_total_row": 1038,
+          "totals": {
+            "B": "721089",
+            "C": "322687",
+            "D": "398402"
+          }
+        },
+        {
+          "settlement": "rural",
+          "source_total_row": 1071,
+          "totals": {
+            "B": "422135",
+            "C": "200863",
+            "D": "221272"
+          }
+        }
+      ],
+      "parent_FD": "Центральный федеральный округ"
+    },
+    {
+      "source_name": "Московская область",
+      "level": "subject",
+      "source_header_row": 1104,
+      "subject_entity": true,
+      "aggregation_role": "include in disjoint regional sum",
+      "settlement_blocks": [
+        {
+          "settlement": "total",
+          "source_total_row": 1105,
+          "totals": {
+            "B": "8524665",
+            "C": "4052693",
+            "D": "4471972"
+          }
+        },
+        {
+          "settlement": "urban",
+          "source_total_row": 1138,
+          "totals": {
+            "B": "6692573",
+            "C": "3160907",
+            "D": "3531666"
+          }
+        },
+        {
+          "settlement": "rural",
+          "source_total_row": 1171,
+          "totals": {
+            "B": "1832092",
+            "C": "891786",
+            "D": "940306"
+          }
+        }
+      ],
+      "parent_FD": "Центральный федеральный округ"
+    },
+    {
+      "source_name": "Орловская область",
+      "level": "subject",
+      "source_header_row": 1204,
+      "subject_entity": true,
+      "aggregation_role": "include in disjoint regional sum",
+      "settlement_blocks": [
+        {
+          "settlement": "total",
+          "source_total_row": 1205,
+          "totals": {
+            "B": "713374",
+            "C": "324243",
+            "D": "389131"
+          }
+        },
+        {
+          "settlement": "urban",
+          "source_total_row": 1238,
+          "totals": {
+            "B": "475441",
+            "C": "212353",
+            "D": "263088"
+          }
+        },
+        {
+          "settlement": "rural",
+          "source_total_row": 1271,
+          "totals": {
+            "B": "237933",
+            "C": "111890",
+            "D": "126043"
+          }
+        }
+      ],
+      "parent_FD": "Центральный федеральный округ"
+    },
+    {
+      "source_name": "Рязанская область",
+      "level": "subject",
+      "source_header_row": 1304,
+      "subject_entity": true,
+      "aggregation_role": "include in disjoint regional sum",
+      "settlement_blocks": [
+        {
+          "settlement": "total",
+          "source_total_row": 1305,
+          "totals": {
+            "B": "1102810",
+            "C": "498878",
+            "D": "603932"
+          }
+        },
+        {
+          "settlement": "urban",
+          "source_total_row": 1338,
+          "totals": {
+            "B": "786964",
+            "C": "349037",
+            "D": "437927"
+          }
+        },
+        {
+          "settlement": "rural",
+          "source_total_row": 1371,
+          "totals": {
+            "B": "315846",
+            "C": "149841",
+            "D": "166005"
+          }
+        }
+      ],
+      "parent_FD": "Центральный федеральный округ"
+    },
+    {
+      "source_name": "Смоленская область",
+      "level": "subject",
+      "source_header_row": 1404,
+      "subject_entity": true,
+      "aggregation_role": "include in disjoint regional sum",
+      "settlement_blocks": [
+        {
+          "settlement": "total",
+          "source_total_row": 1405,
+          "totals": {
+            "B": "888421",
+            "C": "402655",
+            "D": "485766"
+          }
+        },
+        {
+          "settlement": "urban",
+          "source_total_row": 1438,
+          "totals": {
+            "B": "644961",
+            "C": "285728",
+            "D": "359233"
+          }
+        },
+        {
+          "settlement": "rural",
+          "source_total_row": 1471,
+          "totals": {
+            "B": "243460",
+            "C": "116927",
+            "D": "126533"
+          }
+        }
+      ],
+      "parent_FD": "Центральный федеральный округ"
+    },
+    {
+      "source_name": "Тамбовская область",
+      "level": "subject",
+      "source_header_row": 1504,
+      "subject_entity": true,
+      "aggregation_role": "include in disjoint regional sum",
+      "settlement_blocks": [
+        {
+          "settlement": "total",
+          "source_total_row": 1505,
+          "totals": {
+            "B": "982991",
+            "C": "452823",
+            "D": "530168"
+          }
+        },
+        {
+          "settlement": "urban",
+          "source_total_row": 1538,
+          "totals": {
+            "B": "591244",
+            "C": "265784",
+            "D": "325460"
+          }
+        },
+        {
+          "settlement": "rural",
+          "source_total_row": 1571,
+          "totals": {
+            "B": "391747",
+            "C": "187039",
+            "D": "204708"
+          }
+        }
+      ],
+      "parent_FD": "Центральный федеральный округ"
+    },
+    {
+      "source_name": "Тверская область",
+      "level": "subject",
+      "source_header_row": 1604,
+      "subject_entity": true,
+      "aggregation_role": "include in disjoint regional sum",
+      "settlement_blocks": [
+        {
+          "settlement": "total",
+          "source_total_row": 1605,
+          "totals": {
+            "B": "1230171",
+            "C": "560274",
+            "D": "669897"
+          }
+        },
+        {
+          "settlement": "urban",
+          "source_total_row": 1638,
+          "totals": {
+            "B": "938860",
+            "C": "418942",
+            "D": "519918"
+          }
+        },
+        {
+          "settlement": "rural",
+          "source_total_row": 1671,
+          "totals": {
+            "B": "291311",
+            "C": "141332",
+            "D": "149979"
+          }
+        }
+      ],
+      "parent_FD": "Центральный федеральный округ"
+    },
+    {
+      "source_name": "Тульская область",
+      "level": "subject",
+      "source_header_row": 1704,
+      "subject_entity": true,
+      "aggregation_role": "include in disjoint regional sum",
+      "settlement_blocks": [
+        {
+          "settlement": "total",
+          "source_total_row": 1705,
+          "totals": {
+            "B": "1501214",
+            "C": "678103",
+            "D": "823111"
+          }
+        },
+        {
+          "settlement": "urban",
+          "source_total_row": 1738,
+          "totals": {
+            "B": "1100788",
+            "C": "489011",
+            "D": "611777"
+          }
+        },
+        {
+          "settlement": "rural",
+          "source_total_row": 1771,
+          "totals": {
+            "B": "400426",
+            "C": "189092",
+            "D": "211334"
+          }
+        }
+      ],
+      "parent_FD": "Центральный федеральный округ"
+    },
+    {
+      "source_name": "Ярославская область",
+      "level": "subject",
+      "source_header_row": 1804,
+      "subject_entity": true,
+      "aggregation_role": "include in disjoint regional sum",
+      "settlement_blocks": [
+        {
+          "settlement": "total",
+          "source_total_row": 1805,
+          "totals": {
+            "B": "1209811",
+            "C": "543078",
+            "D": "666733"
+          }
+        },
+        {
+          "settlement": "urban",
+          "source_total_row": 1838,
+          "totals": {
+            "B": "980796",
+            "C": "434773",
+            "D": "546023"
+          }
+        },
+        {
+          "settlement": "rural",
+          "source_total_row": 1871,
+          "totals": {
+            "B": "229015",
+            "C": "108305",
+            "D": "120710"
+          }
+        }
+      ],
+      "parent_FD": "Центральный федеральный округ"
+    },
+    {
+      "source_name": "г. Москва",
+      "level": "subject",
+      "source_header_row": 1904,
+      "subject_entity": true,
+      "aggregation_role": "include in disjoint regional sum",
+      "settlement_blocks": [
+        {
+          "settlement": "urban",
+          "source_total_row": 1905,
+          "totals": {
+            "B": "13010112",
+            "C": "6042742",
+            "D": "6967370"
+          }
+        }
+      ],
+      "parent_FD": "Центральный федеральный округ"
+    },
+    {
+      "source_name": "Северо-Западный федеральный округ",
+      "level": "FD",
+      "source_header_row": 1938,
+      "subject_entity": false,
+      "aggregation_role": "aggregate only; never add to children",
+      "settlement_blocks": [
+        {
+          "settlement": "total",
+          "source_total_row": 1939,
+          "totals": {
+            "B": "13917197",
+            "C": "6379110",
+            "D": "7538087"
+          }
+        },
+        {
+          "settlement": "urban",
+          "source_total_row": 1972,
+          "totals": {
+            "B": "11822336",
+            "C": "5364169",
+            "D": "6458167"
+          }
+        },
+        {
+          "settlement": "rural",
+          "source_total_row": 2005,
+          "totals": {
+            "B": "2094861",
+            "C": "1014941",
+            "D": "1079920"
+          }
+        }
+      ],
+      "parent_FD": null
+    },
+    {
+      "source_name": "Республика Карелия",
+      "level": "subject",
+      "source_header_row": 2038,
+      "subject_entity": true,
+      "aggregation_role": "include in disjoint regional sum",
+      "settlement_blocks": [
+        {
+          "settlement": "total",
+          "source_total_row": 2039,
+          "totals": {
+            "B": "533121",
+            "C": "238996",
+            "D": "294125"
+          }
+        },
+        {
+          "settlement": "urban",
+          "source_total_row": 2072,
+          "totals": {
+            "B": "423680",
+            "C": "187158",
+            "D": "236522"
+          }
+        },
+        {
+          "settlement": "rural",
+          "source_total_row": 2105,
+          "totals": {
+            "B": "109441",
+            "C": "51838",
+            "D": "57603"
+          }
+        }
+      ],
+      "parent_FD": "Северо-Западный федеральный округ"
+    },
+    {
+      "source_name": "Республика Коми",
+      "level": "subject",
+      "source_header_row": 2138,
+      "subject_entity": true,
+      "aggregation_role": "include in disjoint regional sum",
+      "settlement_blocks": [
+        {
+          "settlement": "total",
+          "source_total_row": 2139,
+          "totals": {
+            "B": "737853",
+            "C": "341553",
+            "D": "396300"
+          }
+        },
+        {
+          "settlement": "urban",
+          "source_total_row": 2172,
+          "totals": {
+            "B": "571578",
+            "C": "261469",
+            "D": "310109"
+          }
+        },
+        {
+          "settlement": "rural",
+          "source_total_row": 2205,
+          "totals": {
+            "B": "166275",
+            "C": "80084",
+            "D": "86191"
+          }
+        }
+      ],
+      "parent_FD": "Северо-Западный федеральный округ"
+    },
+    {
+      "source_name": "Архангельская область",
+      "level": "composite",
+      "source_header_row": 2238,
+      "subject_entity": true,
+      "aggregation_role": "exclude from disjoint subject sum; includes AO",
+      "settlement_blocks": [
+        {
+          "settlement": "total",
+          "source_total_row": 2239,
+          "totals": {
+            "B": "1020307",
+            "C": "472203",
+            "D": "548104"
+          }
+        },
+        {
+          "settlement": "urban",
+          "source_total_row": 2272,
+          "totals": {
+            "B": "788565",
+            "C": "359937",
+            "D": "428628"
+          }
+        },
+        {
+          "settlement": "rural",
+          "source_total_row": 2305,
+          "totals": {
+            "B": "231742",
+            "C": "112266",
+            "D": "119476"
+          }
+        }
+      ],
+      "parent_FD": "Северо-Западный федеральный округ"
+    },
+    {
+      "source_name": "Ненецкий автономный округ",
+      "level": "subject",
+      "source_header_row": 2339,
+      "subject_entity": true,
+      "aggregation_role": "include in disjoint regional sum",
+      "settlement_blocks": [
+        {
+          "settlement": "total",
+          "source_total_row": 2340,
+          "totals": {
+            "B": "41434",
+            "C": "19914",
+            "D": "21520"
+          }
+        },
+        {
+          "settlement": "urban",
+          "source_total_row": 2373,
+          "totals": {
+            "B": "30665",
+            "C": "14431",
+            "D": "16234"
+          }
+        },
+        {
+          "settlement": "rural",
+          "source_total_row": 2406,
+          "totals": {
+            "B": "10769",
+            "C": "5483",
+            "D": "5286"
+          }
+        }
+      ],
+      "parent_FD": "Северо-Западный федеральный округ"
+    },
+    {
+      "source_name": "Архангельская область без автономного округа",
+      "level": "exclAO",
+      "source_header_row": 2439,
+      "subject_entity": false,
+      "aggregation_role": "include in disjoint regional sum",
+      "settlement_blocks": [
+        {
+          "settlement": "total",
+          "source_total_row": 2440,
+          "totals": {
+            "B": "978873",
+            "C": "452289",
+            "D": "526584"
+          }
+        },
+        {
+          "settlement": "urban",
+          "source_total_row": 2473,
+          "totals": {
+            "B": "757900",
+            "C": "345506",
+            "D": "412394"
+          }
+        },
+        {
+          "settlement": "rural",
+          "source_total_row": 2506,
+          "totals": {
+            "B": "220973",
+            "C": "106783",
+            "D": "114190"
+          }
+        }
+      ],
+      "parent_FD": "Северо-Западный федеральный округ",
+      "composition_note": "Complementary remainder; add to child AO instead of composite, never together with composite."
+    },
+    {
+      "source_name": "Вологодская область",
+      "level": "subject",
+      "source_header_row": 2539,
+      "subject_entity": true,
+      "aggregation_role": "include in disjoint regional sum",
+      "settlement_blocks": [
+        {
+          "settlement": "total",
+          "source_total_row": 2540,
+          "totals": {
+            "B": "1142827",
+            "C": "524099",
+            "D": "618728"
+          }
+        },
+        {
+          "settlement": "urban",
+          "source_total_row": 2573,
+          "totals": {
+            "B": "827577",
+            "C": "370480",
+            "D": "457097"
+          }
+        },
+        {
+          "settlement": "rural",
+          "source_total_row": 2606,
+          "totals": {
+            "B": "315250",
+            "C": "153619",
+            "D": "161631"
+          }
+        }
+      ],
+      "parent_FD": "Северо-Западный федеральный округ"
+    },
+    {
+      "source_name": "Калининградская область",
+      "level": "subject",
+      "source_header_row": 2639,
+      "subject_entity": true,
+      "aggregation_role": "include in disjoint regional sum",
+      "settlement_blocks": [
+        {
+          "settlement": "total",
+          "source_total_row": 2640,
+          "totals": {
+            "B": "1029966",
+            "C": "487350",
+            "D": "542616"
+          }
+        },
+        {
+          "settlement": "urban",
+          "source_total_row": 2673,
+          "totals": {
+            "B": "790844",
+            "C": "370316",
+            "D": "420528"
+          }
+        },
+        {
+          "settlement": "rural",
+          "source_total_row": 2706,
+          "totals": {
+            "B": "239122",
+            "C": "117034",
+            "D": "122088"
+          }
+        }
+      ],
+      "parent_FD": "Северо-Западный федеральный округ"
+    },
+    {
+      "source_name": "Ленинградская область",
+      "level": "subject",
+      "source_header_row": 2739,
+      "subject_entity": true,
+      "aggregation_role": "include in disjoint regional sum",
+      "settlement_blocks": [
+        {
+          "settlement": "total",
+          "source_total_row": 2740,
+          "totals": {
+            "B": "2000997",
+            "C": "940455",
+            "D": "1060542"
+          }
+        },
+        {
+          "settlement": "urban",
+          "source_total_row": 2773,
+          "totals": {
+            "B": "1346333",
+            "C": "623875",
+            "D": "722458"
+          }
+        },
+        {
+          "settlement": "rural",
+          "source_total_row": 2806,
+          "totals": {
+            "B": "654664",
+            "C": "316580",
+            "D": "338084"
+          }
+        }
+      ],
+      "parent_FD": "Северо-Западный федеральный округ"
+    },
+    {
+      "source_name": "Мурманская область",
+      "level": "subject",
+      "source_header_row": 2839,
+      "subject_entity": true,
+      "aggregation_role": "include in disjoint regional sum",
+      "settlement_blocks": [
+        {
+          "settlement": "total",
+          "source_total_row": 2840,
+          "totals": {
+            "B": "667744",
+            "C": "314949",
+            "D": "352795"
+          }
+        },
+        {
+          "settlement": "urban",
+          "source_total_row": 2873,
+          "totals": {
+            "B": "621639",
+            "C": "289984",
+            "D": "331655"
+          }
+        },
+        {
+          "settlement": "rural",
+          "source_total_row": 2906,
+          "totals": {
+            "B": "46105",
+            "C": "24965",
+            "D": "21140"
+          }
+        }
+      ],
+      "parent_FD": "Северо-Западный федеральный округ"
+    },
+    {
+      "source_name": "Новгородская область",
+      "level": "subject",
+      "source_header_row": 2939,
+      "subject_entity": true,
+      "aggregation_role": "include in disjoint regional sum",
+      "settlement_blocks": [
+        {
+          "settlement": "total",
+          "source_total_row": 2940,
+          "totals": {
+            "B": "583387",
+            "C": "261695",
+            "D": "321692"
+          }
+        },
+        {
+          "settlement": "urban",
+          "source_total_row": 2973,
+          "totals": {
+            "B": "425729",
+            "C": "186758",
+            "D": "238971"
+          }
+        },
+        {
+          "settlement": "rural",
+          "source_total_row": 3006,
+          "totals": {
+            "B": "157658",
+            "C": "74937",
+            "D": "82721"
+          }
+        }
+      ],
+      "parent_FD": "Северо-Западный федеральный округ"
+    },
+    {
+      "source_name": "Псковская область",
+      "level": "subject",
+      "source_header_row": 3039,
+      "subject_entity": true,
+      "aggregation_role": "include in disjoint regional sum",
+      "settlement_blocks": [
+        {
+          "settlement": "total",
+          "source_total_row": 3040,
+          "totals": {
+            "B": "599084",
+            "C": "272084",
+            "D": "327000"
+          }
+        },
+        {
+          "settlement": "urban",
+          "source_total_row": 3073,
+          "totals": {
+            "B": "424480",
+            "C": "188466",
+            "D": "236014"
+          }
+        },
+        {
+          "settlement": "rural",
+          "source_total_row": 3106,
+          "totals": {
+            "B": "174604",
+            "C": "83618",
+            "D": "90986"
+          }
+        }
+      ],
+      "parent_FD": "Северо-Западный федеральный округ"
+    },
+    {
+      "source_name": "г. Санкт-Петербург",
+      "level": "subject",
+      "source_header_row": 3139,
+      "subject_entity": true,
+      "aggregation_role": "include in disjoint regional sum",
+      "settlement_blocks": [
+        {
+          "settlement": "urban",
+          "source_total_row": 3140,
+          "totals": {
+            "B": "5601911",
+            "C": "2525726",
+            "D": "3076185"
+          }
+        }
+      ],
+      "parent_FD": "Северо-Западный федеральный округ"
+    },
+    {
+      "source_name": "Южный федеральный округ",
+      "level": "FD",
+      "source_header_row": 3173,
+      "subject_entity": false,
+      "aggregation_role": "aggregate only; never add to children",
+      "settlement_blocks": [
+        {
+          "settlement": "total",
+          "source_total_row": 3174,
+          "totals": {
+            "B": "16746442",
+            "C": "7848276",
+            "D": "8898166"
+          }
+        },
+        {
+          "settlement": "urban",
+          "source_total_row": 3207,
+          "totals": {
+            "B": "10578268",
+            "C": "4897122",
+            "D": "5681146"
+          }
+        },
+        {
+          "settlement": "rural",
+          "source_total_row": 3240,
+          "totals": {
+            "B": "6168174",
+            "C": "2951154",
+            "D": "3217020"
+          }
+        }
+      ],
+      "parent_FD": null
+    },
+    {
+      "source_name": "Республика Адыгея",
+      "level": "subject",
+      "source_header_row": 3273,
+      "subject_entity": true,
+      "aggregation_role": "include in disjoint regional sum",
+      "settlement_blocks": [
+        {
+          "settlement": "total",
+          "source_total_row": 3274,
+          "totals": {
+            "B": "496934",
+            "C": "232796",
+            "D": "264138"
+          }
+        },
+        {
+          "settlement": "urban",
+          "source_total_row": 3307,
+          "totals": {
+            "B": "245698",
+            "C": "112369",
+            "D": "133329"
+          }
+        },
+        {
+          "settlement": "rural",
+          "source_total_row": 3340,
+          "totals": {
+            "B": "251236",
+            "C": "120427",
+            "D": "130809"
+          }
+        }
+      ],
+      "parent_FD": "Южный федеральный округ"
+    },
+    {
+      "source_name": "Республика Калмыкия",
+      "level": "subject",
+      "source_header_row": 3373,
+      "subject_entity": true,
+      "aggregation_role": "include in disjoint regional sum",
+      "settlement_blocks": [
+        {
+          "settlement": "total",
+          "source_total_row": 3374,
+          "totals": {
+            "B": "267133",
+            "C": "128714",
+            "D": "138419"
+          }
+        },
+        {
+          "settlement": "urban",
+          "source_total_row": 3407,
+          "totals": {
+            "B": "124702",
+            "C": "56727",
+            "D": "67975"
+          }
+        },
+        {
+          "settlement": "rural",
+          "source_total_row": 3440,
+          "totals": {
+            "B": "142431",
+            "C": "71987",
+            "D": "70444"
+          }
+        }
+      ],
+      "parent_FD": "Южный федеральный округ"
+    },
+    {
+      "source_name": "Республика Крым",
+      "level": "subject",
+      "source_header_row": 3473,
+      "subject_entity": true,
+      "aggregation_role": "include in disjoint regional sum",
+      "settlement_blocks": [
+        {
+          "settlement": "total",
+          "source_total_row": 3474,
+          "totals": {
+            "B": "1934630",
+            "C": "895954",
+            "D": "1038676"
+          }
+        },
+        {
+          "settlement": "urban",
+          "source_total_row": 3507,
+          "totals": {
+            "B": "976459",
+            "C": "444180",
+            "D": "532279"
+          }
+        },
+        {
+          "settlement": "rural",
+          "source_total_row": 3540,
+          "totals": {
+            "B": "958171",
+            "C": "451774",
+            "D": "506397"
+          }
+        }
+      ],
+      "parent_FD": "Южный федеральный округ"
+    },
+    {
+      "source_name": "Краснодарский край",
+      "level": "subject",
+      "source_header_row": 3573,
+      "subject_entity": true,
+      "aggregation_role": "include in disjoint regional sum",
+      "settlement_blocks": [
+        {
+          "settlement": "total",
+          "source_total_row": 3574,
+          "totals": {
+            "B": "5838273",
+            "C": "2751921",
+            "D": "3086352"
+          }
+        },
+        {
+          "settlement": "urban",
+          "source_total_row": 3607,
+          "totals": {
+            "B": "3320795",
+            "C": "1555647",
+            "D": "1765148"
+          }
+        },
+        {
+          "settlement": "rural",
+          "source_total_row": 3640,
+          "totals": {
+            "B": "2517478",
+            "C": "1196274",
+            "D": "1321204"
+          }
+        }
+      ],
+      "parent_FD": "Южный федеральный округ"
+    },
+    {
+      "source_name": "Астраханская область",
+      "level": "subject",
+      "source_header_row": 3673,
+      "subject_entity": true,
+      "aggregation_role": "include in disjoint regional sum",
+      "settlement_blocks": [
+        {
+          "settlement": "total",
+          "source_total_row": 3674,
+          "totals": {
+            "B": "960142",
+            "C": "450536",
+            "D": "509606"
+          }
+        },
+        {
+          "settlement": "urban",
+          "source_total_row": 3707,
+          "totals": {
+            "B": "617874",
+            "C": "284850",
+            "D": "333024"
+          }
+        },
+        {
+          "settlement": "rural",
+          "source_total_row": 3740,
+          "totals": {
+            "B": "342268",
+            "C": "165686",
+            "D": "176582"
+          }
+        }
+      ],
+      "parent_FD": "Южный федеральный округ"
+    },
+    {
+      "source_name": "Волгоградская область",
+      "level": "subject",
+      "source_header_row": 3773,
+      "subject_entity": true,
+      "aggregation_role": "include in disjoint regional sum",
+      "settlement_blocks": [
+        {
+          "settlement": "total",
+          "source_total_row": 3774,
+          "totals": {
+            "B": "2500781",
+            "C": "1170398",
+            "D": "1330383"
+          }
+        },
+        {
+          "settlement": "urban",
+          "source_total_row": 3807,
+          "totals": {
+            "B": "1935596",
+            "C": "894410",
+            "D": "1041186"
+          }
+        },
+        {
+          "settlement": "rural",
+          "source_total_row": 3840,
+          "totals": {
+            "B": "565185",
+            "C": "275988",
+            "D": "289197"
+          }
+        }
+      ],
+      "parent_FD": "Южный федеральный округ"
+    },
+    {
+      "source_name": "Ростовская область",
+      "level": "subject",
+      "source_header_row": 3873,
+      "subject_entity": true,
+      "aggregation_role": "include in disjoint regional sum",
+      "settlement_blocks": [
+        {
+          "settlement": "total",
+          "source_total_row": 3874,
+          "totals": {
+            "B": "4200729",
+            "C": "1957135",
+            "D": "2243594"
+          }
+        },
+        {
+          "settlement": "urban",
+          "source_total_row": 3907,
+          "totals": {
+            "B": "2851667",
+            "C": "1308918",
+            "D": "1542749"
+          }
+        },
+        {
+          "settlement": "rural",
+          "source_total_row": 3940,
+          "totals": {
+            "B": "1349062",
+            "C": "648217",
+            "D": "700845"
+          }
+        }
+      ],
+      "parent_FD": "Южный федеральный округ"
+    },
+    {
+      "source_name": "г. Севастополь",
+      "level": "subject",
+      "source_header_row": 3973,
+      "subject_entity": true,
+      "aggregation_role": "include in disjoint regional sum",
+      "settlement_blocks": [
+        {
+          "settlement": "total",
+          "source_total_row": 3974,
+          "totals": {
+            "B": "547820",
+            "C": "260822",
+            "D": "286998"
+          }
+        },
+        {
+          "settlement": "urban",
+          "source_total_row": 4007,
+          "totals": {
+            "B": "505477",
+            "C": "240021",
+            "D": "265456"
+          }
+        },
+        {
+          "settlement": "rural",
+          "source_total_row": 4040,
+          "totals": {
+            "B": "42343",
+            "C": "20801",
+            "D": "21542"
+          }
+        }
+      ],
+      "parent_FD": "Южный федеральный округ"
+    },
+    {
+      "source_name": "Северо-Кавказский федеральный округ",
+      "level": "FD",
+      "source_header_row": 4073,
+      "subject_entity": false,
+      "aggregation_role": "aggregate only; never add to children",
+      "settlement_blocks": [
+        {
+          "settlement": "total",
+          "source_total_row": 4074,
+          "totals": {
+            "B": "10171434",
+            "C": "4921947",
+            "D": "5249487"
+          }
+        },
+        {
+          "settlement": "urban",
+          "source_total_row": 4107,
+          "totals": {
+            "B": "5152929",
+            "C": "2462309",
+            "D": "2690620"
+          }
+        },
+        {
+          "settlement": "rural",
+          "source_total_row": 4140,
+          "totals": {
+            "B": "5018505",
+            "C": "2459638",
+            "D": "2558867"
+          }
+        }
+      ],
+      "parent_FD": null
+    },
+    {
+      "source_name": "Республика Дагестан",
+      "level": "subject",
+      "source_header_row": 4173,
+      "subject_entity": true,
+      "aggregation_role": "include in disjoint regional sum",
+      "settlement_blocks": [
+        {
+          "settlement": "total",
+          "source_total_row": 4174,
+          "totals": {
+            "B": "3182054",
+            "C": "1569899",
+            "D": "1612155"
+          }
+        },
+        {
+          "settlement": "urban",
+          "source_total_row": 4207,
+          "totals": {
+            "B": "1438640",
+            "C": "709853",
+            "D": "728787"
+          }
+        },
+        {
+          "settlement": "rural",
+          "source_total_row": 4240,
+          "totals": {
+            "B": "1743414",
+            "C": "860046",
+            "D": "883368"
+          }
+        }
+      ],
+      "parent_FD": "Северо-Кавказский федеральный округ"
+    },
+    {
+      "source_name": "Республика Ингушетия",
+      "level": "subject",
+      "source_header_row": 4273,
+      "subject_entity": true,
+      "aggregation_role": "include in disjoint regional sum",
+      "settlement_blocks": [
+        {
+          "settlement": "total",
+          "source_total_row": 4274,
+          "totals": {
+            "B": "509541",
+            "C": "253561",
+            "D": "255980"
+          }
+        },
+        {
+          "settlement": "urban",
+          "source_total_row": 4307,
+          "totals": {
+            "B": "279216",
+            "C": "139160",
+            "D": "140056"
+          }
+        },
+        {
+          "settlement": "rural",
+          "source_total_row": 4340,
+          "totals": {
+            "B": "230325",
+            "C": "114401",
+            "D": "115924"
+          }
+        }
+      ],
+      "parent_FD": "Северо-Кавказский федеральный округ"
+    },
+    {
+      "source_name": "Кабардино-Балкарская Республика",
+      "level": "subject",
+      "source_header_row": 4373,
+      "subject_entity": true,
+      "aggregation_role": "include in disjoint regional sum",
+      "settlement_blocks": [
+        {
+          "settlement": "total",
+          "source_total_row": 4374,
+          "totals": {
+            "B": "904200",
+            "C": "429062",
+            "D": "475138"
+          }
+        },
+        {
+          "settlement": "urban",
+          "source_total_row": 4407,
+          "totals": {
+            "B": "469160",
+            "C": "216630",
+            "D": "252530"
+          }
+        },
+        {
+          "settlement": "rural",
+          "source_total_row": 4440,
+          "totals": {
+            "B": "435040",
+            "C": "212432",
+            "D": "222608"
+          }
+        }
+      ],
+      "parent_FD": "Северо-Кавказский федеральный округ"
+    },
+    {
+      "source_name": "Карачаево-Черкесская Республика",
+      "level": "subject",
+      "source_header_row": 4473,
+      "subject_entity": true,
+      "aggregation_role": "include in disjoint regional sum",
+      "settlement_blocks": [
+        {
+          "settlement": "total",
+          "source_total_row": 4474,
+          "totals": {
+            "B": "469865",
+            "C": "221252",
+            "D": "248613"
+          }
+        },
+        {
+          "settlement": "urban",
+          "source_total_row": 4507,
+          "totals": {
+            "B": "194285",
+            "C": "88354",
+            "D": "105931"
+          }
+        },
+        {
+          "settlement": "rural",
+          "source_total_row": 4540,
+          "totals": {
+            "B": "275580",
+            "C": "132898",
+            "D": "142682"
+          }
+        }
+      ],
+      "parent_FD": "Северо-Кавказский федеральный округ"
+    },
+    {
+      "source_name": "Республика Северная Осетия – Алания",
+      "level": "subject",
+      "source_header_row": 4573,
+      "subject_entity": true,
+      "aggregation_role": "include in disjoint regional sum",
+      "settlement_blocks": [
+        {
+          "settlement": "total",
+          "source_total_row": 4574,
+          "totals": {
+            "B": "687357",
+            "C": "320546",
+            "D": "366811"
+          }
+        },
+        {
+          "settlement": "urban",
+          "source_total_row": 4607,
+          "totals": {
+            "B": "434479",
+            "C": "198124",
+            "D": "236355"
+          }
+        },
+        {
+          "settlement": "rural",
+          "source_total_row": 4640,
+          "totals": {
+            "B": "252878",
+            "C": "122422",
+            "D": "130456"
+          }
+        }
+      ],
+      "parent_FD": "Северо-Кавказский федеральный округ"
+    },
+    {
+      "source_name": "Чеченская Республика",
+      "level": "subject",
+      "source_header_row": 4673,
+      "subject_entity": true,
+      "aggregation_role": "include in disjoint regional sum",
+      "settlement_blocks": [
+        {
+          "settlement": "total",
+          "source_total_row": 4674,
+          "totals": {
+            "B": "1510824",
+            "C": "757229",
+            "D": "753595"
+          }
+        },
+        {
+          "settlement": "urban",
+          "source_total_row": 4707,
+          "totals": {
+            "B": "576459",
+            "C": "290902",
+            "D": "285557"
+          }
+        },
+        {
+          "settlement": "rural",
+          "source_total_row": 4740,
+          "totals": {
+            "B": "934365",
+            "C": "466327",
+            "D": "468038"
+          }
+        }
+      ],
+      "parent_FD": "Северо-Кавказский федеральный округ"
+    },
+    {
+      "source_name": "Ставропольский край",
+      "level": "subject",
+      "source_header_row": 4773,
+      "subject_entity": true,
+      "aggregation_role": "include in disjoint regional sum",
+      "settlement_blocks": [
+        {
+          "settlement": "total",
+          "source_total_row": 4774,
+          "totals": {
+            "B": "2907593",
+            "C": "1370398",
+            "D": "1537195"
+          }
+        },
+        {
+          "settlement": "urban",
+          "source_total_row": 4807,
+          "totals": {
+            "B": "1760690",
+            "C": "819286",
+            "D": "941404"
+          }
+        },
+        {
+          "settlement": "rural",
+          "source_total_row": 4840,
+          "totals": {
+            "B": "1146903",
+            "C": "551112",
+            "D": "595791"
+          }
+        }
+      ],
+      "parent_FD": "Северо-Кавказский федеральный округ"
+    },
+    {
+      "source_name": "Приволжский федеральный округ",
+      "level": "FD",
+      "source_header_row": 4873,
+      "subject_entity": false,
+      "aggregation_role": "aggregate only; never add to children",
+      "settlement_blocks": [
+        {
+          "settlement": "total",
+          "source_total_row": 4874,
+          "totals": {
+            "B": "28943264",
+            "C": "13373323",
+            "D": "15569941"
+          }
+        },
+        {
+          "settlement": "urban",
+          "source_total_row": 4907,
+          "totals": {
+            "B": "20876680",
+            "C": "9463231",
+            "D": "11413449"
+          }
+        },
+        {
+          "settlement": "rural",
+          "source_total_row": 4940,
+          "totals": {
+            "B": "8066584",
+            "C": "3910092",
+            "D": "4156492"
+          }
+        }
+      ],
+      "parent_FD": null
+    },
+    {
+      "source_name": "Республика Башкортостан",
+      "level": "subject",
+      "source_header_row": 4973,
+      "subject_entity": true,
+      "aggregation_role": "include in disjoint regional sum",
+      "settlement_blocks": [
+        {
+          "settlement": "total",
+          "source_total_row": 4974,
+          "totals": {
+            "B": "4091423",
+            "C": "1931622",
+            "D": "2159801"
+          }
+        },
+        {
+          "settlement": "urban",
+          "source_total_row": 5007,
+          "totals": {
+            "B": "2530190",
+            "C": "1169416",
+            "D": "1360774"
+          }
+        },
+        {
+          "settlement": "rural",
+          "source_total_row": 5040,
+          "totals": {
+            "B": "1561233",
+            "C": "762206",
+            "D": "799027"
+          }
+        }
+      ],
+      "parent_FD": "Приволжский федеральный округ"
+    },
+    {
+      "source_name": "Республика Марий Эл",
+      "level": "subject",
+      "source_header_row": 5073,
+      "subject_entity": true,
+      "aggregation_role": "include in disjoint regional sum",
+      "settlement_blocks": [
+        {
+          "settlement": "total",
+          "source_total_row": 5074,
+          "totals": {
+            "B": "677097",
+            "C": "315150",
+            "D": "361947"
+          }
+        },
+        {
+          "settlement": "urban",
+          "source_total_row": 5107,
+          "totals": {
+            "B": "462899",
+            "C": "209632",
+            "D": "253267"
+          }
+        },
+        {
+          "settlement": "rural",
+          "source_total_row": 5140,
+          "totals": {
+            "B": "214198",
+            "C": "105518",
+            "D": "108680"
+          }
+        }
+      ],
+      "parent_FD": "Приволжский федеральный округ"
+    },
+    {
+      "source_name": "Республика Мордовия",
+      "level": "subject",
+      "source_header_row": 5173,
+      "subject_entity": true,
+      "aggregation_role": "include in disjoint regional sum",
+      "settlement_blocks": [
+        {
+          "settlement": "total",
+          "source_total_row": 5174,
+          "totals": {
+            "B": "783552",
+            "C": "363105",
+            "D": "420447"
+          }
+        },
+        {
+          "settlement": "urban",
+          "source_total_row": 5207,
+          "totals": {
+            "B": "496129",
+            "C": "223521",
+            "D": "272608"
+          }
+        },
+        {
+          "settlement": "rural",
+          "source_total_row": 5240,
+          "totals": {
+            "B": "287423",
+            "C": "139584",
+            "D": "147839"
+          }
+        }
+      ],
+      "parent_FD": "Приволжский федеральный округ"
+    },
+    {
+      "source_name": "Республика Татарстан",
+      "level": "subject",
+      "source_header_row": 5273,
+      "subject_entity": true,
+      "aggregation_role": "include in disjoint regional sum",
+      "settlement_blocks": [
+        {
+          "settlement": "total",
+          "source_total_row": 5274,
+          "totals": {
+            "B": "4004809",
+            "C": "1869836",
+            "D": "2134973"
+          }
+        },
+        {
+          "settlement": "urban",
+          "source_total_row": 5307,
+          "totals": {
+            "B": "3074048",
+            "C": "1414019",
+            "D": "1660029"
+          }
+        },
+        {
+          "settlement": "rural",
+          "source_total_row": 5340,
+          "totals": {
+            "B": "930761",
+            "C": "455817",
+            "D": "474944"
+          }
+        }
+      ],
+      "parent_FD": "Приволжский федеральный округ"
+    },
+    {
+      "source_name": "Удмуртская Республика",
+      "level": "subject",
+      "source_header_row": 5373,
+      "subject_entity": true,
+      "aggregation_role": "include in disjoint regional sum",
+      "settlement_blocks": [
+        {
+          "settlement": "total",
+          "source_total_row": 5374,
+          "totals": {
+            "B": "1452914",
+            "C": "665504",
+            "D": "787410"
+          }
+        },
+        {
+          "settlement": "urban",
+          "source_total_row": 5407,
+          "totals": {
+            "B": "954245",
+            "C": "425509",
+            "D": "528736"
+          }
+        },
+        {
+          "settlement": "rural",
+          "source_total_row": 5440,
+          "totals": {
+            "B": "498669",
+            "C": "239995",
+            "D": "258674"
+          }
+        }
+      ],
+      "parent_FD": "Приволжский федеральный округ"
+    },
+    {
+      "source_name": "Чувашская Республика",
+      "level": "subject",
+      "source_header_row": 5473,
+      "subject_entity": true,
+      "aggregation_role": "include in disjoint regional sum",
+      "settlement_blocks": [
+        {
+          "settlement": "total",
+          "source_total_row": 5474,
+          "totals": {
+            "B": "1186909",
+            "C": "549868",
+            "D": "637041"
+          }
+        },
+        {
+          "settlement": "urban",
+          "source_total_row": 5507,
+          "totals": {
+            "B": "757986",
+            "C": "336675",
+            "D": "421311"
+          }
+        },
+        {
+          "settlement": "rural",
+          "source_total_row": 5540,
+          "totals": {
+            "B": "428923",
+            "C": "213193",
+            "D": "215730"
+          }
+        }
+      ],
+      "parent_FD": "Приволжский федеральный округ"
+    },
+    {
+      "source_name": "Пермский край",
+      "level": "subject",
+      "source_header_row": 5573,
+      "subject_entity": true,
+      "aggregation_role": "include in disjoint regional sum",
+      "settlement_blocks": [
+        {
+          "settlement": "total",
+          "source_total_row": 5574,
+          "totals": {
+            "B": "2532405",
+            "C": "1159497",
+            "D": "1372908"
+          }
+        },
+        {
+          "settlement": "urban",
+          "source_total_row": 5607,
+          "totals": {
+            "B": "1915308",
+            "C": "860796",
+            "D": "1054512"
+          }
+        },
+        {
+          "settlement": "rural",
+          "source_total_row": 5640,
+          "totals": {
+            "B": "617097",
+            "C": "298701",
+            "D": "318396"
+          }
+        }
+      ],
+      "parent_FD": "Приволжский федеральный округ"
+    },
+    {
+      "source_name": "Кировская область",
+      "level": "subject",
+      "source_header_row": 5673,
+      "subject_entity": true,
+      "aggregation_role": "include in disjoint regional sum",
+      "settlement_blocks": [
+        {
+          "settlement": "total",
+          "source_total_row": 5674,
+          "totals": {
+            "B": "1153680",
+            "C": "526926",
+            "D": "626754"
+          }
+        },
+        {
+          "settlement": "urban",
+          "source_total_row": 5707,
+          "totals": {
+            "B": "897247",
+            "C": "404252",
+            "D": "492995"
+          }
+        },
+        {
+          "settlement": "rural",
+          "source_total_row": 5740,
+          "totals": {
+            "B": "256433",
+            "C": "122674",
+            "D": "133759"
+          }
+        }
+      ],
+      "parent_FD": "Приволжский федеральный округ"
+    },
+    {
+      "source_name": "Нижегородская область",
+      "level": "subject",
+      "source_header_row": 5773,
+      "subject_entity": true,
+      "aggregation_role": "include in disjoint regional sum",
+      "settlement_blocks": [
+        {
+          "settlement": "total",
+          "source_total_row": 5774,
+          "totals": {
+            "B": "3119115",
+            "C": "1411929",
+            "D": "1707186"
+          }
+        },
+        {
+          "settlement": "urban",
+          "source_total_row": 5807,
+          "totals": {
+            "B": "2493089",
+            "C": "1111753",
+            "D": "1381336"
+          }
+        },
+        {
+          "settlement": "rural",
+          "source_total_row": 5840,
+          "totals": {
+            "B": "626026",
+            "C": "300176",
+            "D": "325850"
+          }
+        }
+      ],
+      "parent_FD": "Приволжский федеральный округ"
+    },
+    {
+      "source_name": "Оренбургская область",
+      "level": "subject",
+      "source_header_row": 5873,
+      "subject_entity": true,
+      "aggregation_role": "include in disjoint regional sum",
+      "settlement_blocks": [
+        {
+          "settlement": "total",
+          "source_total_row": 5874,
+          "totals": {
+            "B": "1862767",
+            "C": "863980",
+            "D": "998787"
+          }
+        },
+        {
+          "settlement": "urban",
+          "source_total_row": 5907,
+          "totals": {
+            "B": "1111684",
+            "C": "502844",
+            "D": "608840"
+          }
+        },
+        {
+          "settlement": "rural",
+          "source_total_row": 5940,
+          "totals": {
+            "B": "751083",
+            "C": "361136",
+            "D": "389947"
+          }
+        }
+      ],
+      "parent_FD": "Приволжский федеральный округ"
+    },
+    {
+      "source_name": "Пензенская область",
+      "level": "subject",
+      "source_header_row": 5973,
+      "subject_entity": true,
+      "aggregation_role": "include in disjoint regional sum",
+      "settlement_blocks": [
+        {
+          "settlement": "total",
+          "source_total_row": 5974,
+          "totals": {
+            "B": "1266348",
+            "C": "577266",
+            "D": "689082"
+          }
+        },
+        {
+          "settlement": "urban",
+          "source_total_row": 6007,
+          "totals": {
+            "B": "870471",
+            "C": "388896",
+            "D": "481575"
+          }
+        },
+        {
+          "settlement": "rural",
+          "source_total_row": 6040,
+          "totals": {
+            "B": "395877",
+            "C": "188370",
+            "D": "207507"
+          }
+        }
+      ],
+      "parent_FD": "Приволжский федеральный округ"
+    },
+    {
+      "source_name": "Самарская область",
+      "level": "subject",
+      "source_header_row": 6073,
+      "subject_entity": true,
+      "aggregation_role": "include in disjoint regional sum",
+      "settlement_blocks": [
+        {
+          "settlement": "total",
+          "source_total_row": 6074,
+          "totals": {
+            "B": "3172925",
+            "C": "1455755",
+            "D": "1717170"
+          }
+        },
+        {
+          "settlement": "urban",
+          "source_total_row": 6107,
+          "totals": {
+            "B": "2525568",
+            "C": "1143456",
+            "D": "1382112"
+          }
+        },
+        {
+          "settlement": "rural",
+          "source_total_row": 6140,
+          "totals": {
+            "B": "647357",
+            "C": "312299",
+            "D": "335058"
+          }
+        }
+      ],
+      "parent_FD": "Приволжский федеральный округ"
+    },
+    {
+      "source_name": "Саратовская область",
+      "level": "subject",
+      "source_header_row": 6173,
+      "subject_entity": true,
+      "aggregation_role": "include in disjoint regional sum",
+      "settlement_blocks": [
+        {
+          "settlement": "total",
+          "source_total_row": 6174,
+          "totals": {
+            "B": "2442575",
+            "C": "1132704",
+            "D": "1309871"
+          }
+        },
+        {
+          "settlement": "urban",
+          "source_total_row": 6207,
+          "totals": {
+            "B": "1870182",
+            "C": "855207",
+            "D": "1014975"
+          }
+        },
+        {
+          "settlement": "rural",
+          "source_total_row": 6240,
+          "totals": {
+            "B": "572393",
+            "C": "277497",
+            "D": "294896"
+          }
+        }
+      ],
+      "parent_FD": "Приволжский федеральный округ"
+    },
+    {
+      "source_name": "Ульяновская область",
+      "level": "subject",
+      "source_header_row": 6273,
+      "subject_entity": true,
+      "aggregation_role": "include in disjoint regional sum",
+      "settlement_blocks": [
+        {
+          "settlement": "total",
+          "source_total_row": 6274,
+          "totals": {
+            "B": "1196745",
+            "C": "550181",
+            "D": "646564"
+          }
+        },
+        {
+          "settlement": "urban",
+          "source_total_row": 6307,
+          "totals": {
+            "B": "917634",
+            "C": "417255",
+            "D": "500379"
+          }
+        },
+        {
+          "settlement": "rural",
+          "source_total_row": 6340,
+          "totals": {
+            "B": "279111",
+            "C": "132926",
+            "D": "146185"
+          }
+        }
+      ],
+      "parent_FD": "Приволжский федеральный округ"
+    },
+    {
+      "source_name": "Уральский федеральный округ",
+      "level": "FD",
+      "source_header_row": 6373,
+      "subject_entity": false,
+      "aggregation_role": "aggregate only; never add to children",
+      "settlement_blocks": [
+        {
+          "settlement": "total",
+          "source_total_row": 6374,
+          "totals": {
+            "B": "12300793",
+            "C": "5715990",
+            "D": "6584803"
+          }
+        },
+        {
+          "settlement": "urban",
+          "source_total_row": 6407,
+          "totals": {
+            "B": "10081231",
+            "C": "4647695",
+            "D": "5433536"
+          }
+        },
+        {
+          "settlement": "rural",
+          "source_total_row": 6440,
+          "totals": {
+            "B": "2219562",
+            "C": "1068295",
+            "D": "1151267"
+          }
+        }
+      ],
+      "parent_FD": null
+    },
+    {
+      "source_name": "Курганская область",
+      "level": "subject",
+      "source_header_row": 6473,
+      "subject_entity": true,
+      "aggregation_role": "include in disjoint regional sum",
+      "settlement_blocks": [
+        {
+          "settlement": "total",
+          "source_total_row": 6474,
+          "totals": {
+            "B": "776661",
+            "C": "353537",
+            "D": "423124"
+          }
+        },
+        {
+          "settlement": "urban",
+          "source_total_row": 6507,
+          "totals": {
+            "B": "496287",
+            "C": "220302",
+            "D": "275985"
+          }
+        },
+        {
+          "settlement": "rural",
+          "source_total_row": 6540,
+          "totals": {
+            "B": "280374",
+            "C": "133235",
+            "D": "147139"
+          }
+        }
+      ],
+      "parent_FD": "Уральский федеральный округ"
+    },
+    {
+      "source_name": "Свердловская область",
+      "level": "subject",
+      "source_header_row": 6573,
+      "subject_entity": true,
+      "aggregation_role": "include in disjoint regional sum",
+      "settlement_blocks": [
+        {
+          "settlement": "total",
+          "source_total_row": 6574,
+          "totals": {
+            "B": "4268998",
+            "C": "1975468",
+            "D": "2293530"
+          }
+        },
+        {
+          "settlement": "urban",
+          "source_total_row": 6607,
+          "totals": {
+            "B": "3661045",
+            "C": "1684229",
+            "D": "1976816"
+          }
+        },
+        {
+          "settlement": "rural",
+          "source_total_row": 6640,
+          "totals": {
+            "B": "607953",
+            "C": "291239",
+            "D": "316714"
+          }
+        }
+      ],
+      "parent_FD": "Уральский федеральный округ"
+    },
+    {
+      "source_name": "Тюменская область",
+      "level": "composite",
+      "source_header_row": 6673,
+      "subject_entity": true,
+      "aggregation_role": "exclude from disjoint subject sum; includes AO",
+      "settlement_blocks": [
+        {
+          "settlement": "total",
+          "source_total_row": 6674,
+          "totals": {
+            "B": "3823910",
+            "C": "1814658",
+            "D": "2009252"
+          }
+        },
+        {
+          "settlement": "urban",
+          "source_total_row": 6707,
+          "totals": {
+            "B": "3089023",
+            "C": "1455058",
+            "D": "1633965"
+          }
+        },
+        {
+          "settlement": "rural",
+          "source_total_row": 6740,
+          "totals": {
+            "B": "734887",
+            "C": "359600",
+            "D": "375287"
+          }
+        }
+      ],
+      "parent_FD": "Уральский федеральный округ"
+    },
+    {
+      "source_name": "Ханты-Мансийский автономный округ – Югра",
+      "level": "subject",
+      "source_header_row": 6774,
+      "subject_entity": true,
+      "aggregation_role": "include in disjoint regional sum",
+      "settlement_blocks": [
+        {
+          "settlement": "total",
+          "source_total_row": 6775,
+          "totals": {
+            "B": "1711480",
+            "C": "825611",
+            "D": "885869"
+          }
+        },
+        {
+          "settlement": "urban",
+          "source_total_row": 6808,
+          "totals": {
+            "B": "1575353",
+            "C": "756538",
+            "D": "818815"
+          }
+        },
+        {
+          "settlement": "rural",
+          "source_total_row": 6841,
+          "totals": {
+            "B": "136127",
+            "C": "69073",
+            "D": "67054"
+          }
+        }
+      ],
+      "parent_FD": "Уральский федеральный округ"
+    },
+    {
+      "source_name": "Ямало-Ненецкий автономный округ",
+      "level": "subject",
+      "source_header_row": 6874,
+      "subject_entity": true,
+      "aggregation_role": "include in disjoint regional sum",
+      "settlement_blocks": [
+        {
+          "settlement": "total",
+          "source_total_row": 6875,
+          "totals": {
+            "B": "510490",
+            "C": "248974",
+            "D": "261516"
+          }
+        },
+        {
+          "settlement": "urban",
+          "source_total_row": 6908,
+          "totals": {
+            "B": "432263",
+            "C": "210459",
+            "D": "221804"
+          }
+        },
+        {
+          "settlement": "rural",
+          "source_total_row": 6941,
+          "totals": {
+            "B": "78227",
+            "C": "38515",
+            "D": "39712"
+          }
+        }
+      ],
+      "parent_FD": "Уральский федеральный округ"
+    },
+    {
+      "source_name": "Тюменская область без автономных округов",
+      "level": "exclAO",
+      "source_header_row": 6974,
+      "subject_entity": false,
+      "aggregation_role": "include in disjoint regional sum",
+      "settlement_blocks": [
+        {
+          "settlement": "total",
+          "source_total_row": 6975,
+          "totals": {
+            "B": "1601940",
+            "C": "740073",
+            "D": "861867"
+          }
+        },
+        {
+          "settlement": "urban",
+          "source_total_row": 7008,
+          "totals": {
+            "B": "1081407",
+            "C": "488061",
+            "D": "593346"
+          }
+        },
+        {
+          "settlement": "rural",
+          "source_total_row": 7041,
+          "totals": {
+            "B": "520533",
+            "C": "252012",
+            "D": "268521"
+          }
+        }
+      ],
+      "parent_FD": "Уральский федеральный округ",
+      "composition_note": "Complementary remainder; add to child AO instead of composite, never together with composite."
+    },
+    {
+      "source_name": "Челябинская область",
+      "level": "subject",
+      "source_header_row": 7074,
+      "subject_entity": true,
+      "aggregation_role": "include in disjoint regional sum",
+      "settlement_blocks": [
+        {
+          "settlement": "total",
+          "source_total_row": 7075,
+          "totals": {
+            "B": "3431224",
+            "C": "1572327",
+            "D": "1858897"
+          }
+        },
+        {
+          "settlement": "urban",
+          "source_total_row": 7108,
+          "totals": {
+            "B": "2834876",
+            "C": "1288106",
+            "D": "1546770"
+          }
+        },
+        {
+          "settlement": "rural",
+          "source_total_row": 7141,
+          "totals": {
+            "B": "596348",
+            "C": "284221",
+            "D": "312127"
+          }
+        }
+      ],
+      "parent_FD": "Уральский федеральный округ"
+    },
+    {
+      "source_name": "Сибирский федеральный округ",
+      "level": "FD",
+      "source_header_row": 7174,
+      "subject_entity": false,
+      "aggregation_role": "aggregate only; never add to children",
+      "settlement_blocks": [
+        {
+          "settlement": "total",
+          "source_total_row": 7175,
+          "totals": {
+            "B": "16792699",
+            "C": "7733997",
+            "D": "9058702"
+          }
+        },
+        {
+          "settlement": "urban",
+          "source_total_row": 7208,
+          "totals": {
+            "B": "12579046",
+            "C": "5707087",
+            "D": "6871959"
+          }
+        },
+        {
+          "settlement": "rural",
+          "source_total_row": 7241,
+          "totals": {
+            "B": "4213653",
+            "C": "2026910",
+            "D": "2186743"
+          }
+        }
+      ],
+      "parent_FD": null
+    },
+    {
+      "source_name": "Республика Алтай",
+      "level": "subject",
+      "source_header_row": 7274,
+      "subject_entity": true,
+      "aggregation_role": "include in disjoint regional sum",
+      "settlement_blocks": [
+        {
+          "settlement": "total",
+          "source_total_row": 7275,
+          "totals": {
+            "B": "210924",
+            "C": "99486",
+            "D": "111438"
+          }
+        },
+        {
+          "settlement": "urban",
+          "source_total_row": 7308,
+          "totals": {
+            "B": "65342",
+            "C": "29369",
+            "D": "35973"
+          }
+        },
+        {
+          "settlement": "rural",
+          "source_total_row": 7341,
+          "totals": {
+            "B": "145582",
+            "C": "70117",
+            "D": "75465"
+          }
+        }
+      ],
+      "parent_FD": "Сибирский федеральный округ"
+    },
+    {
+      "source_name": "Республика Тыва",
+      "level": "subject",
+      "source_header_row": 7374,
+      "subject_entity": true,
+      "aggregation_role": "include in disjoint regional sum",
+      "settlement_blocks": [
+        {
+          "settlement": "total",
+          "source_total_row": 7375,
+          "totals": {
+            "B": "336651",
+            "C": "159045",
+            "D": "177606"
+          }
+        },
+        {
+          "settlement": "urban",
+          "source_total_row": 7408,
+          "totals": {
+            "B": "183931",
+            "C": "84722",
+            "D": "99209"
+          }
+        },
+        {
+          "settlement": "rural",
+          "source_total_row": 7441,
+          "totals": {
+            "B": "152720",
+            "C": "74323",
+            "D": "78397"
+          }
+        }
+      ],
+      "parent_FD": "Сибирский федеральный округ"
+    },
+    {
+      "source_name": "Республика Хакасия",
+      "level": "subject",
+      "source_header_row": 7474,
+      "subject_entity": true,
+      "aggregation_role": "include in disjoint regional sum",
+      "settlement_blocks": [
+        {
+          "settlement": "total",
+          "source_total_row": 7475,
+          "totals": {
+            "B": "534795",
+            "C": "245777",
+            "D": "289018"
+          }
+        },
+        {
+          "settlement": "urban",
+          "source_total_row": 7508,
+          "totals": {
+            "B": "365712",
+            "C": "164689",
+            "D": "201023"
+          }
+        },
+        {
+          "settlement": "rural",
+          "source_total_row": 7541,
+          "totals": {
+            "B": "169083",
+            "C": "81088",
+            "D": "87995"
+          }
+        }
+      ],
+      "parent_FD": "Сибирский федеральный округ"
+    },
+    {
+      "source_name": "Алтайский край",
+      "level": "subject",
+      "source_header_row": 7574,
+      "subject_entity": true,
+      "aggregation_role": "include in disjoint regional sum",
+      "settlement_blocks": [
+        {
+          "settlement": "total",
+          "source_total_row": 7575,
+          "totals": {
+            "B": "2163693",
+            "C": "989539",
+            "D": "1174154"
+          }
+        },
+        {
+          "settlement": "urban",
+          "source_total_row": 7608,
+          "totals": {
+            "B": "1257795",
+            "C": "563078",
+            "D": "694717"
+          }
+        },
+        {
+          "settlement": "rural",
+          "source_total_row": 7641,
+          "totals": {
+            "B": "905898",
+            "C": "426461",
+            "D": "479437"
+          }
+        }
+      ],
+      "parent_FD": "Сибирский федеральный округ"
+    },
+    {
+      "source_name": "Красноярский край",
+      "level": "subject",
+      "source_header_row": 7674,
+      "subject_entity": true,
+      "aggregation_role": "include in disjoint regional sum",
+      "settlement_blocks": [
+        {
+          "settlement": "total",
+          "source_total_row": 7675,
+          "totals": {
+            "B": "2856971",
+            "C": "1327400",
+            "D": "1529571"
+          }
+        },
+        {
+          "settlement": "urban",
+          "source_total_row": 7708,
+          "totals": {
+            "B": "2265266",
+            "C": "1041326",
+            "D": "1223940"
+          }
+        },
+        {
+          "settlement": "rural",
+          "source_total_row": 7741,
+          "totals": {
+            "B": "591705",
+            "C": "286074",
+            "D": "305631"
+          }
+        }
+      ],
+      "parent_FD": "Сибирский федеральный округ"
+    },
+    {
+      "source_name": "Иркутская область",
+      "level": "subject",
+      "source_header_row": 7774,
+      "subject_entity": true,
+      "aggregation_role": "include in disjoint regional sum",
+      "settlement_blocks": [
+        {
+          "settlement": "total",
+          "source_total_row": 7775,
+          "totals": {
+            "B": "2370102",
+            "C": "1088515",
+            "D": "1281587"
+          }
+        },
+        {
+          "settlement": "urban",
+          "source_total_row": 7808,
+          "totals": {
+            "B": "1839500",
+            "C": "829004",
+            "D": "1010496"
+          }
+        },
+        {
+          "settlement": "rural",
+          "source_total_row": 7841,
+          "totals": {
+            "B": "530602",
+            "C": "259511",
+            "D": "271091"
+          }
+        }
+      ],
+      "parent_FD": "Сибирский федеральный округ"
+    },
+    {
+      "source_name": "Кемеровская область – Кузбасс",
+      "level": "subject",
+      "source_header_row": 7874,
+      "subject_entity": true,
+      "aggregation_role": "include in disjoint regional sum",
+      "settlement_blocks": [
+        {
+          "settlement": "total",
+          "source_total_row": 7875,
+          "totals": {
+            "B": "2600923",
+            "C": "1189901",
+            "D": "1411022"
+          }
+        },
+        {
+          "settlement": "urban",
+          "source_total_row": 7908,
+          "totals": {
+            "B": "2250341",
+            "C": "1019065",
+            "D": "1231276"
+          }
+        },
+        {
+          "settlement": "rural",
+          "source_total_row": 7941,
+          "totals": {
+            "B": "350582",
+            "C": "170836",
+            "D": "179746"
+          }
+        }
+      ],
+      "parent_FD": "Сибирский федеральный округ"
+    },
+    {
+      "source_name": "Новосибирская область",
+      "level": "subject",
+      "source_header_row": 7974,
+      "subject_entity": true,
+      "aggregation_role": "include in disjoint regional sum",
+      "settlement_blocks": [
+        {
+          "settlement": "total",
+          "source_total_row": 7975,
+          "totals": {
+            "B": "2797176",
+            "C": "1280452",
+            "D": "1516724"
+          }
+        },
+        {
+          "settlement": "urban",
+          "source_total_row": 8008,
+          "totals": {
+            "B": "2227390",
+            "C": "1006227",
+            "D": "1221163"
+          }
+        },
+        {
+          "settlement": "rural",
+          "source_total_row": 8041,
+          "totals": {
+            "B": "569786",
+            "C": "274225",
+            "D": "295561"
+          }
+        }
+      ],
+      "parent_FD": "Сибирский федеральный округ"
+    },
+    {
+      "source_name": "Омская область",
+      "level": "subject",
+      "source_header_row": 8074,
+      "subject_entity": true,
+      "aggregation_role": "include in disjoint regional sum",
+      "settlement_blocks": [
+        {
+          "settlement": "total",
+          "source_total_row": 8075,
+          "totals": {
+            "B": "1858798",
+            "C": "857031",
+            "D": "1001767"
+          }
+        },
+        {
+          "settlement": "urban",
+          "source_total_row": 8108,
+          "totals": {
+            "B": "1365999",
+            "C": "618598",
+            "D": "747401"
+          }
+        },
+        {
+          "settlement": "rural",
+          "source_total_row": 8141,
+          "totals": {
+            "B": "492799",
+            "C": "238433",
+            "D": "254366"
+          }
+        }
+      ],
+      "parent_FD": "Сибирский федеральный округ"
+    },
+    {
+      "source_name": "Томская область",
+      "level": "subject",
+      "source_header_row": 8174,
+      "subject_entity": true,
+      "aggregation_role": "include in disjoint regional sum",
+      "settlement_blocks": [
+        {
+          "settlement": "total",
+          "source_total_row": 8175,
+          "totals": {
+            "B": "1062666",
+            "C": "496851",
+            "D": "565815"
+          }
+        },
+        {
+          "settlement": "urban",
+          "source_total_row": 8208,
+          "totals": {
+            "B": "757770",
+            "C": "351009",
+            "D": "406761"
+          }
+        },
+        {
+          "settlement": "rural",
+          "source_total_row": 8241,
+          "totals": {
+            "B": "304896",
+            "C": "145842",
+            "D": "159054"
+          }
+        }
+      ],
+      "parent_FD": "Сибирский федеральный округ"
+    },
+    {
+      "source_name": "Дальневосточный федеральный округ",
+      "level": "FD",
+      "source_header_row": 8274,
+      "subject_entity": false,
+      "aggregation_role": "aggregate only; never add to children",
+      "settlement_blocks": [
+        {
+          "settlement": "total",
+          "source_total_row": 8275,
+          "totals": {
+            "B": "7975762",
+            "C": "3776121",
+            "D": "4199641"
+          }
+        },
+        {
+          "settlement": "urban",
+          "source_total_row": 8308,
+          "totals": {
+            "B": "5866829",
+            "C": "2742741",
+            "D": "3124088"
+          }
+        },
+        {
+          "settlement": "rural",
+          "source_total_row": 8341,
+          "totals": {
+            "B": "2108933",
+            "C": "1033380",
+            "D": "1075553"
+          }
+        }
+      ],
+      "parent_FD": null
+    },
+    {
+      "source_name": "Республика Бурятия",
+      "level": "subject",
+      "source_header_row": 8374,
+      "subject_entity": true,
+      "aggregation_role": "include in disjoint regional sum",
+      "settlement_blocks": [
+        {
+          "settlement": "total",
+          "source_total_row": 8375,
+          "totals": {
+            "B": "978588",
+            "C": "458832",
+            "D": "519756"
+          }
+        },
+        {
+          "settlement": "urban",
+          "source_total_row": 8408,
+          "totals": {
+            "B": "578514",
+            "C": "264433",
+            "D": "314081"
+          }
+        },
+        {
+          "settlement": "rural",
+          "source_total_row": 8441,
+          "totals": {
+            "B": "400074",
+            "C": "194399",
+            "D": "205675"
+          }
+        }
+      ],
+      "parent_FD": "Дальневосточный федеральный округ"
+    },
+    {
+      "source_name": "Республика Саха (Якутия)",
+      "level": "subject",
+      "source_header_row": 8474,
+      "subject_entity": true,
+      "aggregation_role": "include in disjoint regional sum",
+      "settlement_blocks": [
+        {
+          "settlement": "total",
+          "source_total_row": 8475,
+          "totals": {
+            "B": "995686",
+            "C": "480955",
+            "D": "514731"
+          }
+        },
+        {
+          "settlement": "urban",
+          "source_total_row": 8508,
+          "totals": {
+            "B": "665089",
+            "C": "319427",
+            "D": "345662"
+          }
+        },
+        {
+          "settlement": "rural",
+          "source_total_row": 8541,
+          "totals": {
+            "B": "330597",
+            "C": "161528",
+            "D": "169069"
+          }
+        }
+      ],
+      "parent_FD": "Дальневосточный федеральный округ"
+    },
+    {
+      "source_name": "Забайкальский край",
+      "level": "subject",
+      "source_header_row": 8574,
+      "subject_entity": true,
+      "aggregation_role": "include in disjoint regional sum",
+      "settlement_blocks": [
+        {
+          "settlement": "total",
+          "source_total_row": 8575,
+          "totals": {
+            "B": "1004125",
+            "C": "473869",
+            "D": "530256"
+          }
+        },
+        {
+          "settlement": "urban",
+          "source_total_row": 8608,
+          "totals": {
+            "B": "694192",
+            "C": "322210",
+            "D": "371982"
+          }
+        },
+        {
+          "settlement": "rural",
+          "source_total_row": 8641,
+          "totals": {
+            "B": "309933",
+            "C": "151659",
+            "D": "158274"
+          }
+        }
+      ],
+      "parent_FD": "Дальневосточный федеральный округ"
+    },
+    {
+      "source_name": "Камчатский край",
+      "level": "subject",
+      "source_header_row": 8674,
+      "subject_entity": true,
+      "aggregation_role": "include in disjoint regional sum",
+      "settlement_blocks": [
+        {
+          "settlement": "total",
+          "source_total_row": 8675,
+          "totals": {
+            "B": "291705",
+            "C": "142373",
+            "D": "149332"
+          }
+        },
+        {
+          "settlement": "urban",
+          "source_total_row": 8708,
+          "totals": {
+            "B": "227080",
+            "C": "110323",
+            "D": "116757"
+          }
+        },
+        {
+          "settlement": "rural",
+          "source_total_row": 8741,
+          "totals": {
+            "B": "64625",
+            "C": "32050",
+            "D": "32575"
+          }
+        }
+      ],
+      "parent_FD": "Дальневосточный федеральный округ"
+    },
+    {
+      "source_name": "Приморский край",
+      "level": "subject",
+      "source_header_row": 8774,
+      "subject_entity": true,
+      "aggregation_role": "include in disjoint regional sum",
+      "settlement_blocks": [
+        {
+          "settlement": "total",
+          "source_total_row": 8775,
+          "totals": {
+            "B": "1845165",
+            "C": "864725",
+            "D": "980440"
+          }
+        },
+        {
+          "settlement": "urban",
+          "source_total_row": 8808,
+          "totals": {
+            "B": "1446891",
+            "C": "670863",
+            "D": "776028"
+          }
+        },
+        {
+          "settlement": "rural",
+          "source_total_row": 8841,
+          "totals": {
+            "B": "398274",
+            "C": "193862",
+            "D": "204412"
+          }
+        }
+      ],
+      "parent_FD": "Дальневосточный федеральный округ"
+    },
+    {
+      "source_name": "Хабаровский край",
+      "level": "subject",
+      "source_header_row": 8874,
+      "subject_entity": true,
+      "aggregation_role": "include in disjoint regional sum",
+      "settlement_blocks": [
+        {
+          "settlement": "total",
+          "source_total_row": 8875,
+          "totals": {
+            "B": "1292944",
+            "C": "609253",
+            "D": "683691"
+          }
+        },
+        {
+          "settlement": "urban",
+          "source_total_row": 8908,
+          "totals": {
+            "B": "1078340",
+            "C": "501566",
+            "D": "576774"
+          }
+        },
+        {
+          "settlement": "rural",
+          "source_total_row": 8941,
+          "totals": {
+            "B": "214604",
+            "C": "107687",
+            "D": "106917"
+          }
+        }
+      ],
+      "parent_FD": "Дальневосточный федеральный округ"
+    },
+    {
+      "source_name": "Амурская область",
+      "level": "subject",
+      "source_header_row": 8974,
+      "subject_entity": true,
+      "aggregation_role": "include in disjoint regional sum",
+      "settlement_blocks": [
+        {
+          "settlement": "total",
+          "source_total_row": 8975,
+          "totals": {
+            "B": "766912",
+            "C": "362956",
+            "D": "403956"
+          }
+        },
+        {
+          "settlement": "urban",
+          "source_total_row": 9008,
+          "totals": {
+            "B": "522236",
+            "C": "243223",
+            "D": "279013"
+          }
+        },
+        {
+          "settlement": "rural",
+          "source_total_row": 9041,
+          "totals": {
+            "B": "244676",
+            "C": "119733",
+            "D": "124943"
+          }
+        }
+      ],
+      "parent_FD": "Дальневосточный федеральный округ"
+    },
+    {
+      "source_name": "Магаданская область",
+      "level": "subject",
+      "source_header_row": 9074,
+      "subject_entity": true,
+      "aggregation_role": "include in disjoint regional sum",
+      "settlement_blocks": [
+        {
+          "settlement": "total",
+          "source_total_row": 9075,
+          "totals": {
+            "B": "136085",
+            "C": "66141",
+            "D": "69944"
+          }
+        },
+        {
+          "settlement": "urban",
+          "source_total_row": 9108,
+          "totals": {
+            "B": "131124",
+            "C": "63511",
+            "D": "67613"
+          }
+        },
+        {
+          "settlement": "rural",
+          "source_total_row": 9141,
+          "totals": {
+            "B": "4961",
+            "C": "2630",
+            "D": "2331"
+          }
+        }
+      ],
+      "parent_FD": "Дальневосточный федеральный округ"
+    },
+    {
+      "source_name": "Сахалинская область",
+      "level": "subject",
+      "source_header_row": 9174,
+      "subject_entity": true,
+      "aggregation_role": "include in disjoint regional sum",
+      "settlement_blocks": [
+        {
+          "settlement": "total",
+          "source_total_row": 9175,
+          "totals": {
+            "B": "466609",
+            "C": "222805",
+            "D": "243804"
+          }
+        },
+        {
+          "settlement": "urban",
+          "source_total_row": 9208,
+          "totals": {
+            "B": "384481",
+            "C": "182983",
+            "D": "201498"
+          }
+        },
+        {
+          "settlement": "rural",
+          "source_total_row": 9241,
+          "totals": {
+            "B": "82128",
+            "C": "39822",
+            "D": "42306"
+          }
+        }
+      ],
+      "parent_FD": "Дальневосточный федеральный округ"
+    },
+    {
+      "source_name": "Еврейская автономная область",
+      "level": "subject",
+      "source_header_row": 9274,
+      "subject_entity": true,
+      "aggregation_role": "include in disjoint regional sum",
+      "settlement_blocks": [
+        {
+          "settlement": "total",
+          "source_total_row": 9275,
+          "totals": {
+            "B": "150453",
+            "C": "70604",
+            "D": "79849"
+          }
+        },
+        {
+          "settlement": "urban",
+          "source_total_row": 9308,
+          "totals": {
+            "B": "106493",
+            "C": "48174",
+            "D": "58319"
+          }
+        },
+        {
+          "settlement": "rural",
+          "source_total_row": 9341,
+          "totals": {
+            "B": "43960",
+            "C": "22430",
+            "D": "21530"
+          }
+        }
+      ],
+      "parent_FD": "Дальневосточный федеральный округ"
+    },
+    {
+      "source_name": "Чукотский автономный округ",
+      "level": "subject",
+      "source_header_row": 9374,
+      "subject_entity": true,
+      "aggregation_role": "include in disjoint regional sum",
+      "settlement_blocks": [
+        {
+          "settlement": "total",
+          "source_total_row": 9375,
+          "totals": {
+            "B": "47490",
+            "C": "23608",
+            "D": "23882"
+          }
+        },
+        {
+          "settlement": "urban",
+          "source_total_row": 9408,
+          "totals": {
+            "B": "32389",
+            "C": "16028",
+            "D": "16361"
+          }
+        },
+        {
+          "settlement": "rural",
+          "source_total_row": 9441,
+          "totals": {
+            "B": "15101",
+            "C": "7580",
+            "D": "7521"
+          }
+        }
+      ],
+      "parent_FD": "Дальневосточный федеральный округ"
+    }
+  ],
+  "selected_non_numeric_cells": [],
+  "controls": {
+    "selected_row_sex_parity_count": 5396,
+    "all_pass": true,
+    "fully_numeric_age_partition_blocks": 284,
+    "all_pass_age_partition": true,
+    "total_equals_urban_plus_rural_checks": 5358,
+    "all_pass_settlement_partition": true,
+    "geographic_age_sex_partition_checks": 570,
+    "all_pass_geographic_partition": true
+  },
+  "aggregation_controls": {
+    "RF_allages_persons": 147182123,
+    "sum8FD": 147182123,
+    "sum83_subject_plus2_exclAO_excluding2_composites": 147182123,
+    "disjoint_geographic_parts": 85,
+    "Moscow_SPB_control_selection": "Use only their observed urban block values for geographic sum; this does not create synthetic total or rural observations."
+  },
+  "source_blank_conventions": {
+    "selected_count_cells": "All16188 targeted B/C/D cells are explicit nonnegative integer numeric values; no dash, blank, nonnumeric or unknown-age target cells in this snapshot.",
+    "unknown_age": "No «возраст не указан» row in table2;18bins exactly exhaust every observed settlement block. Do not silently drop an unknown-age row if future layout introduces one.",
+    "other_columns": "E–H are percentages/sex ratio; X appears for non-applicable ratio/age-statistic cells. They are outside the count whitelist and must not be parsed as counts.",
+    "structural_absence": "Moscow/SPB have only urban blocks; total/rural source absence is not a numeric blank cell and must not be coerced to zero.",
+    "future_source_changes": "Fail closed on unexpected selected-cell text, unknown territory, changed age partitions, duplicates, missing totals; do not infer dash-as-zero without source-specific verified convention."
+  }
+}

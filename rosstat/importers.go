@@ -59,6 +59,7 @@ type rosstatImporter struct {
 // записями одного утверждения. Незамеченная правка запроса в объявлении оставила бы
 // реестр описывающим другой чек, а забытое объявление молча выключило бы префлайт.
 var rosstatImporters = []rosstatImporter{
+	{census2020Importer, "rosstat_census_2020", "SELECT count() FROM rosstat_census_2020 FINAL"},
 	{ipcMesImporter, "rosstat_ipc_mes", "SELECT count() FROM rosstat_ipc_mes FINAL"},
 	{ipcWeeksImporter, "rosstat_ipc_weeks", ""},
 	{salariesMesImporter, "rosstat_salaries_mes", "SELECT count() FROM rosstat_salaries_mes FINAL"},

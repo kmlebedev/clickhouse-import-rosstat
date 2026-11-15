@@ -1,0 +1,204 @@
+[
+  {
+    "query": "SELECT count() AS points,uniqExact(territory) AS territories,uniqExact(tuple(territory,settlement)) AS blocks,min(date) AS reference,min(loaded_at) AS first_loaded,max(loaded_at) AS last_loaded,groupBitXor(cityHash64(territory,territory_kind,settlement,sex,age_group,date,value,loaded_at)) AS checksum FROM v_rosstat_census_2020",
+    "result": {
+      "columns": [
+        "points",
+        "territories",
+        "blocks",
+        "reference",
+        "first_loaded",
+        "last_loaded",
+        "checksum"
+      ],
+      "rows": [
+        [
+          16188,
+          96,
+          284,
+          "2021-10-01",
+          "2026-11-15 21:19:30+05:00",
+          "2026-11-15 21:19:30+05:00",
+          "5885691337794177970"
+        ]
+      ]
+    }
+  },
+  {
+    "query": "SELECT territory_kind,uniqExact(territory) AS territories,count() AS points FROM v_rosstat_census_2020 GROUP BY territory_kind ORDER BY territory_kind",
+    "result": {
+      "columns": [
+        "territory_kind",
+        "territories",
+        "points"
+      ],
+      "rows": [
+        [
+          "FD",
+          8,
+          1368
+        ],
+        [
+          "RF",
+          1,
+          171
+        ],
+        [
+          "composite",
+          2,
+          342
+        ],
+        [
+          "exclAO",
+          2,
+          342
+        ],
+        [
+          "subject",
+          83,
+          13965
+        ]
+      ]
+    }
+  },
+  {
+    "query": "SELECT sex,value FROM v_rosstat_census_2020 WHERE territory_kind='RF' AND settlement='total' AND age_group='all' ORDER BY sex",
+    "result": {
+      "columns": [
+        "sex",
+        "value"
+      ],
+      "rows": [
+        [
+          "both",
+          147182123
+        ],
+        [
+          "female",
+          78750543
+        ],
+        [
+          "male",
+          68431580
+        ]
+      ]
+    }
+  },
+  {
+    "query": "SELECT count() AS groups,countIf(total!=parts OR n!=19) AS failed FROM (SELECT territory,settlement,sex,count() AS n,sumIf(value,age_group='all') AS total,sumIf(value,age_group!='all') AS parts FROM v_rosstat_census_2020 GROUP BY territory,settlement,sex)",
+    "result": {
+      "columns": [
+        "groups",
+        "failed"
+      ],
+      "rows": [
+        [
+          852,
+          0
+        ]
+      ]
+    }
+  },
+  {
+    "query": "SELECT count() AS groups,countIf(both!=male+female OR n!=3) AS failed FROM (SELECT territory,settlement,age_group,count() AS n,sumIf(value,sex='both') AS both,sumIf(value,sex='male') AS male,sumIf(value,sex='female') AS female FROM v_rosstat_census_2020 GROUP BY territory,settlement,age_group)",
+    "result": {
+      "columns": [
+        "groups",
+        "failed"
+      ],
+      "rows": [
+        [
+          5396,
+          0
+        ]
+      ]
+    }
+  },
+  {
+    "query": "SELECT count() AS groups,countIf(rf!=districts) AS failed FROM (SELECT settlement,sex,age_group,sumIf(value,territory_kind='RF') AS rf,sumIf(value,territory_kind='FD') AS districts FROM v_rosstat_census_2020 WHERE territory_kind IN ('RF','FD') GROUP BY settlement,sex,age_group)",
+    "result": {
+      "columns": [
+        "groups",
+        "failed"
+      ],
+      "rows": [
+        [
+          171,
+          0
+        ]
+      ]
+    }
+  },
+  {
+    "query": "SELECT count() AS groups,countIf(total!=urban+rural OR n!=3) AS failed FROM (SELECT territory,sex,age_group,count() AS n,sumIf(value,settlement='total') AS total,sumIf(value,settlement='urban') AS urban,sumIf(value,settlement='rural') AS rural FROM v_rosstat_census_2020 WHERE territory NOT IN ('г. Москва','г. Санкт-Петербург') GROUP BY territory,sex,age_group)",
+    "result": {
+      "columns": [
+        "groups",
+        "failed"
+      ],
+      "rows": [
+        [
+          5358,
+          0
+        ]
+      ]
+    }
+  },
+  {
+    "query": "SELECT count() AS groups,countIf(rf!=parts) AS failed FROM (SELECT sex,age_group,sumIf(value,territory_kind='RF') AS rf,sumIf(value,territory_kind IN ('subject','exclAO')) AS parts FROM v_rosstat_census_2020 WHERE settlement='total' OR (territory IN ('г. Москва','г. Санкт-Петербург') AND settlement='urban') GROUP BY sex,age_group)",
+    "result": {
+      "columns": [
+        "groups",
+        "failed"
+      ],
+      "rows": [
+        [
+          57,
+          0
+        ]
+      ]
+    }
+  },
+  {
+    "query": "SELECT territory,groupUniqArray(settlement) AS settlements FROM v_rosstat_census_2020 WHERE territory IN ('г. Москва','г. Санкт-Петербург') GROUP BY territory ORDER BY territory",
+    "result": {
+      "columns": [
+        "territory",
+        "settlements"
+      ],
+      "rows": [
+        [
+          "г. Москва",
+          [
+            "urban"
+          ]
+        ],
+        [
+          "г. Санкт-Петербург",
+          [
+            "urban"
+          ]
+        ]
+      ]
+    }
+  },
+  {
+    "query": "SELECT source,series,unit,frequency FROM v_series_catalog WHERE source='rosstat_census_2020'",
+    "result": {
+      "columns": [
+        "source",
+        "series",
+        "unit",
+        "frequency"
+      ],
+      "rows": [
+        [
+          "rosstat_census_2020",
+          "population",
+          "человек",
+          "irregular"
+        ]
+      ]
+    }
+  }
+]
