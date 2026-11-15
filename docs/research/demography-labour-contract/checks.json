@@ -1,0 +1,27 @@
+{
+  "passed": 21,
+  "checks": [
+    "census national sex sum",
+    "census national books parity",
+    "census fixed 15–64 sex sum",
+    "hours 2017 recomputed residual",
+    "hours 2017 rounding bound",
+    "hours 2018 recomputed residual",
+    "hours 2018 rounding bound",
+    "hours 2019 recomputed residual",
+    "hours 2019 rounding bound",
+    "hours 2020 recomputed residual",
+    "hours 2020 rounding bound",
+    "hours 2021 recomputed residual",
+    "hours 2021 rounding bound",
+    "hours 2022 recomputed residual",
+    "hours 2022 rounding bound",
+    "hours 2023 recomputed residual",
+    "hours 2023 rounding bound",
+    "hours 2024 recomputed residual",
+    "hours 2024 rounding bound",
+    "MCP catalog unchanged",
+    "MCP labour unchanged"
+  ],
+  "scope": "Recorded operands only; no independent XLS replay or validation of all 132 distribution groups"
+}

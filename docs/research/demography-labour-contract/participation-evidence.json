@@ -1,0 +1,2359 @@
+{
+  "scope": "Existing rosstat phase-2 labour #492; participation/sex/fixed ages/regions only; no inference of a complete September macro month. No DB writes/import or production-code change.",
+  "decision": "ITERATE for full #492 joint regional demographic monthly panel",
+  "bounded_go": [
+    {
+      "scope": "National monthly labour force by sex and fixed15–64/25–54 age groups",
+      "source": 59191,
+      "condition": "Preserve source metric/precision; separate source from existing macro row; tests sum sexes and disjoint fixed-age partition.",
+      "decision": "GO source availability within bounded national slice"
+    },
+    {
+      "scope": "National monthly participation sex x fixed-age candidate",
+      "source": 59192,
+      "condition": "Usable research slices with explicit source identity; production canonicalization waits on source-age anomaly and parity discrepancies.",
+      "decision": "ITERATE for production canonicalization"
+    },
+    {
+      "scope": "Regional participation age15+ quarterly, no sex",
+      "source": 34028,
+      "condition": "Separate quarterly series; code-based nonoverlapping territoryselection; no monthly interpolation and no synthesized sex/fixedage dimensions.",
+      "decision": "GO source availability within bounded quarterly regional aggregate slice"
+    }
+  ],
+  "no_go": [
+    "Current rectangular region x sex x fixedage x month cube is not established by these exports.",
+    "Do not multiply marginal sex/age shares to synthesize joint distribution.",
+    "Do not substitute15-72 or changing working-age for fixed15-64/25-54.",
+    "Do not sum participation percentages or combine overlapping federal/parent/nestedregional aggregates."
+  ],
+  "sources": [
+    {
+      "id": 59191,
+      "title": "Численность рабочей силы по полу и возрастным группам",
+      "url": "https://fedstat.ru/indicator/59191",
+      "export_url": "https://fedstat.ru/indicator/59191/download",
+      "hash": "6a903cc1c1e64e03af26a6f35bb424f1b24c2905b6dc1ccedee9fb67b6dc6a93",
+      "observed_at_utc": "2026-11-15T14:55:17.680615+00:00",
+      "http_status": 200,
+      "format": "XLS/OLE parsed numeric",
+      "dimension_headers": [
+        "Возраст",
+        "Классификатор объектов административно-территориального деления (ОКАТО)",
+        "Единица измерения",
+        "Период",
+        "Структура населения"
+      ],
+      "year_columns": [
+        "2019",
+        "2020",
+        "2021",
+        "2022",
+        "2023",
+        "2024",
+        "2025",
+        "2026"
+      ],
+      "numeric_cells": 1800,
+      "actual_joint_groups": [
+        {
+          "age_label": "207 15 лет и старше",
+          "geography_class": "national",
+          "frequency_from_actual_period_label": "month",
+          "numeric_cells": 276,
+          "distinct_geography_labels": 2,
+          "sex_labels": [
+            "1 Всего",
+            "2 Женщины",
+            "3 Мужчины"
+          ],
+          "first_year_actual": 2019,
+          "last_year_actual": 2026,
+          "last_year_periods_actual": [
+            "115 январь",
+            "114 февраль",
+            "68 март",
+            "61 апрель",
+            "67 май",
+            "66 июнь",
+            "65 июль",
+            "60 август"
+          ],
+          "latest_period_examples": [
+            {
+              "age": "207 15 лет и старше",
+              "geo": "643004.АГ Российская Федерация без учета новых субъектов (с 01.01.2023)",
+              "period": "60 август",
+              "sex": "1 Всего",
+              "year": 2026,
+              "value": 76668.7,
+              "row": 61,
+              "col": 12
+            }
+          ]
+        },
+        {
+          "age_label": "362 15-24 лет",
+          "geography_class": "national",
+          "frequency_from_actual_period_label": "month",
+          "numeric_cells": 276,
+          "distinct_geography_labels": 2,
+          "sex_labels": [
+            "1 Всего",
+            "2 Женщины",
+            "3 Мужчины"
+          ],
+          "first_year_actual": 2019,
+          "last_year_actual": 2026,
+          "last_year_periods_actual": [
+            "115 январь",
+            "114 февраль",
+            "68 март",
+            "61 апрель",
+            "67 май",
+            "66 июнь",
+            "65 июль",
+            "60 август"
+          ],
+          "latest_period_examples": [
+            {
+              "age": "362 15-24 лет",
+              "geo": "643004.АГ Российская Федерация без учета новых субъектов (с 01.01.2023)",
+              "period": "60 август",
+              "sex": "1 Всего",
+              "year": 2026,
+              "value": 4655.7,
+              "row": 133,
+              "col": 12
+            }
+          ]
+        },
+        {
+          "age_label": "363 15-64 лет",
+          "geography_class": "national",
+          "frequency_from_actual_period_label": "month",
+          "numeric_cells": 276,
+          "distinct_geography_labels": 2,
+          "sex_labels": [
+            "1 Всего",
+            "2 Женщины",
+            "3 Мужчины"
+          ],
+          "first_year_actual": 2019,
+          "last_year_actual": 2026,
+          "last_year_periods_actual": [
+            "115 январь",
+            "114 февраль",
+            "68 март",
+            "61 апрель",
+            "67 май",
+            "66 июнь",
+            "65 июль",
+            "60 август"
+          ],
+          "latest_period_examples": [
+            {
+              "age": "363 15-64 лет",
+              "geo": "643004.АГ Российская Федерация без учета новых субъектов (с 01.01.2023)",
+              "period": "60 август",
+              "sex": "1 Всего",
+              "year": 2026,
+              "value": 74827.3,
+              "row": 205,
+              "col": 12
+            }
+          ]
+        },
+        {
+          "age_label": "204 15-72 лет",
+          "geography_class": "national",
+          "frequency_from_actual_period_label": "month",
+          "numeric_cells": 144,
+          "distinct_geography_labels": 1,
+          "sex_labels": [
+            "1 Всего",
+            "2 Женщины",
+            "3 Мужчины"
+          ],
+          "first_year_actual": 2019,
+          "last_year_actual": 2022,
+          "last_year_periods_actual": [
+            "115 январь",
+            "114 февраль",
+            "68 март",
+            "61 апрель",
+            "67 май",
+            "66 июнь",
+            "65 июль",
+            "60 август",
+            "108 сентябрь",
+            "105 октябрь",
+            "104 ноябрь",
+            "62 декабрь"
+          ],
+          "latest_period_examples": [
+            {
+              "age": "204 15-72 лет",
+              "geo": "643 Российская Федерация",
+              "period": "62 декабрь",
+              "sex": "1 Всего",
+              "year": 2022,
+              "value": 75494.4,
+              "row": 253,
+              "col": 8
+            }
+          ]
+        },
+        {
+          "age_label": "244 15-74 лет",
+          "geography_class": "national",
+          "frequency_from_actual_period_label": "month",
+          "numeric_cells": 276,
+          "distinct_geography_labels": 2,
+          "sex_labels": [
+            "1 Всего",
+            "2 Женщины",
+            "3 Мужчины"
+          ],
+          "first_year_actual": 2019,
+          "last_year_actual": 2026,
+          "last_year_periods_actual": [
+            "115 январь",
+            "114 февраль",
+            "68 март",
+            "61 апрель",
+            "67 май",
+            "66 июнь",
+            "65 июль",
+            "60 август"
+          ],
+          "latest_period_examples": [
+            {
+              "age": "244 15-74 лет",
+              "geo": "643004.АГ Российская Федерация без учета новых субъектов (с 01.01.2023)",
+              "period": "60 август",
+              "sex": "1 Всего",
+              "year": 2026,
+              "value": 76586.4,
+              "row": 313,
+              "col": 12
+            }
+          ]
+        },
+        {
+          "age_label": "382 25-54 года",
+          "geography_class": "national",
+          "frequency_from_actual_period_label": "month",
+          "numeric_cells": 276,
+          "distinct_geography_labels": 2,
+          "sex_labels": [
+            "1 Всего",
+            "2 Женщины",
+            "3 Мужчины"
+          ],
+          "first_year_actual": 2019,
+          "last_year_actual": 2026,
+          "last_year_periods_actual": [
+            "115 январь",
+            "114 февраль",
+            "68 март",
+            "61 апрель",
+            "67 май",
+            "66 июнь",
+            "65 июль",
+            "60 август"
+          ],
+          "latest_period_examples": [
+            {
+              "age": "382 25-54 года",
+              "geo": "643004.АГ Российская Федерация без учета новых субъектов (с 01.01.2023)",
+              "period": "60 август",
+              "sex": "1 Всего",
+              "year": 2026,
+              "value": 57667.1,
+              "row": 385,
+              "col": 12
+            }
+          ]
+        },
+        {
+          "age_label": "286 55-64 года",
+          "geography_class": "national",
+          "frequency_from_actual_period_label": "month",
+          "numeric_cells": 276,
+          "distinct_geography_labels": 2,
+          "sex_labels": [
+            "1 Всего",
+            "2 Женщины",
+            "3 Мужчины"
+          ],
+          "first_year_actual": 2019,
+          "last_year_actual": 2026,
+          "last_year_periods_actual": [
+            "115 январь",
+            "114 февраль",
+            "68 март",
+            "61 апрель",
+            "67 май",
+            "66 июнь",
+            "65 июль",
+            "60 август"
+          ],
+          "latest_period_examples": [
+            {
+              "age": "286 55-64 года",
+              "geo": "643004.АГ Российская Федерация без учета новых субъектов (с 01.01.2023)",
+              "period": "60 август",
+              "sex": "1 Всего",
+              "year": 2026,
+              "value": 12504.6,
+              "row": 457,
+              "col": 12
+            }
+          ]
+        }
+      ],
+      "interpretation": "National monthly joint sex x fixed age; no regional numeric observations."
+    },
+    {
+      "id": 59192,
+      "title": "Доля рабочей силы в общей численности населения по данным ОРС по полу и возрастным группам",
+      "url": "https://fedstat.ru/indicator/59192",
+      "export_url": "https://fedstat.ru/indicator/59192/download",
+      "hash": "7159bb7aa49508e92ba597b75de775e0582f34e7d4d79aba7a15efe2331c7ad8",
+      "observed_at_utc": "2026-11-15T14:55:15.704041+00:00",
+      "http_status": 200,
+      "format": "XLS/OLE parsed numeric",
+      "dimension_headers": [
+        "Возраст",
+        "Классификатор объектов административно-территориального деления (ОКАТО)",
+        "Единица измерения",
+        "Период",
+        "Структура населения"
+      ],
+      "year_columns": [
+        "2019",
+        "2020",
+        "2021",
+        "2022",
+        "2023",
+        "2024",
+        "2025",
+        "2026"
+      ],
+      "numeric_cells": 6549,
+      "actual_joint_groups": [
+        {
+          "age_label": "207 15 лет и старше",
+          "geography_class": "national",
+          "frequency_from_actual_period_label": "month",
+          "numeric_cells": 219,
+          "distinct_geography_labels": 2,
+          "sex_labels": [
+            "1 Всего",
+            "2 Женщины",
+            "3 Мужчины"
+          ],
+          "first_year_actual": 2022,
+          "last_year_actual": 2026,
+          "last_year_periods_actual": [
+            "115 январь",
+            "114 февраль",
+            "68 март",
+            "61 апрель",
+            "67 май",
+            "66 июнь",
+            "65 июль"
+          ],
+          "latest_period_examples": [
+            {
+              "age": "207 15 лет и старше",
+              "geo": "643004.АГ Российская Федерация без учета новых субъектов (с 01.01.2023)",
+              "period": "65 июль",
+              "sex": "1 Всего",
+              "year": 2026,
+              "value": 62.9,
+              "row": 61,
+              "col": 12
+            }
+          ]
+        },
+        {
+          "age_label": "207 15 лет и старше",
+          "geography_class": "national",
+          "frequency_from_actual_period_label": "quarter",
+          "numeric_cells": 3,
+          "distinct_geography_labels": 1,
+          "sex_labels": [
+            "1 Всего",
+            "2 Женщины",
+            "3 Мужчины"
+          ],
+          "first_year_actual": 2025,
+          "last_year_actual": 2025,
+          "last_year_periods_actual": [
+            "56 II квартал"
+          ],
+          "latest_period_examples": [
+            {
+              "age": "207 15 лет и старше",
+              "geo": "643004.АГ Российская Федерация без учета новых субъектов (с 01.01.2023)",
+              "period": "56 II квартал",
+              "sex": "1 Всего",
+              "year": 2025,
+              "value": 62.9,
+              "row": 58,
+              "col": 11
+            }
+          ]
+        },
+        {
+          "age_label": "362 15-24 лет",
+          "geography_class": "national",
+          "frequency_from_actual_period_label": "month",
+          "numeric_cells": 327,
+          "distinct_geography_labels": 2,
+          "sex_labels": [
+            "1 Всего",
+            "2 Женщины",
+            "3 Мужчины"
+          ],
+          "first_year_actual": 2019,
+          "last_year_actual": 2026,
+          "last_year_periods_actual": [
+            "115 январь",
+            "114 февраль",
+            "68 март",
+            "61 апрель",
+            "67 май",
+            "66 июнь",
+            "65 июль"
+          ],
+          "latest_period_examples": [
+            {
+              "age": "362 15-24 лет",
+              "geo": "643004.АГ Российская Федерация без учета новых субъектов (с 01.01.2023)",
+              "period": "65 июль",
+              "sex": "1 Всего",
+              "year": 2026,
+              "value": 28.2,
+              "row": 136,
+              "col": 12
+            }
+          ]
+        },
+        {
+          "age_label": "362 15-24 лет",
+          "geography_class": "national",
+          "frequency_from_actual_period_label": "quarter",
+          "numeric_cells": 3,
+          "distinct_geography_labels": 1,
+          "sex_labels": [
+            "1 Всего",
+            "2 Женщины",
+            "3 Мужчины"
+          ],
+          "first_year_actual": 2025,
+          "last_year_actual": 2025,
+          "last_year_periods_actual": [
+            "56 II квартал"
+          ],
+          "latest_period_examples": [
+            {
+              "age": "362 15-24 лет",
+              "geo": "643004.АГ Российская Федерация без учета новых субъектов (с 01.01.2023)",
+              "period": "56 II квартал",
+              "sex": "1 Всего",
+              "year": 2025,
+              "value": 29.1,
+              "row": 133,
+              "col": 11
+            }
+          ]
+        },
+        {
+          "age_label": "362 15-24 лет",
+          "geography_class": "non-national (includes FD/overlapping aggregates)",
+          "frequency_from_actual_period_label": "month",
+          "numeric_cells": 855,
+          "distinct_geography_labels": 95,
+          "sex_labels": [
+            "1 Всего",
+            "2 Женщины",
+            "3 Мужчины"
+          ],
+          "first_year_actual": 2019,
+          "last_year_actual": 2019,
+          "last_year_periods_actual": [
+            "115 январь",
+            "114 февраль",
+            "68 март"
+          ],
+          "latest_period_examples": [
+            {
+              "age": "362 15-24 лет",
+              "geo": "030 Центральный федеральный округ",
+              "period": "68 март",
+              "sex": "1 Всего",
+              "year": 2019,
+              "value": 29.5,
+              "row": 160,
+              "col": 5
+            }
+          ]
+        },
+        {
+          "age_label": "363 15-64 лет",
+          "geography_class": "national",
+          "frequency_from_actual_period_label": "month",
+          "numeric_cells": 327,
+          "distinct_geography_labels": 2,
+          "sex_labels": [
+            "1 Всего",
+            "2 Женщины",
+            "3 Мужчины"
+          ],
+          "first_year_actual": 2019,
+          "last_year_actual": 2026,
+          "last_year_periods_actual": [
+            "115 январь",
+            "114 февраль",
+            "68 март",
+            "61 апрель",
+            "67 май",
+            "66 июнь",
+            "65 июль"
+          ],
+          "latest_period_examples": [
+            {
+              "age": "363 15-64 лет",
+              "geo": "643004.АГ Российская Федерация без учета новых субъектов (с 01.01.2023)",
+              "period": "65 июль",
+              "sex": "1 Всего",
+              "year": 2026,
+              "value": 78.0,
+              "row": 1066,
+              "col": 12
+            }
+          ]
+        },
+        {
+          "age_label": "363 15-64 лет",
+          "geography_class": "national",
+          "frequency_from_actual_period_label": "quarter",
+          "numeric_cells": 3,
+          "distinct_geography_labels": 1,
+          "sex_labels": [
+            "1 Всего",
+            "2 Женщины",
+            "3 Мужчины"
+          ],
+          "first_year_actual": 2025,
+          "last_year_actual": 2025,
+          "last_year_periods_actual": [
+            "56 II квартал"
+          ],
+          "latest_period_examples": [
+            {
+              "age": "363 15-64 лет",
+              "geo": "643004.АГ Российская Федерация без учета новых субъектов (с 01.01.2023)",
+              "period": "56 II квартал",
+              "sex": "1 Всего",
+              "year": 2025,
+              "value": 77.3,
+              "row": 1063,
+              "col": 11
+            }
+          ]
+        },
+        {
+          "age_label": "363 15-64 лет",
+          "geography_class": "non-national (includes FD/overlapping aggregates)",
+          "frequency_from_actual_period_label": "month",
+          "numeric_cells": 855,
+          "distinct_geography_labels": 95,
+          "sex_labels": [
+            "1 Всего",
+            "2 Женщины",
+            "3 Мужчины"
+          ],
+          "first_year_actual": 2019,
+          "last_year_actual": 2019,
+          "last_year_periods_actual": [
+            "115 январь",
+            "114 февраль",
+            "68 март"
+          ],
+          "latest_period_examples": [
+            {
+              "age": "363 15-64 лет",
+              "geo": "030 Центральный федеральный округ",
+              "period": "68 март",
+              "sex": "1 Всего",
+              "year": 2019,
+              "value": 77.6,
+              "row": 1090,
+              "col": 5
+            }
+          ]
+        },
+        {
+          "age_label": "204 15-72 лет",
+          "geography_class": "national",
+          "frequency_from_actual_period_label": "month",
+          "numeric_cells": 108,
+          "distinct_geography_labels": 1,
+          "sex_labels": [
+            "1 Всего",
+            "2 Женщины",
+            "3 Мужчины"
+          ],
+          "first_year_actual": 2019,
+          "last_year_actual": 2021,
+          "last_year_periods_actual": [
+            "115 январь",
+            "114 февраль",
+            "68 март",
+            "61 апрель",
+            "67 май",
+            "66 июнь",
+            "65 июль",
+            "60 август",
+            "108 сентябрь",
+            "105 октябрь",
+            "104 ноябрь",
+            "62 декабрь"
+          ],
+          "latest_period_examples": [
+            {
+              "age": "204 15-72 лет",
+              "geo": "643 Российская Федерация",
+              "period": "62 декабрь",
+              "sex": "1 Всего",
+              "year": 2021,
+              "value": 62.7,
+              "row": 1972,
+              "col": 7
+            }
+          ]
+        },
+        {
+          "age_label": "204 15-72 лет",
+          "geography_class": "non-national (includes FD/overlapping aggregates)",
+          "frequency_from_actual_period_label": "month",
+          "numeric_cells": 855,
+          "distinct_geography_labels": 95,
+          "sex_labels": [
+            "1 Всего",
+            "2 Женщины",
+            "3 Мужчины"
+          ],
+          "first_year_actual": 2019,
+          "last_year_actual": 2019,
+          "last_year_periods_actual": [
+            "115 январь",
+            "114 февраль",
+            "68 март"
+          ],
+          "latest_period_examples": [
+            {
+              "age": "204 15-72 лет",
+              "geo": "030 Центральный федеральный округ",
+              "period": "68 март",
+              "sex": "1 Всего",
+              "year": 2019,
+              "value": 70.6,
+              "row": 1981,
+              "col": 5
+            }
+          ]
+        },
+        {
+          "age_label": "244 15-74 лет",
+          "geography_class": "national",
+          "frequency_from_actual_period_label": "month",
+          "numeric_cells": 327,
+          "distinct_geography_labels": 2,
+          "sex_labels": [
+            "1 Всего",
+            "2 Женщины",
+            "3 Мужчины"
+          ],
+          "first_year_actual": 2019,
+          "last_year_actual": 2026,
+          "last_year_periods_actual": [
+            "115 январь",
+            "114 февраль",
+            "68 март",
+            "61 апрель",
+            "67 май",
+            "66 июнь",
+            "65 июль"
+          ],
+          "latest_period_examples": [
+            {
+              "age": "244 15-74 лет",
+              "geo": "643004.АГ Российская Федерация без учета новых субъектов (с 01.01.2023)",
+              "period": "65 июль",
+              "sex": "1 Всего",
+              "year": 2026,
+              "value": 68.0,
+              "row": 2887,
+              "col": 12
+            }
+          ]
+        },
+        {
+          "age_label": "244 15-74 лет",
+          "geography_class": "national",
+          "frequency_from_actual_period_label": "quarter",
+          "numeric_cells": 3,
+          "distinct_geography_labels": 1,
+          "sex_labels": [
+            "1 Всего",
+            "2 Женщины",
+            "3 Мужчины"
+          ],
+          "first_year_actual": 2025,
+          "last_year_actual": 2025,
+          "last_year_periods_actual": [
+            "56 II квартал"
+          ],
+          "latest_period_examples": [
+            {
+              "age": "244 15-74 лет",
+              "geo": "643004.АГ Российская Федерация без учета новых субъектов (с 01.01.2023)",
+              "period": "56 II квартал",
+              "sex": "1 Всего",
+              "year": 2025,
+              "value": 67.8,
+              "row": 2884,
+              "col": 11
+            }
+          ]
+        },
+        {
+          "age_label": "244 15-74 лет",
+          "geography_class": "non-national (includes FD/overlapping aggregates)",
+          "frequency_from_actual_period_label": "month",
+          "numeric_cells": 288,
+          "distinct_geography_labels": 96,
+          "sex_labels": [
+            "1 Всего",
+            "2 Женщины",
+            "3 Мужчины"
+          ],
+          "first_year_actual": 2019,
+          "last_year_actual": 2019,
+          "last_year_periods_actual": [
+            "68 март",
+            "65 июль"
+          ],
+          "latest_period_examples": [
+            {
+              "age": "244 15-74 лет",
+              "geo": "15009.АГ Сухопутные территории Арктической зоны Российской Федерации",
+              "period": "65 июль",
+              "sex": "1 Всего",
+              "year": 2019,
+              "value": 67.2,
+              "row": 3190,
+              "col": 5
+            }
+          ]
+        },
+        {
+          "age_label": "382 25-54 года",
+          "geography_class": "national",
+          "frequency_from_actual_period_label": "month",
+          "numeric_cells": 327,
+          "distinct_geography_labels": 2,
+          "sex_labels": [
+            "1 Всего",
+            "2 Женщины",
+            "3 Мужчины"
+          ],
+          "first_year_actual": 2019,
+          "last_year_actual": 2026,
+          "last_year_periods_actual": [
+            "115 январь",
+            "114 февраль",
+            "68 март",
+            "61 апрель",
+            "67 май",
+            "66 июнь",
+            "65 июль"
+          ],
+          "latest_period_examples": [
+            {
+              "age": "382 25-54 года",
+              "geo": "643004.АГ Российская Федерация без учета новых субъектов (с 01.01.2023)",
+              "period": "65 июль",
+              "sex": "1 Всего",
+              "year": 2026,
+              "value": 93.7,
+              "row": 3250,
+              "col": 12
+            }
+          ]
+        },
+        {
+          "age_label": "382 25-54 года",
+          "geography_class": "national",
+          "frequency_from_actual_period_label": "quarter",
+          "numeric_cells": 3,
+          "distinct_geography_labels": 1,
+          "sex_labels": [
+            "1 Всего",
+            "2 Женщины",
+            "3 Мужчины"
+          ],
+          "first_year_actual": 2025,
+          "last_year_actual": 2025,
+          "last_year_periods_actual": [
+            "56 II квартал"
+          ],
+          "latest_period_examples": [
+            {
+              "age": "382 25-54 года",
+              "geo": "643004.АГ Российская Федерация без учета новых субъектов (с 01.01.2023)",
+              "period": "56 II квартал",
+              "sex": "1 Всего",
+              "year": 2025,
+              "value": 93.0,
+              "row": 3247,
+              "col": 11
+            }
+          ]
+        },
+        {
+          "age_label": "382 25-54 года",
+          "geography_class": "non-national (includes FD/overlapping aggregates)",
+          "frequency_from_actual_period_label": "month",
+          "numeric_cells": 855,
+          "distinct_geography_labels": 95,
+          "sex_labels": [
+            "1 Всего",
+            "2 Женщины",
+            "3 Мужчины"
+          ],
+          "first_year_actual": 2019,
+          "last_year_actual": 2019,
+          "last_year_periods_actual": [
+            "115 январь",
+            "114 февраль",
+            "68 март"
+          ],
+          "latest_period_examples": [
+            {
+              "age": "382 25-54 года",
+              "geo": "030 Центральный федеральный округ",
+              "period": "68 март",
+              "sex": "1 Всего",
+              "year": 2019,
+              "value": 92.8,
+              "row": 3274,
+              "col": 5
+            }
+          ]
+        },
+        {
+          "age_label": "286 55-64 года",
+          "geography_class": "national",
+          "frequency_from_actual_period_label": "month",
+          "numeric_cells": 327,
+          "distinct_geography_labels": 2,
+          "sex_labels": [
+            "1 Всего",
+            "2 Женщины",
+            "3 Мужчины"
+          ],
+          "first_year_actual": 2019,
+          "last_year_actual": 2026,
+          "last_year_periods_actual": [
+            "115 январь",
+            "114 февраль",
+            "68 март",
+            "61 апрель",
+            "67 май",
+            "66 июнь",
+            "65 июль"
+          ],
+          "latest_period_examples": [
+            {
+              "age": "286 55-64 года",
+              "geo": "643004.АГ Российская Федерация без учета новых субъектов (с 01.01.2023)",
+              "period": "65 июль",
+              "sex": "1 Всего",
+              "year": 2026,
+              "value": 68.2,
+              "row": 4180,
+              "col": 12
+            }
+          ]
+        },
+        {
+          "age_label": "286 55-64 года",
+          "geography_class": "national",
+          "frequency_from_actual_period_label": "quarter",
+          "numeric_cells": 3,
+          "distinct_geography_labels": 1,
+          "sex_labels": [
+            "1 Всего",
+            "2 Женщины",
+            "3 Мужчины"
+          ],
+          "first_year_actual": 2025,
+          "last_year_actual": 2025,
+          "last_year_periods_actual": [
+            "56 II квартал"
+          ],
+          "latest_period_examples": [
+            {
+              "age": "286 55-64 года",
+              "geo": "643004.АГ Российская Федерация без учета новых субъектов (с 01.01.2023)",
+              "period": "56 II квартал",
+              "sex": "1 Всего",
+              "year": 2025,
+              "value": 64.8,
+              "row": 4177,
+              "col": 11
+            }
+          ]
+        },
+        {
+          "age_label": "286 55-64 года",
+          "geography_class": "non-national (includes FD/overlapping aggregates)",
+          "frequency_from_actual_period_label": "month",
+          "numeric_cells": 855,
+          "distinct_geography_labels": 95,
+          "sex_labels": [
+            "1 Всего",
+            "2 Женщины",
+            "3 Мужчины"
+          ],
+          "first_year_actual": 2019,
+          "last_year_actual": 2019,
+          "last_year_periods_actual": [
+            "115 январь",
+            "114 февраль",
+            "68 март"
+          ],
+          "latest_period_examples": [
+            {
+              "age": "286 55-64 года",
+              "geo": "030 Центральный федеральный округ",
+              "period": "68 март",
+              "sex": "1 Всего",
+              "year": 2019,
+              "value": 59.3,
+              "row": 4204,
+              "col": 5
+            }
+          ]
+        },
+        {
+          "age_label": "263 детей в возрасте 7-15 лет",
+          "geography_class": "national",
+          "frequency_from_actual_period_label": "month",
+          "numeric_cells": 6,
+          "distinct_geography_labels": 1,
+          "sex_labels": [
+            "1 Всего",
+            "2 Женщины",
+            "3 Мужчины"
+          ],
+          "first_year_actual": 2022,
+          "last_year_actual": 2022,
+          "last_year_periods_actual": [
+            "68 март",
+            "61 апрель"
+          ],
+          "latest_period_examples": [
+            {
+              "age": "263 детей в возрасте 7-15 лет",
+              "geo": "643 Российская Федерация",
+              "period": "61 апрель",
+              "sex": "1 Всего",
+              "year": 2022,
+              "value": 75.7,
+              "row": 5056,
+              "col": 8
+            }
+          ]
+        }
+      ],
+      "interpretation": "National joint sex x fixed-age monthly; regional joint exists only sparse historical2019; anomalous age labels/parity make auto-canonicalization unsafe."
+    },
+    {
+      "id": 60973,
+      "title": "Уровень занятости (оперативные данные)",
+      "url": "https://fedstat.ru/indicator/60973",
+      "export_url": "https://fedstat.ru/indicator/60973/download",
+      "hash": "55dfec5483c3620f19dba287c1fcbcff6cfea9019930542469b3dbdce71fd7ab",
+      "observed_at_utc": "2026-11-15T14:39:48.325586+00:00",
+      "http_status": 200,
+      "format": "XLS/OLE parsed numeric",
+      "dimension_headers": [
+        "Возраст",
+        "Классификатор объектов административно-территориального деления (ОКАТО)",
+        "Единица измерения",
+        "Период"
+      ],
+      "year_columns": [
+        "2021",
+        "2022",
+        "2023",
+        "2024",
+        "2025",
+        "2026"
+      ],
+      "numeric_cells": 266,
+      "actual_joint_groups": [
+        {
+          "age_label": "207 15 лет и старше",
+          "geography_class": "national",
+          "frequency_from_actual_period_label": "month",
+          "numeric_cells": 62,
+          "distinct_geography_labels": 2,
+          "sex_labels": [
+            "not dimension"
+          ],
+          "first_year_actual": 2021,
+          "last_year_actual": 2026,
+          "last_year_periods_actual": [
+            "115 январь",
+            "114 февраль",
+            "68 март",
+            "61 апрель",
+            "67 май",
+            "66 июнь",
+            "65 июль",
+            "60 август"
+          ],
+          "latest_period_examples": [
+            {
+              "age": "207 15 лет и старше",
+              "geo": "643004.АГ Российская Федерация без учета новых субъектов (с 01.01.2023)",
+              "period": "60 август",
+              "sex": "not dimension",
+              "year": 2026,
+              "value": 61.8,
+              "row": 25,
+              "col": 9
+            }
+          ]
+        },
+        {
+          "age_label": "207 15 лет и старше",
+          "geography_class": "national",
+          "frequency_from_actual_period_label": "quarter",
+          "numeric_cells": 2,
+          "distinct_geography_labels": 2,
+          "sex_labels": [
+            "not dimension"
+          ],
+          "first_year_actual": 2022,
+          "last_year_actual": 2024,
+          "last_year_periods_actual": [
+            "56 II квартал"
+          ],
+          "latest_period_examples": [
+            {
+              "age": "207 15 лет и старше",
+              "geo": "643004.АГ Российская Федерация без учета новых субъектов (с 01.01.2023)",
+              "period": "56 II квартал",
+              "sex": "not dimension",
+              "year": 2024,
+              "value": 61.35,
+              "row": 23,
+              "col": 7
+            }
+          ]
+        },
+        {
+          "age_label": "207 15 лет и старше",
+          "geography_class": "non-national (includes FD/overlapping aggregates)",
+          "frequency_from_actual_period_label": "month",
+          "numeric_cells": 95,
+          "distinct_geography_labels": 95,
+          "sex_labels": [
+            "not dimension"
+          ],
+          "first_year_actual": 2021,
+          "last_year_actual": 2021,
+          "last_year_periods_actual": [
+            "68 март"
+          ],
+          "latest_period_examples": [
+            {
+              "age": "207 15 лет и старше",
+              "geo": "030 Центральный федеральный округ",
+              "period": "68 март",
+              "sex": "not dimension",
+              "year": 2021,
+              "value": 61.3,
+              "row": 30,
+              "col": 4
+            }
+          ]
+        },
+        {
+          "age_label": "204 15-72 лет",
+          "geography_class": "national",
+          "frequency_from_actual_period_label": "month",
+          "numeric_cells": 12,
+          "distinct_geography_labels": 1,
+          "sex_labels": [
+            "not dimension"
+          ],
+          "first_year_actual": 2021,
+          "last_year_actual": 2021,
+          "last_year_periods_actual": [
+            "115 январь",
+            "114 февраль",
+            "68 март",
+            "61 апрель",
+            "67 май",
+            "66 июнь",
+            "65 июль",
+            "60 август",
+            "108 сентябрь",
+            "105 октябрь",
+            "104 ноябрь",
+            "62 декабрь"
+          ],
+          "latest_period_examples": [
+            {
+              "age": "204 15-72 лет",
+              "geo": "643 Российская Федерация",
+              "period": "62 декабрь",
+              "sex": "not dimension",
+              "year": 2021,
+              "value": 65.6,
+              "row": 136,
+              "col": 4
+            }
+          ]
+        },
+        {
+          "age_label": "204 15-72 лет",
+          "geography_class": "non-national (includes FD/overlapping aggregates)",
+          "frequency_from_actual_period_label": "month",
+          "numeric_cells": 95,
+          "distinct_geography_labels": 95,
+          "sex_labels": [
+            "not dimension"
+          ],
+          "first_year_actual": 2021,
+          "last_year_actual": 2021,
+          "last_year_periods_actual": [
+            "68 март"
+          ],
+          "latest_period_examples": [
+            {
+              "age": "204 15-72 лет",
+              "geo": "030 Центральный федеральный округ",
+              "period": "68 март",
+              "sex": "not dimension",
+              "year": 2021,
+              "value": 67.9,
+              "row": 137,
+              "col": 4
+            }
+          ]
+        }
+      ],
+      "interpretation": "No sex dimension; fixed-age15-64/25-54 absent; regional numeric cells only March2021 snapshot."
+    },
+    {
+      "id": 60974,
+      "title": "Уровень участия в составе рабочей силы (оперативные данные)",
+      "url": "https://fedstat.ru/indicator/60974",
+      "export_url": "https://fedstat.ru/indicator/60974/download",
+      "hash": "d1ef77425ac5f9ee2315fe9e68a3ddbca8e39dcfeb441588cd08afee24db0c0a",
+      "observed_at_utc": "2026-11-15T14:39:48.247633+00:00",
+      "http_status": 200,
+      "format": "XLS/OLE parsed numeric",
+      "dimension_headers": [
+        "Возраст",
+        "Классификатор объектов административно-территориального деления (ОКАТО)",
+        "Единица измерения",
+        "Период"
+      ],
+      "year_columns": [
+        "2021",
+        "2022",
+        "2023",
+        "2024",
+        "2025",
+        "2026"
+      ],
+      "numeric_cells": 271,
+      "actual_joint_groups": [
+        {
+          "age_label": "207 15 лет и старше",
+          "geography_class": "national",
+          "frequency_from_actual_period_label": "month",
+          "numeric_cells": 68,
+          "distinct_geography_labels": 2,
+          "sex_labels": [
+            "not dimension"
+          ],
+          "first_year_actual": 2021,
+          "last_year_actual": 2026,
+          "last_year_periods_actual": [
+            "115 январь",
+            "114 февраль",
+            "68 март",
+            "61 апрель",
+            "67 май",
+            "66 июнь",
+            "65 июль",
+            "60 август"
+          ],
+          "latest_period_examples": [
+            {
+              "age": "207 15 лет и старше",
+              "geo": "643004.АГ Российская Федерация без учета новых субъектов (с 01.01.2023)",
+              "period": "60 август",
+              "sex": "not dimension",
+              "year": 2026,
+              "value": 63.1,
+              "row": 24,
+              "col": 9
+            }
+          ]
+        },
+        {
+          "age_label": "207 15 лет и старше",
+          "geography_class": "national",
+          "frequency_from_actual_period_label": "quarter",
+          "numeric_cells": 1,
+          "distinct_geography_labels": 1,
+          "sex_labels": [
+            "not dimension"
+          ],
+          "first_year_actual": 2022,
+          "last_year_actual": 2022,
+          "last_year_periods_actual": [
+            "54 I квартал"
+          ],
+          "latest_period_examples": [
+            {
+              "age": "207 15 лет и старше",
+              "geo": "643 Российская Федерация",
+              "period": "54 I квартал",
+              "sex": "not dimension",
+              "year": 2022,
+              "value": 62.1,
+              "row": 7,
+              "col": 5
+            }
+          ]
+        },
+        {
+          "age_label": "207 15 лет и старше",
+          "geography_class": "non-national (includes FD/overlapping aggregates)",
+          "frequency_from_actual_period_label": "month",
+          "numeric_cells": 95,
+          "distinct_geography_labels": 95,
+          "sex_labels": [
+            "not dimension"
+          ],
+          "first_year_actual": 2021,
+          "last_year_actual": 2021,
+          "last_year_periods_actual": [
+            "68 март"
+          ],
+          "latest_period_examples": [
+            {
+              "age": "207 15 лет и старше",
+              "geo": "030 Центральный федеральный округ",
+              "period": "68 март",
+              "sex": "not dimension",
+              "year": 2021,
+              "value": 63.7,
+              "row": 29,
+              "col": 4
+            }
+          ]
+        },
+        {
+          "age_label": "204 15-72 лет",
+          "geography_class": "national",
+          "frequency_from_actual_period_label": "month",
+          "numeric_cells": 12,
+          "distinct_geography_labels": 1,
+          "sex_labels": [
+            "not dimension"
+          ],
+          "first_year_actual": 2021,
+          "last_year_actual": 2021,
+          "last_year_periods_actual": [
+            "115 январь",
+            "114 февраль",
+            "68 март",
+            "61 апрель",
+            "67 май",
+            "66 июнь",
+            "65 июль",
+            "60 август",
+            "108 сентябрь",
+            "105 октябрь",
+            "104 ноябрь",
+            "62 декабрь"
+          ],
+          "latest_period_examples": [
+            {
+              "age": "204 15-72 лет",
+              "geo": "643 Российская Федерация",
+              "period": "62 декабрь",
+              "sex": "not dimension",
+              "year": 2021,
+              "value": 68.5,
+              "row": 135,
+              "col": 4
+            }
+          ]
+        },
+        {
+          "age_label": "204 15-72 лет",
+          "geography_class": "non-national (includes FD/overlapping aggregates)",
+          "frequency_from_actual_period_label": "month",
+          "numeric_cells": 95,
+          "distinct_geography_labels": 95,
+          "sex_labels": [
+            "not dimension"
+          ],
+          "first_year_actual": 2021,
+          "last_year_actual": 2021,
+          "last_year_periods_actual": [
+            "68 март"
+          ],
+          "latest_period_examples": [
+            {
+              "age": "204 15-72 лет",
+              "geo": "030 Центральный федеральный округ",
+              "period": "68 март",
+              "sex": "not dimension",
+              "year": 2021,
+              "value": 70.7,
+              "row": 136,
+              "col": 4
+            }
+          ]
+        }
+      ],
+      "interpretation": "No sex dimension; fixed-age15-64/25-54 absent; regional numeric cells only March2021 snapshot."
+    },
+    {
+      "id": 34028,
+      "title": "Уровень участия в составе рабочей силы ",
+      "url": "https://fedstat.ru/indicator/34028",
+      "export_url": "https://fedstat.ru/indicator/34028/download",
+      "hash": "6ebb25848a09baed8f6eab5842626c3d2e5f6b80ed7478f67a62a1429b689ed1",
+      "observed_at_utc": "2026-11-15T14:56:26.592273+00:00",
+      "http_status": 200,
+      "format": "XLS/OLE parsed numeric",
+      "dimension_headers": [
+        "Возраст",
+        "Классификатор объектов административно-территориального деления (ОКАТО)",
+        "Единица измерения",
+        "Период"
+      ],
+      "year_columns": [
+        "2000",
+        "2001",
+        "2002",
+        "2003",
+        "2004",
+        "2005",
+        "2006",
+        "2007",
+        "2008",
+        "2009",
+        "2010",
+        "2011",
+        "2012",
+        "2013",
+        "2014",
+        "2015",
+        "2016",
+        "2017",
+        "2018",
+        "2019",
+        "2020",
+        "2021",
+        "2022",
+        "2023",
+        "2024",
+        "2025",
+        "2026"
+      ],
+      "numeric_cells": 11141,
+      "actual_joint_groups": [
+        {
+          "age_label": "207 15 лет и старше",
+          "geography_class": "national",
+          "frequency_from_actual_period_label": "quarter",
+          "numeric_cells": 38,
+          "distinct_geography_labels": 2,
+          "sex_labels": [
+            "not dimension"
+          ],
+          "first_year_actual": 2017,
+          "last_year_actual": 2026,
+          "last_year_periods_actual": [
+            "54 I квартал",
+            "56 II квартал"
+          ],
+          "latest_period_examples": [
+            {
+              "age": "207 15 лет и старше",
+              "geo": "643004.АГ Российская Федерация без учета новых субъектов (с 01.01.2023)",
+              "period": "56 II квартал",
+              "sex": "not dimension",
+              "year": 2026,
+              "value": 62.9,
+              "row": 10,
+              "col": 30
+            }
+          ]
+        },
+        {
+          "age_label": "207 15 лет и старше",
+          "geography_class": "national",
+          "frequency_from_actual_period_label": "year",
+          "numeric_cells": 9,
+          "distinct_geography_labels": 2,
+          "sex_labels": [
+            "not dimension"
+          ],
+          "first_year_actual": 2017,
+          "last_year_actual": 2025,
+          "last_year_periods_actual": [
+            "1558883 значение показателя за год"
+          ],
+          "latest_period_examples": [
+            {
+              "age": "207 15 лет и старше",
+              "geo": "643004.АГ Российская Федерация без учета новых субъектов (с 01.01.2023)",
+              "period": "1558883 значение показателя за год",
+              "sex": "not dimension",
+              "year": 2025,
+              "value": 62.9,
+              "row": 13,
+              "col": 29
+            }
+          ]
+        },
+        {
+          "age_label": "207 15 лет и старше",
+          "geography_class": "non-national (includes FD/overlapping aggregates)",
+          "frequency_from_actual_period_label": "quarter",
+          "numeric_cells": 3610,
+          "distinct_geography_labels": 95,
+          "sex_labels": [
+            "not dimension"
+          ],
+          "first_year_actual": 2017,
+          "last_year_actual": 2026,
+          "last_year_periods_actual": [
+            "54 I квартал",
+            "56 II квартал"
+          ],
+          "latest_period_examples": [
+            {
+              "age": "207 15 лет и старше",
+              "geo": "030 Центральный федеральный округ",
+              "period": "56 II квартал",
+              "sex": "not dimension",
+              "year": 2026,
+              "value": 63.8,
+              "row": 15,
+              "col": 30
+            }
+          ]
+        },
+        {
+          "age_label": "207 15 лет и старше",
+          "geography_class": "non-national (includes FD/overlapping aggregates)",
+          "frequency_from_actual_period_label": "year",
+          "numeric_cells": 855,
+          "distinct_geography_labels": 95,
+          "sex_labels": [
+            "not dimension"
+          ],
+          "first_year_actual": 2017,
+          "last_year_actual": 2025,
+          "last_year_periods_actual": [
+            "1558883 значение показателя за год"
+          ],
+          "latest_period_examples": [
+            {
+              "age": "207 15 лет и старше",
+              "geo": "030 Центральный федеральный округ",
+              "period": "1558883 значение показателя за год",
+              "sex": "not dimension",
+              "year": 2025,
+              "value": 63.9,
+              "row": 18,
+              "col": 29
+            }
+          ]
+        },
+        {
+          "age_label": "204 15-72 лет",
+          "geography_class": "national",
+          "frequency_from_actual_period_label": "quarter",
+          "numeric_cells": 48,
+          "distinct_geography_labels": 1,
+          "sex_labels": [
+            "not dimension"
+          ],
+          "first_year_actual": 2010,
+          "last_year_actual": 2021,
+          "last_year_periods_actual": [
+            "54 I квартал",
+            "59 IV квартал",
+            "56 II квартал",
+            "58 III квартал"
+          ],
+          "latest_period_examples": [
+            {
+              "age": "204 15-72 лет",
+              "geo": "643 Российская Федерация",
+              "period": "58 III квартал",
+              "sex": "not dimension",
+              "year": 2021,
+              "value": 68.0,
+              "row": 491,
+              "col": 25
+            }
+          ]
+        },
+        {
+          "age_label": "204 15-72 лет",
+          "geography_class": "national",
+          "frequency_from_actual_period_label": "year",
+          "numeric_cells": 22,
+          "distinct_geography_labels": 1,
+          "sex_labels": [
+            "not dimension"
+          ],
+          "first_year_actual": 2000,
+          "last_year_actual": 2021,
+          "last_year_periods_actual": [
+            "1558883 значение показателя за год"
+          ],
+          "latest_period_examples": [
+            {
+              "age": "204 15-72 лет",
+              "geo": "643 Российская Федерация",
+              "period": "1558883 значение показателя за год",
+              "sex": "not dimension",
+              "year": 2021,
+              "value": 67.8,
+              "row": 493,
+              "col": 25
+            }
+          ]
+        },
+        {
+          "age_label": "204 15-72 лет",
+          "geography_class": "non-national (includes FD/overlapping aggregates)",
+          "frequency_from_actual_period_label": "quarter",
+          "numeric_cells": 4512,
+          "distinct_geography_labels": 98,
+          "sex_labels": [
+            "not dimension"
+          ],
+          "first_year_actual": 2010,
+          "last_year_actual": 2021,
+          "last_year_periods_actual": [
+            "54 I квартал",
+            "59 IV квартал",
+            "56 II квартал",
+            "58 III квартал"
+          ],
+          "latest_period_examples": [
+            {
+              "age": "204 15-72 лет",
+              "geo": "030 Центральный федеральный округ",
+              "period": "58 III квартал",
+              "sex": "not dimension",
+              "year": 2021,
+              "value": 70.3,
+              "row": 496,
+              "col": 25
+            }
+          ]
+        },
+        {
+          "age_label": "204 15-72 лет",
+          "geography_class": "non-national (includes FD/overlapping aggregates)",
+          "frequency_from_actual_period_label": "year",
+          "numeric_cells": 2047,
+          "distinct_geography_labels": 99,
+          "sex_labels": [
+            "not dimension"
+          ],
+          "first_year_actual": 2000,
+          "last_year_actual": 2021,
+          "last_year_periods_actual": [
+            "1558883 значение показателя за год"
+          ],
+          "latest_period_examples": [
+            {
+              "age": "204 15-72 лет",
+              "geo": "030 Центральный федеральный округ",
+              "period": "1558883 значение показателя за год",
+              "sex": "not dimension",
+              "year": 2021,
+              "value": 70.1,
+              "row": 498,
+              "col": 25
+            }
+          ]
+        }
+      ],
+      "interpretation": "Regional age15+ quarterly current to2026Q2, nosex/fixedages; annual and quarterly periodtypes must remain separate."
+    },
+    {
+      "id": 58715,
+      "title": "Численность рабочей силы по полу и возрастным группам",
+      "url": "https://fedstat.ru/indicator/58715",
+      "export_url": "https://fedstat.ru/indicator/58715/download",
+      "hash": "348ca55dc08422aabebc7a57122bf8e6f173530fa911efe5f204701136ea6474",
+      "observed_at_utc": "2026-11-15T14:56:26.425182+00:00",
+      "http_status": 200,
+      "format": "XLS/OLE parsed numeric",
+      "dimension_headers": [
+        "Возраст",
+        "Классификатор объектов административно-территориального деления (ОКАТО)",
+        "Единица измерения",
+        "Период",
+        "Структура населения"
+      ],
+      "year_columns": [
+        "2017",
+        "2018",
+        "2019",
+        "2020",
+        "2021",
+        "2022",
+        "2023",
+        "2024"
+      ],
+      "numeric_cells": 216,
+      "actual_joint_groups": [
+        {
+          "age_label": "1 Всего",
+          "geography_class": "national",
+          "frequency_from_actual_period_label": "year",
+          "numeric_cells": 18,
+          "distinct_geography_labels": 2,
+          "sex_labels": [
+            "2 Женщины",
+            "3 Мужчины"
+          ],
+          "first_year_actual": 2017,
+          "last_year_actual": 2024,
+          "last_year_periods_actual": [
+            "1558883 значение показателя за год"
+          ],
+          "latest_period_examples": [
+            {
+              "age": "1 Всего",
+              "geo": "643004.АГ Российская Федерация без учета новых субъектов (с 01.01.2023)",
+              "period": "1558883 значение показателя за год",
+              "sex": "2 Женщины",
+              "year": 2024,
+              "value": 37279.5,
+              "row": 6,
+              "col": 12
+            }
+          ]
+        },
+        {
+          "age_label": "138 15-19 лет",
+          "geography_class": "national",
+          "frequency_from_actual_period_label": "year",
+          "numeric_cells": 18,
+          "distinct_geography_labels": 2,
+          "sex_labels": [
+            "2 Женщины",
+            "3 Мужчины"
+          ],
+          "first_year_actual": 2017,
+          "last_year_actual": 2024,
+          "last_year_periods_actual": [
+            "1558883 значение показателя за год"
+          ],
+          "latest_period_examples": [
+            {
+              "age": "138 15-19 лет",
+              "geo": "643004.АГ Российская Федерация без учета новых субъектов (с 01.01.2023)",
+              "period": "1558883 значение показателя за год",
+              "sex": "2 Женщины",
+              "year": 2024,
+              "value": 187.2,
+              "row": 10,
+              "col": 12
+            }
+          ]
+        },
+        {
+          "age_label": "185 20-24 лет",
+          "geography_class": "national",
+          "frequency_from_actual_period_label": "year",
+          "numeric_cells": 18,
+          "distinct_geography_labels": 2,
+          "sex_labels": [
+            "2 Женщины",
+            "3 Мужчины"
+          ],
+          "first_year_actual": 2017,
+          "last_year_actual": 2024,
+          "last_year_periods_actual": [
+            "1558883 значение показателя за год"
+          ],
+          "latest_period_examples": [
+            {
+              "age": "185 20-24 лет",
+              "geo": "643004.АГ Российская Федерация без учета новых субъектов (с 01.01.2023)",
+              "period": "1558883 значение показателя за год",
+              "sex": "2 Женщины",
+              "year": 2024,
+              "value": 1704.3,
+              "row": 14,
+              "col": 12
+            }
+          ]
+        },
+        {
+          "age_label": "186 25-29 лет",
+          "geography_class": "national",
+          "frequency_from_actual_period_label": "year",
+          "numeric_cells": 18,
+          "distinct_geography_labels": 2,
+          "sex_labels": [
+            "2 Женщины",
+            "3 Мужчины"
+          ],
+          "first_year_actual": 2017,
+          "last_year_actual": 2024,
+          "last_year_periods_actual": [
+            "1558883 значение показателя за год"
+          ],
+          "latest_period_examples": [
+            {
+              "age": "186 25-29 лет",
+              "geo": "643004.АГ Российская Федерация без учета новых субъектов (с 01.01.2023)",
+              "period": "1558883 значение показателя за год",
+              "sex": "2 Женщины",
+              "year": 2024,
+              "value": 3059.2,
+              "row": 18,
+              "col": 12
+            }
+          ]
+        },
+        {
+          "age_label": "187 30-34 года",
+          "geography_class": "national",
+          "frequency_from_actual_period_label": "year",
+          "numeric_cells": 18,
+          "distinct_geography_labels": 2,
+          "sex_labels": [
+            "2 Женщины",
+            "3 Мужчины"
+          ],
+          "first_year_actual": 2017,
+          "last_year_actual": 2024,
+          "last_year_periods_actual": [
+            "1558883 значение показателя за год"
+          ],
+          "latest_period_examples": [
+            {
+              "age": "187 30-34 года",
+              "geo": "643004.АГ Российская Федерация без учета новых субъектов (с 01.01.2023)",
+              "period": "1558883 значение показателя за год",
+              "sex": "2 Женщины",
+              "year": 2024,
+              "value": 4786.0,
+              "row": 22,
+              "col": 12
+            }
+          ]
+        },
+        {
+          "age_label": "188 35-39 лет",
+          "geography_class": "national",
+          "frequency_from_actual_period_label": "year",
+          "numeric_cells": 18,
+          "distinct_geography_labels": 2,
+          "sex_labels": [
+            "2 Женщины",
+            "3 Мужчины"
+          ],
+          "first_year_actual": 2017,
+          "last_year_actual": 2024,
+          "last_year_periods_actual": [
+            "1558883 значение показателя за год"
+          ],
+          "latest_period_examples": [
+            {
+              "age": "188 35-39 лет",
+              "geo": "643004.АГ Российская Федерация без учета новых субъектов (с 01.01.2023)",
+              "period": "1558883 значение показателя за год",
+              "sex": "2 Женщины",
+              "year": 2024,
+              "value": 5847.9,
+              "row": 26,
+              "col": 12
+            }
+          ]
+        },
+        {
+          "age_label": "189 40-44 года",
+          "geography_class": "national",
+          "frequency_from_actual_period_label": "year",
+          "numeric_cells": 18,
+          "distinct_geography_labels": 2,
+          "sex_labels": [
+            "2 Женщины",
+            "3 Мужчины"
+          ],
+          "first_year_actual": 2017,
+          "last_year_actual": 2024,
+          "last_year_periods_actual": [
+            "1558883 значение показателя за год"
+          ],
+          "latest_period_examples": [
+            {
+              "age": "189 40-44 года",
+              "geo": "643004.АГ Российская Федерация без учета новых субъектов (с 01.01.2023)",
+              "period": "1558883 значение показателя за год",
+              "sex": "2 Женщины",
+              "year": 2024,
+              "value": 5476.6,
+              "row": 30,
+              "col": 12
+            }
+          ]
+        },
+        {
+          "age_label": "190 45-49 лет",
+          "geography_class": "national",
+          "frequency_from_actual_period_label": "year",
+          "numeric_cells": 18,
+          "distinct_geography_labels": 2,
+          "sex_labels": [
+            "2 Женщины",
+            "3 Мужчины"
+          ],
+          "first_year_actual": 2017,
+          "last_year_actual": 2024,
+          "last_year_periods_actual": [
+            "1558883 значение показателя за год"
+          ],
+          "latest_period_examples": [
+            {
+              "age": "190 45-49 лет",
+              "geo": "643004.АГ Российская Федерация без учета новых субъектов (с 01.01.2023)",
+              "period": "1558883 значение показателя за год",
+              "sex": "2 Женщины",
+              "year": 2024,
+              "value": 5038.5,
+              "row": 34,
+              "col": 12
+            }
+          ]
+        },
+        {
+          "age_label": "140 50-54 года",
+          "geography_class": "national",
+          "frequency_from_actual_period_label": "year",
+          "numeric_cells": 18,
+          "distinct_geography_labels": 2,
+          "sex_labels": [
+            "2 Женщины",
+            "3 Мужчины"
+          ],
+          "first_year_actual": 2017,
+          "last_year_actual": 2024,
+          "last_year_periods_actual": [
+            "1558883 значение показателя за год"
+          ],
+          "latest_period_examples": [
+            {
+              "age": "140 50-54 года",
+              "geo": "643004.АГ Российская Федерация без учета новых субъектов (с 01.01.2023)",
+              "period": "1558883 значение показателя за год",
+              "sex": "2 Женщины",
+              "year": 2024,
+              "value": 4518.2,
+              "row": 38,
+              "col": 12
+            }
+          ]
+        },
+        {
+          "age_label": "141 55-59 лет",
+          "geography_class": "national",
+          "frequency_from_actual_period_label": "year",
+          "numeric_cells": 18,
+          "distinct_geography_labels": 2,
+          "sex_labels": [
+            "2 Женщины",
+            "3 Мужчины"
+          ],
+          "first_year_actual": 2017,
+          "last_year_actual": 2024,
+          "last_year_periods_actual": [
+            "1558883 значение показателя за год"
+          ],
+          "latest_period_examples": [
+            {
+              "age": "141 55-59 лет",
+              "geo": "643004.АГ Российская Федерация без учета новых субъектов (с 01.01.2023)",
+              "period": "1558883 значение показателя за год",
+              "sex": "2 Женщины",
+              "year": 2024,
+              "value": 3787.2,
+              "row": 42,
+              "col": 12
+            }
+          ]
+        },
+        {
+          "age_label": "142 60-64 года",
+          "geography_class": "national",
+          "frequency_from_actual_period_label": "year",
+          "numeric_cells": 18,
+          "distinct_geography_labels": 2,
+          "sex_labels": [
+            "2 Женщины",
+            "3 Мужчины"
+          ],
+          "first_year_actual": 2017,
+          "last_year_actual": 2024,
+          "last_year_periods_actual": [
+            "1558883 значение показателя за год"
+          ],
+          "latest_period_examples": [
+            {
+              "age": "142 60-64 года",
+              "geo": "643004.АГ Российская Федерация без учета новых субъектов (с 01.01.2023)",
+              "period": "1558883 значение показателя за год",
+              "sex": "2 Женщины",
+              "year": 2024,
+              "value": 1989.7,
+              "row": 46,
+              "col": 12
+            }
+          ]
+        },
+        {
+          "age_label": "242 65 и более",
+          "geography_class": "national",
+          "frequency_from_actual_period_label": "year",
+          "numeric_cells": 18,
+          "distinct_geography_labels": 2,
+          "sex_labels": [
+            "2 Женщины",
+            "3 Мужчины"
+          ],
+          "first_year_actual": 2017,
+          "last_year_actual": 2024,
+          "last_year_periods_actual": [
+            "1558883 значение показателя за год"
+          ],
+          "latest_period_examples": [
+            {
+              "age": "242 65 и более",
+              "geo": "643004.АГ Российская Федерация без учета новых субъектов (с 01.01.2023)",
+              "period": "1558883 значение показателя за год",
+              "sex": "2 Женщины",
+              "year": 2024,
+              "value": 884.6,
+              "row": 50,
+              "col": 12
+            }
+          ]
+        }
+      ],
+      "interpretation": "Annual RF sex x five-yearage, no regions; age Всего semantically15-72 before2020,15+since2020 according passport."
+    }
+  ],
+  "numeric_checks": {
+    "sex_sum": {
+      "n": 600,
+      "max_abs_delta_thousand": "0.1",
+      "outside_0_15_thousand": [],
+      "examples": [
+        {
+          "age": "207 15 лет и старше",
+          "year": 2026,
+          "period": "60 август",
+          "delta_thousand": "0.0",
+          "total_cell": [
+            61,
+            12
+          ],
+          "values": [
+            76668.7,
+            37577.4,
+            39091.3
+          ]
+        }
+      ]
+    },
+    "fixed_age_partition": {
+      "definition": "15-24 +25-54 +55-64 =15-64; disjoint fixed ages, same geography/sex/month",
+      "n": 276,
+      "max_abs_delta_thousand": "0.1",
+      "outside_0_2_thousand": [],
+      "examples": [
+        {
+          "sex": "1 Всего",
+          "year": 2026,
+          "period": "60 август",
+          "delta_thousand": "0.1",
+          "values": [
+            74827.3,
+            4655.7,
+            57667.1,
+            12504.6
+          ],
+          "total_cell": [
+            205,
+            12
+          ]
+        },
+        {
+          "sex": "2 Женщины",
+          "year": 2026,
+          "period": "60 август",
+          "delta_thousand": "0.0",
+          "values": [
+            36649.3,
+            2050.5,
+            28617.0,
+            5981.8
+          ],
+          "total_cell": [
+            206,
+            12
+          ]
+        },
+        {
+          "sex": "3 Мужчины",
+          "year": 2026,
+          "period": "60 август",
+          "delta_thousand": "-0.1",
+          "values": [
+            38178.1,
+            2605.2,
+            29050.0,
+            6522.8
+          ],
+          "total_cell": [
+            207,
+            12
+          ]
+        }
+      ]
+    },
+    "participation_national_parity": {
+      "n": 66,
+      "exact": 44,
+      "max_abs_delta_pp": "5.9",
+      "discrepancies": [
+        {
+          "age": "207 15 лет и старше",
+          "geo": "643 Российская Федерация",
+          "year": 2022,
+          "period": "115 январь",
+          "participation_59192": 62.2,
+          "participation_60974": 62.1,
+          "delta_pp": "0.1",
+          "cells": [
+            [
+              4,
+              8
+            ],
+            [
+              4,
+              5
+            ]
+          ]
+        },
+        {
+          "age": "204 15-72 лет",
+          "geo": "643 Российская Федерация",
+          "year": 2021,
+          "period": "115 январь",
+          "participation_59192": 62.1,
+          "participation_60974": 67.9,
+          "delta_pp": "-5.8",
+          "cells": [
+            [
+              1939,
+              7
+            ],
+            [
+              124,
+              4
+            ]
+          ]
+        }
+      ],
+      "examples": [
+        {
+          "age": "207 15 лет и старше",
+          "geo": "643004.АГ Российская Федерация без учета новых субъектов (с 01.01.2023)",
+          "year": 2026,
+          "period": "65 июль",
+          "participation_59192": 62.9,
+          "participation_60974": 62.9,
+          "delta_pp": "0.0",
+          "cells": [
+            [
+              61,
+              12
+            ],
+            [
+              23,
+              9
+            ]
+          ]
+        }
+      ],
+      "classification": {
+        "age15plus_discrepancies": 10,
+        "age15_72_discrepancies": 12,
+        "age15_72_warning": "same label year2021 differs5.7–5.9pp; cannot assume comparable age or vintage; do not relabel either source",
+        "age15plus_warning": "2022 nine0.1pp gaps and2023one0.04pp gap;0.1pp gaps are not explained by rounding to0.1pp alone. Source definitions/vintage unresolved; no replacement of existing macro series."
+      },
+      "full_discrepancy_file": "temporary /tmp/612-participation/checks.json (all22 mismatches)"
+    },
+    "labour_force_national_parity_59191_vs_60970": {
+      "n": 92,
+      "exact": 89,
+      "max_abs_delta_thousand": 7.2,
+      "discrepancies": [
+        {
+          "date": "2025-01-31",
+          "value_59191": 75265.1,
+          "value_60970": 75267.4,
+          "delta_thousand": -2.3
+        },
+        {
+          "date": "2025-02-28",
+          "value_59191": 75501.8,
+          "value_60970": 75494.6,
+          "delta_thousand": 7.2
+        },
+        {
+          "date": "2023-05-31",
+          "value_59191": 75793.0,
+          "value_60970": 75793.02,
+          "delta_thousand": -0.02
+        }
+      ],
+      "reference": "60970 original604numericbytes independently reverified identicalSHA60814:39UTC; no fresh60970request612",
+      "example": {
+        "date": "2025-12-31",
+        "value_59191": 76321.4,
+        "value_60970": 76321.4,
+        "delta_thousand": 0.0
+      },
+      "classification": "May2023 -0.02thousand compatible with source rounding; January2025 -2.3 andFebruary2025 +7.2thousand unexplained source/vintage discrepancy, not rounding. No silent canonical replacement."
+    }
+  },
+  "minimal_cells": {
+    "fixed_age_participation_July2026": [
+      {
+        "age": "207 15 лет и старше",
+        "geo": "643004.АГ Российская Федерация без учета новых субъектов (с 01.01.2023)",
+        "period": "65 июль",
+        "sex": "1 Всего",
+        "year": 2026,
+        "value": 62.9,
+        "row": 61,
+        "col": 12
+      },
+      {
+        "age": "207 15 лет и старше",
+        "geo": "643004.АГ Российская Федерация без учета новых субъектов (с 01.01.2023)",
+        "period": "65 июль",
+        "sex": "2 Женщины",
+        "year": 2026,
+        "value": 56.8,
+        "row": 62,
+        "col": 12
+      },
+      {
+        "age": "207 15 лет и старше",
+        "geo": "643004.АГ Российская Федерация без учета новых субъектов (с 01.01.2023)",
+        "period": "65 июль",
+        "sex": "3 Мужчины",
+        "year": 2026,
+        "value": 70.2,
+        "row": 63,
+        "col": 12
+      },
+      {
+        "age": "363 15-64 лет",
+        "geo": "643004.АГ Российская Федерация без учета новых субъектов (с 01.01.2023)",
+        "period": "65 июль",
+        "sex": "1 Всего",
+        "year": 2026,
+        "value": 78.0,
+        "row": 1066,
+        "col": 12
+      },
+      {
+        "age": "363 15-64 лет",
+        "geo": "643004.АГ Российская Федерация без учета новых субъектов (с 01.01.2023)",
+        "period": "65 июль",
+        "sex": "2 Женщины",
+        "year": 2026,
+        "value": 74.2,
+        "row": 1067,
+        "col": 12
+      },
+      {
+        "age": "363 15-64 лет",
+        "geo": "643004.АГ Российская Федерация без учета новых субъектов (с 01.01.2023)",
+        "period": "65 июль",
+        "sex": "3 Мужчины",
+        "year": 2026,
+        "value": 82.1,
+        "row": 1068,
+        "col": 12
+      },
+      {
+        "age": "382 25-54 года",
+        "geo": "643004.АГ Российская Федерация без учета новых субъектов (с 01.01.2023)",
+        "period": "65 июль",
+        "sex": "1 Всего",
+        "year": 2026,
+        "value": 93.7,
+        "row": 3250,
+        "col": 12
+      },
+      {
+        "age": "382 25-54 года",
+        "geo": "643004.АГ Российская Федерация без учета новых субъектов (с 01.01.2023)",
+        "period": "65 июль",
+        "sex": "2 Женщины",
+        "year": 2026,
+        "value": 91.2,
+        "row": 3251,
+        "col": 12
+      },
+      {
+        "age": "382 25-54 года",
+        "geo": "643004.АГ Российская Федерация без учета новых субъектов (с 01.01.2023)",
+        "period": "65 июль",
+        "sex": "3 Мужчины",
+        "year": 2026,
+        "value": 96.3,
+        "row": 3252,
+        "col": 12
+      }
+    ],
+    "regional_participation_Q2_2026": [
+      {
+        "age": "207 15 лет и старше",
+        "geo": "643004.АГ Российская Федерация без учета новых субъектов (с 01.01.2023)",
+        "period": "56 II квартал",
+        "sex": "not dimension",
+        "year": 2026,
+        "value": 62.9,
+        "row": 10,
+        "col": 30
+      },
+      {
+        "age": "207 15 лет и старше",
+        "geo": "65000000000 Свердловская область",
+        "period": "56 II квартал",
+        "sex": "not dimension",
+        "year": 2026,
+        "value": 62.1,
+        "row": 345,
+        "col": 30
+      }
+    ],
+    "bad_age_classifier_examples": [
+      {
+        "age": "263 детей в возрасте 7-15 лет",
+        "geo": "643 Российская Федерация",
+        "period": "68 март",
+        "sex": "1 Всего",
+        "year": 2022,
+        "value": 75.3,
+        "row": 5053,
+        "col": 8
+      },
+      {
+        "age": "263 детей в возрасте 7-15 лет",
+        "geo": "643 Российская Федерация",
+        "period": "68 март",
+        "sex": "2 Женщины",
+        "year": 2022,
+        "value": 70.9,
+        "row": 5054,
+        "col": 8
+      },
+      {
+        "age": "263 детей в возрасте 7-15 лет",
+        "geo": "643 Российская Федерация",
+        "period": "68 март",
+        "sex": "3 Мужчины",
+        "year": 2022,
+        "value": 80.0,
+        "row": 5055,
+        "col": 8
+      }
+    ]
+  },
+  "geography_contract": {
+    "national_codes": [
+      "643",
+      "643004.АГ"
+    ],
+    "national_split": "59191 pre2023 values643;2023onward643004.АГ label excludes newterritories;59192 retains some6432023 values with overlapping excludedterritoryseries, so preserve exact geographylabel/source rather than splice silently.",
+    "footnote": "Official passports state exclusion DNR/LNR/Zaporizhzhia/Kherson. Classifier code is not sufficient to assert complete comparability across vintages.",
+    "regional_nesting": "Arkhangelsk with/without NAO;Tyumen with/without KhMAO+YaNAO;FD and Arcticaggregate cannot enter unweighted region sums together."
+  },
+  "handoff": {
+    "key_dimensions": [
+      "source indicator",
+      "geography exact code",
+      "age exact code",
+      "sex code or explicit not_present",
+      "frequency/periodtype",
+      "report period"
+    ],
+    "precision": "Counts0.1thousand, percentages usually0.1pp but raw0.01pp cells must remain raw. Validate identity tolerances from per-cell published precision; no vintageidentity claim from interval overlap. 59191/60970 January-February2025 mismatches2.3/7.2thousand are NOT rounding; preserve distinct sources and require reconciliation before canonical stitching.",
+    "estimate_person_days": "2–3 for national sex/fixedage count slice plus quarterly regional participation; full joint currentregionmonthly blockedpendingnewsource/clarification.",
+    "implementation": "Go follow-up only after bounded #492 spec. OLE/BIFF transport requires actualXLS parser; existing Excelize XLSX path cannot read it. Public CSRF cookies remain ephemeral.",
+    "acceptance": [
+      "Every row actualnumeric and dimensions real, fail on unknown classifier such as263children7–15.",
+      "Keep monthly/quarter/annual separate and preserve missing cells.",
+      "Exact sourcebytes/hash/time, metadata update date not published_at.",
+      "600 gender sum and276 fixedage partitions reproducible; discrepancies classified."
+    ]
+  },
+  "not_verified": [
+    "Open licensing/redistribution terms not inferred from public access.",
+    "No historical vintage archive/PIT; loaded_at would be future actual ingest time, unknown here.",
+    "No region x sex x fixedage currentquarter alternative beyond downloaded sources.",
+    "No direct publication time established; source passport last update is only metadata."
+  ]
+}

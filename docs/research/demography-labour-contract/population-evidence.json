@@ -1,0 +1,318 @@
+{
+  "observed_at_utc": "2026-11-15T14:59:57.012850+00:00",
+  "scope": "#612 read-only bounded source research; no database writes/imports/production changes; full books not committed",
+  "annual_population_489": {
+    "decision": "ITERATE for full1990–latest national+all-subject annual scope; GO only for bounded legacy43701source access2012–2017, not full acceptance",
+    "canonical_listing": "https://rosstat.gov.ru/folder/12781",
+    "blocked_primary_files": [
+      "popul_1897+.xlsx",
+      "OkPopul_Comp2025_Site.xlsx",
+      "Chisl_RF_01-01-2022-01-01-2024.xls",
+      "Chisl_polvozr_01-01-2022_VPN-2020.xlsx"
+    ],
+    "primary_status": "All actualGET404HTML despite official links; no annual values taken from these responses",
+    "emiss43701": {
+      "url": "https://www.fedstat.ru/indicator/43701",
+      "format": "downloadedCDFV2BIFFXLS, public POST mobile download form with its session/token; no authentication used",
+      "reference_date": "1January of each year, not annualaverage",
+      "unit": "persons",
+      "scope": "permanentpopulation, national+districts+subjects; mixed hierarchy must not be summed wholesale",
+      "metadata_period": [
+        "2012-01-01",
+        "2017-01-01"
+      ],
+      "metadata_last_updated": "2018-02-02",
+      "metadata_comment": "Indicator removed from efficiency-assessment section in2018; from1Jan2018 see current permanentpopulationon1January indicator",
+      "current_successor_candidate": "https://www.fedstat.ru/indicator/31557",
+      "successor_probe": "302redirect to authorization then200text/htmllogin,3806bytes; not public numeric evidence; no bypass or credential request",
+      "minimal_cells": {
+        "Данные!D3": "2012",
+        "Данные!I3": "2017",
+        "Данные!A4": "643 Российская Федерация",
+        "Данные!B4": "792 человек",
+        "Данные!C4": "80 на 1 января",
+        "Данные!D4": 143056383,
+        "Данные!I4": 146804372
+      },
+      "controls": [
+        {
+          "year": 2012,
+          "reference_date": "2012-01-01",
+          "aggregation": "nonemptyfederaldistrictrowsONLY; excludeRF/subjects; usemutuallyexclusiveold/newSouthernandCrimeadistrictrowsperyear",
+          "district_count": 8,
+          "district_rows_1based": [
+            5,
+            24,
+            37,
+            47,
+            55,
+            70,
+            78,
+            79
+          ],
+          "sum": 143056383,
+          "national": 143056383,
+          "difference": 0
+        },
+        {
+          "year": 2013,
+          "reference_date": "2013-01-01",
+          "aggregation": "nonemptyfederaldistrictrowsONLY; excludeRF/subjects; usemutuallyexclusiveold/newSouthernandCrimeadistrictrowsperyear",
+          "district_count": 8,
+          "district_rows_1based": [
+            5,
+            24,
+            37,
+            47,
+            55,
+            70,
+            78,
+            79
+          ],
+          "sum": 143347059,
+          "national": 143347059,
+          "difference": 0
+        },
+        {
+          "year": 2014,
+          "reference_date": "2014-01-01",
+          "aggregation": "nonemptyfederaldistrictrowsONLY; excludeRF/subjects; usemutuallyexclusiveold/newSouthernandCrimeadistrictrowsperyear",
+          "district_count": 8,
+          "district_rows_1based": [
+            5,
+            24,
+            37,
+            47,
+            55,
+            70,
+            78,
+            79
+          ],
+          "sum": 143666931,
+          "national": 143666931,
+          "difference": 0
+        },
+        {
+          "year": 2015,
+          "reference_date": "2015-01-01",
+          "aggregation": "nonemptyfederaldistrictrowsONLY; excludeRF/subjects; usemutuallyexclusiveold/newSouthernandCrimeadistrictrowsperyear",
+          "district_count": 9,
+          "district_rows_1based": [
+            5,
+            24,
+            37,
+            47,
+            55,
+            70,
+            78,
+            79,
+            80
+          ],
+          "sum": 146267288,
+          "national": 146267288,
+          "difference": 0
+        },
+        {
+          "year": 2016,
+          "reference_date": "2016-01-01",
+          "aggregation": "nonemptyfederaldistrictrowsONLY; excludeRF/subjects; usemutuallyexclusiveold/newSouthernandCrimeadistrictrowsperyear",
+          "district_count": 9,
+          "district_rows_1based": [
+            5,
+            24,
+            37,
+            47,
+            55,
+            70,
+            78,
+            79,
+            80
+          ],
+          "sum": 146544710,
+          "national": 146544710,
+          "difference": 0
+        },
+        {
+          "year": 2017,
+          "reference_date": "2017-01-01",
+          "aggregation": "nonemptyfederaldistrictrowsONLY; excludeRF/subjects; usemutuallyexclusiveold/newSouthernandCrimeadistrictrowsperyear",
+          "district_count": 8,
+          "district_rows_1based": [
+            5,
+            24,
+            38,
+            47,
+            55,
+            70,
+            78,
+            79
+          ],
+          "sum": 146804372,
+          "national": 146804372,
+          "difference": 0
+        }
+      ],
+      "vintage": "old snapshot lastupdated2018 cannot establish equivalence to postVPN2020revised2012–2017annualseries; do not treat this control as proof of current-vintage accuracy"
+    },
+    "handoff": "#489 retain annualpopulation scope, resolve canonicalfull1990–latest files plus matching-vintage independentnationalcontrol.43701 alone cannot controlpost2017dates; approve/update control contract explicitly, not silently. Do not extend#489tointercensalage-sex. Estimate2–3engineeringdays after source/vintage gate; currently sourceblocked."
+  },
+  "census_490": {
+    "decision": "GO bounded source handoff for2021-10-01 age-sex national+subjects fromtable1/table2, subject to remaining#490acceptance including municipalities not liveverified",
+    "listing": "https://rosstat.gov.ru/vpn/2020/Tom2_Vozrastno_polovoj_sostav_i_sostoyanie_v_brake",
+    "name": "VPN2020",
+    "actual_reference_date": "2021-10-01",
+    "date_evidence_url": "https://rosstat.gov.ru/vpn/2020",
+    "minimal_date_quote": "Всероссийская перепись населения проведена по состоянию на 1 октября 2021 г.",
+    "published_at": "not established from HTTPLastModified; listingdate31.12.2022islistingmetadata, not censusreference",
+    "table1": {
+      "sheet": "таб 1",
+      "url": "https://rosstat.gov.ru/storage/mediabank/Tom2_tab1_VPN-2020.xlsx",
+      "minimal_cells": {
+        "A1": "1. НАСЕЛЕНИЕ ПО ВОЗРАСТУ И ПОЛУ                                        ",
+        "A5": "Городское и сельское население",
+        "B5": "147182123",
+        "C5": "68431580",
+        "D5": "78750543",
+        "B140": "85875264",
+        "C140": "44434799",
+        "D140": "41440465",
+        "A417": "1) Население в возрасте моложе трудоспособного - 0-15 лет, в трудоспособном возрасте - мужчины от 16 до 61,5 лет, женщины от 16 до 56,5 лет;",
+        "A418": "   старше трудоспособного возраста - мужчины от 61,5 лет и более, женщины от 56,5 лет и более"
+      }
+    },
+    "table2": {
+      "sheet": "таб 2",
+      "url": "https://rosstat.gov.ru/storage/mediabank/Tom2_tab2_VPN-2020.xlsx",
+      "minimal_cells": {
+        "A1": "2. НАСЕЛЕНИЕ ПО ВОЗРАСТНЫМ ГРУППАМ И ПОЛУ ПО СУБЪЕКТАМ РОССИЙСКОЙ ФЕДЕРАЦИИ ",
+        "A4": "Российская Федерация",
+        "A5": "Городское и сельское население",
+        "B5": "147182123",
+        "C5": "68431580",
+        "D5": "78750543",
+        "B35": "24710125",
+        "B36": "85875264",
+        "B37": "36596734",
+        "B38": "110075322"
+      },
+      "national_fixed15_64_components": [
+        {
+          "age_label": "15 - 19",
+          "total_cell": "B10",
+          "persons": 7563304
+        },
+        {
+          "age_label": "20 - 24",
+          "total_cell": "B11",
+          "persons": 7750398
+        },
+        {
+          "age_label": "25 - 29",
+          "total_cell": "B12",
+          "persons": 7983625
+        },
+        {
+          "age_label": "30 - 34",
+          "total_cell": "B13",
+          "persons": 12156975
+        },
+        {
+          "age_label": "35 - 39",
+          "total_cell": "B14",
+          "persons": 13043984
+        },
+        {
+          "age_label": "40 - 44",
+          "total_cell": "B15",
+          "persons": 11653990
+        },
+        {
+          "age_label": "45 - 49",
+          "total_cell": "B16",
+          "persons": 10413632
+        },
+        {
+          "age_label": "50 - 54",
+          "total_cell": "B17",
+          "persons": 9209284
+        },
+        {
+          "age_label": "55 - 59",
+          "total_cell": "B18",
+          "persons": 9670775
+        },
+        {
+          "age_label": "60 - 64",
+          "total_cell": "B19",
+          "persons": 10648786
+        }
+      ]
+    },
+    "controls": [
+      {
+        "test": "nationalmale+female=both",
+        "operands": [
+          68431580,
+          78750543
+        ],
+        "result": 147182123,
+        "published_total": 147182123,
+        "difference": 0
+      },
+      {
+        "test": "18disjoint5yearagebins0–4through80–84plus85+sum=allages",
+        "range": "B7:B24",
+        "result": 147182123,
+        "published_total": 147182123,
+        "difference": 0
+      },
+      {
+        "test": "sameRFtotalintable1andtable2",
+        "cells": [
+          "таб1!B5",
+          "таб2!B5"
+        ],
+        "values": [
+          147182123,
+          147182123
+        ],
+        "difference": 0
+      },
+      {
+        "test": "derivedfixed15–64male+female=both",
+        "components": "table2rows10–19only; no totals/overlappingagegroups",
+        "result_by_sex_persons": {
+          "B": 100094753,
+          "C": 48194513,
+          "D": 51900240
+        },
+        "difference": 0
+      }
+    ],
+    "fixed_age_vs_working_age": {
+      "derived_fixed15_64_persons": 100094753,
+      "official_working_age_persons": 85875264,
+      "difference_persons": 14219489,
+      "working_age_definition_fromtable1footnote": "younger0–15; workingagemen16to61.5,women16to56.5; olderfrom61.5/56.5. Preserveliteralboundarysemantics; not equivalentto15–64 orsurvey15+.",
+      "derived_fixed15_64_is_official_observation": false
+    },
+    "territory": "Table2explicitlyincludesRepublicCrimeaandSevastopol; noDNR/LNR/Zaporizhzhia/Khersonlabelsfound. Freeze2021censusgeography; do not silently maplaterboundaries. No hierarchicalterritorysummationperformed.",
+    "municipalities": "not probed; nationaltable2isRF/districts/subjects; regionalmunicipalworkbooks needseparateboundedgatefor#490",
+    "methodology_pdf": "officiallinkedTom2_met_VPN-2020.pdfactual404HTML,so no textualclaimbeyondverifiedmainpage/workbook",
+    "handoff": "#490parse2021-10-01snapshot,sex,age,settlementtypeandgeographylevelwithsourceversion/hash; retainnationalcontrolandexactintegerpersons; fixed15–64derivedseparatefromofficialworkingage. Scopeage-sexonlyhere; broadercensusdomain/municipalacceptanceunverified. Estimate1–2engineeringdaysfornational+subjectage-sexafter#490spec,municipalityeffortnotassessed."
+  },
+  "common_limitations": {
+    "revision_contract": "Officialdemographiclistingexposesexplicit2012–2022recalculationfromVPN2020andseparateannualaveragefiles. Pinrevisedbasis/reference_date; do notspliceold43701vintagewithpostcensusrevisionmerelybecauseyearscoincide. Actualrevisedage2022file404; numericalrevisionsnotquantified.",
+    "period_mismatch": "Census2021-10-01stock,annualJan1stock,annualaverageandmonthlyLFS15+denominatoraredifferentobjects. No annual-to-monthlyinterpolationorresidualmigration/militaryeffects.",
+    "terms": "RosstatfooterCopyrightonly; explicitopenlicensefortestedfilesnotestablished. NoPIT/vintagearchiveverified.",
+    "what_not_checked": [
+      "full1990–latestannualcoverage",
+      "current31557numericexport",
+      "annualmatching-vintagecrosssourcecontrol",
+      "allmunicipalities",
+      "allcensusvolumes",
+      "historicalas-ofsnapshots",
+      "futureavailabilityor+1/+3daystability"
+    ]
+  }
+}

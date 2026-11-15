@@ -1,0 +1,47 @@
+[
+  {
+    "id": 59749,
+    "url": "https://fedstat.ru/indicator/59749/download",
+    "at": "2026-11-15T14:55:17.882282+00:00",
+    "response": "200 application/vnd.ms-excel 0.881110",
+    "bytes": 92160,
+    "sha256": "11f9683fd0397e7db620090e7c3ba4cecf5a05d5e630a630af22f41b45318072",
+    "headers": {
+      "content-type": "application/vnd.ms-excel",
+      "date": "Sun, 15 Nov 2026 14:55:19 GMT",
+      "cache-control": "no-cache, must-revalidate, post-check=0, pre-check=0"
+    },
+    "retry_count": 0,
+    "method": "public indicator GET with cookie jar; same-session POST download id/format=excel/struts.token.name=token/token; session values omitted"
+  },
+  {
+    "id": 59751,
+    "url": "https://fedstat.ru/indicator/59751/download",
+    "at": "2026-11-15T14:55:37.423745+00:00",
+    "response": "200 application/vnd.ms-excel 3.514755",
+    "bytes": 18432,
+    "sha256": "d08d8e3f3e138e76ac6a30100680459dc91a4c3004f0a8b374c6b818d7ec5ca7",
+    "headers": {
+      "content-type": "application/vnd.ms-excel",
+      "date": "Sun, 15 Nov 2026 14:55:42 GMT",
+      "cache-control": "no-cache, must-revalidate, post-check=0, pre-check=0"
+    },
+    "retry_count": 0,
+    "method": "public indicator GET with cookie jar; same-session POST download id/format=excel/struts.token.name=token/token; session values omitted"
+  },
+  {
+    "id": 60463,
+    "url": "https://fedstat.ru/indicator/60463/download",
+    "at": "2026-11-15T14:55:37.425082+00:00",
+    "response": "200 application/vnd.ms-excel 3.118462",
+    "bytes": 89600,
+    "sha256": "f03d6a4c65a83371f87b9626d0ef2da64f5d0ac54a0ca086a383312a4b517441",
+    "headers": {
+      "content-type": "application/vnd.ms-excel",
+      "date": "Sun, 15 Nov 2026 14:55:41 GMT",
+      "cache-control": "no-cache, must-revalidate, post-check=0, pre-check=0"
+    },
+    "retry_count": 0,
+    "method": "public indicator GET with cookie jar; same-session POST download id/format=excel/struts.token.name=token/token; session values omitted"
+  }
+]

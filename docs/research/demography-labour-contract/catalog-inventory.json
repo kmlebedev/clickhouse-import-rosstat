@@ -1,0 +1,51 @@
+{
+  "query": "SELECT source,series,title,unit,frequency FROM v_series_catalog WHERE match(lowerUTF8(concat(source,' ',series,' ',title,' ',description)), 'population|census|hours|демограф|численност.{0,20}населени|отработан|рабочих часов|участия в составе|половозраст|перепис') ORDER BY source,series",
+  "result": {
+    "columns": [
+      "source",
+      "series",
+      "title",
+      "unit",
+      "frequency"
+    ],
+    "rows": [
+      [
+        "rosstat",
+        "Уровень занятости",
+        "Уровень занятости, РФ, помесячно",
+        "%",
+        "M"
+      ],
+      [
+        "rosstat",
+        "Уровень участия в составе рабочей силы",
+        "Уровень участия в составе рабочей силы, РФ, помесячно",
+        "%",
+        "M"
+      ]
+    ]
+  },
+  "view_name_checks": [
+    {
+      "status": "fulfilled",
+      "value": {
+        "like": "v_%population%",
+        "tables": []
+      }
+    },
+    {
+      "status": "fulfilled",
+      "value": {
+        "like": "v_%census%",
+        "tables": []
+      }
+    },
+    {
+      "status": "fulfilled",
+      "value": {
+        "like": "v_%hours%",
+        "tables": []
+      }
+    }
+  ]
+}
