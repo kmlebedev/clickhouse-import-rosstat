@@ -79,10 +79,15 @@ before the 23rd (meetings of 20 March, 19 June, 23 October and 18 December
 Two consequences to handle:
 
 - **Check that the wave is in the database, not just published.** In the
-  preflight compare `as_of` of `infl_exp_expected` with the note's date in
-  `v_cbr_publication_calendar`. If the new wave is not loaded, ask the owner
-  to run the importer; do not forecast on last month's expectations without
-  saying so in the first line of the report.
+  preflight compare the month of the last household-expectations point with
+  the `period` of the latest note in `v_cbr_publication_calendar` (query 10
+  in the data map; the point is dated by the survey, the 14th, so the dates
+  themselves never match). If the note is out but the wave is not loaded,
+  ask the owner to run the importer.
+- **A run before the note is still a run.** When the user asks for the call
+  before this month's note is out, do it — on last month's wave — and say
+  so in the first line of the report, with the date the note is due. That
+  note then becomes the natural "what would change the call" candidate.
 - **Pre-meeting refresh.** When the meeting is more than ten days after the
   monthly run (for example the meetings of 13 February and 11 September
   2026, which preceded that month's note), do a short refresh two working
@@ -110,6 +115,9 @@ the classic way a rate forecast fools its author.
   latest date of every series used. A series flagged `stale` in
   `v_key_rate_dashboard` is reported as stale, not silently used as current;
   the audit of 2026-11-14 found 19 of 24 dashboard indicators stale on dev.
+  The flag misses some cases — a row can show `stale = 0` and still describe
+  the previous meeting or the previous month — so judge each number by its
+  own date against the run date.
 - **Read the Bank's paragraphs; do not count them.** Channel-tag frequency in
   `v_cbr_mp_summary_channels` is not a causal weight, and the tags contain
   known polarity errors (see the channel audit of 2026-11-15). Use the tags
@@ -136,9 +144,10 @@ and their known traps are in [references/data-map.md](references/data-map.md)
 ### 1. Preflight
 
 Establish the run date, whether this month's inFOM wave is loaded (see
-"When to run"), the current rate, the date of the next meeting and
-whether it is a "core" meeting (with a new medium-term forecast: February,
-April, July, October) or an interim one. The Board changes its forecast
+"When to run"), the current rate, the dates of the next eight meetings
+(`v_events_calendar`, query 2) and whether the next one is a "core" meeting
+(with a new medium-term forecast: February, April, July, October) or an
+interim one. The Board changes its forecast
 ranges only at core meetings, which makes large surprises more likely there.
 List which inputs are stale. Read the previous `forecast.json` if one exists.
 
@@ -187,11 +196,13 @@ most important input: the three lenses disagree mainly about these rows.
 
 ### 5. Base rates
 
-Before any argument, write down what history alone says: from
-`cbr_key_rate` in `v_cbr_macro`, the distribution of step sizes following
-the same previous move (cut after cut, hold after cut, and so on), the
-typical length of pauses, and how often the Board reversed direction within
-three meetings. This is the prior. The lenses move it; if the final forecast
+Before any argument, write down what history alone says: from the
+per-meeting decision table (query 3 in the data map — the raw `cbr_key_rate`
+series shows only changes and would hide every hold), the distribution of
+step sizes following the same previous move (cut after cut, hold after cut,
+hold after two holds, and so on), the typical length of pauses, and how
+often the Board reversed direction within three meetings. Leave emergency
+meetings out of the counts and say how many meetings each number rests on. This is the prior. The lenses move it; if the final forecast
 ends far from it, the report must say what evidence justified the distance.
 
 ### 6. Four lenses
@@ -210,11 +221,21 @@ least comfortable.
 | D. Over-tightening dissent | Is the rate hitting supply and financial stability rather than inflation? | Speed of cuts, downside tail |
 
 For lens A, run the arithmetic check with `scripts/rate_math.py avg`: the
-Bank publishes a range for the average key rate of the current year; given
-the rate realised so far, only some paths over the remaining meetings keep
-the average inside that range. This turns a published range into a hard
-constraint on the next one or two decisions and is the strongest single
-piece of evidence available.
+Bank publishes a range for the average key rate of each year; given the
+rate realised so far, only some paths over the remaining meetings keep the
+average inside it. Through most of the year this turns the current-year
+range into a hard constraint on the next one or two decisions and is the
+strongest single piece of evidence available.
+
+Check that the constraint actually binds before leaning on it. With one
+meeting left the current-year range has usually collapsed to a point that
+both a hold and a cut satisfy (December 2026: 14.6 either way) — then say
+it is uninformative and move the same check to next year's range: run
+`avg` for the next year without `--ytd-*`, with `--rate` set to the rate
+each December outcome would leave in force on 1 January, and see which
+paths over next year's eight meetings stay inside. That shows how much
+easing the Bank's own forecast leaves room for, and therefore how urgent a
+December move is.
 
 ### 7. Synthesis
 
@@ -223,8 +244,9 @@ the reason for them in a sentence each — as a default, lens A dominates the
 next decision, while B, C and D shape the path beyond two meetings and the
 tails. Then check three things:
 
-- the path is internally consistent (the annual average of the base path,
-  from `rate_math.py avg`, is stated and compared with the Bank's range);
+- the path is internally consistent (the annual average of the low, base
+  and high paths, from `rate_math.py avg`, is stated for every year the
+  path touches and compared with the Bank's range);
 - the distance from the base-rate prior is explained;
 - the single observation that would most change the call before the meeting
   is named, with its publication date from `v_cbr_publication_calendar`.
@@ -237,7 +259,10 @@ with the forecast's expected rate, and report it in basis points. A gap
 under 25 bp is "no disagreement" — say so plainly; most months the honest
 finding is that the market already prices the view. Where the gap is
 larger, describe what it implies for the main rate-sensitive exposures and
-record a paper position so the claim can be checked later.
+record a paper position so the claim can be checked later. The strip is
+short — usually one series with real open interest — so beyond it there is
+no market price to disagree with: leave the "Market" cell of later meetings
+empty rather than filling it from a series nobody holds.
 
 ### 9. Write the record
 
@@ -266,12 +291,19 @@ destroys the track record that gives the exercise its value.
 
 ```bash
 python3 .kimi-code/skills/economist-oracle/scripts/rate_math.py avg \
-  --year 2026 --ytd-avg 15.9 --ytd-through 2026-11-13 --rate 14.0 \
-  --meeting 2026-12-18:13.5 --range 14.5:14.6
+  --year 2026 --ytd-avg 14.68 --ytd-through 2026-11-15 --rate 14.0 \
+  --meeting 2026-12-18:13.75 --range 14.6:14.6
+# a year that has not started: no --ytd-*, --rate is the rate on 1 January
+python3 .kimi-code/skills/economist-oracle/scripts/rate_math.py avg \
+  --year 2027 --rate 13.75 --meeting 2027-02-12:13.5 --meeting 2027-03-19:13.25 \
+  --range 12.5:13.5
 python3 .kimi-code/skills/economist-oracle/scripts/rate_math.py score \
   --probs '{"-100":0.2,"-50":0.6,"0":0.2}' --market '{"-50":0.5,"0":0.5}' \
   --outcome -50
 ```
 
-The numbers in these examples are placeholders that show the argument
-format; take real values from the views.
+The numbers in these examples show the argument format; take real values
+from the views (`--ytd-avg` from query 4 of the data map — a calendar-day
+average, not `avg()` over the working-day rows). `--meeting` takes the
+meeting date; the script applies the change three days later, when it takes
+effect.

@@ -18,7 +18,14 @@ series: `settle` is the market's expected rate after that meeting.
   with", and prefer comparing expected rates, which needs no assumption.
 - **Liquidity check.** Note `volume` and `openposition`. A thin series
   gives a noisy price; widen the "no disagreement" band to 40 bp when open
-  interest is negligible.
+  interest is a few hundred contracts. A series with open interest under
+  about 100 (the second series of the strip often has single digits and no
+  trades) carries the exchange's model price, not anyone's view: report it
+  as "no market price" and compute no gap against it.
+- **The market at the time, for scoring.** The previous run's
+  `forecast.json` holds the market row it saw. If it is missing, rebuild it
+  from `v_keyrate_expectations` with `decision_date` = that meeting and
+  `date` ≤ that run date, and say it was reconstructed.
 - **Further out,** use the later series of the strip where they trade, and
   the OFZ curve (`ofz_1y`, `ofz_2y` against the key rate) as a rough check
   of the path: a one-year yield below the key rate prices cuts over the
@@ -42,7 +49,11 @@ synthesis. Negative gap: the forecast is more dovish than the market.
 
 Also show the gap for the other tracks (`taylor_vs_market_bp`,
 `ordered_logit_vs_market_bp` in the dashboard) so the reader sees whether
-this forecast disagrees with the market alone or with the models too.
+this forecast disagrees with the market alone or with the models too — but
+only when their `target_date` is the meeting being forecast. Between
+meetings those rows still describe the previous one (and the divergence
+values are empty); then report how the tracks did last time from
+`v_ml_live_accuracy` instead and say they have not been re-run.
 
 ## 3. What a gap implies, in general terms
 

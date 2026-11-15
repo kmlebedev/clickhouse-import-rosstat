@@ -6,3 +6,5 @@ allowed_tools: [Read, Glob, Grep, Skill, Write, Edit, Bash, mcp__clickhouse__run
 ---
 
 В docs/forecasts/key-rate/ лежит прошлый прогноз. Заседание прошло — оцени, насколько мы попали по сравнению с рынком, и обнови прогноз на следующее заседание.
+
+Input files: docs/forecasts/key-rate/2026-10/forecast.json, docs/forecasts/key-rate/2026-10/forecast.md

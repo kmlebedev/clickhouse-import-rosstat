@@ -1,7 +1,0 @@
----
-type: llm
-focus: trace
-weight: 1
----
-
-The result matches this description: Queries the v_* views through the ClickHouse MCP, reports stale inputs, and writes forecast.md and forecast.json under docs/forecasts/key-rate/YYYY-MM/. The report gives decision probabilities in basis-point steps summing to 100, separate probability rows for the base-rate prior, the four lenses and the market, an eight-meeting low/base/high path with annual averages compared against the Bank of Russia range, a one-off ledger with classifications, the gap to KEYRATE futures in basis points with the 25 bp threshold applied, a paper record, and the release that would change the call with its date. Every number carries its date and view. No personalised investment advice.

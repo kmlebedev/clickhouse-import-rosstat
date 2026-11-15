@@ -21,10 +21,17 @@ def _d(s):
 def cmd_avg(a):
     year_start, year_end = date(a.year, 1, 1), date(a.year, 12, 31)
     days_total = (year_end - year_start).days + 1
-    through = _d(a.ytd_through)
-    if not year_start <= through <= year_end:
-        sys.exit("--ytd-through must fall inside --year")
-    days_ytd = (through - year_start).days + 1
+    if (a.ytd_avg is None) != (a.ytd_through is None):
+        sys.exit("--ytd-avg and --ytd-through go together; omit both for a future year")
+    if a.ytd_through is None:
+        # A year that has not started: --rate is the rate in force on 1 January
+        # (the last decision of the previous year, already effective).
+        through, days_ytd, ytd_avg = year_start - timedelta(days=1), 0, 0.0
+    else:
+        through, ytd_avg = _d(a.ytd_through), a.ytd_avg
+        if not year_start <= through <= year_end:
+            sys.exit("--ytd-through must fall inside --year")
+        days_ytd = (through - year_start).days + 1
 
     meetings = []
     for m in a.meeting or []:
@@ -35,7 +42,8 @@ def cmd_avg(a):
     meetings.sort()
     for d, _ in meetings:
         if d <= through:
-            sys.exit(f"meeting {d} is not after --ytd-through {through}")
+            sys.exit(f"meeting {d} is not after {through}; a decision of the previous "
+                     "year belongs in --rate")
 
     # A decision announced on day D applies from the next calendar day; the
     # Bank's rate changes take effect on the following Monday, which the
@@ -57,7 +65,7 @@ def cmd_avg(a):
         segments.append({"from": str(cursor), "days": n, "rate": rate})
 
     days_rest = days_total - days_ytd
-    annual = (a.ytd_avg * days_ytd + weighted) / days_total
+    annual = (ytd_avg * days_ytd + weighted) / days_total
     out = {
         "year": a.year,
         "days_ytd": days_ytd,
@@ -77,7 +85,7 @@ def cmd_avg(a):
             # Average over the remaining days that would put the year at each
             # edge of the range: the constraint on the remaining decisions.
             out["rest_avg_needed"] = [
-                round((x * days_total - a.ytd_avg * days_ytd) / days_rest, 2)
+                round((x * days_total - ytd_avg * days_ytd) / days_rest, 2)
                 for x in (lo, hi)
             ]
     print(json.dumps(out, ensure_ascii=False, indent=2))
@@ -120,10 +128,12 @@ def main():
 
     a = sub.add_parser("avg", help="annual average implied by a path")
     a.add_argument("--year", type=int, required=True)
-    a.add_argument("--ytd-avg", type=float, required=True,
-                   help="calendar-day average rate from 1 Jan through --ytd-through")
-    a.add_argument("--ytd-through", required=True, help="YYYY-MM-DD, last day covered by --ytd-avg")
-    a.add_argument("--rate", type=float, required=True, help="rate in force after --ytd-through")
+    a.add_argument("--ytd-avg", type=float,
+                   help="calendar-day average rate from 1 Jan through --ytd-through; "
+                        "omit with --ytd-through for a year that has not started")
+    a.add_argument("--ytd-through", help="YYYY-MM-DD, last day covered by --ytd-avg")
+    a.add_argument("--rate", type=float, required=True,
+                   help="rate in force after --ytd-through (or on 1 January for a future year)")
     a.add_argument("--meeting", action="append", help="DATE:RATE after that meeting; repeatable")
     a.add_argument("--range", help="LO:HI — the Bank's range for the annual average")
     a.add_argument("--effective-lag-days", type=int, default=3)

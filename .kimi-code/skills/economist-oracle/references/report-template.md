@@ -10,7 +10,7 @@ for arguments. Every number carries its date; every quotation carries its
 # Key rate: forecast for the meeting of <DD Month YYYY>
 
 Run date <YYYY-MM-DD> · current rate <x>% · <core|interim> meeting ·
-data version <hash or "n/a">
+data version <as in the payload>
 Stale inputs: <list, or "none">
 
 ## Call
@@ -120,8 +120,9 @@ fill `resolution` in the previous file:
 
 The `llm` track of `forecast_log` takes the same call. Print this block for
 the owner; the endpoint is `POST /v1/key_rate_forecast` and is written by
-`bi-ml-models: tools/forecast_log.py`. Check the current field list in
-`ingest/key_rate_forecast.go` before printing — it is the contract.
+`bi-ml-models: tools/forecast_log.py`. The contract is
+`ingest/key_rate_forecast.go` (`ValidateKeyRateForecast`); re-read it before
+printing, because a payload it rejects is of no use to the owner.
 
 ```json
 {
@@ -129,9 +130,27 @@ the owner; the endpoint is `POST /v1/key_rate_forecast` and is written by
   "target_date": "YYYY-MM-DD",
   "metric": "cbr_rate:llm:shadow",
   "predicted": 0.0,
-  "probabilities": {"-50": 0.0, "0": 0.0},
-  "data_version": ""
+  "probabilities": {"cut": 0, "hold": 0, "hike": 0},
+  "data_version": "",
+  "model": "",
+  "prompt_version": 1
 }
 ```
 
-`predicted` is the expected rate after the meeting, in percent.
+What the endpoint checks, as of 2026-11-15:
+
+- `predicted` is the expected **rate** after the meeting in percent (13.9),
+  not the step.
+- `probabilities` uses the three classes `cut`, `hold`, `hike` — all three
+  present, in percent, summing to 100 ± 0.1. Collapse the step distribution
+  of the report into them (all negative steps into `cut`, and so on); keys
+  like `"-25"` are rejected. The step-level distribution stays in
+  `forecast.json`.
+- `data_version` must not be empty. Use the `data_version` of
+  `v_point_in_time_version` followed by the run date
+  (`F0B82DAD8D63D150@2026-11-15`) unless the owner has set another
+  convention, and put the same string in `forecast.json`.
+- `model` must not be empty: the model that produced this run.
+- `prompt_version` must be at least 1 for the `llm` track: the version of
+  this skill agreed with the track's owner. If none has been agreed, print
+  1 and say that it is a placeholder.
