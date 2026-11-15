@@ -18,12 +18,23 @@ series: `settle` is the market's expected rate after that meeting.
   with", and prefer comparing expected rates, which needs no assumption.
 - **Liquidity check.** Note `volume` and `openposition`. A thin series
   gives a noisy price; widen the "no disagreement" band to 40 bp when open
-  interest is negligible.
+  interest is a few hundred contracts. A series with open interest under
+  about 100 (the second series of the strip often has single digits and no
+  trades) carries the exchange's model price, not anyone's view: report it
+  as "no market price" and compute no gap against it.
+- **The market at the time, for scoring.** The previous run's
+  `forecast.json` holds the market row it saw. If it is missing, rebuild it
+  from `v_keyrate_expectations` with `decision_date` = that meeting and
+  `date` ≤ that run date, and say it was reconstructed.
 - **Further out,** use the later series of the strip where they trade, and
-  the OFZ curve (`ofz_1y`, `ofz_2y` against the key rate) as a rough check
-  of the path: a one-year yield below the key rate prices cuts over the
-  year, but it includes a term premium, so do not read it to the basis
-  point.
+  the OFZ curve (`ofz_1y`, `ofz_2y` against the key rate) as a check of
+  direction only: a one-year yield below the key rate prices cuts over the
+  year. The yield includes a term premium that no view measures, so it
+  cannot be turned into an implied average rate. Subtracting a premium you
+  chose ("0.5–1.0 pp") and finding that the result matches the base path is
+  not agreement with the market — the premium was picked, not observed. If
+  a number is wanted anyway, present it as a scenario: "if the premium were
+  X, the curve would imply Y", with no conclusion drawn from the match.
 
 ## 2. The gap
 
@@ -42,7 +53,11 @@ synthesis. Negative gap: the forecast is more dovish than the market.
 
 Also show the gap for the other tracks (`taylor_vs_market_bp`,
 `ordered_logit_vs_market_bp` in the dashboard) so the reader sees whether
-this forecast disagrees with the market alone or with the models too.
+this forecast disagrees with the market alone or with the models too — but
+only when their `target_date` is the meeting being forecast. Between
+meetings those rows still describe the previous one (and the divergence
+values are empty); then report how the tracks did last time from
+`v_ml_live_accuracy` instead and say they have not been re-run.
 
 ## 3. What a gap implies, in general terms
 
@@ -66,6 +81,18 @@ Always pair it with the losing case: what the same exposure loses if the
 market's outcome occurs, and the forecast's own probability of that
 outcome. A view with 60% confidence loses four times in ten.
 
+Take the numbers from `rate_math.py paper`, which prints two different
+things, and keep their names apart in the text:
+
+- the result **if** a given outcome happens (`per_outcome`): for a long
+  from 13.94 with the rate held at 14.00 that is +60 ₽;
+- the **expected** result over the whole distribution (`expected_*`): the
+  same long is worth +35 ₽ on a 5/15/70/5/5 distribution.
+
+Writing "on a hold the result is 35 ₽" mixes the two. The probability
+attached to an outcome is that outcome's own cell — 15% for −25 bp, not the
+20% that all cuts add up to.
+
 ## 4. The paper record
 
 In `forecast.json`, under `paper`, record for the next meeting only:
@@ -73,7 +100,9 @@ In `forecast.json`, under `paper`, record for the next meeting only:
 - `instrument`: the KEYRATE series (`secid`) for that meeting;
 - `entry`: its `settle` on the run date and that date;
 - `direction`: `long` if the forecast expected rate is above the strip,
-  `short` if below, `none` if |gap| is under the threshold;
+  `short` if below, `none` if |gap| is under the threshold — and then there
+  is no position: its result is zero whatever the Board does, and anything
+  said about a hypothetical long or short is labelled hypothetical;
 - `size`: always 1 contract — the record measures the forecast, not
   position sizing.
 
