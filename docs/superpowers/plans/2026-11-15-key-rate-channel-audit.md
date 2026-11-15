@@ -2,7 +2,7 @@
 
 Дата: 2026-11-15. Пункт: `key-rate/phase-4-channel-audit`, роль `research`.
 Issue: [#593](https://github.com/kmlebedev/clickhouse-import-rosstat/issues/593).
-Статус: research R0–R6 подготовлен к PR; R3 содержит решения iterate, R6 pass после повторного ревью.
+Статус: In Review, [PR #595](https://github.com/kmlebedev/clickhouse-import-rosstat/pull/595); research R0–R6 завершён; R3 содержит решения iterate, R6 pass после повторного ревью.
 Спецификация: [2026-11-15-key-rate-channel-audit-design.md](../specs/2026-11-15-key-rate-channel-audit-design.md).
 Роадмап: [ROADMAP_KEY_RATE.md](../../ROADMAP_KEY_RATE.md), §4.2.
 
@@ -135,7 +135,7 @@ MCP недоступен → не подтверждать локальный ba
   проверок календаря, три квартала ПБ и два индикативных тарифных расчёта.
   Собственная годовая траектория отсутствует в проверенной витрине: not_comparable.
 - R6: независимый gpt-6.1-terra завершил ревью; замечание о реестре всех
-  заседаний устранено, повторное ревью pass. PR готовится; Done до мержа не ставится.
+  заседаний устранено, повторное ревью pass. Открыт PR #595; Done до мержа не ставится.
 - Проверка: `make docs-check` — 58 страниц, 33 теста, pass.
 
 Артефакты: [отчёт](../../research/2026-11-15-key-rate-channel-audit.md),

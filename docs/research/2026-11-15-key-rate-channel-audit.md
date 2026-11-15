@@ -1,7 +1,7 @@
 # Каналы инфляции и траектория ставки: аудит 15.11.2026
 
 Пункт: `key-rate/phase-4-channel-audit`, [issue #593](https://github.com/kmlebedev/clickhouse-import-rosstat/issues/593).
-Роль: research. Статус: **исследование подготовлено к PR; независимое итоговое ревью — pass**.
+Роль: research. Статус: **In Review, [PR #595](https://github.com/kmlebedev/clickhouse-import-rosstat/pull/595); независимое итоговое ревью — pass**.
 [Спецификация](../superpowers/specs/2026-11-15-key-rate-channel-audit-design.md),
 [план](../superpowers/plans/2026-11-15-key-rate-channel-audit.md),
 [исходный аудит](2026-11-14-key-rate-data-coverage-audit.md).
