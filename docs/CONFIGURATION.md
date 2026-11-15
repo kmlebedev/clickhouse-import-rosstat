@@ -8,6 +8,7 @@
 |---|---|
 | `CLICKHOUSE_URL` | DSN подключения (обязательна). Не выводится в логах |
 | `CLICKHOUSE_IMPORT_STAT` | Фильтр импортёров через запятую по имени (`Name()`). Пусто — все импортёры |
+| `FORECAST_RESOLVE_SCOPE` | `forecast_resolve`: пусто/`all` — ставка и золото; `cbr_rate` — только наступившие прогнозы ставки, включая shadow/canary. Неизвестное значение — ошибка до чтения/записи. Разовый запуск: `FORECAST_RESOLVE_SCOPE=cbr_rate make import STAT=forecast_resolve`; DAG по умолчанию не меняется |
 | `LOG_LEVEL` | Уровень logrus: `debug`, `info`, `warn`, `error` |
 | `CERT_FILES` | PEM-сертификаты через запятую (нац. УЦ РФ для gos-сайтов) |
 | `R_LIBS_USER` | Необязательный путь к библиотеке R с пакетом `seasonal` для импортёра `ppi_sa` (X-13): в dev — `$PWD/build/ppi-sa-research/r-lib`, на staging — системная библиотека R или строка в env-файле. Без пакета шаг падает до записи; Go-тесты и `make all` R не требуют |
