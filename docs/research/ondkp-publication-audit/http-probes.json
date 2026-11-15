@@ -1,0 +1,352 @@
+{
+  "scope": "current HTML; no PDFs or historical bytes; no retries; +1/+3 day probes pending",
+  "probes": [
+    {
+      "fetched_at_utc": "2026-11-15T10:45:13.442798+00:00",
+      "url": "https://www.cbr.ru/press/event/?id=14277",
+      "final_url": "https://www.cbr.ru/press/event/?id=14277",
+      "status": 200,
+      "elapsed_seconds": 0.203,
+      "bytes": 30976,
+      "sha256": "231777e81ed99687d8ebd8afd02a3014e405158ab17c920fe17a3dab78650285",
+      "headers": {
+        "Server": "ddos-guard",
+        "Connection": "close",
+        "Content-Type": "text/html; charset=utf-8",
+        "Content-Length": "30976",
+        "Date": "Sun, 15 Nov 2026 10:45:13 GMT",
+        "Vary": "Accept-Encoding",
+        "Cache-Control": "private",
+        "X-Frame-Options": "SAMEORIGIN"
+      },
+      "attempts": 1,
+      "automatic_retries": 0,
+      "etag": null,
+      "last_modified": null,
+      "release_page_links": [
+        "https://www.cbr.ru/about_br/publ/ondkp/on_2023_2025/"
+      ]
+    },
+    {
+      "fetched_at_utc": "2026-11-15T10:45:13.647521+00:00",
+      "url": "https://www.cbr.ru/press/event/?id=17174",
+      "final_url": "https://www.cbr.ru/press/event/?id=17174",
+      "status": 200,
+      "elapsed_seconds": 0.229,
+      "bytes": 31092,
+      "sha256": "2fbe7ec17e20665e376bf3d26c7d4f5fc94c922f1b89a0efda127b85b799f6e5",
+      "headers": {
+        "Server": "ddos-guard",
+        "Connection": "close",
+        "Content-Type": "text/html; charset=utf-8",
+        "Content-Length": "31092",
+        "Date": "Sun, 15 Nov 2026 10:45:13 GMT",
+        "Vary": "Accept-Encoding",
+        "Cache-Control": "private",
+        "X-Frame-Options": "SAMEORIGIN"
+      },
+      "attempts": 1,
+      "automatic_retries": 0,
+      "etag": null,
+      "last_modified": null,
+      "release_page_links": [
+        "https://www.cbr.ru/about_br/publ/ondkp/on_2024_2026/"
+      ]
+    },
+    {
+      "fetched_at_utc": "2026-11-15T10:45:13.878036+00:00",
+      "url": "https://www.cbr.ru/press/event/?id=28050",
+      "final_url": "https://www.cbr.ru/press/event/?id=28050",
+      "status": 200,
+      "elapsed_seconds": 0.224,
+      "bytes": 30853,
+      "sha256": "fe48fcba0850b66cec813311095ff9b99c3d7fa6b1ca87db548ccd955ec3bc20",
+      "headers": {
+        "Server": "ddos-guard",
+        "Connection": "close",
+        "Content-Type": "text/html; charset=utf-8",
+        "Content-Length": "30853",
+        "Date": "Sun, 15 Nov 2026 10:45:14 GMT",
+        "Vary": "Accept-Encoding",
+        "Cache-Control": "private",
+        "X-Frame-Options": "SAMEORIGIN"
+      },
+      "attempts": 1,
+      "automatic_retries": 0,
+      "etag": null,
+      "last_modified": null,
+      "release_page_links": [
+        "https://www.cbr.ru/about_br/publ/ondkp/on_2026_2028/"
+      ]
+    },
+    {
+      "fetched_at_utc": "2026-11-15T10:45:13.205512+00:00",
+      "url": "https://www.cbr.ru/press/event/?id=32941",
+      "final_url": "https://www.cbr.ru/press/event/?id=32941",
+      "status": 200,
+      "elapsed_seconds": 0.236,
+      "bytes": 31042,
+      "sha256": "7df6b2fa9c08f7d7a38c1457cfae7c07deeff7790aae6398984e10aa013fe6f2",
+      "headers": {
+        "Server": "ddos-guard",
+        "Connection": "close",
+        "Content-Type": "text/html; charset=utf-8",
+        "Content-Length": "31042",
+        "Date": "Sun, 15 Nov 2026 10:45:13 GMT",
+        "Vary": "Accept-Encoding",
+        "Cache-Control": "private",
+        "X-Frame-Options": "SAMEORIGIN"
+      },
+      "attempts": 1,
+      "automatic_retries": 0,
+      "etag": null,
+      "last_modified": null,
+      "release_page_links": [
+        "https://www.cbr.ru/about_br/publ/ondkp/on_2027_2029/"
+      ]
+    },
+    {
+      "fetched_at_utc": "2026-11-15T10:45:07.959134+00:00",
+      "url": "https://www.cbr.ru/about_br/publ/ondkp/",
+      "final_url": "https://www.cbr.ru/about_br/publ/ondkp/",
+      "status": 200,
+      "elapsed_seconds": 0.447,
+      "bytes": 55075,
+      "sha256": "94c0e8a8659f49e33a130c9e4f7e533342cafbda4fd0b073debf96b51f59ff18",
+      "headers": {
+        "Server": "ddos-guard",
+        "Connection": "close",
+        "Content-Type": "text/html; charset=utf-8",
+        "Content-Length": "55075",
+        "Date": "Sun, 15 Nov 2026 10:45:08 GMT",
+        "Vary": "Accept-Encoding",
+        "Cache-Control": "private",
+        "X-Frame-Options": "SAMEORIGIN"
+      },
+      "attempts": 1,
+      "automatic_retries": 0,
+      "etag": null,
+      "last_modified": null
+    },
+    {
+      "fetched_at_utc": "2026-11-15T10:45:08.407798+00:00",
+      "url": "https://www.cbr.ru/about_br/publ/ondkp/on_2021_2023/",
+      "final_url": "https://www.cbr.ru/about_br/publ/ondkp/on_2021_2023/",
+      "status": 200,
+      "elapsed_seconds": 0.173,
+      "bytes": 26908,
+      "sha256": "86cf6694c5a3fd03f7dbd72999a751881939570bf8475abc49c320ca75dc28da",
+      "headers": {
+        "Server": "ddos-guard",
+        "Connection": "close",
+        "Content-Type": "text/html; charset=utf-8",
+        "Content-Length": "26908",
+        "Date": "Sun, 15 Nov 2026 10:45:08 GMT",
+        "Vary": "Accept-Encoding",
+        "Cache-Control": "private",
+        "X-Frame-Options": "SAMEORIGIN"
+      },
+      "attempts": 1,
+      "automatic_retries": 0,
+      "etag": null,
+      "last_modified": null,
+      "release_year": 2021,
+      "selected_pdf_urls": [
+        "https://www.cbr.ru/Content/Document/File/87358/on_2021(2022-2023).pdf"
+      ],
+      "document_regular_date_count": 0,
+      "ot_date_matches": [],
+      "footer_last_update": []
+    },
+    {
+      "fetched_at_utc": "2026-11-15T10:45:08.581573+00:00",
+      "url": "https://www.cbr.ru/about_br/publ/ondkp/on_2022_2024/",
+      "final_url": "https://www.cbr.ru/about_br/publ/ondkp/on_2022_2024/",
+      "status": 200,
+      "elapsed_seconds": 0.163,
+      "bytes": 21945,
+      "sha256": "d1dce3893c2627e29c38925f906b160cc7bf72db6aa894b393c64a3770b95a6e",
+      "headers": {
+        "Server": "ddos-guard",
+        "Connection": "close",
+        "Content-Type": "text/html; charset=utf-8",
+        "Content-Length": "21945",
+        "Date": "Sun, 15 Nov 2026 10:45:08 GMT",
+        "Vary": "Accept-Encoding",
+        "Cache-Control": "private",
+        "X-Frame-Options": "SAMEORIGIN"
+      },
+      "attempts": 1,
+      "automatic_retries": 0,
+      "etag": null,
+      "last_modified": null,
+      "release_year": 2022,
+      "selected_pdf_urls": [
+        "https://www.cbr.ru/Content/Document/File/126064/on_project_2022(2023-2024).pdf"
+      ],
+      "document_regular_date_count": 0,
+      "ot_date_matches": [],
+      "footer_last_update": []
+    },
+    {
+      "fetched_at_utc": "2026-11-15T10:45:08.746274+00:00",
+      "url": "https://www.cbr.ru/about_br/publ/ondkp/on_2023_2025/",
+      "final_url": "https://www.cbr.ru/about_br/publ/ondkp/on_2023_2025/",
+      "status": 200,
+      "elapsed_seconds": 0.904,
+      "bytes": 256727,
+      "sha256": "e7c918cd8e423cd5af9e696088b0b02add7cfb25fcf5008ad52260d96a6b8305",
+      "headers": {
+        "Server": "ddos-guard",
+        "Connection": "close",
+        "Content-Type": "text/html; charset=utf-8",
+        "Content-Length": "256727",
+        "Date": "Sun, 15 Nov 2026 10:45:09 GMT",
+        "Vary": "Accept-Encoding",
+        "Cache-Control": "private",
+        "X-Frame-Options": "SAMEORIGIN"
+      },
+      "attempts": 1,
+      "automatic_retries": 0,
+      "etag": null,
+      "last_modified": null,
+      "release_year": 2023,
+      "selected_pdf_urls": [
+        "https://www.cbr.ru/Content/Document/File/139691/on_2023(2024-2025).pdf"
+      ],
+      "document_regular_date_count": 0,
+      "ot_date_matches": [],
+      "footer_last_update": [
+        "22.08.2025"
+      ]
+    },
+    {
+      "fetched_at_utc": "2026-11-15T10:45:09.655630+00:00",
+      "url": "https://www.cbr.ru/about_br/publ/ondkp/on_2024_2026/",
+      "final_url": "https://www.cbr.ru/about_br/publ/ondkp/on_2024_2026/",
+      "status": 200,
+      "elapsed_seconds": 0.783,
+      "bytes": 349166,
+      "sha256": "f0ef76816b84bdc43b3f45b48a5a6d8e97b3ac7638b0d1206418b23bfa268dc6",
+      "headers": {
+        "Server": "ddos-guard",
+        "Connection": "close",
+        "Content-Type": "text/html; charset=utf-8",
+        "Content-Length": "349166",
+        "Date": "Sun, 15 Nov 2026 10:45:10 GMT",
+        "Vary": "Accept-Encoding",
+        "Cache-Control": "private",
+        "X-Frame-Options": "SAMEORIGIN"
+      },
+      "attempts": 1,
+      "automatic_retries": 0,
+      "etag": null,
+      "last_modified": null,
+      "release_year": 2024,
+      "selected_pdf_urls": [
+        "https://www.cbr.ru/Content/Document/File/150582/on_2024(2025-2026).pdf"
+      ],
+      "document_regular_date_count": 0,
+      "ot_date_matches": [],
+      "footer_last_update": [
+        "22.08.2025"
+      ]
+    },
+    {
+      "fetched_at_utc": "2026-11-15T10:45:10.439793+00:00",
+      "url": "https://www.cbr.ru/about_br/publ/ondkp/on_2025_2027/",
+      "final_url": "https://www.cbr.ru/about_br/publ/ondkp/on_2025_2027/",
+      "status": 200,
+      "elapsed_seconds": 0.847,
+      "bytes": 317180,
+      "sha256": "3351ae7bf52d1b32086811a81e1861435f866f44b948155807e8890d566dc993",
+      "headers": {
+        "Server": "ddos-guard",
+        "Connection": "close",
+        "Content-Type": "text/html; charset=utf-8",
+        "Content-Length": "317180",
+        "Date": "Sun, 15 Nov 2026 10:45:11 GMT",
+        "Vary": "Accept-Encoding",
+        "Cache-Control": "private",
+        "X-Frame-Options": "SAMEORIGIN"
+      },
+      "attempts": 1,
+      "automatic_retries": 0,
+      "etag": null,
+      "last_modified": null,
+      "release_year": 2025,
+      "selected_pdf_urls": [
+        "https://www.cbr.ru/Content/Document/File/164702/on_2025(2026-2027).pdf"
+      ],
+      "document_regular_date_count": 0,
+      "ot_date_matches": [],
+      "footer_last_update": [
+        "22.08.2025"
+      ]
+    },
+    {
+      "fetched_at_utc": "2026-11-15T10:45:11.287621+00:00",
+      "url": "https://www.cbr.ru/about_br/publ/ondkp/on_2026_2028/",
+      "final_url": "https://www.cbr.ru/about_br/publ/ondkp/on_2026_2028/",
+      "status": 200,
+      "elapsed_seconds": 0.859,
+      "bytes": 306759,
+      "sha256": "89893b8d9a0355d8d775412be0596b0a4710febe16077e0cbfecbdbb76c97c77",
+      "headers": {
+        "Server": "ddos-guard",
+        "Connection": "close",
+        "Content-Type": "text/html; charset=utf-8",
+        "Content-Length": "306759",
+        "Date": "Sun, 15 Nov 2026 10:45:12 GMT",
+        "Vary": "Accept-Encoding",
+        "Cache-Control": "private",
+        "X-Frame-Options": "SAMEORIGIN"
+      },
+      "attempts": 1,
+      "automatic_retries": 0,
+      "etag": null,
+      "last_modified": null,
+      "release_year": 2026,
+      "selected_pdf_urls": [
+        "https://www.cbr.ru/Content/Document/File/180751/on_2026(2027-2028).pdf"
+      ],
+      "document_regular_date_count": 0,
+      "ot_date_matches": [],
+      "footer_last_update": [
+        "27.11.2025"
+      ]
+    },
+    {
+      "fetched_at_utc": "2026-11-15T10:45:12.148777+00:00",
+      "url": "https://www.cbr.ru/about_br/publ/ondkp/on_2027_2029/",
+      "final_url": "https://www.cbr.ru/about_br/publ/ondkp/on_2027_2029/",
+      "status": 200,
+      "elapsed_seconds": 1.055,
+      "bytes": 315496,
+      "sha256": "6c53eaefe948d3391933006d74720da172f070fb1068423ffc0d86d704d1c645",
+      "headers": {
+        "Server": "ddos-guard",
+        "Connection": "close",
+        "Content-Type": "text/html; charset=utf-8",
+        "Content-Length": "315496",
+        "Date": "Sun, 15 Nov 2026 10:45:13 GMT",
+        "Vary": "Accept-Encoding",
+        "Cache-Control": "private",
+        "X-Frame-Options": "SAMEORIGIN"
+      },
+      "attempts": 1,
+      "automatic_retries": 0,
+      "etag": null,
+      "last_modified": null,
+      "release_year": 2027,
+      "selected_pdf_urls": [
+        "https://www.cbr.ru/Content/Document/File/197907/on_2027(2028-2029).pdf"
+      ],
+      "document_regular_date_count": 0,
+      "ot_date_matches": [],
+      "footer_last_update": [
+        "28.10.2026"
+      ]
+    }
+  ]
+}
