@@ -1,0 +1,131 @@
+{
+  "_note": "TEST FIXTURE for the score-then-revise eval. Not a real forecast; the market row is the real KKV6 settle of 2026-10-20.",
+  "run_date": "2026-10-21",
+  "target_meeting": "2026-10-23",
+  "meeting_type": "core",
+  "current_rate": 14.0,
+  "data_version": "F0B82DAD8D63D150@2026-10-21",
+  "stale_inputs": [
+    "ipc_yoy (2026-08-31)"
+  ],
+  "probabilities": {
+    "-50": 0.5,
+    "-25": 0.4,
+    "0": 0.1
+  },
+  "expected_rate": 13.65,
+  "lenses": {
+    "prior": {
+      "probabilities": {
+        "-25": 0.35,
+        "0": 0.6,
+        "25": 0.05
+      },
+      "expected_rate": 13.925
+    },
+    "cbr": {
+      "probabilities": {
+        "-50": 0.55,
+        "-25": 0.4,
+        "0": 0.05
+      },
+      "expected_rate": 13.625,
+      "weight": 0.6
+    },
+    "volcker": {
+      "probabilities": {
+        "-25": 0.2,
+        "0": 0.75,
+        "25": 0.05
+      },
+      "expected_rate": 13.9625,
+      "weight": 0.1
+    },
+    "asymmetry": {
+      "probabilities": {
+        "-25": 0.3,
+        "0": 0.65,
+        "25": 0.05
+      },
+      "expected_rate": 13.9375,
+      "weight": 0.1
+    },
+    "dissent": {
+      "probabilities": {
+        "-50": 0.7,
+        "-25": 0.25,
+        "0": 0.05
+      },
+      "expected_rate": 13.5875,
+      "weight": 0.2
+    }
+  },
+  "market": {
+    "secid": "KKV6",
+    "as_of": "2026-10-20",
+    "implied_rate": 13.93,
+    "probabilities": {
+      "-25": 0.28,
+      "0": 0.72
+    },
+    "open_interest": 378
+  },
+  "gap_bp": -28,
+  "path": [
+    {
+      "meeting": "2026-10-23",
+      "low": 13.5,
+      "base": 13.5,
+      "high": 14.0,
+      "market": 13.93
+    },
+    {
+      "meeting": "2026-12-18",
+      "low": 13.0,
+      "base": 13.25,
+      "high": 14.0,
+      "market": null
+    }
+  ],
+  "annual_average": [
+    {
+      "year": 2026,
+      "base": 14.55,
+      "cbr_lo": 14.5,
+      "cbr_hi": 14.6
+    }
+  ],
+  "one_offs": [
+    {
+      "factor": "fuel prices, summer 2026",
+      "classification": "look_through"
+    },
+    {
+      "factor": "tariff indexation, October 2026",
+      "classification": "look_through"
+    }
+  ],
+  "change_trigger": {
+    "release": "inFOM quick note",
+    "date": "2026-10-21",
+    "condition": "expectations above 14%"
+  },
+  "paper": {
+    "instrument": "KKV6",
+    "entry": 13.93,
+    "entry_date": "2026-10-20",
+    "direction": "short",
+    "size": 1
+  },
+  "resolution": {
+    "outcome_bp": 0,
+    "announced_rate": 14.0,
+    "brier": {
+      "own": 1.22,
+      "market": 0.1568,
+      "naive": 0.0
+    },
+    "paper_rub": -70,
+    "closest_lens": "volcker"
+  }
+}

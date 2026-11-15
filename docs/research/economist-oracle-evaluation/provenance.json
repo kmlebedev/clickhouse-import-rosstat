@@ -1,0 +1,121 @@
+{
+  "run_date": "2026-11-15",
+  "data_cutoff": "2026-11-15T15:16:27Z",
+  "tested_revision": "617b7730739c3b92e94a53309439396e02f856e2",
+  "tested_branch": "update-skill-oracule",
+  "tested_revision_url": "https://github.com/kmlebedev/clickhouse-import-rosstat/commit/617b7730739c3b92e94a53309439396e02f856e2",
+  "main_skill_revision": "f7d0818b002bc2b91e49899cc72cdbc63ebc849b",
+  "main_skill_pr": 606,
+  "candidate_is_not_main": true,
+  "criteria_origin": "Local untracked grader decomposition; exact definitions preserved in criteria.json.",
+  "executor_model": "deepseek/deepseek-flash",
+  "review_model": "qwencloud/qwen3.8-flash",
+  "skill_sha256": {
+    "SKILL.md": "f00a2ebe116f0848a07cd65b30bf049825ff3f6fc3b1f35a73b4a173490dbcea",
+    "references/data-map.md": "75897336abb9f6cab42e72ad66ce817b731cfa55a8c3d1c61d6a272bea84ae6e",
+    "references/lenses.md": "5f71202348400a034bc6e97f5c2c4dcf46fb47af5fc5db0a7f7e9907e05acd2e",
+    "references/report-template.md": "e72a36a297489e7cc573f90bfee2cf7be3404ecd4b2aab4ccb1a159a5c0e7ccd",
+    "references/value.md": "dd7ab7bff6a810d4f1df33870111cc2184b8483f7f8984bd6fd741de9f38884e",
+    "scripts/rate_math.py": "28ab6e85892161a7020a53102deaddd7dda64a24226c168427fc2180d79a7f58"
+  },
+  "unchanged_output_sha256": {
+    "monthly/forecast.md": "50d5f42f9d8a2c9613ac96246ae35de9066c41fa7ec2b00b1ccefa5eb2f48e7b",
+    "monthly/forecast.json": "fe724342bf398482bad9d6d8d39bed0bea7a677f7ba2b2850fcc8596d7008f90",
+    "monthly/final-message.md": "f2ef59d7f7cf4b12e8c813450f4231a392bb29b6472f5fcc7fdd3c0d40d17474",
+    "monthly/evidence.md": "bfdc83efc657f7031adc457733d32ee85e578f820af4f7e088877be259d08a10",
+    "score/forecast.md": "ba7ac04c705f3cf5448a526ad1b1417c91cd26dfe1aad2d1e0e9dbd7530720e2",
+    "score/forecast.json": "878cded330bc4fa7a59a19097c9d78af7dff72f517e8facdb7ba0116d9892e00",
+    "score/previous-resolved.json": "9c60eb5848c43cee4a4a3cebc87cf11b31292665f2dd7a8f7e6780f5bec4bd80",
+    "score/final-message.md": "aa1b65f37a235836afbb41e00e25d7b6b8a508c86a851d4bbf8c0a57d830cb32",
+    "score/fixture.json": "0c628033b45aae46a2f18694a25156ac36c80fb24523c53635fc09b07a932458",
+    "score/labour-wages.csv": "beb5373d55454789e090f53d30004eebbbc7ff80f03ae8ae6ceba9e41a504cf2",
+    "score/cpi-monthly.csv": "fc0ae6ba456abfd8b8974f4574bd77d65c1d95947307abac0188af9214228785",
+    "no-database/final-message.md": "7646a4c177e7acd5d3a6c4dc27dbbbbd9fbf75fb6e70a7a0e5f7fcb4ced5b9ce"
+  },
+  "runtime_review": [
+    {
+      "scenario": "monthly-call-next-meeting",
+      "model": "deepseek/deepseek-flash",
+      "tool_counts": {
+        "Skill": 1,
+        "Bash": 17,
+        "Read": 7,
+        "mcp__clickhouse__run_query": 48,
+        "Write": 5,
+        "Edit": 17
+      },
+      "completion_events": [
+        {
+          "type": "turn.ended",
+          "reason": "completed",
+          "time": 1794756365077,
+          "durationMs": 427219
+        },
+        {
+          "type": "prompt.completed",
+          "reason": "completed",
+          "time": 1794756365078
+        }
+      ]
+    },
+    {
+      "scenario": "score-then-revise",
+      "model": "deepseek/deepseek-flash",
+      "tool_counts": {
+        "Bash": 23,
+        "Read": 15,
+        "Skill": 2,
+        "mcp__clickhouse__run_query": 55,
+        "mcp__clickhouse__list_databases": 1,
+        "Edit": 18,
+        "Write": 4
+      },
+      "completion_events": [
+        {
+          "type": "turn.ended",
+          "reason": "completed",
+          "time": 1794756463461,
+          "durationMs": 512631
+        },
+        {
+          "type": "prompt.completed",
+          "reason": "completed",
+          "time": 1794756463462
+        }
+      ]
+    },
+    {
+      "scenario": "no-database-access-stops",
+      "model": "deepseek/deepseek-flash",
+      "tool_counts": {
+        "Bash": 6,
+        "Read": 4,
+        "Skill": 1,
+        "Write": 3
+      },
+      "completion_events": [
+        {
+          "type": "turn.ended",
+          "reason": "completed",
+          "time": 1794756030935,
+          "durationMs": 68399
+        },
+        {
+          "type": "prompt.completed",
+          "reason": "completed",
+          "time": 1794756030935
+        }
+      ]
+    }
+  ],
+  "limitations": [
+    "One run per scenario, no statistical stability claim.",
+    "No-database case simulated declared unavailability; shared MCP remained connected.",
+    "Browser unavailable: Sber CMI original was not re-read.",
+    "Additional SQL skill did not load for executors; economist-oracle data-map was used.",
+    "No database writes, POST, deployment or real trade; erroneous forecasts retained as test samples.",
+    "Only selected MCP evidence is published; full runtime journals and host paths are not."
+  ],
+  "issue": 616,
+  "issue_remains_open_after_report_merge": true
+}

@@ -1,0 +1,192 @@
+{
+  "_note": "TEST FIXTURE RUN for the score-then-revise eval. Not a real forecast and not a record in forecast_log.",
+  "run_date": "2026-11-15",
+  "target_meeting": "2026-12-18",
+  "meeting_type": "interim",
+  "current_rate": 14.0,
+  "data_version": "F0B82DAD8D63D150@2026-11-15",
+  "run_note": "Прогон до ноябрьской оперативной справки инФОМ (ожидается 2026-11-19); используется октябрьская волна ожиданий (13,2%, опрос 2026-10-14).",
+  "stale_inputs": [
+    "ipc_yoy (2026-09-30, stale=1): октябрьский месячный ИПЦ в базе отсутствует",
+    "base_ipc_saar (2026-09-30, stale=1)",
+    "business_climate_sa (2026-09-01, stale=1)",
+    "price_expectations_sa (2026-09-01, stale=1)",
+    "ожидаемая инфляция: ноябрьская волна не загружена, последняя точка 2026-10-14"
+  ],
+  "probabilities": {
+    "-50": 0.05,
+    "-25": 0.2,
+    "0": 0.7,
+    "25": 0.05
+  },
+  "expected_rate": 13.9375,
+  "lenses": {
+    "prior": {
+      "probabilities": {
+        "-50": 0.1,
+        "-25": 0.2,
+        "0": 0.65,
+        "25": 0.05
+      },
+      "expected_rate": 13.9125
+    },
+    "cbr": {
+      "probabilities": {
+        "-50": 0.05,
+        "-25": 0.15,
+        "0": 0.8,
+        "25": 0.0
+      },
+      "expected_rate": 13.9375,
+      "weight": 0.5
+    },
+    "volcker": {
+      "probabilities": {
+        "-50": 0.05,
+        "-25": 0.15,
+        "0": 0.7,
+        "25": 0.1
+      },
+      "expected_rate": 13.9625,
+      "weight": 0.15
+    },
+    "asymmetry": {
+      "probabilities": {
+        "-50": 0.05,
+        "-25": 0.1,
+        "0": 0.8,
+        "25": 0.05
+      },
+      "expected_rate": 13.9625,
+      "weight": 0.2
+    },
+    "dissent": {
+      "probabilities": {
+        "-50": 0.15,
+        "-25": 0.55,
+        "0": 0.3,
+        "25": 0.0
+      },
+      "expected_rate": 13.7875,
+      "weight": 0.15
+    }
+  },
+  "market": {
+    "secid": "KKZ6",
+    "as_of": "2026-11-13",
+    "implied_rate": 13.94,
+    "probabilities": {
+      "-25": 0.24,
+      "0": 0.76
+    },
+    "open_interest": 3926
+  },
+  "gap_bp": 0,
+  "path": [
+    {
+      "meeting": "2026-12-18",
+      "low": 13.75,
+      "base": 14.0,
+      "high": 14.0,
+      "market": 13.94
+    },
+    {
+      "meeting": "2027-02-12",
+      "low": 13.5,
+      "base": 13.75,
+      "high": 14.0,
+      "market": null
+    },
+    {
+      "meeting": "2027-03-19",
+      "low": 13.25,
+      "base": 13.5,
+      "high": 13.75,
+      "market": null
+    },
+    {
+      "meeting": "2027-04-30",
+      "low": 13.0,
+      "base": 13.25,
+      "high": 13.75,
+      "market": null
+    },
+    {
+      "meeting": "2027-06-11",
+      "low": 12.5,
+      "base": 13.0,
+      "high": 13.5,
+      "market": null
+    },
+    {
+      "meeting": "2027-07-30",
+      "low": 12.25,
+      "base": 12.75,
+      "high": 13.25,
+      "market": null
+    },
+    {
+      "meeting": "2027-09-10",
+      "low": 12.0,
+      "base": 12.5,
+      "high": 13.0,
+      "market": null
+    },
+    {
+      "meeting": "2027-10-22",
+      "low": 11.75,
+      "base": 12.25,
+      "high": 12.75,
+      "market": null
+    }
+  ],
+  "annual_average": [
+    {
+      "year": 2026,
+      "base": 14.5925,
+      "cbr_lo": 14.6,
+      "cbr_hi": 14.6
+    },
+    {
+      "year": 2027,
+      "base": 13.0555,
+      "cbr_lo": 12.5,
+      "cbr_hi": 13.5
+    }
+  ],
+  "one_offs": [
+    {
+      "factor": "индексация тарифов ЖКУ, октябрь 2026 (выше плана)",
+      "classification": "react"
+    },
+    {
+      "factor": "временное сокращение производственных мощностей и его вторичные эффекты",
+      "classification": "react"
+    },
+    {
+      "factor": "топливный шок, июнь 2026",
+      "classification": "already_reacted"
+    },
+    {
+      "factor": "базовый эффект повышения НДС, январь 2026 (уходит в январе 2027)",
+      "classification": "look_through"
+    },
+    {
+      "factor": "укрепление рубля, сентябрь-ноябрь 2026 (86,4 -> 82,2 за доллар)",
+      "classification": "look_through"
+    }
+  ],
+  "change_trigger": {
+    "release": "Оперативная справка инФОМ по инфляционным ожиданиям (ноябрь)",
+    "date": "2026-11-19",
+    "condition": "ожидаемая инфляция <= 12,5% (второе снижение подряд) повышает вероятность снижения 18 декабря; >= 14,0% закрепляет удержание"
+  },
+  "paper": {
+    "instrument": "KKZ6",
+    "entry": 13.94,
+    "entry_date": "2026-11-13",
+    "direction": "none",
+    "size": 1
+  },
+  "resolution": null
+}

@@ -1,0 +1,215 @@
+{
+  "artifact_checks": [
+    {
+      "scenario": "monthly-call-next-meeting",
+      "mechanical_artifact_checks": "PASS",
+      "expected_rate": 13.975,
+      "exact_gap_bp": 3.5,
+      "recorded_gap_bp": 3.5,
+      "gap_rounding_disclosed_in_text": false,
+      "lens_expected_rates": {
+        "prior": 14.05,
+        "cbr": 14.0,
+        "volcker": 14.0375,
+        "asymmetry": 14.025,
+        "dissent": 13.875
+      },
+      "payload_contract_checks": "PASS (static checks against read Go contract; no HTTP and no Go validator invocation)",
+      "annual": [
+        {
+          "year": 2026,
+          "paths": {
+            "low": {
+              "helper_avg": 14.5849,
+              "independent_avg": 14.58493178,
+              "inside_rounded_bank_range": true
+            },
+            "base": {
+              "helper_avg": 14.5925,
+              "independent_avg": 14.59246603,
+              "inside_rounded_bank_range": true
+            },
+            "high": {
+              "helper_avg": 14.5925,
+              "independent_avg": 14.59246603,
+              "inside_rounded_bank_range": true
+            }
+          },
+          "carry_after_last_2027_meeting": null
+        },
+        {
+          "year": 2027,
+          "paths": {
+            "low": {
+              "helper_avg": 12.3911,
+              "independent_avg": 12.39109589,
+              "inside_rounded_bank_range": false
+            },
+            "base": {
+              "helper_avg": 13.1021,
+              "independent_avg": 13.10205479,
+              "inside_rounded_bank_range": true
+            },
+            "high": {
+              "helper_avg": 13.5918,
+              "independent_avg": 13.59178082,
+              "inside_rounded_bank_range": false
+            }
+          },
+          "carry_after_last_2027_meeting": "rate held through 31 December; no December 2027 decision assumed"
+        }
+      ]
+    },
+    {
+      "scenario": "score-then-revise",
+      "mechanical_artifact_checks": "PASS",
+      "expected_rate": 13.9375,
+      "exact_gap_bp": -0.25,
+      "recorded_gap_bp": 0,
+      "gap_rounding_disclosed_in_text": true,
+      "lens_expected_rates": {
+        "prior": 13.9125,
+        "cbr": 13.9375,
+        "volcker": 13.9625,
+        "asymmetry": 13.9625,
+        "dissent": 13.7875
+      },
+      "payload_contract_checks": "PASS (static checks against read Go contract; no HTTP and no Go validator invocation)",
+      "annual": [
+        {
+          "year": 2026,
+          "paths": {
+            "low": {
+              "helper_avg": 14.5849,
+              "independent_avg": 14.58493178,
+              "inside_rounded_bank_range": true
+            },
+            "base": {
+              "helper_avg": 14.5925,
+              "independent_avg": 14.59246603,
+              "inside_rounded_bank_range": true
+            },
+            "high": {
+              "helper_avg": 14.5925,
+              "independent_avg": 14.59246603,
+              "inside_rounded_bank_range": true
+            }
+          },
+          "carry_after_last_2027_meeting": null
+        },
+        {
+          "year": 2027,
+          "paths": {
+            "low": {
+              "helper_avg": 12.6678,
+              "independent_avg": 12.66780822,
+              "inside_rounded_bank_range": true
+            },
+            "base": {
+              "helper_avg": 13.0555,
+              "independent_avg": 13.05547945,
+              "inside_rounded_bank_range": true
+            },
+            "high": {
+              "helper_avg": 13.4411,
+              "independent_avg": 13.44109589,
+              "inside_rounded_bank_range": true
+            }
+          },
+          "carry_after_last_2027_meeting": "rate held through 31 December; no December 2027 decision assumed"
+        }
+      ]
+    }
+  ],
+  "previous_fixture": {
+    "only_resolution_changed": true,
+    "resolution": {
+      "outcome_bp": 0,
+      "announced_rate": 14.0,
+      "brier": {
+        "own": 1.22,
+        "market": 0.1568,
+        "naive": 0.0
+      },
+      "paper_rub": -70,
+      "closest_lens": "volcker"
+    }
+  },
+  "narrative_counterexamples": {
+    "minimum_100bp_claim": {
+      "claim_location": "score/forecast.md:169",
+      "total_cut_bp": 75,
+      "command_args": [
+        "avg",
+        "--year",
+        "2027",
+        "--rate",
+        "14",
+        "--meeting",
+        "2027-02-12:13.75",
+        "--meeting",
+        "2027-03-19:13.5",
+        "--meeting",
+        "2027-04-30:13.25",
+        "--range",
+        "12.5:13.5"
+      ],
+      "actual_helper_result": {
+        "year": 2027,
+        "days_ytd": 0,
+        "days_rest": 365,
+        "ytd_avg": null,
+        "rest_avg": 13.4192,
+        "annual_avg": 13.4192,
+        "year_end_rate": 13.25,
+        "segments": [
+          {
+            "from": "2027-01-01",
+            "days": 45,
+            "rate": 14.0
+          },
+          {
+            "from": "2027-02-15",
+            "days": 35,
+            "rate": 13.75
+          },
+          {
+            "from": "2027-03-22",
+            "days": 42,
+            "rate": 13.5
+          },
+          {
+            "from": "2027-05-03",
+            "days": 243,
+            "rate": 13.25
+          }
+        ],
+        "range": [
+          12.5,
+          13.5
+        ],
+        "inside_range": true,
+        "rest_avg_needed": [
+          12.5,
+          13.5
+        ]
+      },
+      "conclusion": "Claim that at least 100 bp of cuts is necessary is false: these three early 25 bp cuts meet the annual range."
+    },
+    "hold_pnl": {
+      "claim_location": "monthly/forecast.md:189",
+      "hypothetical_long_pnl_by_step_rub": {
+        "-50": -440.0,
+        "-25": -190.0,
+        "0": 60.0,
+        "25": 310.0,
+        "50": 560.0
+      },
+      "expected_pnl_rub": 35.0,
+      "hold_conditional_pnl_rub": 60.0,
+      "actual_paper_position_pnl_rub": 0,
+      "conclusion": "35 rubles is the probability-weighted expected payoff, not the payoff conditional on a hold; no actual paper position is open."
+    }
+  },
+  "scope": "Existing scenario artifacts checked; original skill and outputs were not corrected."
+}

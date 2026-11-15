@@ -1,0 +1,108 @@
+{
+  "run_date": "2026-11-15",
+  "target_meeting": "2026-12-18",
+  "meeting_type": "interim",
+  "current_rate": 14.0,
+  "data_version": "F0B82DAD8D63D150@2026-11-15",
+  "stale_inputs": [
+    "rosstat monthly CPI (last print 2026-09-30; October monthly not in the views)",
+    "infl_exp_expected (October wave 2026-10-14; November wave due 2026-11-19)",
+    "base_ipc_saar (stale=1, 2026-09-30)",
+    "ipc_yoy (stale=1, 2026-09-30)",
+    "business_climate_sa (stale=1, 2026-09-01)",
+    "price_expectations_sa (stale=1, 2026-09-01)",
+    "taylor_vs_market_bp / ordered_logit_vs_market_bp (stale=1, target 2026-10-23, not re-run)",
+    "credit and M2 (2026-10-01)",
+    "lending and deposit rates (2026-08-30 / 2026-09-29)",
+    "unemployment (2026-08-31), wages (2026-09-01)",
+    "v_ofz_signal (2026-11-06; fresher dashboard OFZ rows of 2026-11-13 used instead)"
+  ],
+  "probabilities": {
+    "-50": 0.05,
+    "-25": 0.15,
+    "0": 0.7,
+    "25": 0.05,
+    "50": 0.05
+  },
+  "expected_rate": 13.975,
+  "lenses": {
+    "prior": {
+      "probabilities": {"-100": 0.05, "-50": 0.05, "-25": 0.05, "0": 0.65, "25": 0.05, "50": 0.05, "100": 0.1},
+      "expected_rate": 14.05,
+      "note": "30 scheduled meetings since 2014 with two or more consecutive holds before them; hold 19/30"
+    },
+    "cbr": {
+      "probabilities": {"-50": 0.05, "-25": 0.05, "0": 0.8, "25": 0.05, "50": 0.05},
+      "expected_rate": 14.0,
+      "weight": 0.6,
+      "path": [14.0, 13.75, 13.5, 13.25, 13.0, 12.75, 12.5, 12.5]
+    },
+    "volcker": {
+      "probabilities": {"-50": 0.05, "-25": 0.15, "0": 0.55, "25": 0.1, "50": 0.15},
+      "expected_rate": 14.0375,
+      "weight": 0.15,
+      "path": [14.0, 14.0, 13.75, 13.75, 13.5, 13.5, 13.25, 13.25]
+    },
+    "asymmetry": {
+      "probabilities": {"-50": 0.05, "-25": 0.1, "0": 0.65, "25": 0.1, "50": 0.1},
+      "expected_rate": 14.025,
+      "weight": 0.15,
+      "path": [14.0, 13.75, 13.75, 13.5, 13.25, 13.0, 13.0, 12.75]
+    },
+    "dissent": {
+      "probabilities": {"-50": 0.2, "-25": 0.25, "0": 0.45, "25": 0.05, "50": 0.05},
+      "expected_rate": 13.875,
+      "weight": 0.1,
+      "path": [13.75, 13.25, 12.75, 12.5, 12.25, 12.0, 11.75, 11.5]
+    }
+  },
+  "market": {
+    "secid": "KKZ6",
+    "series_name": "KEYRATE-12.26",
+    "as_of": "2026-11-13",
+    "implied_rate": 13.94,
+    "implied_change_bp": -6.0,
+    "probabilities": {"-25": 0.24, "0": 0.76},
+    "open_interest": 3926,
+    "volume": 1
+  },
+  "gap_bp": 3.5,
+  "path": [
+    {"meeting": "2026-12-18", "low": 13.75, "base": 14.0, "high": 14.0, "market": 13.94},
+    {"meeting": "2027-02-12", "low": 13.25, "base": 13.75, "high": 14.0, "market": null},
+    {"meeting": "2027-03-19", "low": 12.75, "base": 13.5, "high": 13.75, "market": null},
+    {"meeting": "2027-04-30", "low": 12.5, "base": 13.25, "high": 13.75, "market": null},
+    {"meeting": "2027-06-11", "low": 12.25, "base": 13.0, "high": 13.5, "market": null},
+    {"meeting": "2027-07-30", "low": 12.0, "base": 12.75, "high": 13.5, "market": null},
+    {"meeting": "2027-09-10", "low": 11.75, "base": 12.5, "high": 13.25, "market": null},
+    {"meeting": "2027-10-22", "low": 11.5, "base": 12.5, "high": 13.25, "market": null}
+  ],
+  "annual_average": [
+    {"year": 2026, "low": 14.58, "base": 14.59, "high": 14.59, "cbr_lo": 14.6, "cbr_hi": 14.6, "inside": true, "note": "point range: hold, -25 and -50 all round to 14.6, uninformative; a 50 bp hike tail would give 14.61"},
+    {"year": 2027, "low": 12.39, "base": 13.1, "high": 13.59, "cbr_lo": 12.5, "cbr_hi": 13.5, "inside": false, "note": "base inside; low below and high above the range"},
+    {"year": 2028, "low": null, "base": 12.5, "high": null, "cbr_lo": 9.0, "cbr_hi": 10.0, "inside": false, "note": "flat carry of the end-2027 base rate; the 2028 range implies another 250-300 bp of cuts beyond the horizon"}
+  ],
+  "one_offs": [
+    {"factor": "October 2026 utility tariff indexation above plan", "classification": "react"},
+    {"factor": "January 2026 VAT rise (per lens C summary)", "classification": "already_reacted"},
+    {"factor": "June 2026 fuel price shock", "classification": "react"},
+    {"factor": "Temporary withdrawal of production capacity", "classification": "react"},
+    {"factor": "Budget impulse / structural primary deficit", "classification": "react"},
+    {"factor": "Rouble appreciation since September", "classification": "look_through"},
+    {"factor": "High oil prices (Brent 96.6)", "classification": "look_through"},
+    {"factor": "2027 base effect from the 2026 tariff spike", "classification": "look_through"}
+  ],
+  "change_trigger": {
+    "release": "Оперативная справка по результатам исследования «Измерение инфляционных ожиданий и потребительских настроений на основе опросов населения» (ноябрь)",
+    "date": "2026-11-19",
+    "condition": "household expected inflation above 14.0% raises the hike probability; below 12.5% with weekly CPI near zero raises the probability of a 25 bp cut to about 30%"
+  },
+  "paper": {
+    "instrument": "KKZ6",
+    "entry": 13.94,
+    "entry_date": "2026-11-13",
+    "direction": "none",
+    "size": 1
+  },
+  "resolution": null
+}
