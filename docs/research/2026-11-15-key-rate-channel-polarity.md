@@ -1,6 +1,6 @@
 # Исправление полярности резюме ЦБ: #594
 
-Дата 15.11.2026. `key-rate/phase-4-channel-polarity`, role:go, In Progress.
+Дата 15.11.2026. `key-rate/phase-4-channel-polarity`, role:go, In Review, [PR #596](https://github.com/kmlebedev/clickhouse-import-rosstat/pull/596).
 [Спецификация](../superpowers/specs/2026-11-15-key-rate-channel-polarity-design.md),
 [план](../superpowers/plans/2026-11-15-key-rate-channel-polarity.md),
 [исходный аудит](2026-11-15-key-rate-channel-audit.md).

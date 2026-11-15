@@ -1,7 +1,7 @@
 # План исправления полярности
 
 Дата: 2026-11-15. [#594](https://github.com/kmlebedev/clickhouse-import-rosstat/issues/594),
-`key-rate/phase-4-channel-polarity`, role:go. Статус In Progress.
+`key-rate/phase-4-channel-polarity`, role:go. Статус In Review, [PR #596](https://github.com/kmlebedev/clickhouse-import-rosstat/pull/596).
 [Спецификация](../specs/2026-11-15-key-rate-channel-polarity-design.md).
 Ветка `codex/key-rate-channel-polarity`, worktree `.worktrees/key-rate-channel-polarity`,
 база `bff088b` (аудит #593 принят владельцем и смержен PR #595).
@@ -29,10 +29,10 @@ P0–P2 выполнены. Спека/план — первый коммит `5
 воспроизведены; исправленный regex проходит вместе с двумя отрицательными случаями.
 Replay 23 заседаний: 3660→3660 строк, 10 меток в четырёх резюме изменены,
 3650 строк сохранены. Независимый baseline `bff088b` совпал со снимком полностью.
-P3: make all pass, независимое code review без блокирующих дефектов; отдельный
-race без кэша выполняется. Общий MCP-smoke имеет четыре не связанные с #594 ошибки;
-затронутые витрины и два no-op импорта проходят. P4/P5 открыты: данные не обновлены,
-процедура refresh не реализована/не согласована, PR не открыт.
+P3: make all и отдельный race без кэша pass, code review без блокирующих дефектов.
+Общий MCP-smoke имеет четыре не связанные с #594 ошибки; целевые витрины проходят.
+P4 принят после реализации защищённого refresh и сравнения полных MCP-снимков.
+P5: PR #596 открыт, merge остаётся владельцу.
 [Отчёт и конкретный объём refresh](../../research/2026-11-15-key-rate-channel-polarity.md).
 
 P4 уточнён до кода: ограниченный plan/apply/rollback внутри существующего импортёра
@@ -46,7 +46,7 @@ P4 уточнён до кода: ограниченный plan/apply/rollback в
 10 замен kind и 6582 полностью неизменных строки, в том числе 2932 LLM. Backup 0600
 сохранён. P3: make all pass последнего кода, safety-review закрыл гонки и проверку физических
 версий. Неразрешённых замечаний к коду нет. Общие 4 проблемы MCP-smoke вне объёма;
-целевая приёмка проходит. P5: готовится итоговый PR, не Done до merge.
+целевая приёмка проходит. P5: PR #596 открыт, не Done до merge.
 
 
 Итог проверок: финальный `make all` pass; отдельный cbr race -count=1 pass, 87,058 с;
