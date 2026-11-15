@@ -1,0 +1,17 @@
+[
+  {
+    "checkpoint": "after_first_import",
+    "rows": 1118,
+    "identical_to_baseline": true
+  },
+  {
+    "checkpoint": "after_repeat",
+    "rows": 1118,
+    "identical_to_baseline": true
+  },
+  {
+    "checkpoint": "after_archive",
+    "rows": 1118,
+    "identical_to_baseline": true
+  }
+]

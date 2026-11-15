@@ -207,12 +207,29 @@ func salariesMesImport(xlsx *excelize.File, batch driver.Batch) error {
 // HEAD (файл обновляется раз в месяц, шаг расписания — недельный) → точки → производные
 // (AfterImport) → строка версии.
 func (s *SalariesMesStat) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
-	xlsDataUrl, err := getSalariesMesXlsDataUrl()
-	if err != nil {
-		return count, err
+	primary := s.ClickHouseImport
+	if util.ArchiveRestoreMode() {
+		if primary.DataUrl == "" {
+			return 0, fmt.Errorf("salary restore requires an explicit archived primary DataUrl; source discovery and SDDS fallback are disabled")
+		}
+		return primary.Import(ctx, conn)
 	}
-	s.DataUrl = xlsDataUrl
-	return s.ClickHouseImport.Import(ctx, conn)
+	url, sourceErr := getSalariesMesXlsDataUrl()
+	if sourceErr != nil {
+		sourceErr = &util.SourceReadError{URL: rosstatUrl + "/labor_market_employment_salaries", Err: sourceErr}
+	} else {
+		primary.DataUrl = url
+		count, sourceErr = importSalaryWithMetadata(ctx, conn, &primary, false)
+	}
+	if sourceErr == nil || !salarySDDSFallbackAllowed(sourceErr, util.ArchiveRestoreMode()) {
+		return count, sourceErr
+	}
+	fallback := s.salarySDDSImport()
+	count, err = importSalaryWithMetadata(ctx, conn, &fallback, true)
+	if err != nil {
+		return count, fmt.Errorf("salary primary failed (%v); SDDS fallback: %w", sourceErr, err)
+	}
+	return count, nil
 }
 
 // salariesMesImporter — среднемесячная начисленная зарплата по РФ; регистрируется реестром rosstat/importers.go.

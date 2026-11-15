@@ -1,0 +1,7 @@
+go build -o build/clickhouse-import-rosstat-native .
+CLICKHOUSE_IMPORT_STAT="rosstat_salaries_mes" ./build/clickhouse-import-rosstat-native
+time="2026-11-15T19:27:43+05:00" level=info msg="Connected to clickhouse"
+time="2026-11-15T19:27:45+05:00" level=warning msg="rosstat_salaries_mes: HEAD https://rosstat.gov.ru/storage/mediabank/tab1-zpl_12-2025.xlsx недоступен (HEAD https://rosstat.gov.ru/storage/mediabank/tab1-zpl_12-2025.xlsx: статус 404) — полный импорт без записи версии"
+time="2026-11-15T19:27:46+05:00" level=info msg="Get xlsx file https://rosstat.gov.ru/storage/mediabank/tab1-zpl_12-2025.xlsx"
+time="2026-11-15T19:27:47+05:00" level=info msg="Get xlsx file https://rosstat.gov.ru/storage/mediabank/SDDS_labor_market.xlsx"
+time="2026-11-15T19:27:56+05:00" level=info msg="Imported 0 rows of rosstat_salaries_mes"
