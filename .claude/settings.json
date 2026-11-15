@@ -1,0 +1,12 @@
+{
+  "enabledMcpjsonServers": [
+    "clickhouse"
+  ],
+  "permissions": {
+    "allow": [
+      "mcp__clickhouse__run_query",
+      "mcp__clickhouse__list_databases",
+      "mcp__clickhouse__list_tables"
+    ]
+  }
+}
