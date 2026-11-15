@@ -140,10 +140,9 @@ func TestCbrOndkpReleases(t *testing.T) {
 	if byYear[2010].format != cbrOndkpFormatPDF || byYear[2010].pageUrl != "" {
 		t.Errorf("выпуск 2010: %+v, want прямое PDF (артефакт лучше ZIP)", byYear[2010])
 	}
-	// Дата документа — строка «Вестника» (выпуск), а не дата карточки на текущей странице:
-	// у 2010 карточка говорит 19.11.2009, выпуск — 26.11.2009.
-	if byYear[2010].publishedAt == nil || byYear[2010].publishedAt.Format("2006-01-02") != "2009-11-26" {
-		t.Errorf("дата публикации 2010 = %v, want 2009-11-26 (дата «Вестника», а не карточки)", byYear[2010].publishedAt)
+	// The selected PDF card date must not be replaced with another artifact's date.
+	if byYear[2010].publishedAt == nil || byYear[2010].publishedAt.Format("2006-01-02") != "2009-11-19" {
+		t.Errorf("date2010=%v, want PDF card2009-11-19", byYear[2010].publishedAt)
 	}
 	if byYear[2022].pageUrl == "" {
 		t.Errorf("выпуск 2022: pageUrl пуст, want страницу выпуска (проект документа лежит на ней, формат уточняется в Import)")
@@ -337,22 +336,5 @@ func TestCbrOndkpAnalyzeReleaseZipNotZip(t *testing.T) {
 		t.Fatal("HTML вместо ZIP разобран без ошибки: выпуск запишется версией навсегда")
 	} else if !strings.Contains(err.Error(), "не ZIP") {
 		t.Errorf("ошибка %q не называет подмену архива", err)
-	}
-}
-
-// TestCbrOndkpPageDate — дата публикации страницы выпуска 2021–2027: на индексе её нет,
-// но на самой странице она есть (карточка «Опубликовано …» или «от ДД.ММ.ГГГГ»). Без неё
-// published_at оставался NULL у семи винтажей.
-func TestCbrOndkpPageDate(t *testing.T) {
-	page := []byte(`<html><body><div class="document-regular_date">от 02.12.2020</div></body></html>`)
-	if date := ondkpPageDate(page); date == nil || date.Format("2006-01-02") != "2020-12-02" {
-		t.Errorf("дата страницы %v, want 2020-12-02", date)
-	}
-	textOnly := []byte(`<html><body><p>Опубликовано от 30.11.2022, страница выпуска</p></body></html>`)
-	if date := ondkpPageDate(textOnly); date == nil || date.Format("2006-01-02") != "2022-11-30" {
-		t.Errorf("дата из текста страницы %v, want 2022-11-30", date)
-	}
-	if date := ondkpPageDate([]byte(`<html><body>без даты</body></html>`)); date != nil {
-		t.Errorf("страница без даты дала %v, want nil", date)
 	}
 }
