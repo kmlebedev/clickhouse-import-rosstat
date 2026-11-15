@@ -1,0 +1,94 @@
+{
+  "probes": [
+    {
+      "url": "https://rosstat.gov.ru/compendium/document/50801",
+      "observed_completed_at_utc": "2026-11-15T14:40:25.339732+00:00",
+      "http_status": 200,
+      "bytes": 769906,
+      "sha256": "d0da269f408df6bf1b2e17960a1d9da57314feec5ae1b57c5f9a8aa1c3b9764d",
+      "headers": {
+        "content-type": "text/html; charset=UTF-8",
+        "date": "Sun, 15 Nov 2026 14:40:24 GMT",
+        "cache-control": "private, must-revalidate"
+      },
+      "method": "curl -sS -L --max-time 45 -A Mozilla/5.0 -D <headers> -o <body> <url>",
+      "retries": 0
+    },
+    {
+      "url": "https://rosstat.gov.ru/storage/mediabank/osn-09_2026.pdf",
+      "observed_completed_at_utc": "2026-11-15T14:40:50.103613+00:00",
+      "http_status": 200,
+      "bytes": 11019430,
+      "sha256": "fd11acb84d6c740c090d27b40c62dcfa8d6ba9b84256c403c9c5aa90af72294d",
+      "headers": {
+        "content-type": "application/pdf",
+        "date": "Sun, 15 Nov 2026 14:40:48 GMT",
+        "last-modified": "Wed, 11 Nov 2026 14:41:22 GMT",
+        "etag": "\"6af47e92-a824a6\""
+      },
+      "method": "curl -sS -L --max-time 45 -A Mozilla/5.0 -D <headers> -o <body> <url>",
+      "retries": 0
+    }
+  ],
+  "discovered_href": "/storage/mediabank/osn-09_2026.pdf",
+  "observations": {
+    "report_month": "2026-09",
+    "age": "15+",
+    "geography": "Russian Federation; report general note excludes DNR,LNR,Zaporizhzhia,Kherson",
+    "frequency": "monthly, NSA",
+    "monthly": [
+      {
+        "series": "Рабочая сила",
+        "value": 76.7,
+        "unit": "million persons",
+        "pdf_page": 197,
+        "table": 1
+      },
+      {
+        "series": "Занятые",
+        "value": 75.0,
+        "unit": "million persons",
+        "pdf_page": 197,
+        "table": 1
+      },
+      {
+        "series": "Безработные",
+        "value": 1.7,
+        "unit": "million persons",
+        "pdf_page": 197,
+        "table": 1
+      },
+      {
+        "series": "Уровень безработицы",
+        "value": 2.2,
+        "unit": "percent",
+        "pdf_page": 197,
+        "table": 1
+      },
+      {
+        "series": "Уровень занятости",
+        "value": 61.8,
+        "unit": "percent",
+        "pdf_page": 198,
+        "table": 2
+      }
+    ],
+    "rejected_participation": {
+      "value": 63.1,
+      "unit": "percent",
+      "pdf_page": 291,
+      "actual_period": "2026-07..2026-09",
+      "aggregation": "three-month average",
+      "reason": "not September monthly observation"
+    },
+    "monthly_participation": "not found in report; participation column occurs only in rolling three-month regional appendix",
+    "visual_checks": [
+      197,
+      198,
+      291
+    ],
+    "parser_warning": "pdftotext optional-content-group warning; relevant pages rendered and visually verified",
+    "publication_date": null,
+    "publication_date_note": "listing labels are not historical byte provenance; download time is not publication time"
+  }
+}

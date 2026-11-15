@@ -1,0 +1,50 @@
+[
+  {
+    "month": "2026-01",
+    "pdf": 61.3,
+    "baseline": 61.3,
+    "equal": true
+  },
+  {
+    "month": "2026-02",
+    "pdf": 61.4,
+    "baseline": 61.4,
+    "equal": true
+  },
+  {
+    "month": "2026-03",
+    "pdf": 61.4,
+    "baseline": 61.4,
+    "equal": true
+  },
+  {
+    "month": "2026-04",
+    "pdf": 61.3,
+    "baseline": 61.3,
+    "equal": true
+  },
+  {
+    "month": "2026-05",
+    "pdf": 61.5,
+    "baseline": 61.5,
+    "equal": true
+  },
+  {
+    "month": "2026-06",
+    "pdf": 61.6,
+    "baseline": 61.6,
+    "equal": true
+  },
+  {
+    "month": "2026-07",
+    "pdf": 61.5,
+    "baseline": 61.5,
+    "equal": true
+  },
+  {
+    "month": "2026-08",
+    "pdf": 61.8,
+    "baseline": 61.8,
+    "equal": true
+  }
+]
