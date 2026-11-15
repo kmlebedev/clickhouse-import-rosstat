@@ -4,7 +4,8 @@ import "github.com/kmlebedev/clickhouse-import-rosstat/chimport"
 
 // fedstatImporter — запись реестра: сам импортёр, литерал таблицы и литерал
 // запроса количественного чека. countPoints пуст: точки контроля публикации нет
-// (стандарт §9.3), no-op держит гейт по своей таблице; расхождение поймал бы
+// (стандарт §9.3), no-op держит гейт по своей таблице; labour_hours сравнивает
+// значения и ведёт версии каждого POST отдельно. Расхождение поймал бы
 // тест-энфорсер.
 type fedstatImporter struct {
 	chimport.ImportStat
@@ -22,6 +23,7 @@ var fedstatImporters = []fedstatImporter{
 	{fedstatAgriImporter, "fedstat_agri", ""},
 	{fedstatInvestmentImporter, "fedstat_investment", ""},
 	{fedstatIPCImporter, "fedstat_ipc", ""},
+	{fedstatLabourHoursImporter, "fedstat_labour_hours", ""},
 }
 
 func init() {

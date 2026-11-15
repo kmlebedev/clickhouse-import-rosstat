@@ -10,6 +10,8 @@ Docs-портал: **https://kmlebedev.github.io/clickhouse-import-rosstat/** �
 
 Резервный источник зарплаты Росстата: официальный SDDS добавляет отсутствующие месяцы с 2015 года при недоступности `tab1-zpl`, сохраняя историю. [Контракт и ограничения](docs/IMPORTERS.md).
 
+Годовые часы и трудозатраты: `fedstat_labour_hours` / `v_fedstat_labour_hours` — три показателя ЕМИСС с отдельными единицами и исходными измерениями. Запуск `make import STAT=fedstat_labour_hours`; пятница 13:43 МСК, последний шаг `dagu/fedstat.yaml`. POST-выгрузки архивируются при настроенном backend; исторический PIT не доказан. [Спецификация](docs/superpowers/specs/2026-11-15-labour-hours-design.md).
+
 ## Документация
 
 | Документ | Что внутри |

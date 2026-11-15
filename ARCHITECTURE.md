@@ -69,7 +69,7 @@ weeklysa/          — производный недельный SA-агрега
                      по SHA-256 без R; каталог series_catalog (source='weekly_cpi_sa', 5 рядов:
                      3 месячных + saar_q/saar_3m);
                      витрина v_weekly_cpi_sa; шаг dagu/ppi.yaml после ppi_sa (четверг 14:17)
-fedstat/           — ЕМИСС (fedstat.ru), шесть импортёров:
+fedstat/           — ЕМИСС (fedstat.ru), семь импортёров:
                      (1) fedstat_weekly_prices — 37426: недельные средние потребительские цены, 158 товаров,
                      2008–2022 (РФ, s_OKATO=643) и 2026 недели 39–40 (РФ без новых субъектов,
                      s_OKATO=643004.АГ), 56 133 точки; 2023–2025 в источнике отсутствуют.
@@ -82,6 +82,10 @@ fedstat/           — ЕМИСС (fedstat.ru), шесть импортёров:
                      витрина v_fedstat_investment.
                      (6) fedstat_ipc — 31074: ИПЦ на 1 105 товаров/услуг, 2002–2026, 204 038 точек,
                      витрина v_fedstat_ipc.
+                     (7) fedstat_labour_hours — 59749/59751/60463: годовые часы, 3 ряда отдельного
+                     source=fedstat_labour_hours, витрина v_fedstat_labour_hours. Полный POST
+                     /indicator/ID/download, SHA256 тела, сверка ключ+значение, общий archive.Store/Registry;
+                     source_publications после архива и производных. HEAD-префлайта нет.
                      Транспорт — CSRF POST: GET страницы → token → downloadData.do (37426 — format=sdmx;
                      макро-блоки — format=excel, BIFF .xls) через util.NewDefaultTLSClient() на прогон;
                      кастомный TLS-конфиг util.HttpClient источник отвергает. Один POST на год, пауза 10 с
@@ -91,7 +95,7 @@ fedstat/           — ЕМИСС (fedstat.ru), шесть импортёров:
                      fedstat_retail/fedstat_investment в ключ входит period. Каталог series_catalog
                      (source='fedstat', 1 727 рядов = 158 + 432 + 9 + 18 + 5 + 1 105), витрины v_fedstat_*;
                      своя регистрация fedstat/importers.go с тестом-энфорсером; no-op — гейт по своей таблице
-                     (минимумы точек на источник + max(date)), точки контроля публикации нет (§8 п. 13).
+                     (минимумы точек на источник + max(date)) у первых шести; у labour_hours — сверка значений, SHA256 и архив (§8 п. 13).
 cbr/               — ЦБ РФ, все источники cbr.ru: key_rate, currency_usd (XML_dynamic.asp), metal_gold (cbr_gold,
                      xml_metall.asp), households (cbr_households_b_mes), средства клиентов банков (cbr_sors_funds — счета организаций, депозиты юрлиц, вклады физлиц с эскроу и без, счета эскроу, средства ИП; 21 ряд, 2012-02+), m2, new_loans_ind/new_loans_corp
                      (кредиты физлицам и юрлицам), ruonia (таблица cbr_ruania), bank_int_rate, int_rate_loans, credit_m2x,
@@ -540,6 +544,7 @@ durable intent-маркер создаётся до первой записи; b
 | `fedstat_agri` | `fedstat/` | реализован; `Name()` = `fedstat_agri`; пункт #310 | 34128: matrix Q, 2018–2026; 59001: activity-columns, 2017–2025; 31062: year-columns batch, 1991–2016; 43337: year-columns batch, 1990–2011; 2023+ — 1849012 | `fedstat_agri` (`series, activity, category, region, period_type, date, value, unit`), **565** точек (60 + 108 + 312 + 85), 18 рядов; витрина `v_fedstat_agri` |
 | `fedstat_investment` | `fedstat/` | реализован; `Name()` = `fedstat_investment`; пункт #310 | 58089/58090: matrix Q/CUM, 2017–2026, fallback 2023 на 1688487; 34129/40562: batch 2000–2022 / 2005–2022 + годы 2023–2024 / 2023–2025; 34475: batch 1998–2016 | `fedstat_investment` (`series, indicator_id, summary_type, region, period_type, period, date, value, unit`), **153** точки (41 + 47 + 25 + 21 + 19), 5 рядов; витрина `v_fedstat_investment`; нули 58090 2024 Jan–Jun/Q2 сохранены |
 | `fedstat_ipc` | `fedstat/` | реализован; `Name()` = `fedstat_ipc`; пункт #310 | 31074: matrix, `57831/58273`, все 1 105 товаров/услуг, тип `57937=1704142` («К предыдущему месяцу»), один POST на год, пауза 30 с, 2002–2026; 2023+ — 1849012 | `fedstat_ipc` (`product, indicator_type, region, date, value`), **204 038** точек, 1 105 рядов; витрина `v_fedstat_ipc`; гейт по `count()` и `max(date)` |
+| `fedstat_labour_hours` | `fedstat/` | rosstat/1.14 (#613); [спека](docs/superpowers/specs/2026-11-15-labour-hours-design.md) | GET indicator → CSRF/cookie → POST /indicator/ID/download, util.NewDefaultTLSClient; BIFF | 59749/59751/60463, годовая частота, отдельные единицы и исходные измерения; каталог source=fedstat_labour_hours, витрина v_fedstat_labour_hours; сравнение FINAL значений, SHA256 и архив каждой выгрузки; исторического PIT нет |
 | `cbr_mp_bsu_map` | `cbr/` | реализован; `Name()` = `cbr_mp_bsu_map` (имя таблицы, `CLICKHOUSE_IMPORT_STAT` и 29-го шага `dagu/cbr.yaml`; Task 7 #248). Публичный кроссворд 87 BSU-кодов на отраслевые листы `mp_survey_data.xlsx`; 87 строк, витрины `v_cbr_mp_bsu_map` и `v_cbr_mp_public_panel` | Публичный `model.xlsx` авторов CB_COMP (figshare DOI `10.6084/m9.figshare.27990260.v1`, `1.0.4.2`, поля `мониторинг_код1..4`); 87 кодов проверяются по `rosstat_okved2`, если он уже импортирован | Свой `Import()` без сети: DDL → проверка 87/87 в `rosstat_okved2` (если таблицы нет — warn, витрина с именами появится после классификатора) → один батч 87 строк → обе витрины. `Rule` — разделы/классы ОКВЭД2, `manual` — 26 производственных кодов (21 consumer + 1 investment + 4 intermediate), `fallback` не используется; 87 кодов дают 11 листов / 33 серии. Повтор идемпотентен. Тесты: `cbr/mp_bsu_map_test.go`; вручную — `make import STAT=cbr_mp_bsu_map` |
 | `cbr_infl_exp_op` | `cbr/` | реализован; `Name()` = `cbr_infl_exp_op` (имя шага `dagu/cbr.yaml` и `CLICKHOUSE_IMPORT_STAT`; пишет в общую `cbr_infl_exp` — второй писатель после книги `cbr_infl_exp`, ключ версии в `source_publications` — свой). Оперативная точка инфляционных ожиданий до выхода книги | `https://www.cbr.ru/statistics/ddkp/inflationary_expectations/`, блок версий: `a.versions_item[href*="inFOM_"][href$=".pdf"]` — PDF «Оперативная справка» `inFOM_ГГ-ММ.pdf` (на 2026-10-21 — `inFOM_26-10.pdf`, книга `Infl_exp_26-09.xlsx`) | Разбор `pdftotext -bbox` первой страницы: ось месяцев рис. 1 (`янв.24 … окт.26`) и подписи значений у точек; колонка — по x, ряд — по порядку сверху вниз (наблюдаемая → ожидаемая через год → ожидаемая через пять лет; пятилетний не пишется). Собственный `Import()`: тонкая обёртка над `util.Fallback` — страница → PDF-ссылка → месяц из имени → гейт `SELECT DISTINCT date FROM cbr_infl_exp FINAL` → шаблон (`BodyFunc`): PDF не обновился — `0 строк` без скачивания; `AfterImport` вызывается и на no-op-пути (идемпотентный self-heal). Проверено на PDF 26-10: 33 исторических месяца совпадают с книгой 26-09 до 0.1 п.п., октябрь (14,5 / 13,2) пишется в `cbr_infl_exp`, вышедшая позже книга перезаписывает значением из книги. Точка контроля объявлена (`SELECT count() FROM cbr_infl_exp FINAL`, `PublicationSource='cbr_infl_exp_op'`) |
 | `cbr_sors_funds` | `cbr/` | реализован; `Name()` = `cbr_sors_funds` (имя таблицы, `CLICKHOUSE_IMPORT_STAT` и id 34-го шага `dagu/cbr.yaml`; 34-я запись реестра `cbr/importers.go`); пункт `key-rate/phase-2-cbr-sors-funds`, issue [#544](https://github.com/kmlebedev/clickhouse-import-rosstat/issues/544) | «Сведения о размещенных и привлеченных средствах»: `https://www.cbr.ru/vfs/statistics/BankSector/Borrowings/02_01_Funds_all.xlsx` — прямая стабильная выгрузка ЦБ (HEAD `200`, обновляется раз в месяц), листы «итого»/«в рублях»/«в инвалюте» | 21 ряд = 7 строк × 3 листа (счета организаций, депозиты юрлиц, вклады физлиц с учётом эскроу и без, счета эскроу, средства ИП), помесячно с 01.02.2012, млн руб.; `ImportFunc` с сырыми значениями (`RawCellValue`), шапка дат — якорь, подписи строк объявлены кодом (стандарт §6.8), `""`/`-` — пропуск; `PublicationCountPoints` — HEAD-префлайт и no-op в будни; `AfterImport: afterCbrMacro` → каталог (21 запись) и ветка `v_cbr_macro` |
@@ -1624,6 +1629,21 @@ CREATE TABLE IF NOT EXISTS fedstat_investment (
     unit          LowCardinality(String)   -- 'процент' | 'тысяча рублей' | 'миллион рублей'
 ) ENGINE = ReplacingMergeTree ORDER BY (series, indicator_id, summary_type, region, period_type, period, date);
 
+-- fedstat/labour_hours.go — три годовых показателя ЕМИСС; исходные коды и подписи
+-- измерений сохранены. Пустое измерение = неприменимо, не «Всего».
+CREATE TABLE IF NOT EXISTS fedstat_labour_hours (
+    series LowCardinality(String),
+    region LowCardinality(String),
+    age LowCardinality(String),
+    sex LowCardinality(String),
+    hours_band LowCardinality(String),
+    activity LowCardinality(String),
+    employment_status LowCardinality(String),
+    unit LowCardinality(String),
+    date Date,
+    value Float64
+) ENGINE = ReplacingMergeTree ORDER BY (series, region, age, sex, hours_band, activity, employment_status, date);
+
 -- fedstat/ipc.go — ЕМИСС 31074: индексы потребительских цен на товары и услуги,
 -- импортёр fedstat_ipc. Тип — только «К предыдущему месяцу»; product — имя из Excel.
 CREATE TABLE IF NOT EXISTS fedstat_ipc (
@@ -2267,6 +2287,13 @@ ALTER TABLE v_keyrate_expectations COMMENT COLUMN openposition 'Открытые
 ALTER TABLE v_keyrate_expectations COMMENT COLUMN expected_change_pp 'Вменённое изменение ключевой ставки к дате заседания: settle − последняя известная ставка cbr_key_rate, п.п.; плюс — рынок ждёт повышения, минус — понижения. NULL означает, что ставка ещё не загружена (cbr_key_rate пуста): вменённое значение неизвестно, нулём его считать нельзя';
 ALTER TABLE v_keyrate_expectations COMMENT COLUMN expected_change_bp 'То же в базисных пунктах: (settle − последняя известная ставка cbr_key_rate) × 100. Считается к последней ИЗВЕСТНОЙ ставке, а не к ставке на дату decision_date; при нулевом объёме серии значение нерепрезентативно, а NULL (cbr_key_rate пуста, ставка ещё не загружена) значит «неизвестно», а не нулевое изменение. Вменённое рынком значение, а не прогноз и не ценовое обязательство';
 ```
+
+
+#### Годовые часы — витрина и архив (rosstat/1.14)
+
+`v_fedstat_labour_hours` выдаёт FINAL-данные с source/series/date/value, region, age, sex, hours_band, activity, employment_status, unit, frequency=Y. Все колонки имеют комментарии. Пустое измерение неприменимо, а не итог. Каталог содержит три семантики. 643 и 643004.АГ различаются; отрасли и итоги вложены. MCP получает SELECT только на витрину.
+
+Отступление §9.6 стандарта: три POST не проходят GET-шаблон, поэтому custom Import сохраняет те же байты через общий archive.Store/Registry; SHA256 — версия, source_publications под ключами fedstat_labour_hours_ID записывается последней. Каждый прогон скачивает три XLS: HEAD страницы не является версией. Повтор сравнивает ключ и значение, изменённые значения обновляются, удалённые ключи останавливают импорт. Archive restore явно отклоняется. Архив отключён при пустом backend; FirstSeen не published_at. Шаг в хвосте пятничного DAG 13:43 МСК, без изменения расписания.
 
 ### 6.4 DCF-модель Полюса (ключевые допущения, rev.2 по мировой практике)
 
