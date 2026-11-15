@@ -1,0 +1,296 @@
+{
+  "probes": [
+    {
+      "url": "https://rosstat.gov.ru/folder/12781",
+      "method": "GET",
+      "observed_at_utc": "2026-11-15T14:54:43.535351+00:00",
+      "http_chain": [
+        "HTTP/1.1 200 OK"
+      ],
+      "selected_headers": {
+        "content-type": "text/html; charset=UTF-8",
+        "date": "Sun, 15 Nov 2026 14:54:43 GMT",
+        "cache-control": "private, must-revalidate"
+      },
+      "actual_signature": "HTML",
+      "size_bytes": 854479,
+      "sha256": "c0bae7d1dc15a692e33abee3792ced0736be233fbe300e8911269d33b71c8d68",
+      "retries": 0,
+      "user_agent": "Mozilla/5.0",
+      "rate_limit_observed": false,
+      "note": "Official link followed; wrong-format404 is not parsed as data"
+    },
+    {
+      "url": "https://rosstat.gov.ru/vpn/2020/Tom2_Vozrastno_polovoj_sostav_i_sostoyanie_v_brake",
+      "method": "GET",
+      "observed_at_utc": "2026-11-15T14:55:00.819658+00:00",
+      "http_chain": [
+        "HTTP/1.1 200 OK"
+      ],
+      "selected_headers": {
+        "content-type": "text/html; charset=UTF-8",
+        "date": "Sun, 15 Nov 2026 14:55:00 GMT",
+        "cache-control": "private, must-revalidate"
+      },
+      "actual_signature": "HTML",
+      "size_bytes": 751908,
+      "sha256": "b6cea9bd31040acfeb47c55dbdfcc26be8569d9918329fa80a43a36523603fc8",
+      "retries": 0,
+      "user_agent": "Mozilla/5.0",
+      "rate_limit_observed": false,
+      "note": ""
+    },
+    {
+      "url": "https://rosstat.gov.ru/storage/mediabank/OkPopul_Comp2025_Site.xlsx",
+      "method": "GET",
+      "observed_at_utc": "2026-11-15T14:55:17.948018+00:00",
+      "http_chain": [
+        "HTTP/1.1 404 Not Found"
+      ],
+      "selected_headers": {
+        "content-type": "text/html; charset=UTF-8",
+        "date": "Sun, 15 Nov 2026 14:55:17 GMT",
+        "cache-control": "no-cache, private"
+      },
+      "actual_signature": "HTML",
+      "size_bytes": 682001,
+      "sha256": "df8c9f73bda8e510df0857db83ecb6fdf024bec8500a6c4e66876f89e98c786c",
+      "retries": 0,
+      "user_agent": "Mozilla/5.0",
+      "rate_limit_observed": false,
+      "note": "Official link followed; wrong-format404 is not parsed as data"
+    },
+    {
+      "url": "https://rosstat.gov.ru/storage/mediabank/popul_1897+.xlsx",
+      "method": "GET",
+      "observed_at_utc": "2026-11-15T14:55:21.607899+00:00",
+      "http_chain": [
+        "HTTP/1.1 404 Not Found"
+      ],
+      "selected_headers": {
+        "content-type": "text/html; charset=UTF-8",
+        "date": "Sun, 15 Nov 2026 14:55:21 GMT",
+        "cache-control": "no-cache, private"
+      },
+      "actual_signature": "HTML",
+      "size_bytes": 682001,
+      "sha256": "55cc60ab2167307575e821fa127ad9187831d93d20b30b9fcf598832607d6840",
+      "retries": 0,
+      "user_agent": "Mozilla/5.0",
+      "rate_limit_observed": false,
+      "note": "Official link followed; wrong-format404 is not parsed as data"
+    },
+    {
+      "url": "https://rosstat.gov.ru/storage/mediabank/Chisl_polvozr_01-01-2022_VPN-2020.xlsx",
+      "method": "GET",
+      "observed_at_utc": "2026-11-15T14:56:18.032165+00:00",
+      "http_chain": [
+        "HTTP/1.1 404 Not Found"
+      ],
+      "selected_headers": {
+        "content-type": "text/html; charset=UTF-8",
+        "date": "Sun, 15 Nov 2026 14:56:17 GMT",
+        "cache-control": "no-cache, private"
+      },
+      "actual_signature": "HTML",
+      "size_bytes": 682001,
+      "sha256": "bb0120675eed7853095180349f2d0d76f46c8e7cbf84b8825d54cb0cd3af3d97",
+      "retries": 0,
+      "user_agent": "Mozilla/5.0",
+      "rate_limit_observed": false,
+      "note": "Official link followed; wrong-format404 is not parsed as data"
+    },
+    {
+      "url": "https://rosstat.gov.ru/storage/mediabank/Chisl_RF_01-01-2022-01-01-2024.xls",
+      "method": "GET",
+      "observed_at_utc": "2026-11-15T14:58:25.699395+00:00",
+      "http_chain": [
+        "HTTP/1.1 404 Not Found"
+      ],
+      "selected_headers": {
+        "content-type": "text/html; charset=UTF-8",
+        "date": "Sun, 15 Nov 2026 14:58:25 GMT",
+        "cache-control": "no-cache, private"
+      },
+      "actual_signature": "HTML",
+      "size_bytes": 682001,
+      "sha256": "b98d055c25d2e2f89416c511ac073bdf7cd30315fe75aa7dbf10ff42c0b641a5",
+      "retries": 0,
+      "user_agent": "Mozilla/5.0",
+      "rate_limit_observed": false,
+      "note": "Official link followed; wrong-format404 is not parsed as data"
+    },
+    {
+      "url": "https://rosstat.gov.ru/vpn/2020",
+      "method": "GET",
+      "observed_at_utc": "2026-11-15T14:56:00.457263+00:00",
+      "http_chain": [
+        "HTTP/1.1 200 OK"
+      ],
+      "selected_headers": {
+        "content-type": "text/html; charset=UTF-8",
+        "date": "Sun, 15 Nov 2026 14:56:00 GMT",
+        "cache-control": "private, must-revalidate"
+      },
+      "actual_signature": "HTML",
+      "size_bytes": 759787,
+      "sha256": "41bde99750b7e97527b7b4661ec894b00748101fc1649f3ff94e018c83481eeb",
+      "retries": 0,
+      "user_agent": "Mozilla/5.0",
+      "rate_limit_observed": false,
+      "note": ""
+    },
+    {
+      "url": "https://rosstat.gov.ru/storage/mediabank/Tom2_tab1_VPN-2020.xlsx",
+      "method": "GET",
+      "observed_at_utc": "2026-11-15T14:55:32.297905+00:00",
+      "http_chain": [
+        "HTTP/1.1 200 OK"
+      ],
+      "selected_headers": {
+        "content-type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "content-length": "38362",
+        "date": "Sun, 15 Nov 2026 14:55:32 GMT",
+        "last-modified": "Wed, 26 Apr 2023 12:14:47 GMT",
+        "etag": "\"644915b7-95da\""
+      },
+      "actual_signature": "ZIP/XLSX",
+      "size_bytes": 38362,
+      "sha256": "a497b919f8bf16fdb28b79e8416486d40c435c57364d98b9a8a062c6b7d1826e",
+      "retries": 0,
+      "user_agent": "Mozilla/5.0",
+      "rate_limit_observed": false,
+      "note": ""
+    },
+    {
+      "url": "https://rosstat.gov.ru/storage/mediabank/Tom2_tab2_VPN-2020.xlsx",
+      "method": "GET",
+      "observed_at_utc": "2026-11-15T14:56:14.644144+00:00",
+      "http_chain": [
+        "HTTP/1.1 200 OK"
+      ],
+      "selected_headers": {
+        "content-type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "content-length": "632954",
+        "date": "Sun, 15 Nov 2026 14:56:14 GMT",
+        "last-modified": "Wed, 26 Apr 2023 12:15:09 GMT",
+        "etag": "\"644915cd-9a87a\""
+      },
+      "actual_signature": "ZIP/XLSX",
+      "size_bytes": 632954,
+      "sha256": "ad87b6b604af7fe957b63f43d3a6d07b6eabb67e9241a820c43d5472aa6840f3",
+      "retries": 0,
+      "user_agent": "Mozilla/5.0",
+      "rate_limit_observed": false,
+      "note": ""
+    },
+    {
+      "url": "https://rosstat.gov.ru/storage/mediabank/Tom2_met_VPN-2020.pdf",
+      "method": "GET",
+      "observed_at_utc": "2026-11-15T14:55:36.455148+00:00",
+      "http_chain": [
+        "HTTP/1.1 404 Not Found"
+      ],
+      "selected_headers": {
+        "content-type": "text/html; charset=UTF-8",
+        "date": "Sun, 15 Nov 2026 14:55:36 GMT",
+        "cache-control": "no-cache, private"
+      },
+      "actual_signature": "HTML",
+      "size_bytes": 682001,
+      "sha256": "5818e9f7a5f2ccb7c1704e2878ea1f2693fe591b07b4c3970b3c270c934195e3",
+      "retries": 0,
+      "user_agent": "Mozilla/5.0",
+      "rate_limit_observed": false,
+      "note": "Official link followed; wrong-format404 is not parsed as data"
+    },
+    {
+      "url": "https://rosstat.gov.ru/storage/mediabank/metod-poyasn_demo.htm",
+      "method": "GET",
+      "observed_at_utc": "2026-11-15T14:58:29.299033+00:00",
+      "http_chain": [
+        "HTTP/1.1 404 Not Found"
+      ],
+      "selected_headers": {
+        "content-type": "text/html; charset=UTF-8",
+        "date": "Sun, 15 Nov 2026 14:58:29 GMT",
+        "cache-control": "no-cache, private"
+      },
+      "actual_signature": "HTML",
+      "size_bytes": 682001,
+      "sha256": "91cf90d0cc45b38860b5cd8bf72a24201a002b498cc86e21f8a80d23fdd0b9bb",
+      "retries": 0,
+      "user_agent": "Mozilla/5.0",
+      "rate_limit_observed": false,
+      "note": "Official link followed; wrong-format404 is not parsed as data"
+    },
+    {
+      "url": "https://www.fedstat.ru/indicator/43701",
+      "method": "GET",
+      "observed_at_utc": "2026-11-15T14:55:03.948220+00:00",
+      "http_chain": [
+        "HTTP/1.1 200"
+      ],
+      "selected_headers": {
+        "content-type": "text/html;charset=UTF-8",
+        "date": "Sun, 15 Nov 2026 14:55:03 GMT"
+      },
+      "actual_signature": "HTML",
+      "size_bytes": 116827,
+      "sha256": "86e583bb29cb8dc0175d6942c305609a89dd4ef33971f223ae9171b164325b3a",
+      "retries": 0,
+      "user_agent": "Mozilla/5.0",
+      "rate_limit_observed": false,
+      "note": ""
+    },
+    {
+      "url": "https://www.fedstat.ru/indicator/31557",
+      "method": "GET",
+      "observed_at_utc": "2026-11-15T14:56:28.958402+00:00",
+      "http_chain": [
+        "HTTP/1.1 302",
+        "HTTP/1.1 200"
+      ],
+      "selected_headers": {
+        "content-length": "3806",
+        "date": "Sun, 15 Nov 2026 14:56:29 GMT",
+        "location": "/user/login?redirectUrl=%252Findicator%252F31557%253Fid%253D31557&id=31557",
+        "content-type": "text/html;charset=UTF-8"
+      },
+      "actual_signature": "HTML",
+      "size_bytes": 3806,
+      "sha256": "22c7895ecac6b08a62f6fc4a37451f012f58c660e80943cae2c540d3c0d2005b",
+      "retries": 0,
+      "user_agent": "Mozilla/5.0",
+      "rate_limit_observed": false,
+      "note": "Final200 is authorization HTML, not numeric data; no bypass attempted"
+    },
+    {
+      "url": "https://www.fedstat.ru/indicator/43701/download",
+      "method": "POST public mobile download form, using session/token from official43701page",
+      "observed_at_utc": "2026-11-15T14:57:37.944996+00:00",
+      "http_chain": [
+        "HTTP/1.1 200"
+      ],
+      "selected_headers": {
+        "content-type": "application/vnd.ms-excel",
+        "date": "Sun, 15 Nov 2026 14:57:38 GMT",
+        "cache-control": "no-cache, must-revalidate, post-check=0, pre-check=0"
+      },
+      "actual_signature": "CDFV2/BIFF XLS",
+      "size_bytes": 35328,
+      "sha256": "8e07c7522e31f8cfb887c2f598307c8343c58787b137346ddd2f87331c43360e",
+      "retries": 0,
+      "user_agent": "Mozilla/5.0",
+      "rate_limit_observed": false,
+      "note": ""
+    }
+  ],
+  "credential_handling": "No credentials read. Public session cookies and form tokens excluded from evidence.",
+  "retained_artifacts": "Only minimal cells/controls and response fingerprints committed; no complete books.",
+  "discovery": "Official Rosstat demographic/census listing anchors; EMISS43701 itself and31557 primary-source methodological reference. No speculative URL brute force.",
+  "successor31557_discovery": {
+    "url": "https://www.rosstat.gov.ru/storage/mediabank/met_541-12112024.pdf",
+    "evidence": "Official primary-source web search result explicitly references fedstat.ru/indicator/31557 for annual permanent population on1January; this discovery PDF was not downloaded and is not a new numeric source."
+  }
+}
