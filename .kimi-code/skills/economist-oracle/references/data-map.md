@@ -75,19 +75,27 @@ WHERE category = 'cbr' AND title LIKE '%заседание по ключевой
 
 -- 3. Decision history WITH holds, for base rates. cbr_key_rate alone shows
 --    only changes, dated by the day they took effect (the Monday after).
-WITH m AS (SELECT event_date AS meeting, max(emergency) AS emergency
-           FROM v_events_calendar
-           WHERE category = 'cbr' AND title LIKE '%заседание по ключевой ставке%'
-             AND event_date < today() GROUP BY event_date),
+WITH m0 AS (SELECT event_date AS meeting, max(emergency) AS emergency
+            FROM v_events_calendar
+            WHERE category = 'cbr' AND title LIKE '%заседание по ключевой ставке%'
+              AND event_date < today() GROUP BY event_date),
+     -- the decision is in force within six days (holidays stretch the usual
+     -- three), but never later than the eve of the next meeting
+     m AS (SELECT meeting, emergency,
+                  least(meeting + 6, leadInFrame(meeting, 1, toDate('2100-01-01'))
+                        OVER (ORDER BY meeting ROWS BETWEEN CURRENT ROW AND 1 FOLLOWING) - 1) AS settled
+           FROM m0),
      r AS (SELECT date, value FROM v_cbr_macro WHERE series = 'cbr_key_rate'),
      x AS (SELECT meeting, emergency,
-                  argMaxIf(value, date, date <  meeting)     AS rate_before,
-                  argMaxIf(value, date, date <= meeting + 4) AS rate_after
+                  argMaxIf(value, date, date <  meeting) AS rate_before,
+                  argMaxIf(value, date, date <= settled) AS rate_after
            FROM m CROSS JOIN r GROUP BY meeting, emergency)
 SELECT meeting, emergency, rate_before, rate_after,
        round((rate_after - rate_before) * 100) AS step_bp,
        lagInFrame(step_bp) OVER (ORDER BY meeting) AS prev_step_bp
 FROM x ORDER BY meeting;
+-- A fixed "+4 days" window is wrong: the moves of 2014-10-31, 2015-04-30 and
+-- 2022-04-29 took effect five days later, after holidays, and showed as holds.
 -- Aggregate it for the prior, e.g. … GROUP BY sign(prev_step_bp), step_bp
 -- WHERE emergency = 0. 109 meetings since 2014.
 
@@ -176,6 +184,27 @@ SELECT metric, stage, forecast_date, target_date, predicted, actual, error_bp
 FROM v_ml_live_accuracy
 WHERE metric LIKE 'cbr_rate:%' AND model != 'gate-selftest'
 ORDER BY target_date DESC, metric, forecast_date DESC LIMIT 20;
+-- Rows whose target_date is not the meeting being forecast are scores of
+-- past calls. They say how reliable a track has been, not what it expects
+-- now.
+
+-- 13. Where today's real rate sits in its own history. Run this (or its
+--     equivalent for another deflator) before calling a level "high",
+--     "record" or "in the upper part of the distribution", and report the
+--     period, the deflator and the percentile.
+WITH h AS (SELECT date, key_rate - inflation_yoy AS real_rate FROM v_ofz_signal
+           WHERE key_rate IS NOT NULL AND inflation_yoy IS NOT NULL)
+SELECT min(date) AS from_day, max(date) AS to_day, count() AS days,
+       round(quantile(0.5)(real_rate), 2) AS median,
+       round(quantile(0.9)(real_rate), 2) AS p90,
+       round(argMax(real_rate, date), 2) AS latest,
+       round(100 * countIf(real_rate <= (SELECT argMax(real_rate, date) FROM h))
+             / count(), 1) AS latest_percentile
+FROM h;
+-- On 2026-11-15: 2013-09 to 2026-11, 3 305 days, median 3.45, latest 7.65
+-- against year-on-year CPI = 77th percentile — elevated, not extreme. The
+-- deflator changes the answer (8.1 against the core annualised rate), and
+-- for that one there is no ready history: build it or do not rank it.
 ```
 
 ## Traps found on live data
@@ -259,9 +288,15 @@ ORDER BY target_date DESC, metric, forecast_date DESC LIMIT 20;
   importer has been loaded; check `min(meeting_date)` before making
   statements about "how the Board worded it in 2014–2015". Decisions
   themselves go back to 2014 through query 3.
-- **Neutral rate and output gap.** Nobody publishes either as a series.
-  Use the Bank's stated long-run range for neutral and survey proxies for
-  the gap, and call them proxies.
+- **Neutral rate, output gap, term premium.** Nobody publishes any of them
+  as a series. Use the Bank's stated long-run range for neutral and survey
+  proxies for the gap, and call them proxies; for the term premium there is
+  not even a proxy, so the OFZ curve is read in direction only.
+- **Wages lag by two months and CPI by two weeks.** On 2026-11-15 the last
+  wage figure was for September, the last monthly CPI for September, the
+  last expectations survey for October. Anything that happened in October
+  cannot be seen in wages yet; check the date before using a series as
+  evidence of what a shock did.
 
 ## Further reading in the repository
 

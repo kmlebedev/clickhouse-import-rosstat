@@ -18,11 +18,13 @@ steps that keep it on that path unless the data push the forecast.
 1. *The arithmetic of the published range.* `v_cbr_mt_forecast` gives the
    range for the average key rate in the current and next years. With the
    rate realised so far, compute which combinations of decisions over the
-   remaining meetings keep the annual average inside the range
-   (`rate_math.py avg`). Late in the year this pins the remaining decisions
-   to within one step; early in the year it bounds the year-end rate. For
-   next year's range, compute the year-end rate implied by a smooth path
-   from the current level.
+   remaining meetings keep the annual average inside the range:
+   `rate_math.py bound` for the whole set of paths, `rate_math.py avg` for
+   one path you want to show. Late in the year this pins the remaining
+   decisions to within one step; early in the year it bounds the year-end
+   rate. For next year's range, report what `bound` returns — the least
+   total easing that fits, the range of year-end rates, and the step sizes
+   it assumed — rather than a minimum inferred from a few schedules.
 2. *The signal sentence* in the last press release
    (`v_cbr_key_rate_press_blocks`): what the Board says it will assess, and
    whether the wording changed against the previous release. A changed
@@ -131,7 +133,15 @@ The paper argues the first three have not held in Russia since 2021. Apply
 the test to every row of the one-off ledger with current data: size
 relative to monthly inflation, whether a shock of the same kind occurred in
 the previous twelve months, what expectations did in the two surveys after
-it, what wages did.
+it, what wages did after it.
+
+"After it" is the whole point of questions 3 and 4. Wages arrive with a
+lag of about two months, so for a recent shock there is usually no
+post-shock wage figure yet: the honest answer is `unknown — latest data
+<month>, before the shock`, and wage growth before the shock goes in the
+evidence table as labour-market background. The same holds for
+expectations when no survey has been taken since. A row can still be
+classified *react* on questions 1–3; say that it rests on those.
 
 **Consequences for the forecast.**
 

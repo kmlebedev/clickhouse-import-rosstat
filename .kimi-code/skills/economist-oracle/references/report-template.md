@@ -52,8 +52,10 @@ budget and external, monetary conditions, the Bank's words and numbers,
 the market — indicator, value, date, view)
 
 ## One-off ledger
-| Factor | Size | Recurred in 12m? | Expectations after | Wages | Bank's label | Classification |
+| Factor (date) | Size | Recurred in 12m? | Expectations after (survey date) | Wages after (month) | Bank's label | Classification |
 |---|---|---|---|---|---|---|
+(the two "after" cells hold an observation dated later than the factor, or
+`unknown — latest <date>, before the shock`)
 
 ## The four views
 ### A. The Bank's own reaction function
@@ -71,12 +73,18 @@ from the base-rate prior and why.>
 <Gap by meeting, reading of it, general implications with the losing case,
 paper record.> Not investment advice.
 
+| Outcome, bp | Probability | Announced rate | Result if it happens, ₽ |
+|---|---|---|---|
+(from `rate_math.py paper`; below it one line: expected result, ₽, and
+whether a position is recorded or the rows are hypothetical)
+
 ## What to watch before the meeting
 | Date | Release | Would move the call if |
 |---|---|---|
 
 ## Limits of this run
-<Stale or missing inputs, what was not checked, proxies used.>
+<Stale or missing inputs, what was not checked, proxies used, and every
+assumption the argument leans on that no view or computation supports.>
 ```
 
 ## forecast.json

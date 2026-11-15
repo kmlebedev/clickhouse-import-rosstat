@@ -128,6 +128,15 @@ the classic way a rate forecast fools its author.
   the forecast only through a stated mechanism — for example, "if the Board
   eases against this view, the probability of a reversal within three
   meetings rises".
+- **Every statement is observed, computed or assumed — and says which.**
+  A first evaluation of this skill passed all 22 format checks and still
+  contained six wrong arguments (issue #616), all of one kind: a sentence
+  that sounded like evidence and was not. So before a claim goes into the
+  report, know its status. *Observed*: a number from a view with its date.
+  *Computed*: the method is shown and anyone can rerun it. *Assumed*:
+  labelled as an assumption in the sentence itself, and nothing is
+  concluded from it that the reader could mistake for a finding. The six
+  ways this went wrong are the checklist in step 9.
 - **Probabilities, in 5-point steps, summing to 100.** A forecast of "hold,
   probably" cannot be scored. Never give 0 or 100 to an outcome the Board has
   delivered at least once in a comparable situation.
@@ -191,8 +200,12 @@ administrative (tax changes, tariff indexation, fuel, harvest, a base
 effect, a currency move). For each, answer the four questions in
 [references/lenses.md](references/lenses.md) §3 — is it small, does it
 recur, are expectations anchored, does it pass into wages — and classify it
-as *look through*, *react*, or *already reacted*. This ledger is the single
-most important input: the three lenses disagree mainly about these rows.
+as *look through*, *react*, or *already reacted*. Give each answer the date
+of the observation it rests on, and answer `unknown` where the only data
+predate the shock — a classification can still be argued from the other
+questions, but an untested one must not be counted as failed. This ledger
+is the single most important input: the three lenses disagree mainly about
+these rows.
 
 ### 5. Base rates
 
@@ -231,11 +244,14 @@ Check that the constraint actually binds before leaning on it. With one
 meeting left the current-year range has usually collapsed to a point that
 both a hold and a cut satisfy (December 2026: 14.6 either way) — then say
 it is uninformative and move the same check to next year's range: run
-`avg` for the next year without `--ytd-*`, with `--rate` set to the rate
-each December outcome would leave in force on 1 January, and see which
-paths over next year's eight meetings stay inside. That shows how much
-easing the Bank's own forecast leaves room for, and therefore how urgent a
-December move is.
+`bound` for the next year without `--ytd-*`, with `--rate` set to the rate
+each December outcome would leave in force on 1 January and all of next
+year's meetings listed. It enumerates every path over the step sizes the
+Board uses and reports how many stay inside and the least total easing
+among them. That shows how much easing the Bank's own forecast leaves room
+for, and therefore how urgent a December move is. Timing matters as much
+as size — early steps move the average far more than late ones — which is
+why trying a few schedules by hand misleads.
 
 ### 7. Synthesis
 
@@ -249,7 +265,12 @@ tails. Then check three things:
   path touches and compared with the Bank's range);
 - the distance from the base-rate prior is explained;
 - the single observation that would most change the call before the meeting
-  is named, with its publication date from `v_cbr_publication_calendar`.
+  is named, with its publication date from `v_cbr_publication_calendar`;
+- nothing that supports the call was made for a different meeting. Another
+  track's forecast, an old futures price or last run's own call whose
+  `target_date` is not the meeting being forecast is history — it belongs
+  in the score, and repeating it here as "the tracks also sit at 13.9"
+  counts a resolved number as fresh independent support.
 
 ### 8. Value against the market
 
@@ -264,9 +285,45 @@ short — usually one series with real open interest — so beyond it there is
 no market price to disagree with: leave the "Market" cell of later meetings
 empty rather than filling it from a series nobody holds.
 
-### 9. Write the record
+### 9. Audit the arguments, then write the record
 
-Fill the template, write `forecast.json`, and print the ingest payload for
+Reread the draft once as a hostile reviewer, looking only for these six
+things. Each is a real defect found in this skill's own output; a report
+can have every table filled and still fail here.
+
+1. **"At least", "only if", "requires", "impossible".** A statement about
+   all paths needs all paths checked. A handful of `rate_math.py avg` runs
+   shows what those schedules do, nothing more: four steps of 25 bp spread
+   over the year looked like the minimum for 2027 until three early steps
+   turned out to fit too. Run `rate_math.py bound` and quote its result
+   with its conditions (which meetings, which step sizes), or write "of the
+   schedules checked".
+2. **Result if versus result on average.** What a position makes if the
+   Board holds and what it makes in expectation over the whole distribution
+   are different numbers; take both from `rate_math.py paper` and label
+   each. Every probability quoted in prose must be the one in the table and
+   in `forecast.json` — "a cut" (all negative steps) is not "−25 bp". With
+   `direction: none` there is no position and its result is zero.
+3. **Cause before effect.** An observation supports "the shock passed
+   into X" only if it is dated after the shock. September wages say
+   nothing about the pass-through of an October tariff rise; they are
+   background. Until post-shock data exist the cell is `unknown`, or a
+   hypothesis called a hypothesis.
+4. **The right meeting.** See the last check of step 7.
+5. **Numbers that came from nowhere.** A term premium, a neutral rate, an
+   elasticity: if no view holds it and no computation produced it, it is an
+   assumption. Label it, give the range, and do not derive "the market
+   agrees with our path" from it — an assumed premium subtracted from a
+   yield manufactures agreement. Beyond the liquid futures series the
+   comparison with the curve is in direction only.
+6. **"High by historical standards".** A rank needs the distribution:
+   sample, period, method, result (query 13 in the data map does it for the
+   real rate). Without it, give the level and drop the adjective.
+
+Fix what the audit finds — downgrade the claim, or do the computation —
+and note in "Limits of this run" what stayed an assumption.
+
+Then fill the template, write `forecast.json`, and print the ingest payload for
 the `cbr_rate:llm:shadow` track (fields in the template). Do not POST it:
 writing to `forecast_log` goes through the ingest endpoint and its owner
 decides when a track is recorded and at which stage.
@@ -287,7 +344,8 @@ destroys the track record that gives the exercise its value.
 
 ## Helper
 
-`scripts/rate_math.py` (standard library only):
+`scripts/rate_math.py` (standard library only; `avg`, `bound`, `paper`,
+`score`):
 
 ```bash
 python3 .kimi-code/skills/economist-oracle/scripts/rate_math.py avg \
@@ -297,6 +355,13 @@ python3 .kimi-code/skills/economist-oracle/scripts/rate_math.py avg \
 python3 .kimi-code/skills/economist-oracle/scripts/rate_math.py avg \
   --year 2027 --rate 13.75 --meeting 2027-02-12:13.5 --meeting 2027-03-19:13.25 \
   --range 12.5:13.5
+# every path over these meetings and step sizes: what the range really requires
+python3 .kimi-code/skills/economist-oracle/scripts/rate_math.py bound \
+  --year 2027 --rate 14.0 --meeting 2027-02-12 --meeting 2027-03-19 \
+  --meeting 2027-04-30 --steps=-50,-25,0 --range 12.5:13.5
+# one contract: result per outcome, and the expectation, kept apart
+python3 .kimi-code/skills/economist-oracle/scripts/rate_math.py paper \
+  --entry 13.94 --rate 14.0 --probs '{"-25":20,"0":75,"25":5}'
 python3 .kimi-code/skills/economist-oracle/scripts/rate_math.py score \
   --probs '{"-100":0.2,"-50":0.6,"0":0.2}' --market '{"-50":0.5,"0":0.5}' \
   --outcome -50

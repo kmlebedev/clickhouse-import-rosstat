@@ -27,10 +27,14 @@ series: `settle` is the market's expected rate after that meeting.
   from `v_keyrate_expectations` with `decision_date` = that meeting and
   `date` ≤ that run date, and say it was reconstructed.
 - **Further out,** use the later series of the strip where they trade, and
-  the OFZ curve (`ofz_1y`, `ofz_2y` against the key rate) as a rough check
-  of the path: a one-year yield below the key rate prices cuts over the
-  year, but it includes a term premium, so do not read it to the basis
-  point.
+  the OFZ curve (`ofz_1y`, `ofz_2y` against the key rate) as a check of
+  direction only: a one-year yield below the key rate prices cuts over the
+  year. The yield includes a term premium that no view measures, so it
+  cannot be turned into an implied average rate. Subtracting a premium you
+  chose ("0.5–1.0 pp") and finding that the result matches the base path is
+  not agreement with the market — the premium was picked, not observed. If
+  a number is wanted anyway, present it as a scenario: "if the premium were
+  X, the curve would imply Y", with no conclusion drawn from the match.
 
 ## 2. The gap
 
@@ -77,6 +81,18 @@ Always pair it with the losing case: what the same exposure loses if the
 market's outcome occurs, and the forecast's own probability of that
 outcome. A view with 60% confidence loses four times in ten.
 
+Take the numbers from `rate_math.py paper`, which prints two different
+things, and keep their names apart in the text:
+
+- the result **if** a given outcome happens (`per_outcome`): for a long
+  from 13.94 with the rate held at 14.00 that is +60 ₽;
+- the **expected** result over the whole distribution (`expected_*`): the
+  same long is worth +35 ₽ on a 5/15/70/5/5 distribution.
+
+Writing "on a hold the result is 35 ₽" mixes the two. The probability
+attached to an outcome is that outcome's own cell — 15% for −25 bp, not the
+20% that all cuts add up to.
+
 ## 4. The paper record
 
 In `forecast.json`, under `paper`, record for the next meeting only:
@@ -84,7 +100,9 @@ In `forecast.json`, under `paper`, record for the next meeting only:
 - `instrument`: the KEYRATE series (`secid`) for that meeting;
 - `entry`: its `settle` on the run date and that date;
 - `direction`: `long` if the forecast expected rate is above the strip,
-  `short` if below, `none` if |gap| is under the threshold;
+  `short` if below, `none` if |gap| is under the threshold — and then there
+  is no position: its result is zero whatever the Board does, and anything
+  said about a hypothetical long or short is labelled hypothetical;
 - `size`: always 1 contract — the record measures the forecast, not
   position sizing.
 
