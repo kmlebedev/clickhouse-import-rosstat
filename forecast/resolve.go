@@ -43,6 +43,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
@@ -266,7 +267,7 @@ func (r *resolver) Name() string { return forecastResolveStat }
 // записывает ОДНИМ батчем только изменившиеся строки. Возвращает число записанных
 // строк: 0 — норма (менять нечего), а не сбой; main.go печатает его сам.
 func (r *resolver) Import(ctx context.Context, conn driver.Conn) (int64, error) {
-	return resolveForecasts(ctx, connStore{conn: conn})
+	return resolveForecastsWithScope(ctx, connStore{conn: conn}, os.Getenv("FORECAST_RESOLVE_SCOPE"))
 }
 
 // resolveForecasts — оркестрация: выборки → факт → решение → батч. Вынесена из
@@ -280,14 +281,30 @@ func (r *resolver) Import(ctx context.Context, conn driver.Conn) (int64, error) 
 // возвращает 0 строк (журнал прогнозов заполняется ingest'ом, и на свежей БД
 // строк с наступившей target_date может не быть вовсе).
 func resolveForecasts(ctx context.Context, store resolveStore) (int64, error) {
+	return resolveForecastsWithScope(ctx, store, "all")
+}
+
+// Scope is validated before touching either store. The default DAG keeps both
+// families; a manual rate catchup cannot read or rewrite the gold branch.
+func resolveForecastsWithScope(ctx context.Context, store resolveStore, scope string) (int64, error) {
+	if scope == "" {
+		scope = "all"
+	}
+	if scope != "all" && scope != "cbr_rate" {
+		return 0, fmt.Errorf("forecast_resolve: unknown FORECAST_RESOLVE_SCOPE %q (want all or cbr_rate)", scope)
+	}
+	log.Infof("forecast_resolve: scope=%s", scope)
 	rateRows, err := store.rateResolvable(ctx)
 	if err != nil {
 		return 0, err
 	}
 
-	rows, err := store.resolvable(ctx)
-	if err != nil {
-		return 0, err
+	var rows []forecastRow
+	if scope == "all" {
+		rows, err = store.resolvable(ctx)
+		if err != nil {
+			return 0, err
+		}
 	}
 
 	var resolutions []forecastResolution

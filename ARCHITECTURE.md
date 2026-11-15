@@ -410,6 +410,7 @@ func init() {
 |---|---|
 | `CLICKHOUSE_URL` | DSN подключения (обязательная для импорта и для `cmd/ingest`) |
 | `CLICKHOUSE_IMPORT_STAT` | Фильтр импортёров через запятую (пусто = все) |
+| `FORECAST_RESOLVE_SCOPE` | `forecast_resolve`: пусто/`all` — обе ветки (ставка и золото); `cbr_rate` — только прогнозы ставки, без чтения/пересчёта золота. Неизвестное значение — ошибка до запросов/записи. Для разового догона: `FORECAST_RESOLVE_SCOPE=cbr_rate make import STAT=forecast_resolve`; штатный DAG не меняется |
 | `LOG_LEVEL` | logrus-уровень (debug/info/warn/error) |
 | `CERT_FILES` | Пути к PEM-сертификатам через запятую |
 | `TICKER` | Маршрутизация legacy-контура financial (MOEX/VTBR/CHMF/MAGN/NLMK/Exports/ALL) |

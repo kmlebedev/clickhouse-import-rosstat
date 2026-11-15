@@ -112,6 +112,7 @@ deploy/staging/      артефакты staging
 |---|---|
 | `CLICKHOUSE_URL` | DSN подключения (обязательна) |
 | `CLICKHOUSE_IMPORT_STAT` | фильтр импортёров по имени; пусто — все |
+| `FORECAST_RESOLVE_SCOPE` | `forecast_resolve`: пусто/`all` — обе ветки (ставка и золото); `cbr_rate` — только прогнозы ставки, без чтения/пересчёта золота. Неизвестное значение — ошибка до запросов/записи. Для разового догона: `FORECAST_RESOLVE_SCOPE=cbr_rate make import STAT=forecast_resolve`; штатный DAG не меняется |
 | `LOG_LEVEL` | `debug`, `info`, `warn`, `error` |
 | `CERT_FILES` | PEM-сертификаты нац. УЦ РФ |
 | `BEA_API_KEY`, `EIA_API_KEY`, `BLS_API_KEY` | ключи источников (BLS необязателен) |

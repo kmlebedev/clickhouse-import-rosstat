@@ -1,0 +1,80 @@
+{
+  "prepared_before_write": true,
+  "source": "before.json, facts",
+  "expected_changes": [
+    {
+      "metric": "cbr_rate:llm",
+      "forecast_date": "2026-10-18",
+      "target_date": "2026-10-23",
+      "predicted": 13.95,
+      "actual": 14,
+      "error_bp": -5.000000000000071,
+      "error_pct": null
+    },
+    {
+      "metric": "cbr_rate:llm",
+      "forecast_date": "2026-10-19",
+      "target_date": "2026-10-23",
+      "predicted": 13.975,
+      "actual": 14,
+      "error_bp": -2.5000000000000355,
+      "error_pct": null
+    },
+    {
+      "metric": "cbr_rate:ordered_logit",
+      "forecast_date": "2026-10-18",
+      "target_date": "2026-10-23",
+      "predicted": 13.36644959954927,
+      "actual": 14,
+      "error_bp": -63.355040045073,
+      "error_pct": null
+    },
+    {
+      "metric": "cbr_rate:ordered_logit",
+      "forecast_date": "2026-10-19",
+      "target_date": "2026-10-23",
+      "predicted": 13.36644959954927,
+      "actual": 14,
+      "error_bp": -63.355040045073,
+      "error_pct": null
+    },
+    {
+      "metric": "cbr_rate:ordered_logit:shadow",
+      "forecast_date": "2026-10-20",
+      "target_date": "2026-10-23",
+      "predicted": 13.360379614311869,
+      "actual": 14,
+      "error_bp": -63.96203856881311,
+      "error_pct": null
+    },
+    {
+      "metric": "cbr_rate:taylor",
+      "forecast_date": "2026-10-18",
+      "target_date": "2026-10-23",
+      "predicted": 13.348478672298485,
+      "actual": 14,
+      "error_bp": -65.15213277015147,
+      "error_pct": null
+    },
+    {
+      "metric": "cbr_rate:taylor",
+      "forecast_date": "2026-10-19",
+      "target_date": "2026-10-23",
+      "predicted": 13.348478672298485,
+      "actual": 14,
+      "error_bp": -65.15213277015147,
+      "error_pct": null
+    },
+    {
+      "metric": "cbr_rate:taylor:shadow",
+      "forecast_date": "2026-10-20",
+      "target_date": "2026-10-23",
+      "predicted": 13.334048536978791,
+      "actual": 14,
+      "error_bp": -66.59514630212087,
+      "error_pct": null
+    }
+  ],
+  "unchanged_previously_resolved_rate_rows": 4,
+  "unchanged_non_rate_rows": 3
+}
