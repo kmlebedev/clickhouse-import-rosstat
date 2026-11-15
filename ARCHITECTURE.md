@@ -1332,11 +1332,14 @@ CREATE TABLE IF NOT EXISTS cbr_liquidity (
 -- cbr/ondkp.go — корпус «Основных направлений единой государственной денежно-кредитной
 -- политики», импортёр cbr_ondkp (пункт key-rate/phase-2-ondkp-vintages, issue #572):
 -- реестр 28 выпусков 2000–2027. release_year — год политики (документ «на 2027»
--- опубликован 28.10.2026), published_at — дата публикации (Nullable: у страниц
--- 2021–2027 на индексе её нет, берётся со страницы выпуска), format — pdf | pdf-project |
+-- объявлен 28.10.2026), published_at — историческое поле даты (Nullable:
+-- историческая доступность конкретных байтов не подтверждена), format — pdf | pdf-project |
 -- zip-doc, sha256/bytes — провенанс артефакта, forecast_rows — число прогнозных строк
 -- выпуска (сверяется с cbr_ondkp_forecast после вставки). Ключ release_year; гейт
 -- известности расширен на url: перевыложенный под новым адресом выпуск перечитывается.
+-- #598: при прежнем URL обновляется announcement_date после проверки текущего SHA;
+-- published_at не подменяется датой новости. ALTER ADD COLUMN IF NOT EXISTS трёх
+-- announcement_* полей применяется импортёром до SELECT. Схема в разработке #598.
 CREATE TABLE IF NOT EXISTS cbr_ondkp (
     release_year UInt16,               -- год политики
     published_at Nullable(Date),       -- дата публикации выпуска
@@ -1344,7 +1347,10 @@ CREATE TABLE IF NOT EXISTS cbr_ondkp (
     format LowCardinality(String),     -- pdf | pdf-project | zip-doc
     sha256 String,                     -- версия артефакта (провенанс)
     bytes UInt64,                      -- размер артефакта
-    forecast_rows UInt16               -- число строк прогноза этого выпуска
+    forecast_rows UInt16,              -- число строк прогноза этого выпуска
+    announcement_date Nullable(Date), -- дата официальной новости; не дата исторических байтов
+    announcement_url String,           -- первичный источник даты объявления
+    announcement_evidence String       -- JSON v1: observed_at UTC, artifact_sha256, news_sha256, release_page_sha256, release_page_url
 ) ENGINE = ReplacingMergeTree ORDER BY (release_year);
 
 -- cbr/ondkp_forecast — прогнозные точки базового сценария ОНДКП: машиночитаемая таблица
