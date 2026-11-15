@@ -3381,6 +3381,19 @@ async def check(params, server_log):
                                  ondkp_n == 66 and ondkp_releases == 8,
                                  f"строк: {ondkp_n}, выпусков: {ondkp_releases} — прогнать "
                                  "make import STAT=cbr_ondkp")
+            ondkp_announcements = result_rows(text(await session.call_tool("run_query", {
+                "query": "SELECT countIf(announcement_date IS NOT NULL) AS announced, "
+                         "countIf(release_year = 2023 AND announcement_date = toDate('2022-11-02')) AS nov2, "
+                         "countIf(announcement_date IS NOT NULL AND "
+                         "(announcement_url = '' OR publication_status != 'announcement_only' OR "
+                         "JSONExtractString(announcement_evidence, 'artifact_sha256') != artifact_sha256)) AS invalid "
+                         "FROM v_cbr_ondkp_forecast"})))
+            announcement_row = ondkp_announcements[0] if ondkp_announcements else {}
+            failed += not expect("ОНДКП: 36 строк с датой объявления; 2023 = 02.11.2022; provenance",
+                                 announcement_row.get("announced") == 36 and
+                                 announcement_row.get("nov2") == 9 and
+                                 announcement_row.get("invalid") == 0,
+                                 f"{announcement_row} — прогнать make import STAT=cbr_ondkp")
             ondkp_catalog = result_rows(text(await session.call_tool("run_query", {
                 "query": "SELECT count() AS n FROM v_series_catalog WHERE source = 'cbr_ondkp_forecast'"})))
             ondkp_catalog_n = ondkp_catalog[0].get("n") if ondkp_catalog else None

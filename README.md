@@ -6,6 +6,8 @@ Go-конвейер импорта российской макроэкономи
 
 Docs-портал: **https://kmlebedev.github.io/clickhouse-import-rosstat/** — собирается из этого репозитория по манифесту `docs/site-pages.json`.
 
+ОНДКП: витрина `v_cbr_ondkp_forecast` разделяет `announcement_date` (дату официальной новости с provenance) и старое `published_at`. Текущий SHA проверяется перед обновлением метаданных; историческая доступность PDF не доказана. `release_year` не является датой as-of.
+
 ## Документация
 
 | Документ | Что внутри |

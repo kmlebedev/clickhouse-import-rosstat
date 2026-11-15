@@ -917,29 +917,33 @@ var cbrLiquidityView = util.View{
 	},
 }
 
-// cbrOndkpForecastView — прогнозы ЦБ из винтажей ОНДКП.
+// cbrOndkpForecastView exposes announcement evidence separately from legacy dates.
 var cbrOndkpForecastView = util.View{
 	Name:   "v_cbr_ondkp_forecast",
 	Tables: []string{cbrOndkpForecastTable, cbrOndkpTable},
-	// FINAL идёт после алиаса: «FROM t AS f FINAL» — так требует грамматика ClickHouse
-	// (после FINAL алиас уже нельзя).
-	Select: "SELECT f.release_year, f.indicator, f.year, f.lo, f.hi, o.published_at, o.url " +
+	Select: "SELECT f.release_year, f.indicator, f.year, f.lo, f.hi, o.published_at, o.url, " +
+		"o.sha256 AS artifact_sha256, o.announcement_date, o.announcement_url, o.announcement_evidence, " +
+		"multiIf(o.announcement_date IS NOT NULL, 'announcement_only', o.published_at IS NOT NULL, 'legacy_unverified', 'unknown') AS publication_status " +
 		"FROM cbr_ondkp_forecast AS f FINAL LEFT JOIN cbr_ondkp AS o FINAL ON f.release_year = o.release_year",
-	Comment: "Прогнозы Банка России из «Основных направлений единой государственной " +
-		"денежно-кредитной политики»: винтаж (release_year — год политики), индикатор, год " +
-		"прогноза и границы lo/hi (lo = hi — точка). Это винтажный ряд: один и тот же год " +
-		"встречается в нескольких выпусках, as-of — release_year и published_at, а не год " +
-		"прогноза. Машиночитаемая таблица базового сценария есть только у выпусков 2020–2027: " +
-		"у 2000–2019 прогноз изложен прозой (см. docs/LIMITATIONS.md), поэтому строк за них нет. " +
-		"Цель по инфляции с 2015 года — 4 %, прогноз старших винтажей в годы шоков от неё отклоняется.",
+	Comment: "Прогнозы базового сценария ОНДКП: release_year — год политики, НЕ дата as-of. " +
+		"lo/hi — диапазон; один прогнозный год встречается в нескольких выпусках. " +
+		"announcement_date — дата официальной новости, отдельно от legacy published_at. " +
+		"Совпадение текущего SHA с сохранённым не доказывает историческую доступность байтов. " +
+		"Ни один publication_status не означает PIT-ready; необходима отдельная проверка версии и cutoff. " +
+		"Табличные прогнозы есть у выпусков 2020–2027; более ранние выпуски изложены прозой.",
 	Columns: map[string]string{
-		"release_year": "Винтаж: год, на который принят документ (документ «на 2027» опубликован 28.10.2026). As-of по этому полю",
-		"indicator":    "key_rate — среднегодовая ключевая ставка; inflation — инфляция в среднем за год; gdp — прирост ВВП",
-		"year":         "Год прогноза (release_year, release_year+1, release_year+2)",
-		"lo":           "Нижняя граница диапазона, %; при lo = hi — точечный прогноз",
-		"hi":           "Верхняя граница диапазона, %",
-		"published_at": "Дата публикации выпуска (Nullable: у страниц 2021–2027 на индексе её нет)",
-		"url":          "Артефакт выпуска: PDF документа (или ZIP «Вестника» для 2000–2009)",
+		"release_year":          "Год политики, на который принят документ; НЕ использовать как дату доступности/as-of",
+		"indicator":             "key_rate — среднегодовая ставка; inflation — среднегодовая инфляция; gdp — прирост ВВП",
+		"year":                  "Год прогноза, не дата публикации",
+		"lo":                    "Нижняя граница диапазона, %; lo=hi — точечный прогноз",
+		"hi":                    "Верхняя граница диапазона, %",
+		"published_at":          "Историческое поле даты, Nullable; новые даты новости сюда не подставляются, ненулевая дата сама по себе не доказывает PIT",
+		"url":                   "URL сохранённого артефакта выпуска",
+		"artifact_sha256":       "SHA256 сохранённого PDF/ZIP; при обновлении announcement_* проверен по текущим байтам",
+		"announcement_date":     "Дата в .news-info-line_date официального объявления; не доказательство доступности конкретных байтов PDF в этот день",
+		"announcement_url":      "Первичный источник даты объявления на cbr.ru/press/event/",
+		"announcement_evidence": "JSON v1: observed_at UTC, artifact_sha256, news_sha256, release_page_sha256, release_page_url; снимок текущей ассоциации, не исторический архив",
+		"publication_status":    "announcement_only — проверена дата новости и текущая ассоциация; legacy_unverified — только старая дата; unknown — дат нет. Все три статуса НЕ PIT-ready",
 	},
 }
 

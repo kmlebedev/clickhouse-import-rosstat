@@ -29,7 +29,7 @@ const (
 	cbrOndkpTable          = "cbr_ondkp"
 	cbrOndkpForecastTable  = "cbr_ondkp_forecast"
 	cbrOndkpIndexUrl       = "https://www.cbr.ru/about_br/publ/ondkp/"
-	cbrOndkpInsert         = "INSERT INTO " + cbrOndkpTable
+	cbrOndkpInsert         = "INSERT INTO " + cbrOndkpTable + " (release_year, published_at, url, format, sha256, bytes, forecast_rows, announcement_date, announcement_url, announcement_evidence)"
 	cbrOndkpForecastInsert = "INSERT INTO " + cbrOndkpForecastTable
 	cbrOndkpDateFormat     = "02.01.2006"
 
@@ -60,7 +60,10 @@ const cbrOndkpDdl = "CREATE TABLE IF NOT EXISTS %s (" +
 	" format LowCardinality(String)," +
 	" sha256 String," +
 	" bytes UInt64," +
-	" forecast_rows UInt16" +
+	" forecast_rows UInt16," +
+	" announcement_date Nullable(Date)," +
+	" announcement_url String," +
+	" announcement_evidence String" +
 	") ENGINE = ReplacingMergeTree ORDER BY (release_year);"
 
 // cbrOndkpForecastDdl — прогнозные точки. lo == hi — точка, иначе диапазон.
@@ -83,20 +86,22 @@ var (
 	ondkpVestnikRe      = regexp.MustCompile(`^/Queries/XsltBlock/File/\d+/(?:-1/\d+|\d+-\d+|0/\d+)$`)
 	ondkpVestnikQueryRe = regexp.MustCompile(`^/Queries/XsltBlock/File/\d+\?.*\bfileId=`)
 	ondkpDateRe         = regexp.MustCompile(`(\d{2}\.\d{2}\.\d{4})`)
-	ondkpPageDateRe     = regexp.MustCompile(`от\s+\d{2}\.\d{2}\.\d{4}`)
 )
 
 // ondkpRelease — выпуск корпуса: год политики, дата публикации, артефакт и формат.
 // pageUrl непустой, когда артефакт лежит на странице выпуска (2021–2027).
 type ondkpRelease struct {
-	year         int
-	publishedAt  *time.Time
-	url          string
-	pageUrl      string
-	format       string
-	sha256       string
-	bytes        int
-	forecastRows int
+	year                 int
+	publishedAt          *time.Time
+	url                  string
+	pageUrl              string
+	format               string
+	sha256               string
+	bytes                uint64
+	forecastRows         int
+	announcementDate     *time.Time
+	announcementURL      string
+	announcementEvidence string
 }
 
 // ondkpRank — приоритет артефакта одного года: PDF разбирается, ZIP — нет.
@@ -162,11 +167,9 @@ func ondkpReleases(page []byte) ([]ondkpRelease, error) {
 		}
 		best[candidate.year] = candidate
 	}
-	// Даты строк «Вестника» — даты выпуска документа; дата карточки на индексе — дата
-	// размещения на текущей странице (у 2010: 19.11.2009 против 26.11.2009). Карточка
-	// вытесняет ZIP по приоритету артефакта, поэтому дату выпуска запоминаем отдельно и
-	// применяем после разбора — иначе она терялась бы вместе с ZIP-строкой.
-	vestnikDates := map[int]*time.Time{}
+	// A Vestnik issue date belongs only to its exact artifact, not another PDF
+	// with the same policy year (which may be a draft or a later revision).
+	vestnikDates := map[string]*time.Time{}
 	doc.Find("div.document-regular").Each(func(_ int, block *goquery.Selection) {
 		if parseErr != nil {
 			return
@@ -211,7 +214,7 @@ func ondkpReleases(page []byte) ([]ondkpRelease, error) {
 			url:         cbrUrl + href,
 			format:      cbrOndkpFormatZipDoc,
 		})
-		vestnikDates[year] = ondkpDateOf(rowText)
+		vestnikDates[cbrUrl+href] = ondkpDateOf(rowText)
 	})
 	if parseErr != nil {
 		return nil, parseErr
@@ -219,8 +222,8 @@ func ondkpReleases(page []byte) ([]ondkpRelease, error) {
 	if len(best) == 0 {
 		return nil, fmt.Errorf("cbr_ondkp: на странице индекса не найден ни один выпуск — разметка изменилась")
 	}
-	for year, date := range vestnikDates {
-		if release, ok := best[year]; ok && date != nil {
+	for year, release := range best {
+		if date := vestnikDates[release.url]; date != nil {
 			release.publishedAt = date
 			best[year] = release
 		}
@@ -342,11 +345,17 @@ func (s *cbrOndkp) Import(ctx context.Context, conn driver.Conn) (count int64, e
 			return 0, fmt.Errorf("cbr_ondkp: DDL %s: %w", table, err)
 		}
 	}
+	if err = conn.Exec(ctx, "ALTER TABLE "+cbrOndkpTable+
+		" ADD COLUMN IF NOT EXISTS announcement_date Nullable(Date),"+
+		" ADD COLUMN IF NOT EXISTS announcement_url String,"+
+		" ADD COLUMN IF NOT EXISTS announcement_evidence String"); err != nil {
+		return 0, fmt.Errorf("cbr_ondkp: announcement columns: %w", err)
+	}
 	known, err := ondkpKnownYears(ctx, conn)
 	if err != nil {
 		return 0, err
 	}
-	page, err := util.GetPage(cbrOndkpIndexUrl)
+	page, err := util.GetFileBytesChecked(cbrOndkpIndexUrl)
 	if err != nil {
 		return 0, fmt.Errorf("cbr_ondkp: %s: %w", cbrOndkpIndexUrl, err)
 	}
@@ -360,32 +369,37 @@ func (s *cbrOndkp) Import(ctx context.Context, conn driver.Conn) (count int64, e
 	for _, release := range releases {
 		knownRelease, isKnown := known[release.year]
 		artifactURL := release.url
+		var pageHTML []byte
 		if release.pageUrl != "" {
-			pageHTML, pageErr := util.GetPage(release.pageUrl)
+			var pageErr error
+			pageHTML, pageErr = util.GetFileBytesChecked(release.pageUrl)
 			if pageErr != nil {
-				if isKnown {
-					continue
-				}
 				errs = append(errs, fmt.Errorf("cbr_ondkp: выпуск %d: %s: %w", release.year, release.pageUrl, pageErr))
 				continue
 			}
 			var linkErr error
 			if artifactURL, linkErr = ondkpYearPagePDF(pageHTML, release.year); linkErr != nil {
-				if isKnown {
-					continue
-				}
 				errs = append(errs, linkErr)
 				continue
 			}
-			// Дата публикации страниц 2021–2027 на индексе не показана, но есть на самой
-			// странице выпуска: без неё published_at оставался NULL у семи винтажей.
-			if release.publishedAt == nil {
-				release.publishedAt = ondkpPageDate(pageHTML)
-			}
+			// A page date (or a year-matched Vestnik date) is not artifact evidence.
+			release.publishedAt = nil
 		}
-		// Гейт известности расширен на версию: пока артефакт тот же, файл не качается
-		// (no-op), а перевыложенный под новым адресом выпуск перечитывается.
+		// A changed URL is a different artifact: neither a legacy publication date
+		// nor this metadata-only acceptance can be transferred to it automatically.
+		if isKnown && artifactURL != knownRelease.url {
+			return 0, errors.Join(append(errs, fmt.Errorf("cbr_ondkp: known release %d changed artifact URL; explicit version review required", release.year))...)
+		}
+		// Same-URL refresh changes announcement metadata only; repeat is a no-op.
 		if isKnown && artifactURL == knownRelease.url {
+			updated, changed, refreshErr := ondkpWithAnnouncement(knownRelease, pageHTML, nil, util.GetFileBytesChecked, util.GetFileBytesChecked, time.Now)
+			if refreshErr != nil {
+				errs = append(errs, refreshErr)
+				continue
+			}
+			if changed {
+				fresh = append(fresh, updated)
+			}
 			continue
 		}
 		if artifactURL == "" {
@@ -397,7 +411,7 @@ func (s *cbrOndkp) Import(ctx context.Context, conn driver.Conn) (count int64, e
 		if strings.Contains(artifactURL, "on_project_") {
 			release.format = cbrOndkpFormatPDFProject
 		}
-		body, bodyErr := util.GetFileBytes(artifactURL)
+		body, bodyErr := util.GetFileBytesChecked(artifactURL)
 		if bodyErr != nil {
 			errs = append(errs, fmt.Errorf("cbr_ondkp: выпуск %d, %s: %w", release.year, artifactURL, bodyErr))
 			continue
@@ -406,6 +420,11 @@ func (s *cbrOndkp) Import(ctx context.Context, conn driver.Conn) (count int64, e
 		analyzed, rows, analyzeErr := ondkpAnalyzeRelease(ctx, release, body)
 		if analyzeErr != nil {
 			errs = append(errs, analyzeErr)
+			continue
+		}
+		analyzed, _, err = ondkpWithAnnouncement(analyzed, pageHTML, body, util.GetFileBytesChecked, util.GetFileBytesChecked, time.Now)
+		if err != nil {
+			errs = append(errs, err)
 			continue
 		}
 		forecasts = append(forecasts, rows...)
@@ -446,6 +465,15 @@ func (s *cbrOndkp) Import(ctx context.Context, conn driver.Conn) (count int64, e
 		errs = append(errs, verifyErr)
 		return 0, errors.Join(errs...)
 	}
+	written, readErr := ondkpKnownYears(ctx, conn)
+	if readErr != nil {
+		return 0, errors.Join(append(errs, readErr)...)
+	}
+	for _, release := range fresh {
+		if !ondkpSameStored(release, written[release.year]) {
+			return 0, errors.Join(append(errs, fmt.Errorf("cbr_ondkp: registry postcondition failed for %d", release.year))...)
+		}
+	}
 	if err = publishDerived(ctx, conn); err != nil {
 		return 0, err
 	}
@@ -462,7 +490,7 @@ func (s *cbrOndkp) Import(ctx context.Context, conn driver.Conn) (count int64, e
 func ondkpAnalyzeRelease(ctx context.Context, release ondkpRelease, body []byte) (ondkpRelease, []ondkpForecastRow, error) {
 	sum := sha256.Sum256(body)
 	release.sha256 = hex.EncodeToString(sum[:])
-	release.bytes = len(body)
+	release.bytes = uint64(len(body))
 	if release.format == cbrOndkpFormatZipDoc {
 		// ZIP-эпоха не разбирается, но и она обязана быть ZIP: страница-заглушка WAF или
 		// HTML-ошибка иначе записалась бы версией выпуска навсегда (гейт по url её не
@@ -484,53 +512,56 @@ func ondkpAnalyzeRelease(ctx context.Context, release ondkpRelease, body []byte)
 	return release, rows, nil
 }
 
-// ondkpKnownRelease — запись реестра для гейта известности: адрес артефакта и его версия.
-// sha256 в БД хранится как провенанс, но сравнением версии не служит: чтобы его сверить,
-// файл пришлось бы скачивать каждый прогон, а это отменяет no-op. Поэтому перевыложение
-// артефакта под новым адресом ловится по url, а подмена содержимого по тому же адресу —
-// нет (лечение — удалить строку выпуска и повторить прогон).
-type ondkpKnownRelease struct {
-	url    string
-	sha256 string
-}
-
-// ondkpKnownYears — выпуски, уже записанные в реестр: повторный прогон артефакты не качает,
-// а перевыложенный под новым адресом выпуск перечитывает.
-func ondkpKnownYears(ctx context.Context, conn driver.Conn) (map[int]ondkpKnownRelease, error) {
-	rows, err := conn.Query(ctx, "SELECT release_year, url, sha256 FROM "+cbrOndkpTable+" FINAL")
+// Read all stored fields so a metadata-only replacement cannot erase provenance.
+func ondkpKnownYears(ctx context.Context, conn driver.Conn) (map[int]ondkpRelease, error) {
+	rows, err := conn.Query(ctx, "SELECT release_year, ifNull(toString(published_at), ''), url, format, sha256, bytes, forecast_rows, ifNull(toString(announcement_date), ''), announcement_url, announcement_evidence FROM "+cbrOndkpTable+" FINAL")
 	if err != nil {
-		return nil, fmt.Errorf("cbr_ondkp: известные выпуски: %w", err)
+		return nil, fmt.Errorf("cbr_ondkp: known releases: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
-	known := make(map[int]ondkpKnownRelease)
+	known := make(map[int]ondkpRelease)
 	for rows.Next() {
-		var year uint16
-		var release ondkpKnownRelease
-		if err = rows.Scan(&year, &release.url, &release.sha256); err != nil {
-			return nil, fmt.Errorf("cbr_ondkp: чтение release_year: %w", err)
+		var year, count uint16
+		var published, announced string
+		var release ondkpRelease
+		if err = rows.Scan(&year, &published, &release.url, &release.format, &release.sha256, &release.bytes, &count, &announced, &release.announcementURL, &release.announcementEvidence); err != nil {
+			return nil, fmt.Errorf("cbr_ondkp: registry scan: %w", err)
+		}
+		release.year, release.forecastRows = int(year), int(count)
+		if release.publishedAt, err = ondkpStoredDate(published); err != nil {
+			return nil, err
+		}
+		if release.announcementDate, err = ondkpStoredDate(announced); err != nil {
+			return nil, err
 		}
 		known[int(year)] = release
 	}
 	return known, rows.Err()
 }
 
-// ondkpPageDate ищет дату публикации на странице выпуска: сначала атрибут карточки, затем
-// первую дату вида «от ДД.ММ.ГГГГ» в тексте. Нет даты — nil.
-func ondkpPageDate(page []byte) *time.Time {
-	doc, err := goquery.NewDocumentFromReader(bytes.NewReader(page))
+func ondkpStoredDate(value string) (*time.Time, error) {
+	if value == "" {
+		return nil, nil
+	}
+	date, err := time.Parse("2006-01-02", value)
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf("cbr_ondkp: stored date: %w", err)
 	}
-	if dateText := strings.Join(strings.Fields(doc.Find(".document-regular_date").First().Text()), " "); dateText != "" {
-		if date := ondkpDateOf(dateText); date != nil {
-			return date
-		}
+	return &date, nil
+}
+
+func ondkpDateString(value *time.Time) string {
+	if value == nil {
+		return ""
 	}
-	text := strings.Join(strings.Fields(doc.Text()), " ")
-	if match := ondkpPageDateRe.FindStringSubmatch(text); match != nil {
-		return ondkpDateOf(match[0])
-	}
-	return nil
+	return value.Format("2006-01-02")
+}
+
+func ondkpSameStored(a, b ondkpRelease) bool {
+	return a.year == b.year && ondkpDateString(a.publishedAt) == ondkpDateString(b.publishedAt) &&
+		a.url == b.url && a.format == b.format && a.sha256 == b.sha256 && a.bytes == b.bytes &&
+		a.forecastRows == b.forecastRows && ondkpDateString(a.announcementDate) == ondkpDateString(b.announcementDate) &&
+		a.announcementURL == b.announcementURL && a.announcementEvidence == b.announcementEvidence
 }
 
 // ondkpInsertReleases пишет реестр выпусков одним батчем. Год и forecast_rows проверяются
@@ -552,12 +583,15 @@ func ondkpInsertReleases(ctx context.Context, conn driver.Conn, releases []ondkp
 				fmt.Errorf("%s: выпуск %d: %w", cbrOndkpTable, release.year, rowsErr))
 		}
 		if err = batch.Append(year, release.publishedAt, release.url, release.format,
-			release.sha256, uint64(release.bytes), forecastRows); err != nil {
+			release.sha256, release.bytes, forecastRows, release.announcementDate, release.announcementURL, release.announcementEvidence); err != nil {
 			return ondkpAbortBatch(batch, cbrOndkpTable,
 				fmt.Errorf("%s: Append (%d): %w", cbrOndkpTable, release.year, err))
 		}
 	}
-	return batch.Send()
+	if err = batch.Send(); err != nil {
+		return ondkpAbortBatch(batch, cbrOndkpTable, err)
+	}
+	return nil
 }
 
 // ondkpInsertForecasts пишет прогнозные точки одним батчем. Годы выпуска и прогноза
