@@ -1,0 +1,74 @@
+[
+  {
+    "year": 2027,
+    "ondkp_indicator": "inflation",
+    "mt_indicator": "cpi_avg",
+    "ondkp_lo": 5.2,
+    "ondkp_hi": 5.7,
+    "mt_lo": 5.2,
+    "mt_hi": 5.7,
+    "match": true,
+    "ondkp_published_at": null,
+    "historical_pit": false
+  },
+  {
+    "year": 2028,
+    "ondkp_indicator": "inflation",
+    "mt_indicator": "cpi_avg",
+    "ondkp_lo": 4,
+    "ondkp_hi": 4,
+    "mt_lo": 4,
+    "mt_hi": 4,
+    "match": true,
+    "ondkp_published_at": null,
+    "historical_pit": false
+  },
+  {
+    "year": 2029,
+    "ondkp_indicator": "inflation",
+    "mt_indicator": "cpi_avg",
+    "ondkp_lo": 4,
+    "ondkp_hi": 4,
+    "mt_lo": 4,
+    "mt_hi": 4,
+    "match": true,
+    "ondkp_published_at": null,
+    "historical_pit": false
+  },
+  {
+    "year": 2027,
+    "ondkp_indicator": "key_rate",
+    "mt_indicator": "key_rate_avg",
+    "ondkp_lo": 12.5,
+    "ondkp_hi": 13.5,
+    "mt_lo": 12.5,
+    "mt_hi": 13.5,
+    "match": true,
+    "ondkp_published_at": null,
+    "historical_pit": false
+  },
+  {
+    "year": 2028,
+    "ondkp_indicator": "key_rate",
+    "mt_indicator": "key_rate_avg",
+    "ondkp_lo": 9,
+    "ondkp_hi": 10,
+    "mt_lo": 9,
+    "mt_hi": 10,
+    "match": true,
+    "ondkp_published_at": null,
+    "historical_pit": false
+  },
+  {
+    "year": 2029,
+    "ondkp_indicator": "key_rate",
+    "mt_indicator": "key_rate_avg",
+    "ondkp_lo": 7.5,
+    "ondkp_hi": 8.5,
+    "mt_lo": 7.5,
+    "mt_hi": 8.5,
+    "match": true,
+    "ondkp_published_at": null,
+    "historical_pit": false
+  }
+]

@@ -1,0 +1,12 @@
+cutoff,own_forecast_id,data_version,scenario,release_date,source_url,target_year,own_annual_avg,cbr_lo,cbr_hi,gap_to_lo_bp,gap_to_hi_bp,distance_to_band_bp,comparable,exclusion_reason
+2026-07-23,,,CBR baseline,2026-05-07,https://www.cbr.ru/dkp/mp_dec/decision_key_rate/comment_07052026/,2026,,14,14.5,,,,false,No own annual path in inspected forecast dashboard
+2026-07-23,,,CBR baseline,2026-05-07,https://www.cbr.ru/dkp/mp_dec/decision_key_rate/comment_07052026/,2027,,8,10,,,,false,No own annual path in inspected forecast dashboard
+2026-07-23,,,CBR baseline,2026-05-07,https://www.cbr.ru/dkp/mp_dec/decision_key_rate/comment_07052026/,2028,,7.5,8.5,,,,false,No own annual path in inspected forecast dashboard
+2026-10-22,,,CBR baseline,2026-08-05,https://www.cbr.ru/dkp/mp_dec/decision_key_rate/comment_05082026/,2026,,14.5,14.6,,,,false,No own annual path in inspected forecast dashboard
+2026-10-22,,,CBR baseline,2026-08-05,https://www.cbr.ru/dkp/mp_dec/decision_key_rate/comment_05082026/,2027,,10.5,12.5,,,,false,No own annual path in inspected forecast dashboard
+2026-10-22,,,CBR baseline,2026-08-05,https://www.cbr.ru/dkp/mp_dec/decision_key_rate/comment_05082026/,2028,,8,9,,,,false,No own annual path in inspected forecast dashboard
+2026-10-22,,,CBR baseline,2026-08-05,https://www.cbr.ru/dkp/mp_dec/decision_key_rate/comment_05082026/,2029,,7.5,8.5,,,,false,No own annual path in inspected forecast dashboard
+2026-11-15,,,CBR baseline,2026-11-05,https://www.cbr.ru/dkp/mp_dec/decision_key_rate/comment_05112026/,2026,,14.6,14.6,,,,false,No own annual path in inspected forecast dashboard
+2026-11-15,,,CBR baseline,2026-11-05,https://www.cbr.ru/dkp/mp_dec/decision_key_rate/comment_05112026/,2027,,12.5,13.5,,,,false,No own annual path in inspected forecast dashboard
+2026-11-15,,,CBR baseline,2026-11-05,https://www.cbr.ru/dkp/mp_dec/decision_key_rate/comment_05112026/,2028,,9,10,,,,false,No own annual path in inspected forecast dashboard
+2026-11-15,,,CBR baseline,2026-11-05,https://www.cbr.ru/dkp/mp_dec/decision_key_rate/comment_05112026/,2029,,7.5,8.5,,,,false,No own annual path in inspected forecast dashboard

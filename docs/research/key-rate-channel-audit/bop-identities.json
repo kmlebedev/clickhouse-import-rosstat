@@ -1,0 +1,47 @@
+[
+  {
+    "date": "2025-12-31",
+    "unit": "million USD",
+    "current": 9996.77,
+    "capital": -113.7,
+    "net_lending": 9883.06,
+    "financial": 7435.19,
+    "errors_omissions": -2447.88,
+    "reserves": -3642.62,
+    "financial_ex_reserves": 11077.81,
+    "residual_current_plus_capital": 0.01,
+    "residual_net_plus_errors_minus_financial": -0.01,
+    "tolerance": 0.02,
+    "pass_check": true
+  },
+  {
+    "date": "2026-03-31",
+    "unit": "million USD",
+    "current": 13150.83,
+    "capital": -7.91,
+    "net_lending": 13142.91,
+    "financial": 12466.43,
+    "errors_omissions": -676.49,
+    "reserves": -6673.97,
+    "financial_ex_reserves": 19140.4,
+    "residual_current_plus_capital": 0.01,
+    "residual_net_plus_errors_minus_financial": -0.01,
+    "tolerance": 0.02,
+    "pass_check": true
+  },
+  {
+    "date": "2026-06-30",
+    "unit": "million USD",
+    "current": 16949.24,
+    "capital": -4.4,
+    "net_lending": 16944.84,
+    "financial": 8268.61,
+    "errors_omissions": -8676.24,
+    "reserves": 7251.98,
+    "financial_ex_reserves": 1016.63,
+    "residual_current_plus_capital": 0.0,
+    "residual_net_plus_errors_minus_financial": -0.01,
+    "tolerance": 0.02,
+    "pass_check": true
+  }
+]
