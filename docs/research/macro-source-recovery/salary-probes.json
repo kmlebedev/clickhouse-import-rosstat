@@ -1,0 +1,212 @@
+[
+  {
+    "url": "https://rosstat.gov.ru/labor_market_employment_salaries",
+    "artifact": "listing.html",
+    "status_line": "HTTP/1.1 403 Forbidden",
+    "headers": {
+      "content-type": "text/html; charset=utf-8",
+      "content-length": "370"
+    },
+    "size": 370,
+    "sha256": "8de07e24a48a6b5cfff2e98cfa2cf1c4dc3b6d1a53edf757c611262a7b281e91",
+    "file_mtime_utc": "2026-11-15T13:35:46.198369+00:00",
+    "user_agent": "curl default",
+    "retries": 0
+  },
+  {
+    "url": "https://www.rosstat.gov.ru/labor_market_employment_salaries",
+    "artifact": "www-listing.html",
+    "status_line": "HTTP/1.1 403 Forbidden",
+    "headers": {
+      "content-type": "text/html; charset=utf-8",
+      "content-length": "374"
+    },
+    "size": 374,
+    "sha256": "d0143c25def5af42133ba9c038c5c3bfa37d6a06ab2c5e0cfb7756513e46e712",
+    "file_mtime_utc": "2026-11-15T13:36:33.753796+00:00",
+    "user_agent": "curl default",
+    "retries": 0
+  },
+  {
+    "url": "https://rosstat.gov.ru/labor_market_employment_salaries",
+    "artifact": "browser-listing.html",
+    "status_line": "HTTP/1.1 200 OK",
+    "headers": {
+      "content-type": "text/html; charset=UTF-8",
+      "date": "Sun, 15 Nov 2026 13:37:07 GMT",
+      "cache-control": "private, must-revalidate"
+    },
+    "size": 809435,
+    "sha256": "bf6f34e8c4805e931955b1960cd95e8afed083bbfe342b95e738b9ec24520619",
+    "file_mtime_utc": "2026-11-15T13:37:08.012826+00:00",
+    "user_agent": "Mozilla/5.0",
+    "retries": 0
+  },
+  {
+    "url": "https://rosstat.gov.ru/storage/mediabank/tab1-zpl_07-2026.xlsx",
+    "artifact": "tab1-07.xlsx",
+    "status_line": "HTTP/1.1 403 Forbidden",
+    "headers": {
+      "content-type": "text/html; charset=utf-8",
+      "content-length": "370"
+    },
+    "size": 370,
+    "sha256": "0f2aaacb049517eb730c3c73e87199c6d629542bdd47bcb45c56d266b5f87f6f",
+    "file_mtime_utc": "2026-11-15T13:36:54.384905+00:00",
+    "user_agent": "curl default",
+    "retries": 0
+  },
+  {
+    "url": "https://rosstat.gov.ru/storage/mediabank/tab1-zpl_07-2026.xlsx",
+    "artifact": "tab1-07-browser.xlsx",
+    "status_line": "HTTP/1.1 404 Not Found",
+    "headers": {
+      "content-type": "text/html; charset=UTF-8",
+      "date": "Sun, 15 Nov 2026 13:37:35 GMT",
+      "cache-control": "no-cache, private"
+    },
+    "size": 682001,
+    "sha256": "0fbc23d5b13146422a0639d161aa486ece4c70e5d293d7633404455921abeb8e",
+    "file_mtime_utc": "2026-11-15T13:37:35.746008+00:00",
+    "user_agent": "Mozilla/5.0",
+    "retries": 0
+  },
+  {
+    "url": "https://rosstat.gov.ru/storage/mediabank/tab1-zpl_12-2025.xlsx",
+    "artifact": "current-tab1.xlsx",
+    "status_line": "HTTP/1.1 404 Not Found",
+    "headers": {
+      "content-type": "text/html; charset=UTF-8",
+      "date": "Sun, 15 Nov 2026 13:37:43 GMT",
+      "cache-control": "no-cache, private"
+    },
+    "size": 682001,
+    "sha256": "e3a81161c156228730ba4554ae372a29da2013e2502632f89500d48229c2e226",
+    "file_mtime_utc": "2026-11-15T13:37:44.112701+00:00",
+    "user_agent": "Mozilla/5.0",
+    "retries": 0
+  },
+  {
+    "url": "https://rosstat.gov.ru/statistics/monitoring/sdds/data",
+    "artifact": "sdds.html",
+    "status_line": "HTTP/1.1 200 OK",
+    "headers": {
+      "content-type": "text/html; charset=UTF-8",
+      "date": "Sun, 15 Nov 2026 13:37:39 GMT",
+      "cache-control": "private, must-revalidate"
+    },
+    "size": 764825,
+    "sha256": "53bfd78596924a46a86f4e1ca9bd5a8c23f64dd01273d3e10d35474b48e21f52",
+    "file_mtime_utc": "2026-11-15T13:37:39.563676+00:00",
+    "user_agent": "Mozilla/5.0",
+    "retries": 0
+  },
+  {
+    "url": "https://rosstat.gov.ru/storage/mediabank/SDDS_labor_market.xlsx",
+    "artifact": "sdds-labor.xlsx",
+    "status_line": "HTTP/1.1 200 OK",
+    "headers": {
+      "content-type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "content-length": "21986",
+      "date": "Sun, 15 Nov 2026 13:38:28 GMT",
+      "last-modified": "Thu, 12 Nov 2026 15:39:25 GMT",
+      "etag": "\"6af5ddad-55e2\""
+    },
+    "size": 21986,
+    "sha256": "70b53e0e07399f0ef9c0b2cf536a3881dbf242f4b5729690de57ed7b69107a1c",
+    "file_mtime_utc": "2026-11-15T13:38:28.501139+00:00",
+    "user_agent": "Mozilla/5.0",
+    "retries": 0
+  },
+  {
+    "url": "https://rosstat.gov.ru/storage/mediabank/SDDS_labor_market.xlsx",
+    "artifact": "sdds-labor-repeat.xlsx",
+    "status_line": "HTTP/1.1 200 OK",
+    "headers": {
+      "content-type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "content-length": "21986",
+      "date": "Sun, 15 Nov 2026 13:40:22 GMT",
+      "last-modified": "Thu, 12 Nov 2026 15:39:25 GMT",
+      "etag": "\"6af5ddad-55e2\""
+    },
+    "size": 21986,
+    "sha256": "70b53e0e07399f0ef9c0b2cf536a3881dbf242f4b5729690de57ed7b69107a1c",
+    "file_mtime_utc": "2026-11-15T13:40:22.188430+00:00",
+    "user_agent": "Mozilla/5.0",
+    "retries": 0
+  },
+  {
+    "url": "https://rosstat.gov.ru/statistics/monitoring/sdds/metadata",
+    "artifact": "sdds-metadata.html",
+    "status_line": "HTTP/1.1 200 OK",
+    "headers": {
+      "content-type": "text/html; charset=UTF-8",
+      "date": "Sun, 15 Nov 2026 13:38:58 GMT",
+      "cache-control": "private, must-revalidate"
+    },
+    "size": 748821,
+    "sha256": "cf208d9ee4d8a2b2fb927543616aced1d438b5ecbdbb0555d2d11a221c3c6171",
+    "file_mtime_utc": "2026-11-15T13:38:58.903614+00:00",
+    "user_agent": "Mozilla/5.0",
+    "retries": 0
+  },
+  {
+    "url": "https://rosstat.gov.ru/storage/mediabank/SSRD_met_ZP.pdf",
+    "artifact": "sdds-wage-metadata.pdf",
+    "status_line": "HTTP/1.1 404 Not Found",
+    "headers": {
+      "content-type": "text/html; charset=UTF-8",
+      "date": "Sun, 15 Nov 2026 13:39:36 GMT",
+      "cache-control": "no-cache, private"
+    },
+    "size": 682001,
+    "sha256": "91e8a39614126d3add56f1c5e6a240dfdef45b5a5eba742c1f08a8740ed5bc55",
+    "file_mtime_utc": "2026-11-15T13:39:36.351550+00:00",
+    "user_agent": "Mozilla/5.0",
+    "retries": 0
+  },
+  {
+    "url": "https://rosstat.gov.ru/folder/165737",
+    "artifact": "faq.html",
+    "status_line": "HTTP/1.1 200 OK",
+    "headers": {
+      "content-type": "text/html; charset=UTF-8",
+      "date": "Sun, 15 Nov 2026 13:38:11 GMT",
+      "cache-control": "private, must-revalidate"
+    },
+    "size": 799830,
+    "sha256": "8d7c4928d841e68f495023bcf05002bab66c0ab2c8715532e5df04989f4e58ea",
+    "file_mtime_utc": "2026-11-15T13:38:12.200672+00:00",
+    "user_agent": "Mozilla/5.0",
+    "retries": 0
+  },
+  {
+    "url": "https://www.fedstat.ru/indicator/57824",
+    "artifact": "emiss.html",
+    "status_line": "HTTP/1.1 200 ",
+    "headers": {
+      "content-type": "text/html;charset=UTF-8",
+      "date": "Sun, 15 Nov 2026 13:38:17 GMT"
+    },
+    "size": 344279,
+    "sha256": "b83bd8483d66141561f98c5376e8c9cadb88c92c65ace3a96cd5ef934c338197",
+    "file_mtime_utc": "2026-11-15T13:38:17.186087+00:00",
+    "user_agent": "Mozilla/5.0",
+    "retries": 0
+  },
+  {
+    "url": "https://dsbb.imf.org/sdds/summary-methodology-base/country/RUS/category/WOE00",
+    "artifact": "imf-wage.html",
+    "status_line": "HTTP/1.1 200 OK",
+    "headers": {
+      "cache-control": "private",
+      "content-type": "text/html; charset=utf-8",
+      "date": "Sun, 15 Nov 2026 13:40:07 GMT"
+    },
+    "size": 44059,
+    "sha256": "2b3f3d013d4ab6d140ce9e4cdd0debe07fbc2603a3b76d12a88da1fed67305a3",
+    "file_mtime_utc": "2026-11-15T13:40:07.978130+00:00",
+    "user_agent": "Mozilla/5.0",
+    "retries": 0
+  }
+]

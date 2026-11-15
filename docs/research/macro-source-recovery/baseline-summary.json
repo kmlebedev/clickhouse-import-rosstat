@@ -1,0 +1,65 @@
+[
+  {
+    "series": "Безработные",
+    "count": 116,
+    "first": "2017-01-31",
+    "last": "2026-08-31",
+    "last_value": 1648.809,
+    "expected_contiguous_months": 116,
+    "unique_dates": 116
+  },
+  {
+    "series": "Занятые",
+    "count": 116,
+    "first": "2017-01-31",
+    "last": "2026-08-31",
+    "last_value": 75019.896,
+    "expected_contiguous_months": 116,
+    "unique_dates": 116
+  },
+  {
+    "series": "Рабочая сила",
+    "count": 116,
+    "first": "2017-01-31",
+    "last": "2026-08-31",
+    "last_value": 76668.705,
+    "expected_contiguous_months": 116,
+    "unique_dates": 116
+  },
+  {
+    "series": "Среднемесячная номинальная начисленная заработная плата работников по полному кругу организаций",
+    "count": 422,
+    "first": "1991-08-01",
+    "last": "2026-09-01",
+    "last_value": 103014,
+    "expected_contiguous_months": 422,
+    "unique_dates": 422
+  },
+  {
+    "series": "Уровень безработицы",
+    "count": 116,
+    "first": "2017-01-31",
+    "last": "2026-08-31",
+    "last_value": 2.2,
+    "expected_contiguous_months": 116,
+    "unique_dates": 116
+  },
+  {
+    "series": "Уровень занятости",
+    "count": 116,
+    "first": "2017-01-31",
+    "last": "2026-08-31",
+    "last_value": 61.8,
+    "expected_contiguous_months": 116,
+    "unique_dates": 116
+  },
+  {
+    "series": "Уровень участия в составе рабочей силы",
+    "count": 116,
+    "first": "2017-01-31",
+    "last": "2026-08-31",
+    "last_value": 63.1,
+    "expected_contiguous_months": 116,
+    "unique_dates": 116
+  }
+]

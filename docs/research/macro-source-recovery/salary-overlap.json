@@ -1,0 +1,861 @@
+{
+  "source": "https://rosstat.gov.ru/storage/mediabank/SDDS_labor_market.xlsx",
+  "point_count": 140,
+  "first": {
+    "report_month": "2015-01",
+    "date": "2015-02-01",
+    "value": 30929.0,
+    "cell": "C6"
+  },
+  "last": {
+    "report_month": "2026-08",
+    "date": "2026-09-01",
+    "value": 103014.0,
+    "cell": "EL6"
+  },
+  "overlap": 140,
+  "mismatch_count": 0,
+  "mismatches": [],
+  "points": [
+    {
+      "report_month": "2015-01",
+      "date": "2015-02-01",
+      "value": 30929.0,
+      "cell": "C6"
+    },
+    {
+      "report_month": "2015-02",
+      "date": "2015-03-01",
+      "value": 31325.0,
+      "cell": "D6"
+    },
+    {
+      "report_month": "2015-03",
+      "date": "2015-04-01",
+      "value": 32642.0,
+      "cell": "E6"
+    },
+    {
+      "report_month": "2015-04",
+      "date": "2015-05-01",
+      "value": 34377.0,
+      "cell": "F6"
+    },
+    {
+      "report_month": "2015-05",
+      "date": "2015-06-01",
+      "value": 34380.0,
+      "cell": "G6"
+    },
+    {
+      "report_month": "2015-06",
+      "date": "2015-07-01",
+      "value": 35395.0,
+      "cell": "H6"
+    },
+    {
+      "report_month": "2015-07",
+      "date": "2015-08-01",
+      "value": 33901.0,
+      "cell": "I6"
+    },
+    {
+      "report_month": "2015-08",
+      "date": "2015-09-01",
+      "value": 32176.0,
+      "cell": "J6"
+    },
+    {
+      "report_month": "2015-09",
+      "date": "2015-10-01",
+      "value": 32911.0,
+      "cell": "K6"
+    },
+    {
+      "report_month": "2015-10",
+      "date": "2015-11-01",
+      "value": 33357.0,
+      "cell": "L6"
+    },
+    {
+      "report_month": "2015-11",
+      "date": "2015-12-01",
+      "value": 33347.0,
+      "cell": "M6"
+    },
+    {
+      "report_month": "2015-12",
+      "date": "2016-01-01",
+      "value": 43408.0,
+      "cell": "N6"
+    },
+    {
+      "report_month": "2016-01",
+      "date": "2016-02-01",
+      "value": 32660.0,
+      "cell": "O6"
+    },
+    {
+      "report_month": "2016-02",
+      "date": "2016-03-01",
+      "value": 33873.0,
+      "cell": "P6"
+    },
+    {
+      "report_month": "2016-03",
+      "date": "2016-04-01",
+      "value": 35501.0,
+      "cell": "Q6"
+    },
+    {
+      "report_month": "2016-04",
+      "date": "2016-05-01",
+      "value": 36497.0,
+      "cell": "R6"
+    },
+    {
+      "report_month": "2016-05",
+      "date": "2016-06-01",
+      "value": 37270.0,
+      "cell": "S6"
+    },
+    {
+      "report_month": "2016-06",
+      "date": "2016-07-01",
+      "value": 38447.0,
+      "cell": "T6"
+    },
+    {
+      "report_month": "2016-07",
+      "date": "2016-08-01",
+      "value": 35888.0,
+      "cell": "U6"
+    },
+    {
+      "report_month": "2016-08",
+      "date": "2016-09-01",
+      "value": 35405.0,
+      "cell": "V6"
+    },
+    {
+      "report_month": "2016-09",
+      "date": "2016-10-01",
+      "value": 35843.0,
+      "cell": "W6"
+    },
+    {
+      "report_month": "2016-10",
+      "date": "2016-11-01",
+      "value": 35749.0,
+      "cell": "X6"
+    },
+    {
+      "report_month": "2016-11",
+      "date": "2016-12-01",
+      "value": 36195.0,
+      "cell": "Y6"
+    },
+    {
+      "report_month": "2016-12",
+      "date": "2017-01-01",
+      "value": 47554.0,
+      "cell": "Z6"
+    },
+    {
+      "report_month": "2017-01",
+      "date": "2017-02-01",
+      "value": 34422.0,
+      "cell": "AA6"
+    },
+    {
+      "report_month": "2017-02",
+      "date": "2017-03-01",
+      "value": 35497.0,
+      "cell": "AB6"
+    },
+    {
+      "report_month": "2017-03",
+      "date": "2017-04-01",
+      "value": 37899.0,
+      "cell": "AC6"
+    },
+    {
+      "report_month": "2017-04",
+      "date": "2017-05-01",
+      "value": 39225.0,
+      "cell": "AD6"
+    },
+    {
+      "report_month": "2017-05",
+      "date": "2017-06-01",
+      "value": 39679.0,
+      "cell": "AE6"
+    },
+    {
+      "report_month": "2017-06",
+      "date": "2017-07-01",
+      "value": 41454.0,
+      "cell": "AF6"
+    },
+    {
+      "report_month": "2017-07",
+      "date": "2017-08-01",
+      "value": 38073.0,
+      "cell": "AG6"
+    },
+    {
+      "report_month": "2017-08",
+      "date": "2017-09-01",
+      "value": 37099.0,
+      "cell": "AH6"
+    },
+    {
+      "report_month": "2017-09",
+      "date": "2017-10-01",
+      "value": 38047.0,
+      "cell": "AI6"
+    },
+    {
+      "report_month": "2017-10",
+      "date": "2017-11-01",
+      "value": 38333.0,
+      "cell": "AJ6"
+    },
+    {
+      "report_month": "2017-11",
+      "date": "2017-12-01",
+      "value": 38848.0,
+      "cell": "AK6"
+    },
+    {
+      "report_month": "2017-12",
+      "date": "2018-01-01",
+      "value": 51197.0,
+      "cell": "AL6"
+    },
+    {
+      "report_month": "2018-01",
+      "date": "2018-02-01",
+      "value": 39017.0,
+      "cell": "AM6"
+    },
+    {
+      "report_month": "2018-02",
+      "date": "2018-03-01",
+      "value": 40443.0,
+      "cell": "AN6"
+    },
+    {
+      "report_month": "2018-03",
+      "date": "2018-04-01",
+      "value": 42364.0,
+      "cell": "AO6"
+    },
+    {
+      "report_month": "2018-04",
+      "date": "2018-05-01",
+      "value": 43381.0,
+      "cell": "AP6"
+    },
+    {
+      "report_month": "2018-05",
+      "date": "2018-06-01",
+      "value": 44076.0,
+      "cell": "AQ6"
+    },
+    {
+      "report_month": "2018-06",
+      "date": "2018-07-01",
+      "value": 45848.0,
+      "cell": "AR6"
+    },
+    {
+      "report_month": "2018-07",
+      "date": "2018-08-01",
+      "value": 42413.0,
+      "cell": "AS6"
+    },
+    {
+      "report_month": "2018-08",
+      "date": "2018-09-01",
+      "value": 41364.0,
+      "cell": "AT6"
+    },
+    {
+      "report_month": "2018-09",
+      "date": "2018-10-01",
+      "value": 41774.0,
+      "cell": "AU6"
+    },
+    {
+      "report_month": "2018-10",
+      "date": "2018-11-01",
+      "value": 42332.0,
+      "cell": "AV6"
+    },
+    {
+      "report_month": "2018-11",
+      "date": "2018-12-01",
+      "value": 42595.0,
+      "cell": "AW6"
+    },
+    {
+      "report_month": "2018-12",
+      "date": "2019-01-01",
+      "value": 55569.0,
+      "cell": "AX6"
+    },
+    {
+      "report_month": "2019-01",
+      "date": "2019-02-01",
+      "value": 42263.0,
+      "cell": "AY6"
+    },
+    {
+      "report_month": "2019-02",
+      "date": "2019-03-01",
+      "value": 43062.0,
+      "cell": "AZ6"
+    },
+    {
+      "report_month": "2019-03",
+      "date": "2019-04-01",
+      "value": 46324.0,
+      "cell": "BA6"
+    },
+    {
+      "report_month": "2019-04",
+      "date": "2019-05-01",
+      "value": 48030.0,
+      "cell": "BB6"
+    },
+    {
+      "report_month": "2019-05",
+      "date": "2019-06-01",
+      "value": 47926.0,
+      "cell": "BC6"
+    },
+    {
+      "report_month": "2019-06",
+      "date": "2019-07-01",
+      "value": 49348.0,
+      "cell": "BD6"
+    },
+    {
+      "report_month": "2019-07",
+      "date": "2019-08-01",
+      "value": 46509.0,
+      "cell": "BE6"
+    },
+    {
+      "report_month": "2019-08",
+      "date": "2019-09-01",
+      "value": 44961.0,
+      "cell": "BF6"
+    },
+    {
+      "report_month": "2019-09",
+      "date": "2019-10-01",
+      "value": 45541.0,
+      "cell": "BG6"
+    },
+    {
+      "report_month": "2019-10",
+      "date": "2019-11-01",
+      "value": 46549.0,
+      "cell": "BH6"
+    },
+    {
+      "report_month": "2019-11",
+      "date": "2019-12-01",
+      "value": 46285.0,
+      "cell": "BI6"
+    },
+    {
+      "report_month": "2019-12",
+      "date": "2020-01-01",
+      "value": 62239.0,
+      "cell": "BJ6"
+    },
+    {
+      "report_month": "2020-01",
+      "date": "2020-02-01",
+      "value": 46674.0,
+      "cell": "BK6"
+    },
+    {
+      "report_month": "2020-02",
+      "date": "2020-03-01",
+      "value": 47257.0,
+      "cell": "BL6"
+    },
+    {
+      "report_month": "2020-03",
+      "date": "2020-04-01",
+      "value": 50948.0,
+      "cell": "BM6"
+    },
+    {
+      "report_month": "2020-04",
+      "date": "2020-05-01",
+      "value": 49306.0,
+      "cell": "BN6"
+    },
+    {
+      "report_month": "2020-05",
+      "date": "2020-06-01",
+      "value": 50747.0,
+      "cell": "BO6"
+    },
+    {
+      "report_month": "2020-06",
+      "date": "2020-07-01",
+      "value": 52123.0,
+      "cell": "BP6"
+    },
+    {
+      "report_month": "2020-07",
+      "date": "2020-08-01",
+      "value": 50145.0,
+      "cell": "BQ6"
+    },
+    {
+      "report_month": "2020-08",
+      "date": "2020-09-01",
+      "value": 47649.0,
+      "cell": "BR6"
+    },
+    {
+      "report_month": "2020-09",
+      "date": "2020-10-01",
+      "value": 49259.0,
+      "cell": "BS6"
+    },
+    {
+      "report_month": "2020-10",
+      "date": "2020-11-01",
+      "value": 49539.0,
+      "cell": "BT6"
+    },
+    {
+      "report_month": "2020-11",
+      "date": "2020-12-01",
+      "value": 49274.0,
+      "cell": "BU6"
+    },
+    {
+      "report_month": "2020-12",
+      "date": "2021-01-01",
+      "value": 69278.0,
+      "cell": "BV6"
+    },
+    {
+      "report_month": "2021-01",
+      "date": "2021-02-01",
+      "value": 49516.0,
+      "cell": "BW6"
+    },
+    {
+      "report_month": "2021-02",
+      "date": "2021-03-01",
+      "value": 51229.0,
+      "cell": "BX6"
+    },
+    {
+      "report_month": "2021-03",
+      "date": "2021-04-01",
+      "value": 55208.0,
+      "cell": "BY6"
+    },
+    {
+      "report_month": "2021-04",
+      "date": "2021-05-01",
+      "value": 56614.0,
+      "cell": "BZ6"
+    },
+    {
+      "report_month": "2021-05",
+      "date": "2021-06-01",
+      "value": 56171.0,
+      "cell": "CA6"
+    },
+    {
+      "report_month": "2021-06",
+      "date": "2021-07-01",
+      "value": 58782.0,
+      "cell": "CB6"
+    },
+    {
+      "report_month": "2021-07",
+      "date": "2021-08-01",
+      "value": 55170.0,
+      "cell": "CC6"
+    },
+    {
+      "report_month": "2021-08",
+      "date": "2021-09-01",
+      "value": 52355.0,
+      "cell": "CD6"
+    },
+    {
+      "report_month": "2021-09",
+      "date": "2021-10-01",
+      "value": 54687.0,
+      "cell": "CE6"
+    },
+    {
+      "report_month": "2021-10",
+      "date": "2021-11-01",
+      "value": 54649.0,
+      "cell": "CF6"
+    },
+    {
+      "report_month": "2021-11",
+      "date": "2021-12-01",
+      "value": 55639.0,
+      "cell": "CG6"
+    },
+    {
+      "report_month": "2021-12",
+      "date": "2022-01-01",
+      "value": 77994.0,
+      "cell": "CH6"
+    },
+    {
+      "report_month": "2022-01",
+      "date": "2022-02-01",
+      "value": 55717.0,
+      "cell": "CI6"
+    },
+    {
+      "report_month": "2022-02",
+      "date": "2022-03-01",
+      "value": 57344.0,
+      "cell": "CJ6"
+    },
+    {
+      "report_month": "2022-03",
+      "date": "2022-04-01",
+      "value": 66757.0,
+      "cell": "CK6"
+    },
+    {
+      "report_month": "2022-04",
+      "date": "2022-05-01",
+      "value": 62269.0,
+      "cell": "CL6"
+    },
+    {
+      "report_month": "2022-05",
+      "date": "2022-06-01",
+      "value": 62457.0,
+      "cell": "CM6"
+    },
+    {
+      "report_month": "2022-06",
+      "date": "2022-07-01",
+      "value": 66572.0,
+      "cell": "CN6"
+    },
+    {
+      "report_month": "2022-07",
+      "date": "2022-08-01",
+      "value": 62200.0,
+      "cell": "CO6"
+    },
+    {
+      "report_month": "2022-08",
+      "date": "2022-09-01",
+      "value": 59907.0,
+      "cell": "CP6"
+    },
+    {
+      "report_month": "2022-09",
+      "date": "2022-10-01",
+      "value": 61879.0,
+      "cell": "CQ6"
+    },
+    {
+      "report_month": "2022-10",
+      "date": "2022-11-01",
+      "value": 62470.0,
+      "cell": "CR6"
+    },
+    {
+      "report_month": "2022-11",
+      "date": "2022-12-01",
+      "value": 63060.0,
+      "cell": "CS6"
+    },
+    {
+      "report_month": "2022-12",
+      "date": "2023-01-01",
+      "value": 88468.0,
+      "cell": "CT6"
+    },
+    {
+      "report_month": "2023-01",
+      "date": "2023-02-01",
+      "value": 63260.0,
+      "cell": "CU6"
+    },
+    {
+      "report_month": "2023-02",
+      "date": "2023-03-01",
+      "value": 65094.0,
+      "cell": "CV6"
+    },
+    {
+      "report_month": "2023-03",
+      "date": "2023-04-01",
+      "value": 71334.0,
+      "cell": "CW6"
+    },
+    {
+      "report_month": "2023-04",
+      "date": "2023-05-01",
+      "value": 71204.0,
+      "cell": "CX6"
+    },
+    {
+      "report_month": "2023-05",
+      "date": "2023-06-01",
+      "value": 72851.0,
+      "cell": "CY6"
+    },
+    {
+      "report_month": "2023-06",
+      "date": "2023-07-01",
+      "value": 76604.0,
+      "cell": "CZ6"
+    },
+    {
+      "report_month": "2023-07",
+      "date": "2023-08-01",
+      "value": 71419.0,
+      "cell": "DA6"
+    },
+    {
+      "report_month": "2023-08",
+      "date": "2023-09-01",
+      "value": 69439.0,
+      "cell": "DB6"
+    },
+    {
+      "report_month": "2023-09",
+      "date": "2023-10-01",
+      "value": 70922.0,
+      "cell": "DC6"
+    },
+    {
+      "report_month": "2023-10",
+      "date": "2023-11-01",
+      "value": 73830.0,
+      "cell": "DD6"
+    },
+    {
+      "report_month": "2023-11",
+      "date": "2023-12-01",
+      "value": 73383.0,
+      "cell": "DE6"
+    },
+    {
+      "report_month": "2023-12",
+      "date": "2024-01-01",
+      "value": 103815.0,
+      "cell": "DF6"
+    },
+    {
+      "report_month": "2024-01",
+      "date": "2024-02-01",
+      "value": 75034.0,
+      "cell": "DG6"
+    },
+    {
+      "report_month": "2024-02",
+      "date": "2024-03-01",
+      "value": 78432.0,
+      "cell": "DH6"
+    },
+    {
+      "report_month": "2024-03",
+      "date": "2024-04-01",
+      "value": 87740.0,
+      "cell": "DI6"
+    },
+    {
+      "report_month": "2024-04",
+      "date": "2024-05-01",
+      "value": 83875.0,
+      "cell": "DJ6"
+    },
+    {
+      "report_month": "2024-05",
+      "date": "2024-06-01",
+      "value": 86384.0,
+      "cell": "DK6"
+    },
+    {
+      "report_month": "2024-06",
+      "date": "2024-07-01",
+      "value": 89145.0,
+      "cell": "DL6"
+    },
+    {
+      "report_month": "2024-07",
+      "date": "2024-08-01",
+      "value": 85017.0,
+      "cell": "DM6"
+    },
+    {
+      "report_month": "2024-08",
+      "date": "2024-09-01",
+      "value": 82218.0,
+      "cell": "DN6"
+    },
+    {
+      "report_month": "2024-09",
+      "date": "2024-10-01",
+      "value": 84324.0,
+      "cell": "DO6"
+    },
+    {
+      "report_month": "2024-10",
+      "date": "2024-11-01",
+      "value": 86582.0,
+      "cell": "DP6"
+    },
+    {
+      "report_month": "2024-11",
+      "date": "2024-12-01",
+      "value": 86399.0,
+      "cell": "DQ6"
+    },
+    {
+      "report_month": "2024-12",
+      "date": "2025-01-01",
+      "value": 128665.0,
+      "cell": "DR6"
+    },
+    {
+      "report_month": "2025-01",
+      "date": "2025-02-01",
+      "value": 88981.0,
+      "cell": "DS6"
+    },
+    {
+      "report_month": "2025-02",
+      "date": "2025-03-01",
+      "value": 89646.0,
+      "cell": "DT6"
+    },
+    {
+      "report_month": "2025-03",
+      "date": "2025-04-01",
+      "value": 97645.0,
+      "cell": "DU6"
+    },
+    {
+      "report_month": "2025-04",
+      "date": "2025-05-01",
+      "value": 97375.0,
+      "cell": "DV6"
+    },
+    {
+      "report_month": "2025-05",
+      "date": "2025-06-01",
+      "value": 99422.0,
+      "cell": "DW6"
+    },
+    {
+      "report_month": "2025-06",
+      "date": "2025-07-01",
+      "value": 103183.0,
+      "cell": "DX6"
+    },
+    {
+      "report_month": "2025-07",
+      "date": "2025-08-01",
+      "value": 99305.0,
+      "cell": "DY6"
+    },
+    {
+      "report_month": "2025-08",
+      "date": "2025-09-01",
+      "value": 92866.0,
+      "cell": "DZ6"
+    },
+    {
+      "report_month": "2025-09",
+      "date": "2025-10-01",
+      "value": 96182.0,
+      "cell": "EA6"
+    },
+    {
+      "report_month": "2025-10",
+      "date": "2025-11-01",
+      "value": 99707.0,
+      "cell": "EB6"
+    },
+    {
+      "report_month": "2025-11",
+      "date": "2025-12-01",
+      "value": 98193.0,
+      "cell": "EC6"
+    },
+    {
+      "report_month": "2025-12",
+      "date": "2026-01-01",
+      "value": 139727.0,
+      "cell": "ED6"
+    },
+    {
+      "report_month": "2026-01",
+      "date": "2026-02-01",
+      "value": 103612.0,
+      "cell": "EE6"
+    },
+    {
+      "report_month": "2026-02",
+      "date": "2026-03-01",
+      "value": 103900.0,
+      "cell": "EF6"
+    },
+    {
+      "report_month": "2026-03",
+      "date": "2026-04-01",
+      "value": 112654.0,
+      "cell": "EG6"
+    },
+    {
+      "report_month": "2026-04",
+      "date": "2026-05-01",
+      "value": 109052.0,
+      "cell": "EH6"
+    },
+    {
+      "report_month": "2026-05",
+      "date": "2026-06-01",
+      "value": 110216.0,
+      "cell": "EI6"
+    },
+    {
+      "report_month": "2026-06",
+      "date": "2026-07-01",
+      "value": 114743.0,
+      "cell": "EJ6"
+    },
+    {
+      "report_month": "2026-07",
+      "date": "2026-08-01",
+      "value": 109524.0,
+      "cell": "EK6"
+    },
+    {
+      "report_month": "2026-08",
+      "date": "2026-09-01",
+      "value": 103014.0,
+      "cell": "EL6"
+    }
+  ]
+}

@@ -1,0 +1,124 @@
+[
+  {
+    "key": "www-page",
+    "url": "https://www.rosstat.gov.ru/labour_force",
+    "at": "2026-11-15T13:36:17.852849+00:00",
+    "exit": 0,
+    "response": "200 text/html; charset=UTF-8 2.024436 https://www.rosstat.gov.ru/labour_force",
+    "bytes": 876488,
+    "sha256": "5e0b7ce465ad90ba2305ded1b41f340b6144216520f5cc7a7bb61236fb2879d2"
+  },
+  {
+    "key": "quarterly",
+    "url": "https://rosstat.gov.ru/compendium/document/13265",
+    "at": "2026-11-15T13:36:17.853900+00:00",
+    "exit": 0,
+    "response": "200 text/html; charset=UTF-8 1.181228 https://rosstat.gov.ru/compendium/document/13265",
+    "bytes": 752088,
+    "sha256": "94e75678582ebc2cf47a45965a5d0ac9b6a20289bf035b06a3df6dfe25e0e3e2"
+  },
+  {
+    "key": "current-xlsx",
+    "url": "https://rosstat.gov.ru/storage/mediabank/Trud-1_15-s.xlsx",
+    "at": "2026-11-15T13:36:17.854997+00:00",
+    "exit": 0,
+    "response": "404 text/html; charset=UTF-8 1.495661 https://rosstat.gov.ru/storage/mediabank/Trud-1_15-s.xlsx",
+    "bytes": 682001,
+    "sha256": "cfb71fbb950bffe365f0e072a2139acd165c863a00bf5bd7fae60c1a6e11ddb1"
+  },
+  {
+    "key": "janpdf",
+    "url": "https://rosstat.gov.ru/storage/mediabank/osn-01-2026.pdf",
+    "at": "2026-11-15T13:36:17.856307+00:00",
+    "exit": 0,
+    "response": "200 application/pdf 1.420186 https://rosstat.gov.ru/storage/mediabank/osn-01-2026.pdf",
+    "bytes": 3245604,
+    "sha256": "26f51b0aff42d1799ad0fc181b85a2cbb45c882b38251c1a590fa6f63965e034"
+  },
+  {
+    "key": "lower-xlsx",
+    "url": "https://www.rosstat.gov.ru/storage/mediabank/trud-1_15-s.xlsx",
+    "at": "2026-11-15T13:36:42.815271+00:00",
+    "response": "404 text/html; charset=UTF-8 1.503445 https://www.rosstat.gov.ru/storage/mediabank/trud-1_15-s.xlsx",
+    "bytes": 682245,
+    "sha256": "ab9b17678acbc17f3c4786e2c9427f5f08c8e40b7c42524d149d6c889e65b4fb"
+  },
+  {
+    "key": "quarterlyfolder",
+    "url": "https://www.rosstat.gov.ru/folder/11110/document/13265",
+    "at": "2026-11-15T13:36:42.816543+00:00",
+    "response": "200 text/html; charset=UTF-8 1.119620 https://www.rosstat.gov.ru/folder/11110/document/13265",
+    "bytes": 763606,
+    "sha256": "0b496dd3faf6401d89f4230ce2bda4e1d78d1f696d4353764b94c843f2d70e83"
+  },
+  {
+    "url": "https://www.rosstat.gov.ru/storage/mediabank/ORS3_2025.rar",
+    "at": "2026-11-15T13:37:23.013868+00:00",
+    "response": "404 text/html; charset=UTF-8 1.251515",
+    "bytes": 682245,
+    "sha256": "ed8901740a37eca78820d4fb029871deae90eb03262de41e04dc2e7f108be53d"
+  },
+  {
+    "url": "https://fedstat.ru/indicator/60970",
+    "at": "2026-11-15T13:37:47.925646+00:00",
+    "exit": 0,
+    "response": "200 text/html;charset=UTF-8 0.889795",
+    "bytes": 84416,
+    "sha256": "fad4240cd25fc42ed50a726f04dac29e9d93fa671bffe21c366f91e6a6715cbf"
+  },
+  {
+    "url": "https://fedstat.ru/indicator/dataGrid.do?id=60970",
+    "at": "2026-11-15T13:38:41.293827+00:00",
+    "method": "POST",
+    "response": "200 text/html;charset=UTF-8 0.225995",
+    "bytes": 82006,
+    "sha256": "3528b1351a2f1627e2eda8900708699b21037be8333d2d216c2fea97b54515d1"
+  },
+  {
+    "key": "emiss-xhr",
+    "url": "https://www.fedstat.ru/indicator/dataGrid.do?id=60970",
+    "at": "2026-11-15T13:39:03.426688+00:00",
+    "response": "200 text/html;charset=UTF-8 0.199897",
+    "bytes": 82006,
+    "sha256": "3528b1351a2f1627e2eda8900708699b21037be8333d2d216c2fea97b54515d1"
+  },
+  {
+    "key": "emiss-download",
+    "url": "https://fedstat.ru/indicator/60970/download",
+    "at": "2026-11-15T13:39:03.428165+00:00",
+    "response": "200 text/html;charset=UTF-8 0.126018",
+    "bytes": 127,
+    "sha256": "8794af4409af1414104a3805568bf2146f603ea442ae3d223dad1e4d68092d3d"
+  },
+  {
+    "url": "https://fedstat.ru/indicator/60970/download",
+    "at": "2026-11-15T13:40:09.477803+00:00",
+    "response": "200 application/vnd.ms-excel 1.234310",
+    "bytes": 14848,
+    "sha256": "d7d5d8972a715f82506e2511db211066dd991789b7778d3795726df2a7f46619"
+  },
+  {
+    "id": 60973,
+    "url": "https://fedstat.ru/indicator/60973/download",
+    "at": "2026-11-15T13:41:11.728187+00:00",
+    "response": "200 application/vnd.ms-excel 1.150330",
+    "bytes": 55296,
+    "sha256": "55dfec5483c3620f19dba287c1fcbcff6cfea9019930542469b3dbdce71fd7ab"
+  },
+  {
+    "id": 60974,
+    "url": "https://fedstat.ru/indicator/60974/download",
+    "at": "2026-11-15T13:41:11.729272+00:00",
+    "response": "200 application/vnd.ms-excel 1.207057",
+    "bytes": 55296,
+    "sha256": "d1ef77425ac5f9ee2315fe9e68a3ddbca8e39dcfeb441588cd08afee24db0c0a"
+  },
+  {
+    "id": 57341,
+    "url": "https://fedstat.ru/indicator/57341/download",
+    "at": "2026-11-15T13:41:11.729598+00:00",
+    "response": "200 application/vnd.ms-excel 1.057540",
+    "bytes": 18944,
+    "sha256": "92dc29a4cd66892149c7e5fbde9a311b93d26e15196c8b96d1b50ef13162c78f"
+  }
+]

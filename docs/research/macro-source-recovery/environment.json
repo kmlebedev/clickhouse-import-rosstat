@@ -1,0 +1,19 @@
+{
+  "query": "SELECT hostName(),currentDatabase(),currentUser(),now()",
+  "result": {
+    "columns": [
+      "hostName()",
+      "currentDatabase()",
+      "currentUser()",
+      "now()"
+    ],
+    "rows": [
+      [
+        "whitefox-Mac-9945",
+        "default",
+        "kimi_reader",
+        "2026-11-15 18:38:44+05:00"
+      ]
+    ]
+  }
+}
