@@ -11,3 +11,5 @@
    выполнить docs-check; независимое финальное ревью gpt-6.1-terra.
 6. Единственный PR с Closes #608 и комментарием приёмки, Project In Review;
    решение о merge — владельцем.
+
+Пункты1–5 выполнены: NO-GO полного месяца (5/6), precision helper PASS,696точек/каталог неизменны, docs-check65страниц/33теста PASS, независимое review PASS. [Протокол](../../research/2026-11-15-labour-source-contract.md). Пункт6 — итоговый PR; merge владельцем.

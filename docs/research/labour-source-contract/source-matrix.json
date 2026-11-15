@@ -1,0 +1,623 @@
+{
+  "decision": "NO-GO",
+  "decision_reason": "Only three count series have September 2026 observations; all three actual official EMISS rate exports end August 2026. Primary linked workbook remains HTTP404/HTML.",
+  "target_month": "2026-09-30",
+  "september_series_present": 3,
+  "september_series_required": 6,
+  "observed_at_utc": "2026-11-15T14:39:47.073491+00:00",
+  "published_at": null,
+  "published_at_note": "Passport update strings are metadata, not verified publication timestamps or historical vintages.",
+  "scope": "Subset: primary XLSX, SDDS and four EMISS exports only. See report-probe.json and main report for additional PDF evidence; combined candidate coverage is 5/6, not this subset 3/6. Read-only; no imports or database writes.",
+  "primary_source": {
+    "listing_probe": "primary-page",
+    "linked_probe": "primary-xlsx",
+    "actual_format": "HTML",
+    "http_status": 404
+  },
+  "series_matrix": [
+    {
+      "series": "Рабочая сила",
+      "unit": "thousand persons",
+      "age": "15+",
+      "frequency": "monthly, NSA",
+      "date_semantics": "report month end",
+      "september_2026_present": true,
+      "candidates": [
+        {
+          "source_key": "sdds-xlsx",
+          "point_count": 117,
+          "first_actual": "2017-01-31",
+          "latest_actual": "2026-09-30",
+          "september_2026": [
+            {
+              "date": "2026-09-30",
+              "cell": "EM2",
+              "raw_value": "76.693804396899353",
+              "raw_unit": "million persons",
+              "value_thousand": "76693.804396899353000"
+            }
+          ],
+          "months_2026": [
+            "2026-01-31",
+            "2026-02-28",
+            "2026-03-31",
+            "2026-04-30",
+            "2026-05-31",
+            "2026-06-30",
+            "2026-07-31",
+            "2026-08-31",
+            "2026-09-30"
+          ],
+          "latest_cell": {
+            "date": "2026-09-30",
+            "cell": "EM2",
+            "raw_value": "76.693804396899353",
+            "raw_unit": "million persons",
+            "value_thousand": "76693.804396899353000"
+          },
+          "missing_months_between_first_and_latest": []
+        },
+        {
+          "source_key": "emiss-60970-download",
+          "point_count": 116,
+          "first_actual": "2017-01-31",
+          "latest_actual": "2026-08-31",
+          "september_2026": [],
+          "months_2026": [
+            "2026-01-31",
+            "2026-02-28",
+            "2026-03-31",
+            "2026-04-30",
+            "2026-05-31",
+            "2026-06-30",
+            "2026-07-31",
+            "2026-08-31"
+          ],
+          "latest_cell": {
+            "date": "2026-08-31",
+            "cell": "N23",
+            "raw_value": "76668.7",
+            "geography_label": "643004.АГ Российская Федерация без учета новых субъектов (с 01.01.2023)",
+            "age_label": "207 15 лет и старше",
+            "unit_label": "793 тысяча человек"
+          },
+          "missing_months_between_first_and_latest": []
+        }
+      ]
+    },
+    {
+      "series": "Занятые",
+      "unit": "thousand persons",
+      "age": "15+",
+      "frequency": "monthly, NSA",
+      "date_semantics": "report month end",
+      "september_2026_present": true,
+      "candidates": [
+        {
+          "source_key": "sdds-xlsx",
+          "point_count": 117,
+          "first_actual": "2017-01-31",
+          "latest_actual": "2026-09-30",
+          "september_2026": [
+            {
+              "date": "2026-09-30",
+              "cell": "EM3",
+              "raw_value": "75.042681504717152",
+              "raw_unit": "million persons",
+              "value_thousand": "75042.681504717152000"
+            }
+          ],
+          "months_2026": [
+            "2026-01-31",
+            "2026-02-28",
+            "2026-03-31",
+            "2026-04-30",
+            "2026-05-31",
+            "2026-06-30",
+            "2026-07-31",
+            "2026-08-31",
+            "2026-09-30"
+          ],
+          "latest_cell": {
+            "date": "2026-09-30",
+            "cell": "EM3",
+            "raw_value": "75.042681504717152",
+            "raw_unit": "million persons",
+            "value_thousand": "75042.681504717152000"
+          },
+          "missing_months_between_first_and_latest": []
+        }
+      ]
+    },
+    {
+      "series": "Безработные",
+      "unit": "thousand persons",
+      "age": "15+",
+      "frequency": "monthly, NSA",
+      "date_semantics": "report month end",
+      "september_2026_present": true,
+      "candidates": [
+        {
+          "source_key": "sdds-xlsx",
+          "point_count": 117,
+          "first_actual": "2017-01-31",
+          "latest_actual": "2026-09-30",
+          "september_2026": [
+            {
+              "date": "2026-09-30",
+              "cell": "EM4",
+              "raw_value": "1.6511228921822021",
+              "raw_unit": "million persons",
+              "value_thousand": "1651.1228921822021000"
+            }
+          ],
+          "months_2026": [
+            "2026-01-31",
+            "2026-02-28",
+            "2026-03-31",
+            "2026-04-30",
+            "2026-05-31",
+            "2026-06-30",
+            "2026-07-31",
+            "2026-08-31",
+            "2026-09-30"
+          ],
+          "latest_cell": {
+            "date": "2026-09-30",
+            "cell": "EM4",
+            "raw_value": "1.6511228921822021",
+            "raw_unit": "million persons",
+            "value_thousand": "1651.1228921822021000"
+          },
+          "missing_months_between_first_and_latest": []
+        }
+      ]
+    },
+    {
+      "series": "Уровень участия в составе рабочей силы",
+      "unit": "percent",
+      "age": "15+",
+      "frequency": "monthly, NSA",
+      "date_semantics": "report month end",
+      "september_2026_present": false,
+      "candidates": [
+        {
+          "source_key": "sdds-xlsx",
+          "point_count": 0,
+          "latest_actual": null,
+          "september_2026": [],
+          "reason": "No corresponding rate row in workbook"
+        },
+        {
+          "source_key": "emiss-60974-download",
+          "point_count": 68,
+          "first_actual": "2021-01-31",
+          "latest_actual": "2026-08-31",
+          "september_2026": [],
+          "months_2026": [
+            "2026-01-31",
+            "2026-02-28",
+            "2026-03-31",
+            "2026-04-30",
+            "2026-05-31",
+            "2026-06-30",
+            "2026-07-31",
+            "2026-08-31"
+          ],
+          "latest_cell": {
+            "date": "2026-08-31",
+            "cell": "J24",
+            "raw_value": "63.1",
+            "geography_label": "643004.АГ Российская Федерация без учета новых субъектов (с 01.01.2023)",
+            "age_label": "207 15 лет и старше",
+            "unit_label": "744 процент"
+          },
+          "missing_months_between_first_and_latest": []
+        }
+      ]
+    },
+    {
+      "series": "Уровень занятости",
+      "unit": "percent",
+      "age": "15+",
+      "frequency": "monthly, NSA",
+      "date_semantics": "report month end",
+      "september_2026_present": false,
+      "candidates": [
+        {
+          "source_key": "sdds-xlsx",
+          "point_count": 0,
+          "latest_actual": null,
+          "september_2026": [],
+          "reason": "No corresponding rate row in workbook"
+        },
+        {
+          "source_key": "emiss-60973-download",
+          "point_count": 62,
+          "first_actual": "2021-01-31",
+          "latest_actual": "2026-08-31",
+          "september_2026": [],
+          "months_2026": [
+            "2026-01-31",
+            "2026-02-28",
+            "2026-03-31",
+            "2026-04-30",
+            "2026-05-31",
+            "2026-06-30",
+            "2026-07-31",
+            "2026-08-31"
+          ],
+          "latest_cell": {
+            "date": "2026-08-31",
+            "cell": "J25",
+            "raw_value": "61.8",
+            "geography_label": "643004.АГ Российская Федерация без учета новых субъектов (с 01.01.2023)",
+            "age_label": "207 15 лет и старше",
+            "unit_label": "744 процент"
+          },
+          "missing_months_between_first_and_latest": [
+            "2024-01-31",
+            "2024-02-29",
+            "2024-03-31",
+            "2024-04-30",
+            "2024-05-31",
+            "2024-06-30"
+          ]
+        }
+      ]
+    },
+    {
+      "series": "Уровень безработицы",
+      "unit": "percent",
+      "age": "15+",
+      "frequency": "monthly, NSA",
+      "date_semantics": "report month end",
+      "september_2026_present": false,
+      "candidates": [
+        {
+          "source_key": "sdds-xlsx",
+          "point_count": 0,
+          "latest_actual": null,
+          "september_2026": [],
+          "reason": "No corresponding rate row in workbook"
+        },
+        {
+          "source_key": "emiss-57341-download",
+          "point_count": 115,
+          "first_actual": "2017-01-31",
+          "latest_actual": "2026-08-31",
+          "september_2026": [],
+          "months_2026": [
+            "2026-01-31",
+            "2026-02-28",
+            "2026-03-31",
+            "2026-04-30",
+            "2026-05-31",
+            "2026-06-30",
+            "2026-07-31",
+            "2026-08-31"
+          ],
+          "latest_cell": {
+            "date": "2026-08-31",
+            "cell": "P23",
+            "raw_value": "2.2",
+            "geography_label": "643004.АГ Российская Федерация без учета новых субъектов (с 01.01.2023)",
+            "age_label": "207 15 лет и старше",
+            "unit_label": "744 процент"
+          },
+          "missing_months_between_first_and_latest": [
+            "2025-06-30"
+          ]
+        }
+      ]
+    }
+  ],
+  "source_evidence": [
+    {
+      "key": "sdds-xlsx",
+      "url": "https://rosstat.gov.ru/storage/mediabank/SDDS_labor_market.xlsx",
+      "format_verified": "XLSX parsed ZIP/XML",
+      "age_geography_evidence": {
+        "A8": "1 С января 2017 года данные по выборочному обследованию рабочей силы приводятся по населению в возрасте 15 лет и старше.",
+        "A9": "2 Без учета статистической информации по Донецкой Народной Республике, Луганской Народной Республике, Запорожской и Херсонской областям."
+      },
+      "series": {
+        "Рабочая сила": {
+          "point_count": 117,
+          "first_actual": "2017-01-31",
+          "latest_actual": "2026-09-30",
+          "september_2026": [
+            {
+              "date": "2026-09-30",
+              "cell": "EM2",
+              "raw_value": "76.693804396899353",
+              "raw_unit": "million persons",
+              "value_thousand": "76693.804396899353000"
+            }
+          ],
+          "months_2026": [
+            "2026-01-31",
+            "2026-02-28",
+            "2026-03-31",
+            "2026-04-30",
+            "2026-05-31",
+            "2026-06-30",
+            "2026-07-31",
+            "2026-08-31",
+            "2026-09-30"
+          ],
+          "latest_cell": {
+            "date": "2026-09-30",
+            "cell": "EM2",
+            "raw_value": "76.693804396899353",
+            "raw_unit": "million persons",
+            "value_thousand": "76693.804396899353000"
+          },
+          "missing_months_between_first_and_latest": []
+        },
+        "Занятые": {
+          "point_count": 117,
+          "first_actual": "2017-01-31",
+          "latest_actual": "2026-09-30",
+          "september_2026": [
+            {
+              "date": "2026-09-30",
+              "cell": "EM3",
+              "raw_value": "75.042681504717152",
+              "raw_unit": "million persons",
+              "value_thousand": "75042.681504717152000"
+            }
+          ],
+          "months_2026": [
+            "2026-01-31",
+            "2026-02-28",
+            "2026-03-31",
+            "2026-04-30",
+            "2026-05-31",
+            "2026-06-30",
+            "2026-07-31",
+            "2026-08-31",
+            "2026-09-30"
+          ],
+          "latest_cell": {
+            "date": "2026-09-30",
+            "cell": "EM3",
+            "raw_value": "75.042681504717152",
+            "raw_unit": "million persons",
+            "value_thousand": "75042.681504717152000"
+          },
+          "missing_months_between_first_and_latest": []
+        },
+        "Безработные": {
+          "point_count": 117,
+          "first_actual": "2017-01-31",
+          "latest_actual": "2026-09-30",
+          "september_2026": [
+            {
+              "date": "2026-09-30",
+              "cell": "EM4",
+              "raw_value": "1.6511228921822021",
+              "raw_unit": "million persons",
+              "value_thousand": "1651.1228921822021000"
+            }
+          ],
+          "months_2026": [
+            "2026-01-31",
+            "2026-02-28",
+            "2026-03-31",
+            "2026-04-30",
+            "2026-05-31",
+            "2026-06-30",
+            "2026-07-31",
+            "2026-08-31",
+            "2026-09-30"
+          ],
+          "latest_cell": {
+            "date": "2026-09-30",
+            "cell": "EM4",
+            "raw_value": "1.6511228921822021",
+            "raw_unit": "million persons",
+            "value_thousand": "1651.1228921822021000"
+          },
+          "missing_months_between_first_and_latest": []
+        },
+        "Уровень участия в составе рабочей силы": {
+          "point_count": 0,
+          "latest_actual": null,
+          "september_2026": [],
+          "reason": "No corresponding rate row in workbook"
+        },
+        "Уровень занятости": {
+          "point_count": 0,
+          "latest_actual": null,
+          "september_2026": [],
+          "reason": "No corresponding rate row in workbook"
+        },
+        "Уровень безработицы": {
+          "point_count": 0,
+          "latest_actual": null,
+          "september_2026": [],
+          "reason": "No corresponding rate row in workbook"
+        }
+      },
+      "source_hash": "70b53e0e07399f0ef9c0b2cf536a3881dbf242f4b5729690de57ed7b69107a1c"
+    },
+    {
+      "key": "emiss-60970-download",
+      "url": "https://fedstat.ru/indicator/60970/download",
+      "format_verified": "XLS OLE/BIFF parsed xlrd",
+      "source_hash": "d7d5d8972a715f82506e2511db211066dd991789b7778d3795726df2a7f46619",
+      "series_name": "Рабочая сила",
+      "series": {
+        "Рабочая сила": {
+          "point_count": 116,
+          "first_actual": "2017-01-31",
+          "latest_actual": "2026-08-31",
+          "september_2026": [],
+          "months_2026": [
+            "2026-01-31",
+            "2026-02-28",
+            "2026-03-31",
+            "2026-04-30",
+            "2026-05-31",
+            "2026-06-30",
+            "2026-07-31",
+            "2026-08-31"
+          ],
+          "latest_cell": {
+            "date": "2026-08-31",
+            "cell": "N23",
+            "raw_value": "76668.7",
+            "geography_label": "643004.АГ Российская Федерация без учета новых субъектов (с 01.01.2023)",
+            "age_label": "207 15 лет и старше",
+            "unit_label": "793 тысяча человек"
+          },
+          "missing_months_between_first_and_latest": []
+        }
+      },
+      "passport_evidence": {
+        "Единицы измерения: ": "* тысяча человек",
+        "Период действия: ": "с 01.01.2017",
+        "Длина временного ряда: ": "2017 - 2026",
+        "Последнее обновление данных: ": "15.10.2026",
+        "Методологические пояснения: ": "Рабочая сила – лица в возрасте 15 лет и старше, которые   в рассматриваемый период (обследуемую неделю) считаются занятыми или безработными.  ",
+        "Комментарий: ": " Статистические данные по Российской Федерации публикуются без учета статистической информации по Донецкой Народной Республике (ДНР), Луганской Народной Республике (ЛНР), Запорожской и Херсонской областям"
+      }
+    },
+    {
+      "key": "emiss-60973-download",
+      "url": "https://fedstat.ru/indicator/60973/download",
+      "format_verified": "XLS OLE/BIFF parsed xlrd",
+      "source_hash": "55dfec5483c3620f19dba287c1fcbcff6cfea9019930542469b3dbdce71fd7ab",
+      "series_name": "Уровень занятости",
+      "series": {
+        "Уровень занятости": {
+          "point_count": 62,
+          "first_actual": "2021-01-31",
+          "latest_actual": "2026-08-31",
+          "september_2026": [],
+          "months_2026": [
+            "2026-01-31",
+            "2026-02-28",
+            "2026-03-31",
+            "2026-04-30",
+            "2026-05-31",
+            "2026-06-30",
+            "2026-07-31",
+            "2026-08-31"
+          ],
+          "latest_cell": {
+            "date": "2026-08-31",
+            "cell": "J25",
+            "raw_value": "61.8",
+            "geography_label": "643004.АГ Российская Федерация без учета новых субъектов (с 01.01.2023)",
+            "age_label": "207 15 лет и старше",
+            "unit_label": "744 процент"
+          },
+          "missing_months_between_first_and_latest": [
+            "2024-01-31",
+            "2024-02-29",
+            "2024-03-31",
+            "2024-04-30",
+            "2024-05-31",
+            "2024-06-30"
+          ]
+        }
+      },
+      "passport_evidence": {
+        "Единицы измерения: ": "* процент",
+        "Период действия: ": "с 01.01.2017",
+        "Длина временного ряда: ": "2021 - 2026",
+        "Последнее обновление данных: ": "15.10.2026",
+        "Методологические пояснения: ": "Уровень занятости населения – отношение численности занятого населения определенной возрастной группы к общей численности населения соответствующей возрастной группы, рассчитанное в процентах.",
+        "Комментарий: ": " Статистические данные по Российской Федерации публикуются без учета статистической информации по Донецкой Народной Республике (ДНР), Луганской Народной Республике (ЛНР), Запорожской и Херсонской областям"
+      }
+    },
+    {
+      "key": "emiss-60974-download",
+      "url": "https://fedstat.ru/indicator/60974/download",
+      "format_verified": "XLS OLE/BIFF parsed xlrd",
+      "source_hash": "d1ef77425ac5f9ee2315fe9e68a3ddbca8e39dcfeb441588cd08afee24db0c0a",
+      "series_name": "Уровень участия в составе рабочей силы",
+      "series": {
+        "Уровень участия в составе рабочей силы": {
+          "point_count": 68,
+          "first_actual": "2021-01-31",
+          "latest_actual": "2026-08-31",
+          "september_2026": [],
+          "months_2026": [
+            "2026-01-31",
+            "2026-02-28",
+            "2026-03-31",
+            "2026-04-30",
+            "2026-05-31",
+            "2026-06-30",
+            "2026-07-31",
+            "2026-08-31"
+          ],
+          "latest_cell": {
+            "date": "2026-08-31",
+            "cell": "J24",
+            "raw_value": "63.1",
+            "geography_label": "643004.АГ Российская Федерация без учета новых субъектов (с 01.01.2023)",
+            "age_label": "207 15 лет и старше",
+            "unit_label": "744 процент"
+          },
+          "missing_months_between_first_and_latest": []
+        }
+      },
+      "passport_evidence": {
+        "Единицы измерения: ": "* процент",
+        "Период действия: ": "с 01.01.2017",
+        "Длина временного ряда: ": "2021 - 2026",
+        "Последнее обновление данных: ": "15.10.2026",
+        "Методологические пояснения: ": "Уровень участия в составе рабочей силы – отношение численности рабочей силы (занятых и безработных) определенной возрастной группы к общей численности населения соответствующей возрастной группы, рассчитанное в процентах.",
+        "Комментарий: ": " Статистические данные по Российской Федерации публикуются без учета статистической информации по Донецкой Народной Республике (ДНР), Луганской Народной Республике (ЛНР), Запорожской и Херсонской областям"
+      }
+    },
+    {
+      "key": "emiss-57341-download",
+      "url": "https://fedstat.ru/indicator/57341/download",
+      "format_verified": "XLS OLE/BIFF parsed xlrd",
+      "source_hash": "92dc29a4cd66892149c7e5fbde9a311b93d26e15196c8b96d1b50ef13162c78f",
+      "series_name": "Уровень безработицы",
+      "series": {
+        "Уровень безработицы": {
+          "point_count": 115,
+          "first_actual": "2017-01-31",
+          "latest_actual": "2026-08-31",
+          "september_2026": [],
+          "months_2026": [
+            "2026-01-31",
+            "2026-02-28",
+            "2026-03-31",
+            "2026-04-30",
+            "2026-05-31",
+            "2026-06-30",
+            "2026-07-31",
+            "2026-08-31"
+          ],
+          "latest_cell": {
+            "date": "2026-08-31",
+            "cell": "P23",
+            "raw_value": "2.2",
+            "geography_label": "643004.АГ Российская Федерация без учета новых субъектов (с 01.01.2023)",
+            "age_label": "207 15 лет и старше",
+            "unit_label": "744 процент"
+          },
+          "missing_months_between_first_and_latest": [
+            "2025-06-30"
+          ]
+        }
+      },
+      "passport_evidence": {
+        "Единицы измерения: ": "* процент",
+        "Период действия: ": "с 01.01.2015",
+        "Длина временного ряда: ": "2015 - 2026",
+        "Последнее обновление данных: ": "22.10.2026",
+        "Методологические пояснения: ": "Уровень безработицы (по методологии МОТ) - отношение численности безработных определенной возрастной группы к численности рабочей силы соответствующей возрастной группы, рассчитанное в процентах. Данные получены по материалам выборочных обследований рабочей силы. С 2017 года обследованию подлежат лица в возрасте от 15 лет и старше (до 2017 года – лица в возрасте 15-72 лет).  ",
+        "Комментарий: ": " Статистические данные по Российской Федерации публикуются без учета статистической информации по Донецкой Народной Республике (ДНР), Луганской Народной Республике (ЛНР), Запорожской и Херсонской областям"
+      }
+    }
+  ]
+}

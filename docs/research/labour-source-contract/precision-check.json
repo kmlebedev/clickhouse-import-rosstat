@@ -1,0 +1,32 @@
+{
+  "baseline_months": 116,
+  "SDDS_months": 117,
+  "coarse_cells": 32,
+  "half_tie_dates": [
+    "2023-08-31",
+    "2024-05-31"
+  ],
+  "baseline_max_sum_error_thousand": "0.001",
+  "September_derived_u_percent": "2.152876500476425968804498747",
+  "September_conditional_u_interval": [
+    "2.152875834497755085269057512",
+    "2.152877166455105535944573530"
+  ],
+  "September_conditional_p_interval": [
+    "63.10865049220711422418756604",
+    "63.21085240244881155322907218"
+  ],
+  "p_counterexamples": [
+    {
+      "latent_p": "63.12",
+      "implied_e": "61.76110435289928083380492853",
+      "rounded_p": "63.1"
+    },
+    {
+      "latent_p": "63.18",
+      "implied_e": "61.81981262699899497908421078",
+      "rounded_p": "63.2"
+    }
+  ],
+  "official_monthly_p": "not established; PDF official e/u inputs are parent-verified, not re-fetched by this helper"
+}
