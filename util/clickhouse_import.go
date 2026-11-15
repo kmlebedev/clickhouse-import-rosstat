@@ -40,6 +40,9 @@ type ClickHouseImport struct {
 	// TableName. Нужен импортёрам, чей Name() не равен TableName (cbr_mo_br, cbr_mp_survey
 	// пишут в общую macro_series).
 	PublicationSource string
+	// PublicationAlwaysRead retains fingerprint/archive/version tracking but disables
+	// count-only no-op. Missing-date importers must compare the actual source dates.
+	PublicationAlwaysRead bool
 	// AfterImport вызывается после успешного Send точек и до записи строки версии: здесь
 	// импортёр публикует производные (series_catalog, витрину). Ошибка отменяет запись версии —
 	// порядок «точки -> производные -> версия», иначе сбой публикации каталога заблокировал бы
@@ -113,7 +116,7 @@ func abortBatch(batch driver.Batch, what string) {
 func (s *ClickHouseImport) importXlsBody(ctx context.Context, body []byte, conn driver.Conn) (count int64, err error) {
 	xlsx, err := excelize.OpenReader(bytes.NewReader(body))
 	if err != nil {
-		return 0, fmt.Errorf("%s: excelize %v", s.TableName, err)
+		return 0, &SourceReadError{URL: s.DataUrl, Err: fmt.Errorf("%s: excelize: %w", s.TableName, err)}
 	}
 	defer func() { _ = xlsx.Close() }()
 	batch, err := conn.PrepareBatch(ctx, fmt.Sprintf("INSERT INTO %s", s.TableName))
@@ -201,6 +204,9 @@ func (s *ClickHouseImport) Import(ctx context.Context, conn driver.Conn) (count 
 		if err != nil {
 			return 0, err
 		}
+		if s.PublicationAlwaysRead {
+			noop = false
+		}
 		if noop && fingerprint != "" {
 			// «Версия известна» и «версия в архиве» — одно утверждение механизма: no-op при
 			// отсутствующем объекте означал бы версию, которую из архива уже не восстановить
@@ -253,7 +259,7 @@ func (s *ClickHouseImport) Import(ctx context.Context, conn driver.Conn) (count 
 			fingerprint = entry.Fingerprint
 			log.Infof("%s: версия из архива: %s (%s)", s.PublicationKey(), entry.Key, s.DataUrl)
 		} else if body, err = GetFileBytes(s.DataUrl); err != nil {
-			return count, err
+			return count, &SourceReadError{URL: s.DataUrl, Err: err}
 		}
 		if s.BodyFunc != nil {
 			log.Infof("Get file %+v", s.DataUrl)

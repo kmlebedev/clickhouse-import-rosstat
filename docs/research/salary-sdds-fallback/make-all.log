@@ -1,0 +1,44 @@
+0 issues.
+go vet ./...
+go test -race ./...
+?   	github.com/kmlebedev/clickhouse-import-rosstat	[no test files]
+ok  	github.com/kmlebedev/clickhouse-import-rosstat/archive	4.773s
+ok  	github.com/kmlebedev/clickhouse-import-rosstat/bank	11.808s
+ok  	github.com/kmlebedev/clickhouse-import-rosstat/bea	3.039s
+ok  	github.com/kmlebedev/clickhouse-import-rosstat/bls	2.500s
+ok  	github.com/kmlebedev/clickhouse-import-rosstat/bold	4.173s
+ok  	github.com/kmlebedev/clickhouse-import-rosstat/calendar	3.704s
+ok  	github.com/kmlebedev/clickhouse-import-rosstat/cbr	180.278s
+?   	github.com/kmlebedev/clickhouse-import-rosstat/chimport	[no test files]
+?   	github.com/kmlebedev/clickhouse-import-rosstat/cmd/ingest	[no test files]
+ok  	github.com/kmlebedev/clickhouse-import-rosstat/craw	4.604s
+?   	github.com/kmlebedev/clickhouse-import-rosstat/customs	[no test files]
+ok  	github.com/kmlebedev/clickhouse-import-rosstat/dcf	5.689s
+ok  	github.com/kmlebedev/clickhouse-import-rosstat/domrf	12.356s
+ok  	github.com/kmlebedev/clickhouse-import-rosstat/edisclosure	4.654s
+ok  	github.com/kmlebedev/clickhouse-import-rosstat/eia	2.528s
+ok  	github.com/kmlebedev/clickhouse-import-rosstat/fao	2.900s
+ok  	github.com/kmlebedev/clickhouse-import-rosstat/fedstat	7.388s
+?   	github.com/kmlebedev/clickhouse-import-rosstat/financial	[no test files]
+?   	github.com/kmlebedev/clickhouse-import-rosstat/financial/exporter	[no test files]
+ok  	github.com/kmlebedev/clickhouse-import-rosstat/fns	21.655s
+ok  	github.com/kmlebedev/clickhouse-import-rosstat/forecast	4.219s
+ok  	github.com/kmlebedev/clickhouse-import-rosstat/fred	4.404s
+ok  	github.com/kmlebedev/clickhouse-import-rosstat/gold	3.195s
+ok  	github.com/kmlebedev/clickhouse-import-rosstat/ingest	4.011s
+ok  	github.com/kmlebedev/clickhouse-import-rosstat/minec	4.260s
+ok  	github.com/kmlebedev/clickhouse-import-rosstat/minfin	9.345s
+ok  	github.com/kmlebedev/clickhouse-import-rosstat/mlregistry	3.134s
+ok  	github.com/kmlebedev/clickhouse-import-rosstat/moex	3.267s
+ok  	github.com/kmlebedev/clickhouse-import-rosstat/news	24.068s
+ok  	github.com/kmlebedev/clickhouse-import-rosstat/ofz	3.920s
+ok  	github.com/kmlebedev/clickhouse-import-rosstat/polyus	15.024s
+ok  	github.com/kmlebedev/clickhouse-import-rosstat/ppi	4.145s
+ok  	github.com/kmlebedev/clickhouse-import-rosstat/rosstat	157.378s
+ok  	github.com/kmlebedev/clickhouse-import-rosstat/transaq	4.676s
+ok  	github.com/kmlebedev/clickhouse-import-rosstat/util	5.171s
+ok  	github.com/kmlebedev/clickhouse-import-rosstat/views	5.555s
+ok  	github.com/kmlebedev/clickhouse-import-rosstat/weeklysa	3.881s
+ok  	github.com/kmlebedev/clickhouse-import-rosstat/wgc	106.047s
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o build/clickhouse-import-rosstat .
+go build -o build/ingest ./cmd/ingest
