@@ -3326,6 +3326,33 @@ async def check(params, server_log):
                                  (ofz_null_n or 0) > 0 and ofz_nulls == ofz_null_n,
                                  ofz_null_detail)
 
+            # Датировка ИПЦ (дефект Ф2 бэктеста economist-oracle, #622/#626): значение
+            # становится доступно с даты публикации Росстата (rosstat_ipc_pubdates →
+            # series_publication, 2022-05+), а не с конца отчётного месяца. Май 2025
+            # опубликован 11.06.2025: 4 июня в строке ещё апрельский ИПЦ (10,23), 11 июня —
+            # уже майский (9,89). Проверка пинит оба края и наличие точных дат Росстата.
+            cpi_dates = text(await session.call_tool("run_query", {
+                "query": "SELECT toString(date) AS d, round(inflation_yoy, 2) AS cpi_yoy FROM v_ofz_signal "
+                         "WHERE date IN ('2025-06-04', '2025-06-11') ORDER BY date"}))
+            cpi_date_rows = result_rows(cpi_dates)
+            cpi_by_date = {row.get("d"): row.get("cpi_yoy") for row in (cpi_date_rows or [])}
+            failed += not expect("v_ofz_signal: до публикации ИПЦ — предыдущий месяц (2025-06-04 = 10,23)",
+                                 cpi_by_date.get("2025-06-04") == 10.23, cpi_dates[:200])
+            failed += not expect("v_ofz_signal: в день публикации — новый ИПЦ (2025-06-11 = 9,89)",
+                                 cpi_by_date.get("2025-06-11") == 9.89, cpi_dates[:200])
+
+            rosstat_pubdates = text(await session.call_tool("run_query", {
+                "query": "SELECT count() AS n FROM v_series_publication "
+                         "WHERE source='rosstat' AND quality='date'"}))
+            rosstat_pubdates_rows = result_rows(rosstat_pubdates)
+            rosstat_pubdates_n = rosstat_pubdates_rows[0].get("n") if rosstat_pubdates_rows else None
+            failed += not expect("v_series_publication: точные даты Росстата ≥ 40 месяцев",
+                                 (rosstat_pubdates_n or 0) >= 40, rosstat_pubdates[:200])
+            raw = text(await session.call_tool("run_query", {"query": "SELECT count() FROM rosstat_ipc_pubdates"}))
+            denied = "ACCESS_DENIED" in raw or "Not enough privileges" in raw
+            failed += not expect("сырая rosstat_ipc_pubdates закрыта", denied,
+                                 f"отказ ClickHouse 497 на rosstat_ipc_pubdates (ожидаемо)" if denied else raw[:200])
+
             # Каталог обязан описывать все 12 теноров КБД (0.25…30) — точным равенством, а не
             # «> 0»: 12 = набор колонок «Срок до погашения, лет» источника, который код
             # объявляет сам (стандарт §6.8). Выборка по origin, а не по source: у source='cbr'
