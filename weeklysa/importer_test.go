@@ -59,7 +59,9 @@ func TestBuildRows(t *testing.T) {
 		{Date: weeklyDate(2020, 2, 29), SA: 101},
 	}
 	published := sql.NullTime{Time: weeklyDate(2026, 10, 22), Valid: true}
-	rows, err := buildRows(months, sa, published)
+	vintage := weeklyDate(2026, 11, 2)
+	computedAt := weeklyDate(2026, 11, 8)
+	rows, err := buildRows(months, sa, published, vintage, computedAt)
 	if err != nil {
 		t.Fatalf("buildRows: %v", err)
 	}
@@ -72,6 +74,9 @@ func TestBuildRows(t *testing.T) {
 		}
 		if !row.PublishedAt.Valid || !row.PublishedAt.Time.Equal(published.Time) {
 			t.Errorf("published_at %v", row.PublishedAt)
+		}
+		if !row.Vintage.Equal(vintage) || !row.ComputedAt.Equal(computedAt) {
+			t.Errorf("винтаж %s/%s", row.Vintage.Format("2006-01-02"), row.ComputedAt.Format("2006-01-02"))
 		}
 	}
 	if !rows[0].AsOf.Equal(weeklyDate(2020, 1, 27)) || rows[0].Partial {
@@ -88,6 +93,8 @@ func TestSchemaLiterals(t *testing.T) {
 		"CREATE TABLE IF NOT EXISTS weekly_cpi_sa",
 		"ReplacingMergeTree(loaded_at)",
 		"ORDER BY (date, series, method, spec_version)",
+		"vintage        Date",
+		"computed_at    DateTime('Europe/Moscow')",
 		"sa_index       Float64",
 		"sa_4w          Float64",
 		"saar           Float64",
@@ -98,6 +105,47 @@ func TestSchemaLiterals(t *testing.T) {
 		if !strings.Contains(weeklySADdl, fragment) {
 			t.Errorf("DDL не содержит %q", fragment)
 		}
+	}
+}
+
+// TestWeeklySAVintageMigration — миграция винтажей идемпотентна, бэкфилл старых
+// строк однократен и материализует computed_at (иначе DEFAULT now() считается при
+// чтении), а INSERT перечисляет обе колонки винтажа.
+func TestWeeklySAVintageMigration(t *testing.T) {
+	for _, fragment := range []string{"ADD COLUMN IF NOT EXISTS vintage Date", "ADD COLUMN IF NOT EXISTS computed_at DateTime('Europe/Moscow')"} {
+		found := false
+		for _, alter := range weeklySAAlters {
+			if strings.Contains(alter, fragment) {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("в миграциях нет %q", fragment)
+		}
+	}
+	if !strings.Contains(weeklySAVintageBackfill, "vintage = as_of") ||
+		!strings.Contains(weeklySAVintageBackfill, "computed_at = loaded_at") ||
+		!strings.Contains(weeklySAVintageBackfill, "WHERE vintage = '1970-01-01'") {
+		t.Errorf("бэкфилл винтажа неполон: %q", weeklySAVintageBackfill)
+	}
+	if !strings.Contains(weeklySALegacyVintageCount, "vintage = '1970-01-01'") {
+		t.Errorf("guard бэкфилла неверен: %q", weeklySALegacyVintageCount)
+	}
+	if !strings.Contains(weeklySAVintageDdl, "weekly_cpi_sa_vintage") ||
+		!strings.Contains(weeklySAVintageDdl, "ORDER BY (date, series, method, spec_version, vintage, computed_at)") {
+		t.Errorf("DDL истории винтажей неверен: %q", weeklySAVintageDdl)
+	}
+	if !strings.Contains(weeklySAVintageInsert, "weekly_cpi_sa_vintage") ||
+		!strings.Contains(weeklySAVintageInsert, "vintage, computed_at") {
+		t.Errorf("INSERT истории винтажей неверен: %q", weeklySAVintageInsert)
+	}
+	if !strings.Contains(weeklySALegacyVintageCount, "as_of != '1970-01-01'") ||
+		!strings.Contains(weeklySAVintageBackfill, "as_of != '1970-01-01'") {
+		t.Errorf("строки поколения as_of не исключены из бэкфилла: %q / %q",
+			weeklySALegacyVintageCount, weeklySAVintageBackfill)
+	}
+	if !strings.Contains(weeklySAFeatureVersion, "vintage") {
+		t.Errorf("feature-версия не поднята: %q", weeklySAFeatureVersion)
 	}
 }
 
@@ -147,8 +195,34 @@ func TestCatalogAndView(t *testing.T) {
 	if weeklySAView.Name != "v_weekly_cpi_sa" {
 		t.Errorf("имя витрины %q", weeklySAView.Name)
 	}
-	if len(weeklySAView.Columns) != 8 {
-		t.Errorf("комментариев колонок %d, ожидалось 8", len(weeklySAView.Columns))
+	if len(weeklySAView.Columns) != 9 {
+		t.Errorf("комментариев колонок %d, ожидалось 9", len(weeklySAView.Columns))
+	}
+	// Винтажи: последний винтаж — в v_weekly_cpi_sa, история — в v_weekly_cpi_sa_vintage,
+	// срез на дату — в параметризованной v_weekly_cpi_sa_asof (дефект Ф4, #630).
+	for _, fragment := range []string{"vintage", "computed_at = (SELECT max(computed_at)"} {
+		if !strings.Contains(weeklySAView.Select, fragment) {
+			t.Errorf("витрина последнего винтажа не содержит %q", fragment)
+		}
+	}
+	for _, fragment := range []string{"v_weekly_cpi_sa_vintage", "vintage", "computed_at", "published_at"} {
+		if weeklySAVintagesView.Name != "v_weekly_cpi_sa_vintage" && fragment == "v_weekly_cpi_sa_vintage" {
+			t.Errorf("имя витрины винтажей %q", weeklySAVintagesView.Name)
+		}
+		if fragment == "v_weekly_cpi_sa_vintage" {
+			continue
+		}
+		if !strings.Contains(weeklySAVintagesView.Select, fragment) {
+			t.Errorf("витрина винтажей не содержит %q", fragment)
+		}
+	}
+	for _, fragment := range []string{"{vintage_as_of:Date}", "published_at <", "argMax(s.value", "GROUP BY s.source, s.series, s.date"} {
+		if !strings.Contains(weeklySAAsOfView.Select, fragment) {
+			t.Errorf("as-of витрина не содержит %q", fragment)
+		}
+	}
+	if weeklySAAsOfView.Name != "v_weekly_cpi_sa_asof" {
+		t.Errorf("имя as-of витрины %q", weeklySAAsOfView.Name)
 	}
 }
 

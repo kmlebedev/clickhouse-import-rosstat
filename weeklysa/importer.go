@@ -43,6 +43,8 @@ type weeklySARow struct {
 	Series      string
 	Method      string
 	SpecVersion string
+	Vintage     time.Time
+	ComputedAt  time.Time
 	SAIndex     float64
 	SA4W        float64
 	SAAR        float64
@@ -72,6 +74,33 @@ func (s *weeklySAImporter) Import(ctx context.Context, conn driver.Conn) (count 
 		if execErr := conn.Exec(ctx, alter); execErr != nil {
 			return 0, fmt.Errorf("%s: миграция колонок: %w", weeklySATable, execErr)
 		}
+	}
+	if execErr := conn.Exec(ctx, weeklySAVintageDdl); execErr != nil {
+		return 0, fmt.Errorf("%s: DDL истории винтажей: %w", weeklySATable, execErr)
+	}
+	var legacyVintage uint64
+	if scanErr := conn.QueryRow(ctx, weeklySALegacyVintageCount).Scan(&legacyVintage); scanErr != nil {
+		return 0, fmt.Errorf("%s: guard бэкфилла винтажа: %w", weeklySATable, scanErr)
+	}
+	if legacyVintage > 0 {
+		if execErr := conn.Exec(ctx, weeklySAVintageBackfill); execErr != nil {
+			return 0, fmt.Errorf("%s: бэкфилл винтажа: %w", weeklySATable, execErr)
+		}
+		log.Infof("%s: бэкфилл винтажа для %d старых строк", weeklySATable, legacyVintage)
+	}
+	var vintageRows uint64
+	if scanErr := conn.QueryRow(ctx, weeklySAVintageCount).Scan(&vintageRows); scanErr != nil {
+		return 0, fmt.Errorf("%s: guard истории винтажей: %w", weeklySATable, scanErr)
+	}
+	if vintageRows == 0 {
+		if execErr := conn.Exec(ctx, weeklySAVintageBackfillInsert); execErr != nil {
+			return 0, fmt.Errorf("%s: бэкфилл истории винтажей: %w", weeklySATable, execErr)
+		}
+		var copied uint64
+		if scanErr := conn.QueryRow(ctx, weeklySAVintageCount).Scan(&copied); scanErr != nil {
+			return 0, fmt.Errorf("%s: счётчик истории винтажей: %w", weeklySATable, scanErr)
+		}
+		log.Infof("%s: история винтажей заполнена текущими строками (%d)", weeklySATable, copied)
 	}
 
 	bulletin, bi, readErr := readInputs(ctx, conn)
@@ -148,7 +177,9 @@ func (s *weeklySAImporter) Import(ctx context.Context, conn driver.Conn) (count 
 	if publishedErr != nil {
 		return 0, publishedErr
 	}
-	rows, rowsErr := buildRows(months, sa, published)
+	vintage := lastGridDate
+	computedAt := time.Now()
+	rows, rowsErr := buildRows(months, sa, published, vintage, computedAt)
 	if rowsErr != nil {
 		return 0, fmt.Errorf("%s: %w", weeklySATable, rowsErr)
 	}
@@ -166,7 +197,7 @@ func (s *weeklySAImporter) Import(ctx context.Context, conn driver.Conn) (count 
 		if nowcastParseErr != nil {
 			return 0, nowcastParseErr
 		}
-		partialRows, partialRowsErr := buildRows([]monthPoint{*partial}, []saPoint{nowcastSA[len(nowcastSA)-1]}, published)
+		partialRows, partialRowsErr := buildRows([]monthPoint{*partial}, []saPoint{nowcastSA[len(nowcastSA)-1]}, published, vintage, computedAt)
 		if partialRowsErr != nil {
 			return 0, fmt.Errorf("%s: %w", weeklySATable, partialRowsErr)
 		}
@@ -175,6 +206,9 @@ func (s *weeklySAImporter) Import(ctx context.Context, conn driver.Conn) (count 
 	count, insertErr := insertRows(ctx, conn, rows)
 	if insertErr != nil {
 		return count, insertErr
+	}
+	if _, vintageErr := insertVintageRows(ctx, conn, rows); vintageErr != nil {
+		return count, vintageErr
 	}
 
 	if catalogErr := publishWeeklyDerived(ctx, conn); catalogErr != nil {
@@ -284,9 +318,10 @@ func readPublishedAt(ctx context.Context, conn driver.Conn) (sql.NullTime, error
 }
 
 // buildRows проверяет совпадение SA-ряда с месяцами и собирает строки с версией
-// в каждой. AsOf/Partial переносятся из monthPoint: так полные месяцы и
-// nowcast-строка различаются без отдельного SQL-признака по дате.
-func buildRows(months []monthPoint, sa []saPoint, published sql.NullTime) ([]weeklySARow, error) {
+// и винтажом в каждой. AsOf/Partial переносятся из monthPoint: так полные месяцы и
+// nowcast-строка различаются без отдельного SQL-признака по дате. vintage — отсечка
+// входа (последняя неделя сетки), computedAt — момент расчёта: один на прогон.
+func buildRows(months []monthPoint, sa []saPoint, published sql.NullTime, vintage, computedAt time.Time) ([]weeklySARow, error) {
 	metrics, err := computeMetrics(months, sa)
 	if err != nil {
 		return nil, err
@@ -298,6 +333,8 @@ func buildRows(months []monthPoint, sa []saPoint, published sql.NullTime) ([]wee
 			Series:      weeklySASeries,
 			Method:      weeklySAMethod,
 			SpecVersion: weeklySASpecVersion,
+			Vintage:     vintage,
+			ComputedAt:  computedAt,
 			SAIndex:     metric.SAIndex,
 			SA4W:        metric.SA4W,
 			SAAR:        metric.SAAR,
@@ -311,7 +348,7 @@ func buildRows(months []monthPoint, sa []saPoint, published sql.NullTime) ([]wee
 
 // insertRows — один PrepareBatch на прогон, Append с проверкой, Send.
 func insertRows(ctx context.Context, conn driver.Conn, rows []weeklySARow) (int64, error) {
-	batch, err := conn.PrepareBatch(ctx, "INSERT INTO weekly_cpi_sa (date, series, method, spec_version, sa_index, sa_4w, saar, as_of, partial, published_at)")
+	batch, err := conn.PrepareBatch(ctx, "INSERT INTO weekly_cpi_sa (date, series, method, spec_version, vintage, computed_at, sa_index, sa_4w, saar, as_of, partial, published_at)")
 	if err != nil {
 		return 0, err
 	}
@@ -321,6 +358,8 @@ func insertRows(ctx context.Context, conn driver.Conn, rows []weeklySARow) (int6
 			row.Series,
 			row.Method,
 			row.SpecVersion,
+			row.Vintage,
+			row.ComputedAt,
 			row.SAIndex,
 			row.SA4W,
 			row.SAAR,
@@ -330,6 +369,40 @@ func insertRows(ctx context.Context, conn driver.Conn, rows []weeklySARow) (int6
 		); appendErr != nil {
 			if abortErr := batch.Abort(); abortErr != nil {
 				log.Warnf("%s: не удалось закрыть батч после ошибки: %v", weeklySATable, abortErr)
+			}
+			return 0, appendErr
+		}
+	}
+	if sendErr := batch.Send(); sendErr != nil {
+		return 0, sendErr
+	}
+	return int64(len(rows)), nil
+}
+
+// insertVintageRows — тот же батч строк в append-only историю винтажей: ключ с
+// (vintage, computed_at) не даёт новой версии затереть прежнюю.
+func insertVintageRows(ctx context.Context, conn driver.Conn, rows []weeklySARow) (int64, error) {
+	batch, err := conn.PrepareBatch(ctx, weeklySAVintageInsert)
+	if err != nil {
+		return 0, err
+	}
+	for _, row := range rows {
+		if appendErr := batch.Append(
+			row.Date,
+			row.Series,
+			row.Method,
+			row.SpecVersion,
+			row.Vintage,
+			row.ComputedAt,
+			row.SAIndex,
+			row.SA4W,
+			row.SAAR,
+			row.AsOf,
+			row.Partial,
+			nullableDate(row.PublishedAt),
+		); appendErr != nil {
+			if abortErr := batch.Abort(); abortErr != nil {
+				log.Warnf("%s: не удалось закрыть батч истории: %v", weeklySATable, abortErr)
 			}
 			return 0, appendErr
 		}
@@ -353,7 +426,7 @@ func publishWeeklyDerived(ctx context.Context, conn driver.Conn) error {
 	if err := util.UpsertSeriesCatalog(ctx, conn, weeklySASeriesMeta()); err != nil {
 		return err
 	}
-	for _, view := range []util.View{weeklySAView, weeklySAQuarterlyView, weeklySARolling3mView} {
+	for _, view := range []util.View{weeklySAView, weeklySAVintagesView, weeklySAAsOfView, weeklySAQuarterlyView, weeklySARolling3mView} {
 		if _, err := util.CreateView(ctx, conn, view); err != nil {
 			return err
 		}

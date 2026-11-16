@@ -1636,6 +1636,38 @@ async def check(params, server_log):
             failed += not expect("сырая weekly_cpi_sa закрыта", denied,
                                  "отказ ClickHouse 497 на weekly_cpi_sa (ожидаемо)" if denied else raw[:200])
 
+            # Винтажи недельного SA-агрегата (дефект Ф4 бэктеста economist-oracle, #622/#630):
+            # история append-only в weekly_cpi_sa_vintage, срез на дату — по published_at
+            # входа (строгая граница), сырая история закрыта.
+            # На неизменном входе винтаж один по построению (гейт по SHA-256 не пишет дубль);
+            # второй появляется с новым входом. Поэтому >= 1, а не >= 2; ключ таблицы и
+            # поведение as-of проверяются ниже.
+            sa_vintage = text(await session.call_tool("run_query", {
+                "query": "SELECT count() AS rows, uniqExact(vintage) AS vintages FROM v_weekly_cpi_sa_vintage"}))
+            sa_vintage_rows = result_rows(sa_vintage)
+            sa_vintage_n = sa_vintage_rows[0].get("rows") if sa_vintage_rows else None
+            sa_vintage_v = sa_vintage_rows[0].get("vintages") if sa_vintage_rows else None
+            failed += not expect("v_weekly_cpi_sa_vintage: история винтажей",
+                                 (sa_vintage_n or 0) >= 627 and (sa_vintage_v or 0) >= 1, sa_vintage[:200])
+
+            sa_asof = text(await session.call_tool("run_query", {
+                "query": "SELECT count() AS n FROM v_weekly_cpi_sa_asof(vintage_as_of='2099-01-01')"}))
+            sa_asof_rows = result_rows(sa_asof)
+            sa_asof_n = sa_asof_rows[0].get("n") if sa_asof_rows else None
+            failed += not expect("v_weekly_cpi_sa_asof: срез читается", (sa_asof_n or 0) > 0, sa_asof[:200])
+
+            sa_asof_old = text(await session.call_tool("run_query", {
+                "query": "SELECT count() AS n FROM v_weekly_cpi_sa_asof(vintage_as_of='2000-01-01')"}))
+            sa_asof_old_rows = result_rows(sa_asof_old)
+            sa_asof_old_n = sa_asof_old_rows[0].get("n") if sa_asof_old_rows else None
+            failed += not expect("v_weekly_cpi_sa_asof: граница published_at строгая",
+                                 sa_asof_old_n == 0, sa_asof_old[:200])
+
+            raw = text(await session.call_tool("run_query", {"query": "SELECT count() FROM weekly_cpi_sa_vintage"}))
+            denied = "ACCESS_DENIED" in raw or "Not enough privileges" in raw
+            failed += not expect("сырая weekly_cpi_sa_vintage закрыта", denied,
+                                 "отказ ClickHouse 497 на weekly_cpi_sa_vintage (ожидаемо)" if denied else raw[:200])
+
             # Контур ЕМИСС 37426 (пункт key-rate/phase-4-emiss-weekly-prices, импортёр
             # fedstat_weekly_prices): витрина v_fedstat_weekly_prices читается агентом и
             # непуста. Полный срез v1 — 158 товаров, 2 определения РФ (2008–2022 и 2026),
