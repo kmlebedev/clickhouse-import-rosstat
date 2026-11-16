@@ -96,7 +96,11 @@ func (s *weeklySAImporter) Import(ctx context.Context, conn driver.Conn) (count 
 		if execErr := conn.Exec(ctx, weeklySAVintageBackfillInsert); execErr != nil {
 			return 0, fmt.Errorf("%s: бэкфилл истории винтажей: %w", weeklySATable, execErr)
 		}
-		log.Infof("%s: история винтажей заполнена текущими строками", weeklySATable)
+		var copied uint64
+		if scanErr := conn.QueryRow(ctx, weeklySAVintageCount).Scan(&copied); scanErr != nil {
+			return 0, fmt.Errorf("%s: счётчик истории винтажей: %w", weeklySATable, scanErr)
+		}
+		log.Infof("%s: история винтажей заполнена текущими строками (%d)", weeklySATable, copied)
 	}
 
 	bulletin, bi, readErr := readInputs(ctx, conn)
@@ -378,8 +382,7 @@ func insertRows(ctx context.Context, conn driver.Conn, rows []weeklySARow) (int6
 // insertVintageRows — тот же батч строк в append-only историю винтажей: ключ с
 // (vintage, computed_at) не даёт новой версии затереть прежнюю.
 func insertVintageRows(ctx context.Context, conn driver.Conn, rows []weeklySARow) (int64, error) {
-	batch, err := conn.PrepareBatch(ctx, "INSERT INTO "+weeklySAVintageTable+
-		" (date, series, method, spec_version, vintage, computed_at, sa_index, sa_4w, saar, as_of, partial, published_at)")
+	batch, err := conn.PrepareBatch(ctx, weeklySAVintageInsert)
 	if err != nil {
 		return 0, err
 	}

@@ -26,8 +26,8 @@
 - `INSERT` основной таблицы += `vintage, computed_at`; второй батч — `insertVintageRows` в
   `weekly_cpi_sa_vintage`.
 - Миграция/бэкфилл — в начале `Import` после DDL.
-- Гейт по отпечатку не меняется; счётчик `weeklySACountPoints` теперь считает все винтажи —
-  при повторе он совпадает с записанным.
+- Гейт по отпечатку не меняется; `weeklySACountPoints` по-прежнему считает `weekly_cpi_sa FINAL`
+  (основная таблица) — поэтому повтор no-op, а история винтажей не растёт на неизменном входе.
 
 ## Шаг 3. Витрины
 
@@ -42,8 +42,8 @@
 ## Шаг 4. Гранты, проверки, документы
 
 - `sql/mcp_kimi_reader.sql` — `GRANT SELECT` на две новые витрины.
-- `scripts/mcp_check.py` — винтажи (`uniqExact(vintage, computed_at) ≥ 2`), вызов
-  `v_weekly_cpi_sa_asof`, неизменность `v_weekly_cpi_sa`, сырая закрыта.
+- `scripts/mcp_check.py` — винтажи (`uniqExact(vintage) ≥ 1`: на неизменном входе винтаж один
+  по построению), вызов `v_weekly_cpi_sa_asof`, неизменность `v_weekly_cpi_sa`, сырая закрыта.
 - `ARCHITECTURE.md` §6.2 (DDL), §6.3 (витрины и as-of), `docs/IMPORTERS.md`, `docs/ROADMAP_KEY_RATE.md`.
 
 ## Шаг 5. Тесты
@@ -56,8 +56,8 @@
 
 1. `go test ./weeklysa/ -count=1`.
 2. `make all`, `make docs-check`.
-3. `make import STAT=weekly_cpi_sa` — новый винтаж; повтор — 0.
-4. SQL: `v_weekly_cpi_sa` 211 строк с `vintage`; `v_weekly_cpi_sa_vintage` — 2 винтажа;
-   `v_weekly_cpi_sa_asof('2026-11-01')` — 0, `('2026-11-12')` — оба.
+3. `make import STAT=weekly_cpi_sa` — бэкфилл истории и текущий винтаж; повтор — 0.
+4. SQL: `v_weekly_cpi_sa` 633 строки с `vintage`; `v_weekly_cpi_sa_vintage` — 1 винтаж
+   (второй — с новым входом); `v_weekly_cpi_sa_asof('2026-11-14')` — 0, `('2026-11-16')` — текущий.
 5. `make mcp-check`.
 6. Протокол — комментарием в PR, `Closes #630`.

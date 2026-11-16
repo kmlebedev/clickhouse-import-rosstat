@@ -122,6 +122,11 @@ const weeklySAVintageBackfillInsert = `INSERT INTO ` + weeklySAVintageTable + `
 SELECT date, series, method, spec_version, vintage, computed_at, sa_index, sa_4w, saar, as_of, partial, published_at, loaded_at
 FROM weekly_cpi_sa FINAL`
 
+// weeklySAVintageInsert — колонки истории винтажей: те же, что у основной таблицы,
+// плюс отсечка входа и момент расчёта в ключе.
+const weeklySAVintageInsert = "INSERT INTO " + weeklySAVintageTable +
+	" (date, series, method, spec_version, vintage, computed_at, sa_index, sa_4w, saar, as_of, partial, published_at)"
+
 // weeklySAVintageCount — guard бэкфилла истории.
 const weeklySAVintageCount = "SELECT count() FROM " + weeklySAVintageTable + " FINAL"
 
@@ -138,12 +143,14 @@ var weeklySAAlters = []string{
 
 // weeklySALegacyVintageCount — guard однократного бэкфилла: строки, существовавшие
 // до винтажей, несут vintage='1970-01-01'. После UPDATE условие пустое.
-const weeklySALegacyVintageCount = "SELECT count() FROM weekly_cpi_sa WHERE vintage = '1970-01-01'"
+// Строки поколения до миграции as_of (as_of='1970-01-01') не получают осмысленного
+// vintage от UPDATE и остались бы под guard-ом навсегда — они исключены.
+const weeklySALegacyVintageCount = "SELECT count() FROM weekly_cpi_sa WHERE vintage = '1970-01-01' AND as_of != '1970-01-01'"
 
 // weeklySAVintageBackfill — бэкфилл старых строк: отсечка данных у них — as_of
 // (последняя неделя, по которой считали), момент расчёта — loaded_at. UPDATE
 // материализует computed_at, иначе DEFAULT now() показывал бы время запроса.
-const weeklySAVintageBackfill = `ALTER TABLE weekly_cpi_sa UPDATE vintage = as_of, computed_at = loaded_at WHERE vintage = '1970-01-01' SETTINGS mutations_sync=2`
+const weeklySAVintageBackfill = `ALTER TABLE weekly_cpi_sa UPDATE vintage = as_of, computed_at = loaded_at WHERE vintage = '1970-01-01' AND as_of != '1970-01-01' SETTINGS mutations_sync=2`
 
 // checkEmbeddedPins сверяет встроенный R-скрипт с пином. Это не косметика:
 // правка скрипта без bump spec_version сделала бы версию в строке ложной.

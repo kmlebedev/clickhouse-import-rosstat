@@ -135,6 +135,15 @@ func TestWeeklySAVintageMigration(t *testing.T) {
 		!strings.Contains(weeklySAVintageDdl, "ORDER BY (date, series, method, spec_version, vintage, computed_at)") {
 		t.Errorf("DDL истории винтажей неверен: %q", weeklySAVintageDdl)
 	}
+	if !strings.Contains(weeklySAVintageInsert, "weekly_cpi_sa_vintage") ||
+		!strings.Contains(weeklySAVintageInsert, "vintage, computed_at") {
+		t.Errorf("INSERT истории винтажей неверен: %q", weeklySAVintageInsert)
+	}
+	if !strings.Contains(weeklySALegacyVintageCount, "as_of != '1970-01-01'") ||
+		!strings.Contains(weeklySAVintageBackfill, "as_of != '1970-01-01'") {
+		t.Errorf("строки поколения as_of не исключены из бэкфилла: %q / %q",
+			weeklySALegacyVintageCount, weeklySAVintageBackfill)
+	}
 	if !strings.Contains(weeklySAFeatureVersion, "vintage") {
 		t.Errorf("feature-версия не поднята: %q", weeklySAFeatureVersion)
 	}

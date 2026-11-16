@@ -30,6 +30,7 @@
 ## Схема и миграция
 
 ```sql
+-- основная таблица: последний винтаж; ключ не меняется
 CREATE TABLE IF NOT EXISTS weekly_cpi_sa (
     date           Date
   , series         LowCardinality(String)
@@ -45,12 +46,31 @@ CREATE TABLE IF NOT EXISTS weekly_cpi_sa (
   , published_at   Nullable(Date)
   , loaded_at      DateTime DEFAULT now()
 ) ENGINE = ReplacingMergeTree(loaded_at)
+ORDER BY (date, series, method, spec_version);
+
+-- история винтажей: append-only, ключ с отсечкой входа и моментом расчёта
+CREATE TABLE IF NOT EXISTS weekly_cpi_sa_vintage (
+    date           Date
+  , series         LowCardinality(String)
+  , method         LowCardinality(String)
+  , spec_version   LowCardinality(String)
+  , vintage        Date
+  , computed_at    DateTime('Europe/Moscow')
+  , sa_index       Float64
+  , sa_4w          Float64
+  , saar           Float64
+  , as_of          Date
+  , partial        UInt8
+  , published_at   Nullable(Date)
+  , loaded_at      DateTime DEFAULT now()
+) ENGINE = ReplacingMergeTree(loaded_at)
 ORDER BY (date, series, method, spec_version, vintage, computed_at);
 ```
 
 Миграция живой таблицы идемпотентна: `ADD COLUMN IF NOT EXISTS` для `vintage`/`computed_at`;
-бэкфилл старых строк — `vintage = as_of, computed_at = loaded_at` (у них `vintage='1970-01-01'`),
-однократный `ALTER TABLE … UPDATE … SETTINGS mutations_sync=2` под guard-запросом. Пустая
+бэкфилл старых строк — `vintage = as_of, computed_at = loaded_at` (у них `vintage='1970-01-01'`,
+а строки поколения с `as_of='1970-01-01'` исключены из guard-а и UPDATE), однократный
+`ALTER TABLE … UPDATE … SETTINGS mutations_sync=2` под guard-запросом. Пустая
 таблица истории при первом прогоне заполняется копией текущих строк (`INSERT … SELECT …
 FROM weekly_cpi_sa FINAL`) под guard-запросом `count() = 0`.
 `weeklySAFeatureVersion` поднимается (`weekly-cpi-sa-vintage-v2`): первый прогон после фикса
@@ -74,11 +94,17 @@ FROM weekly_cpi_sa FINAL`) под guard-запросом `count() = 0`.
 Гранты `kimi_reader` — на `v_weekly_cpi_sa_vintage` и `v_weekly_cpi_sa_asof`; сырая
 `weekly_cpi_sa` остаётся закрытой.
 
+## Хранение
+
+TTL у истории нет: ~633 строки на новый вход, около 30 тыс. строк в год. При необходимости
+политику хранения (TTL/архив) заводить отдельным пунктом — это осознанно не часть фикса.
+
 ## Инварианты
 
 - `v_weekly_cpi_sa` возвращает ровно один ряд на месяц (211 строк на 2026-11-08: 210 полных +
   nowcast), как до фикса.
-- `v_weekly_cpi_sa_vintage` содержит ≥2 винтажа после приёмки (бэкфилл + новый расчёт).
+- `v_weekly_cpi_sa_vintage` содержит ≥1 винтаж: на неизменном входе винтаж один по построению
+  (гейт по SHA-256 не пишет дубль), второй появляется с новым входом.
 - `v_weekly_cpi_sa_asof` до `published_at` нового винтажа возвращает предыдущий срез; если
   известных винтажей нет — 0 строк, а не ошибка.
 - Формула X-13, `spec_version`, сетка, источники и каталог (`weekly_cpi:*`) не меняются.
@@ -88,7 +114,8 @@ FROM weekly_cpi_sa FINAL`) под guard-запросом `count() = 0`.
 
 - Unit: DDL/ALTER/бэкфилл/INSERT/витрины (vintage/computed_at в ключе и проекциях), фильтр
   последнего винтажа, as-of SQL.
-- Dev: `make import STAT=weekly_cpi_sa` — новый винтаж; повтор — 0. `v_weekly_cpi_sa` — 211
-  строк с `vintage`; `v_weekly_cpi_sa_vintage` — 2 винтажа; `v_weekly_cpi_sa_asof('2026-11-01')`
-  — 0 строк (винтажа ещё не было), `as_of('2026-11-12')` — оба.
+- Dev: `make import STAT=weekly_cpi_sa` — бэкфилл истории и текущий винтаж; повтор — 0.
+  `v_weekly_cpi_sa` — 633 строки с `vintage`; `v_weekly_cpi_sa_vintage` — 1 винтаж;
+  `v_weekly_cpi_sa_asof('2026-11-14')` — 0 строк (до `published_at`), `as_of('2026-11-16')` —
+  текущий винтаж.
 - `make all`, `make docs-check`, `make mcp-check`.

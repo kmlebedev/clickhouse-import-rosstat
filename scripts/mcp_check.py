@@ -1639,6 +1639,9 @@ async def check(params, server_log):
             # Винтажи недельного SA-агрегата (дефект Ф4 бэктеста economist-oracle, #622/#630):
             # история append-only в weekly_cpi_sa_vintage, срез на дату — по published_at
             # входа (строгая граница), сырая история закрыта.
+            # На неизменном входе винтаж один по построению (гейт по SHA-256 не пишет дубль);
+            # второй появляется с новым входом. Поэтому >= 1, а не >= 2; ключ таблицы и
+            # поведение as-of проверяются ниже.
             sa_vintage = text(await session.call_tool("run_query", {
                 "query": "SELECT count() AS rows, uniqExact(vintage) AS vintages FROM v_weekly_cpi_sa_vintage"}))
             sa_vintage_rows = result_rows(sa_vintage)

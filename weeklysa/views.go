@@ -59,7 +59,7 @@ var weeklySAVintagesView = util.View{
 	Select: `SELECT 'weekly_cpi_sa' AS source,
        'weekly_cpi:sa_index' AS series,
        date,
-       toFloat64(sa_index) AS value,
+       toNullable(toFloat64(sa_index)) AS value,
        'индекс (100 = без изменения за 4 недели)' AS unit,
        'M' AS frequency,
        as_of,
@@ -69,10 +69,10 @@ var weeklySAVintagesView = util.View{
        published_at
 FROM weekly_cpi_sa_vintage FINAL
 UNION ALL
-SELECT 'weekly_cpi_sa', 'weekly_cpi:sa_4w', date, toFloat64(sa_4w), '% за 4 недели', 'M', as_of, toUInt8(partial), vintage, computed_at, published_at
+SELECT 'weekly_cpi_sa', 'weekly_cpi:sa_4w', date, toNullable(toFloat64(sa_4w)), '% за 4 недели', 'M', as_of, toUInt8(partial), vintage, computed_at, published_at
 FROM weekly_cpi_sa_vintage FINAL
 UNION ALL
-SELECT 'weekly_cpi_sa', 'weekly_cpi:saar', date, toFloat64(saar), '% годовых', 'M', as_of, toUInt8(partial), vintage, computed_at, published_at
+SELECT 'weekly_cpi_sa', 'weekly_cpi:saar', date, toNullable(toFloat64(saar)), '% годовых', 'M', as_of, toUInt8(partial), vintage, computed_at, published_at
 FROM weekly_cpi_sa_vintage FINAL`,
 	Comment: "История винтажей недельного SA-агрегата ИПЦ: одна строка на (source, series, date, vintage, computed_at). vintage — последняя неделя входа (отсечка данных), computed_at — момент расчёта; ревизия прошлых недель с тем же последним воскресеньем даёт новый винтаж, старый не затирается. published_at — когда конвейер впервые увидел версии обоих источников (Nullable: у старых прогонов строки версии могло не быть). Последний винтаж — v_weekly_cpi_sa; срез «что было известно строго до даты» — v_weekly_cpi_sa_asof(vintage_as_of='YYYY-MM-DD'). Ряд индикативный, не официальный SA ЦБ; сырая weekly_cpi_sa агенту не выдана",
 	Columns: map[string]string{
@@ -84,7 +84,7 @@ FROM weekly_cpi_sa_vintage FINAL`,
 		"frequency":    "Частота: M — месячная сетка, построенная на недельном источнике",
 		"as_of":        "Последняя дата 7-дневной сетки, использованная для месяца в этом винтаже",
 		"partial":      "1 — месяц был неполным (nowcast) в этом винтаже, 0 — полный",
-		"vintage":      "Последняя неделя входа (отсечка данных винтажа)",
+		"vintage":      "Последняя неделя входа (отсечка данных винтажа); у строк, перенесённых из поколения до миграции 2026-11-16, стоит конец отчётного месяца (as_of) — это историческое значение, а не отсечка",
 		"computed_at":  "Момент расчёта винтажа (Europe/Moscow); различает ревизии одного последнего воскресенья",
 		"published_at": "Когда версии обоих источников впервые появились в source_publications (Nullable — у старых прогонов строки версии могло не быть). Граница as-of строгая: published_at < vintage_as_of",
 	},
@@ -105,14 +105,14 @@ var weeklySAAsOfView = util.View{
        max(s.published_at) AS published_at,
        argMax(s.vintage, (s.published_at, s.vintage, s.computed_at)) AS vintage
 FROM (
-    SELECT 'weekly_cpi_sa' AS source, 'weekly_cpi:sa_index' AS series, date, toFloat64(sa_index) AS value,
+    SELECT 'weekly_cpi_sa' AS source, 'weekly_cpi:sa_index' AS series, date, toNullable(toFloat64(sa_index)) AS value,
            as_of, toUInt8(partial) AS partial, vintage, computed_at, published_at
     FROM weekly_cpi_sa_vintage FINAL
     UNION ALL
-    SELECT 'weekly_cpi_sa', 'weekly_cpi:sa_4w', date, toFloat64(sa_4w), as_of, toUInt8(partial), vintage, computed_at, published_at
+    SELECT 'weekly_cpi_sa', 'weekly_cpi:sa_4w', date, toNullable(toFloat64(sa_4w)), as_of, toUInt8(partial), vintage, computed_at, published_at
     FROM weekly_cpi_sa_vintage FINAL
     UNION ALL
-    SELECT 'weekly_cpi_sa', 'weekly_cpi:saar', date, toFloat64(saar), as_of, toUInt8(partial), vintage, computed_at, published_at
+    SELECT 'weekly_cpi_sa', 'weekly_cpi:saar', date, toNullable(toFloat64(saar)), as_of, toUInt8(partial), vintage, computed_at, published_at
     FROM weekly_cpi_sa_vintage FINAL
 ) AS s
 WHERE s.published_at < {vintage_as_of:Date}
