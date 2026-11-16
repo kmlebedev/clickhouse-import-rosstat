@@ -19,6 +19,11 @@ const (
 	cpdArchiveURL     = "https://www.cbr.ru/analytics/dkp/dinamic/"
 	surveyArchiveURL  = "https://www.cbr.ru/analytics/dkp/monitoring/"
 
+	// inflExpSpravkaTitlePrefix — строка календаря ЦБ с датой оперативной справки инФОМ:
+	// волна становится публичной в этот день, а не в дату полного комментария из tooltip
+	// релизного архива (#624). Префикс не совпадает со справкой мониторинга предприятий.
+	inflExpSpravkaTitlePrefix = "Оперативная справка по результатам исследования"
+
 	// Каталожные имена источников: series_publication — generic-слой, его source
 	// должен совпадать с source в v_series_catalog, чтобы lookup шёл по тем же
 	// (source, series), что и чтение значения.
@@ -207,8 +212,9 @@ type publicationPoint struct {
 	Archive string
 }
 
-// writeSeriesPublications — backfill published_at для трёх релизов ЦБ. Точные даты
-// берутся из релизных архивов, для старых периодов остаётся fallback конец M+1.
+// writeSeriesPublications — backfill published_at для трёх релизов ЦБ. Для инфляционных
+// ожиданий дату задаёт оперативная справка инФОМ из календаря, иначе — tooltip релизного
+// архива; для старых периодов остаётся fallback конец M+1.
 func writeSeriesPublications(ctx context.Context, conn driver.Conn) (int64, error) {
 	points, err := loadPublicationPoints(ctx, conn)
 	if err != nil {
@@ -218,8 +224,20 @@ func writeSeriesPublications(ctx context.Context, conn driver.Conn) (int64, erro
 	if err != nil {
 		return 0, err
 	}
-	archives := loadPublicationArchives(ctx, points, existing)
-	desired := buildSeriesPublications(points, archives)
+	spravka, err := loadInflExpSpravkaDates(ctx, conn, time.Now())
+	if err != nil {
+		return 0, err
+	}
+	log.Infof("%s: дат оперативной справки инФОМ %d", util.SeriesPublicationTable, len(spravka))
+	archives := loadPublicationArchives(ctx, points, existing, spravka)
+	desired := buildSeriesPublications(points, archives, spravka)
+	spravkaKeys := make(map[seriesPublicationKey]bool, len(spravka)*2)
+	for _, point := range points {
+		if _, ok := inflExpSpravkaFor(point, spravka); !ok {
+			continue
+		}
+		spravkaKeys[seriesPublicationKey{Source: point.Source, Series: point.Series, Period: point.Date.Format("2006-01-02")}] = true
+	}
 	var changed []util.SeriesPublication
 	for _, row := range desired {
 		key := seriesPublicationKey{
@@ -228,7 +246,7 @@ func writeSeriesPublications(ctx context.Context, conn driver.Conn) (int64, erro
 			Period: row.PeriodDate.Format("2006-01-02"),
 		}
 		old, ok := existing[key]
-		if ok && !seriesPublicationChanged(old, row) {
+		if ok && !seriesPublicationStale(old, row, spravkaKeys[key]) {
 			continue
 		}
 		changed = append(changed, row)
@@ -329,10 +347,50 @@ func loadExistingSeriesPublications(ctx context.Context, conn driver.Conn) (map[
 	return result, nil
 }
 
+// loadInflExpSpravkaDates читает даты оперативных справок инФОМ по месяцу волны из
+// календаря публикаций. Календарь в том же прогоне обновляется до этого чтения, поэтому
+// источник — свежий снимок, без нового сетевого вызова.
+func loadInflExpSpravkaDates(ctx context.Context, conn driver.Conn, today time.Time) (map[publicationPeriod]archivePublication, error) {
+	rows, err := conn.Query(ctx, "SELECT period, publication_date, source_url FROM "+
+		cbrPublicationCalendarTable+" FINAL WHERE topic = ? AND startsWith(title, ?)",
+		publicationCalendarTopicAnalytics, inflExpSpravkaTitlePrefix)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var parsed []spravkaRow
+	for rows.Next() {
+		var row spravkaRow
+		if err = rows.Scan(&row.Period, &row.Date, &row.SourceURL); err != nil {
+			return nil, err
+		}
+		parsed = append(parsed, row)
+	}
+	if err = rows.Err(); err != nil {
+		return nil, err
+	}
+	return spravkaDates(parsed, today), nil
+}
+
+// inflExpSpravkaFor возвращает дату оперативной справки для точки cbr_infl_exp. Справка
+// принимается только для своей волны: её дата не раньше period_date — страховка от сдвига
+// месяца в аналитическом блоке календаря.
+func inflExpSpravkaFor(point publicationPoint, spravka map[publicationPeriod]archivePublication) (archivePublication, bool) {
+	if point.Archive != cbrInflExpTable {
+		return archivePublication{}, false
+	}
+	period := publicationPeriod{Year: point.Date.Year(), Month: point.Date.Month()}
+	publication, ok := spravka[period]
+	if !ok || publication.Date.Before(dateComponents(point.Date)) {
+		return archivePublication{}, false
+	}
+	return publication, true
+}
+
 // loadPublicationArchives качает только те индексы, для которых есть периоды без
 // точной даты. Ошибка сети/разбора — warn и пустая карта: остаётся fallback, прогон
 // не падает (следующий прогон повторит).
-func loadPublicationArchives(ctx context.Context, points []publicationPoint, existing map[seriesPublicationKey]util.SeriesPublication) map[string]map[publicationPeriod]archivePublication {
+func loadPublicationArchives(ctx context.Context, points []publicationPoint, existing map[seriesPublicationKey]util.SeriesPublication, spravka map[publicationPeriod]archivePublication) map[string]map[publicationPeriod]archivePublication {
 	needed := map[string]map[publicationPeriod]bool{}
 	for _, point := range points {
 		key := seriesPublicationKey{
@@ -341,6 +399,9 @@ func loadPublicationArchives(ctx context.Context, points []publicationPoint, exi
 			Period: point.Date.Format("2006-01-02"),
 		}
 		if old, ok := existing[key]; ok && publicationQualityRank(old.Quality) >= publicationQualityRank("date") {
+			continue
+		}
+		if _, ok := inflExpSpravkaFor(point, spravka); ok {
 			continue
 		}
 		period := publicationPeriod{Year: point.Date.Year(), Month: point.Date.Month()}
@@ -467,8 +528,8 @@ func fetchSurveyArchive(periods map[publicationPeriod]bool) map[publicationPerio
 }
 
 // buildSeriesPublications превращает точки источников в строки series_publication:
-// точная дата из архива → quality=date; иначе fallback конец M+1.
-func buildSeriesPublications(points []publicationPoint, archives map[string]map[publicationPeriod]archivePublication) []util.SeriesPublication {
+// оперативная справка инФОМ → точная дата из архива (quality=date), иначе fallback конец M+1.
+func buildSeriesPublications(points []publicationPoint, archives map[string]map[publicationPeriod]archivePublication, spravka map[publicationPeriod]archivePublication) []util.SeriesPublication {
 	result := make([]util.SeriesPublication, 0, len(points))
 	for _, point := range points {
 		period := publicationPeriod{Year: point.Date.Year(), Month: point.Date.Month()}
@@ -480,7 +541,11 @@ func buildSeriesPublications(points []publicationPoint, archives map[string]map[
 			SourceURL:   archiveURLForSource(point.Archive),
 			PublishedAt: fallbackPublishedAt(point.Date),
 		}
-		if publication, ok := archives[point.Archive][period]; ok && !publication.Date.IsZero() {
+		if publication, ok := inflExpSpravkaFor(point, spravka); ok {
+			row.PublishedAt = dateOnlyPublishedAt(publication.Date)
+			row.Quality = "date"
+			row.SourceURL = publication.SourceURL
+		} else if publication, ok := archives[point.Archive][period]; ok && !publication.Date.IsZero() {
 			row.PublishedAt = dateOnlyPublishedAt(publication.Date)
 			row.Quality = "date"
 			row.SourceURL = publication.SourceURL

@@ -192,6 +192,56 @@ func parseSurveyArchive(page []byte) (map[publicationPeriod]string, error) {
 	return result, nil
 }
 
+// spravkaRow — строка календаря с датой оперативной справки инФОМ: period — YYYY-MM
+// аналитического блока.
+type spravkaRow struct {
+	Period    string
+	Date      time.Time
+	SourceURL string
+}
+
+// spravkaDates сводит строки календаря к месяцу волны. Дата в будущем отбрасывается:
+// as-of не должен видеть ещё не вышедшую справку. Из дублей месяца берётся поздняя —
+// ЦБ может перенести дату, и поздняя строка остаётся фактической. Периоды не вида
+// YYYY-MM и строки без ссылки пропускаются: без них lookup по месяцу неоднозначен.
+func spravkaDates(rows []spravkaRow, today time.Time) map[publicationPeriod]archivePublication {
+	result := make(map[publicationPeriod]archivePublication)
+	cutoff := dateComponents(today.In(mskZone))
+	for _, row := range rows {
+		period, ok := parsePublicationPeriod(row.Period)
+		if !ok || row.SourceURL == "" {
+			continue
+		}
+		date := dateComponents(row.Date)
+		if date.After(cutoff) {
+			continue
+		}
+		if existing, ok := result[period]; ok {
+			if date.Before(existing.Date) || (date.Equal(existing.Date) && row.SourceURL <= existing.SourceURL) {
+				continue
+			}
+		}
+		result[period] = archivePublication{Date: date, SourceURL: row.SourceURL}
+	}
+	return result
+}
+
+// parsePublicationPeriod разбирает YYYY-MM аналитического блока календаря.
+func parsePublicationPeriod(raw string) (publicationPeriod, bool) {
+	parsed, err := time.Parse("2006-01", strings.TrimSpace(raw))
+	if err != nil {
+		return publicationPeriod{}, false
+	}
+	return publicationPeriod{Year: parsed.Year(), Month: parsed.Month()}, true
+}
+
+// dateComponents берёт календарные компоненты даты как есть: Date приходит из ClickHouse
+// в зоне сессии (+05:00 на dev-хосте), и пересчёт зоны сдвинул бы день.
+func dateComponents(date time.Time) time.Time {
+	y, m, d := date.Date()
+	return time.Date(y, m, d, 0, 0, 0, 0, time.UTC)
+}
+
 // parsePublicationPageDate берёт дату публикации со страницы версии ЦБ
 // (.news-info-line_date, «14 октября 2026 года»). Нет блока/даты — false:
 // вызывающий оставляет fallback и не роняет прогон.
@@ -310,6 +360,20 @@ func seriesPublicationChanged(existing, desired util.SeriesPublication) bool {
 		return true
 	}
 	return !existing.PublishedAt.Equal(desired.PublishedAt)
+}
+
+// seriesPublicationStale — писать ли новую версию строки. Кроме апгрейда/смены даты,
+// для месяцев с оперативной справкой обновляется ссылка: старая строка могла сохранить
+// source_url полного комментария, который противоречит дате справки. Понижение качества
+// запрещено и здесь: ссылка не повод перезаписать более точную строку.
+func seriesPublicationStale(existing, desired util.SeriesPublication, forceSourceURL bool) bool {
+	if publicationQualityRank(existing.Quality) > publicationQualityRank(desired.Quality) {
+		return false
+	}
+	if seriesPublicationChanged(existing, desired) {
+		return true
+	}
+	return forceSourceURL && existing.SourceURL != desired.SourceURL
 }
 
 func publicationQualityRank(quality string) int {
