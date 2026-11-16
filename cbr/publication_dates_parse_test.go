@@ -221,10 +221,12 @@ func TestSpravkaDates(t *testing.T) {
 		{Period: "2026-11", Date: time.Date(2026, time.November, 19, 0, 0, 0, 0, time.UTC), SourceURL: "future"},
 		{Period: "2026-13", Date: time.Date(2026, time.December, 1, 0, 0, 0, 0, time.UTC), SourceURL: "bad-month"},
 		{Period: "2026-09", Date: time.Date(2026, time.September, 22, 0, 0, 0, 0, time.UTC)},
+		{Period: "2026-08", Date: time.Date(2026, time.August, 19, 0, 0, 0, 0, time.UTC), SourceURL: "aug-a"},
+		{Period: "2026-08", Date: time.Date(2026, time.August, 19, 0, 0, 0, 0, time.UTC), SourceURL: "aug-b"},
 	}
 	got := spravkaDates(rows, today)
-	if len(got) != 2 {
-		t.Fatalf("получено %d месяцев, ожидалось 2: %+v", len(got), got)
+	if len(got) != 3 {
+		t.Fatalf("получено %d месяцев, ожидалось 3: %+v", len(got), got)
 	}
 	july := got[publicationPeriod{Year: 2026, Month: time.July}]
 	if july.Date.Format("2006-01-02") != "2026-07-28" || july.SourceURL != "july-late" {
@@ -233,6 +235,10 @@ func TestSpravkaDates(t *testing.T) {
 	november := got[publicationPeriod{Year: 2026, Month: time.November}]
 	if november.Date.Format("2006-01-02") != "2026-11-16" || november.SourceURL != "today" {
 		t.Errorf("ноябрь: получено %s (%s), ожидалась дата не позже сегодня", november.Date.Format("2006-01-02"), november.SourceURL)
+	}
+	august := got[publicationPeriod{Year: 2026, Month: time.August}]
+	if august.SourceURL != "aug-b" {
+		t.Errorf("август: дубль одной даты разобран в %q, ожидалась детерминированная ссылка aug-b", august.SourceURL)
 	}
 }
 
@@ -301,5 +307,9 @@ func TestSeriesPublicationStale(t *testing.T) {
 	earlier.PublishedAt = published.Add(-24 * time.Hour)
 	if !seriesPublicationStale(existing, earlier, false) {
 		t.Fatal("смена даты должна считаться изменением")
+	}
+	exact := util.SeriesPublication{Quality: "exact_time", PublishedAt: published, SourceURL: "pdf"}
+	if seriesPublicationStale(exact, spravka, true) {
+		t.Fatal("ссылка не должна перезаписывать более точную строку exact_time")
 	}
 }

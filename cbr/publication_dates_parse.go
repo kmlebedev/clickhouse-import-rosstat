@@ -216,8 +216,10 @@ func spravkaDates(rows []spravkaRow, today time.Time) map[publicationPeriod]arch
 		if date.After(cutoff) {
 			continue
 		}
-		if existing, ok := result[period]; ok && !date.After(existing.Date) {
-			continue
+		if existing, ok := result[period]; ok {
+			if date.Before(existing.Date) || (date.Equal(existing.Date) && row.SourceURL <= existing.SourceURL) {
+				continue
+			}
 		}
 		result[period] = archivePublication{Date: date, SourceURL: row.SourceURL}
 	}
@@ -362,8 +364,12 @@ func seriesPublicationChanged(existing, desired util.SeriesPublication) bool {
 
 // seriesPublicationStale — писать ли новую версию строки. Кроме апгрейда/смены даты,
 // для месяцев с оперативной справкой обновляется ссылка: старая строка могла сохранить
-// source_url полного комментария, который противоречит дате справки.
+// source_url полного комментария, который противоречит дате справки. Понижение качества
+// запрещено и здесь: ссылка не повод перезаписать более точную строку.
 func seriesPublicationStale(existing, desired util.SeriesPublication, forceSourceURL bool) bool {
+	if publicationQualityRank(existing.Quality) > publicationQualityRank(desired.Quality) {
+		return false
+	}
 	if seriesPublicationChanged(existing, desired) {
 		return true
 	}
