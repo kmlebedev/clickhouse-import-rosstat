@@ -1,0 +1,117 @@
+# Даты публикации ИПЦ Росстата для `v_ofz_signal` — #626
+
+Пункт `key-rate/phase-4-rosstat-ipc-publication-dates`, role:go. Контекст — дефект Ф2
+бэктеста `economist-oracle` (#622; отчёт `docs/research/2026-11-16-economist-oracle-backtest-data-gaps.md`
+в PR #623).
+
+## Дефект
+
+`v_ofz_signal` (`cbr/views.go`) ASOF-соединяет месячный ИПЦ Росстата (`rosstat_ipc_mes`,
+дата точки — конец отчётного месяца) с доходностью по `c.date >= i.date`. Годовая инфляция
+за май 2025 (9,89 %) стоит на 2–4 июня, хотя Росстат опубликовал её **11.06.2025**: в
+бэктесте и в реальном ряде реальной ставки это утечка будущего.
+
+## Источник даты (проверено 2026-11-16)
+
+Лента новостей Росстата:
+
+```
+https://rosstat.gov.ru/central-news?per_page=20&search=Об индексе потребительских цен в&page=N
+```
+
+Карточка месяца: титул «Об индексе потребительских цен в <месяц> <год> года», дата
+публикации в `.news-card__data` («11 июня 2025») и в имени файла `<id>_DD-MM-YYYY.(html|pdf)`.
+Обе даты совпадают; расхождение — ошибка разбора (fail-closed). Глубина ленты —
+**2022-05 … 2026-09, 49 релизов**; 4-я страница пуста, дальше сайт не отдаёт. Новые
+месяцы появляются на первой странице.
+
+Отклонённые источники: годовой план `/announcements` (только текущий год; `Grafik_srochn_2025.docx`
+и старше — 404), «План выпуска публикаций» (JS-виджет без архива), поиск по сайту
+(`/search` для 2016–2021 отдаёт нерелевантные документы), Wayback (снимки только с 2021,
+сторонний источник).
+
+Решение владельца: **точные даты 2022-05+, раньше — прокси**; Wayback-бэкфилл не делаем.
+
+## Приоритет дат в витрине
+
+Для каждого месяца ИПЦ дата доступности:
+
+1. `series_publication` c `source='rosstat'`, ряд «Индексы потребительских цен на товары и
+   услуги по Российской Федерации» (`rosstat_ipc_pubdates`, 2022-05+);
+2. иначе `series_publication` c `source='cbr'`, ряд «Все товары и услуги» — дата релиза ЦБ
+   «Динамика потребительских цен» (2016+; на 3–7 дней позже Росстата — консервативно);
+3. иначе конец M+1 (до 2016 и для месяцев без прокси).
+
+До даты доступности `inflation_yoy` показывает **предыдущий известный** ИПЦ (ASOF по
+месяцам публикации), а не NULL: точка не исчезает, но будущее не подставляется.
+
+## Схема
+
+Новая таблица (канонический DDL — `ARCHITECTURE.md` §6.2):
+
+```sql
+CREATE TABLE IF NOT EXISTS rosstat_ipc_pubdates (
+    period_date Date,                       -- конец отчётного месяца ИПЦ
+    publication_date Date,                  -- дата релиза Росстата (карточка = имя файла)
+    title String,                           -- титул карточки ленты
+    source_url String,                      -- ссылка на файл релиза
+    loaded_at DateTime('Europe/Moscow') DEFAULT now()
+) ENGINE = ReplacingMergeTree(loaded_at) ORDER BY (period_date);
+```
+
+Импортёр `rosstat_ipc_pubdates` (`rosstat/ipc_pubdates.go`):
+
+- `CrawFunc`: страницы ленты 1..N до первой пустой (сейчас 3); фильтр титула строгим
+  регексом месяца/года; карточки «недельных оценок» и прочие не проходят.
+- Дельта по `period_date`: читает `FINAL`, пишет только новые/изменившиеся строки; повтор —
+  `Imported 0 rows`.
+- `AfterImport`: `util.EnsureSeriesPublication` + backfill `series_publication` строк
+  `(source='rosstat', series='Индексы потребительских цен на товары и услуги по Российской
+  Федерации', period_date, published_at = 23:59:59 MSK publication_date, quality='date',
+  source_url)`. Дельта — по тем же ключам; качество всегда `date`, понижения нет.
+- Регистрация — `rosstat/importers.go` (пятнадцатая запись), без префлайта (лента — список,
+  не файл): дельта по содержимому, как у `cbr_publication_calendar`.
+- `series_catalog` не меняется: ряд ИПЦ уже описан `source='rosstat'`.
+
+## Витрина
+
+`cbrZcycSignalView` (`cbr/views.go`):
+
+- `Tables` += `util.SeriesPublicationTable` (витрина ждёт таблицу публикационных дат).
+- ASOF-ключ правой части ИПЦ — `available_at`:
+
+```sql
+toDate(coalesce(
+    sp_r.published_at,
+    sp_c.published_at,
+    toDateTime(addMonths(toStartOfMonth(w.date), 2) - 1)
+))
+```
+
+где `sp_r` — `series_publication FINAL` по `(source='rosstat', ряд ИПЦ)`, `sp_c` — по
+`(source='cbr', 'Все товары и услуги')`, все на `period_date = w.date`. Оконная функция
+12 месяцев считается по отчётным месяцам до выбора даты доступности.
+- Самоисцеление: `cbrPublicationCalendarImporter.AfterImport` дополнительно создаёт
+  `cbrZcycSignalView` — если `cbr_zcyc` прогнался раньше `rosstat_ipc_pubdates` и витрина
+  была пропущена.
+- Комментарии таблицы и колонки `inflation_yoy`: дата доступности и правило приоритета.
+
+## Инварианты
+
+- `inflation_yoy` в строке `date` относится только к месяцам с `available_at <= date`.
+- `key_rate`, `ofz_*`, спреды, наклон не меняются.
+- Повтор `rosstat_ipc_pubdates` и `cbr_publication_calendar` — no-op.
+- Пустая лента/смена вёрстки — ошибка, а не «0 строк»: карточки обязаны быть.
+
+## Приёмка
+
+- Unit: разбор карточки (дата и титул), регекс титула, сверка даты с именем файла (mismatch →
+  ошибка), дельта (повтор 0), контракт SQL витрины (ключ `available_at`, оба источника).
+- Dev: `make import STAT=rosstat_ipc_pubdates` — 49 строк таблицы и 49 строк
+  `series_publication`; повтор — 0. `make import STAT=cbr_publication_calendar` пересоздаёт
+  витрину.
+- SQL: 2025-06-04 → 10,23 (апрель), 2025-06-11 → 9,89 (май); 2025-05-19 → март (10,34?);
+  2026-10-14 → сентябрьский ИПЦ (не октябрьский).
+- `make all`, `make docs-check`, `make mcp-check` — зелёные; в `mcp_check.py` добавлены
+  проверки датировки (2025-06-04 = 10,23, 2025-06-11 = 9,89).
+- Остаток 1991–2022-04 — прокси/fallback, зафиксирован в issue и роадмапе.
