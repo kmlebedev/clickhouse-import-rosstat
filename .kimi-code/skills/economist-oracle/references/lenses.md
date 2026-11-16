@@ -51,6 +51,30 @@ consecutive surveys, and explains reversals in advance through the signal.
 Verify each of these against step 5 of the workflow (base rates) for the
 current regime rather than taking them on trust.
 
+**Hypothesis under test — the signal sets the direction; the data set the
+size.** Not yet validated: its first replay did not improve the score, and
+the escape clause below is where it failed. Apply it, but say in the report
+that it is a hypothesis, and record whether the decision followed the
+signal so the tally can confirm or drop it. This is the rule
+the lens most often breaks when it is argued from the data rather than from
+the Board's words: data between meetings run hot, the lens moves toward a
+pause, and the Board does what its last signal said instead — changing the
+size of the step and the wording of the next signal rather than the
+direction. Departures from the signal, when they happen, have tended to
+be in the softer direction, on credit and activity evidence (lens D's
+ground).
+
+So, while the last signal points one way, keep most of the probability on
+that direction and let the data argue about the step size. Moving the mode
+against the signal (a pause after an easing signal, a hike after a neutral
+one) needs a condition the Board itself named in the last summary, met by
+data dated after that summary — quote both. A condition met does not by
+itself flip the mode: say how far it moved the probability and keep the
+signalled direction above its prior share unless two or more of the Board's
+named conditions are met. The tally rests on few meetings;
+recount it from the press releases and query 3 each run, and record in the
+report whether the new decision followed its signal.
+
 **How this lens fails.** It extrapolates the Board's plan. The Board's own
 forecasts have been revised upward more often than downward since 2021; a
 lens that only reads the plan misses the meeting where the plan changes.
@@ -223,6 +247,15 @@ weights in words and numbers and defend them with the current evidence:
   this is where B, C and D earn their place. Use the one-off ledger to
   decide between them: rows classified *react* support C and B, rows
   classified *look through* with weak activity support D.
+- **B and C argue the same side** (hypothesis under test, like the signal
+  rule in §1). Both say "tighter than the plan" —
+  Volcker from expectations and money, the asymmetric-shock lens from the
+  shock record. Counting them as two independent votes against one dovish
+  lens tilts every synthesis hawkish. Treat B and C together as one side
+  and D as the other: unless the ledger and the data clearly favour one
+  side, their combined weights should be about equal (for example A 0.5,
+  B 0.125, C 0.125, D 0.25), and any departure from that balance gets its
+  own sentence of evidence.
 - For the **tails**, ask each lens for the outcome it considers most
   under-priced and keep at least 5% on it.
 - Where two lenses give opposite paths and the evidence does not separate
@@ -232,3 +265,4 @@ weights in words and numbers and defend them with the current evidence:
 Record in the report which lens was closest to the outcome at each resolved
 meeting. After six or more resolved meetings that tally — not any prior
 conviction — is the main guide to the weights.
+

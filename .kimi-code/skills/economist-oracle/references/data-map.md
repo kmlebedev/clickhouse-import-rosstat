@@ -2,7 +2,7 @@
 
 All queries go through `mcp__clickhouse__run_query` as `kimi_reader`
 (read-only, `v_*` views only). Everything below was run against the dev
-instance on 2026-11-15; columns and series names are the real ones. Views
+instance on 2026-11-17; columns and series names are the real ones. Views
 change, so when a query fails run `DESCRIBE v_<name>` and read the column
 comments rather than guessing. The canonical registry is `ARCHITECTURE.md`
 §6.3; if a view below does not exist on the instance, say so in the report
@@ -38,16 +38,17 @@ Three mechanical things cost a run more time than any economics:
 | Block | View | What to take |
 |---|---|---|
 | One-row-per-signal overview | `v_key_rate_dashboard` | `contour, indicator, value, unit, as_of, target_date, threshold, flag, stale, error_bp, probabilities, model, data_version`; contours `spot`, `fundamental`, `market`, `divergence`, `forecast`, `calendar` |
-| Meeting dates, past and future | `v_events_calendar` | `category = 'cbr'` and title `СД ЦБ РФ: заседание по ключевой ставке`: every meeting since 2014 and the published schedule ahead; `emergency = 1` marks unscheduled ones |
+| Meeting dates, past and future | `v_events_calendar` | `category = 'cbr'` and title `СД ЦБ РФ: заседание по ключевой ставке`: every meeting since 2014 and the published schedule ahead; `emergency = 1` marks unscheduled ones; `source = 'canonical'` marks importer rows, `created_at` the row's first write |
 | Key rate, RUONIA, FX | `v_cbr_macro` | `cbr_key_rate` (daily, working days, from 2013-09), `cbr_ruania_ruo`, `cbr_currency_usd` |
 | Household expectations | `v_cbr_macro` | `ожидаемая инфляция`, `наблюдаемая инфляция` — monthly from 2017, dated the 14th of the survey month; the dashboard's `infl_exp_expected` is the last point |
 | Money, credit, deposits | `v_cbr_macro` | `М2 SA`, `Денежная масса М2`, `Кредит экономике`, `Требования к организациям`, `Требования к населению*`, `Депозиты населения`; core CPI index `Базовый ИПЦ` |
 | Lending and deposit rates | `v_cbr_macro` | bare maturity labels (`Всего: свыше 1 года`, `от 1 года до 3 лет`, `Всего (кредиты физлицам): по всем срокам`, `Средневзвешенная ставка по жилищным кредитам, РФ`) — resolve which is a loan and which a deposit through `v_series_catalog` before quoting |
 | CPI monthly, weekly, labour, wages, GDP | `v_rosstat_macro` | Russian titles: `Индексы потребительских цен на товары и услуги…`, `Индекс потребительских цен (недельная оценка)`, `Уровень безработицы`, `Среднемесячная номинальная начисленная заработная плата…`; the rest of the view is weekly prices of individual goods |
-| Weekly CPI, seasonally adjusted | `v_weekly_cpi_sa`, `v_weekly_cpi_rolling3m` | series `weekly_cpi:saar`, `weekly_cpi:sa_4w`, `weekly_cpi:sa_index`, one row per month (month-end date), `as_of` = last week included, `partial = 1` for the unfinished month; `saar_3m` in the rolling view |
+| Weekly CPI, seasonally adjusted | `v_weekly_cpi_sa`, `v_weekly_cpi_rolling3m`, `v_weekly_cpi_sa_vintage`, `v_weekly_cpi_sa_asof` | series `weekly_cpi:saar`, `weekly_cpi:sa_4w`, `weekly_cpi:sa_index`, one row per month (month-end date), `as_of` = last week included, `partial = 1` for the unfinished month; `saar_3m` in the rolling view; for an as-of slice use `v_weekly_cpi_sa_asof(vintage_as_of='YYYY-MM-DD')`, whose history starts on 2026-11-09 |
 | Business surveys | `v_cbr_survey` | `price_expectations_sa`, `price_growth_expected_sa`, `business_climate_sa`, `capacity_utilization_sa`, `headcount_expectations_sa`, `staff_availability_sa`, `credit_conditions`; 80 more `industry_*` series |
 | Budget | `v_minfin_budget` | sources `minfin`, `minfin_mesyats`, `minfin_oil_gas`; `Доходы, всего`, `Расходы, всего`, `Дефицит (-)/Профицит (+)`, `Нефтегазовые доходы, всего`; defence closed since 2022 |
-| External | `v_cbr_bop`, `v_moex_market` | `cbr_bop_est` (monthly estimate, 2025 on) and `cbr_bop_standard` (quarterly since 1994), period in the series name: `Счет текущих операций (месяц)`; `v_moex_market` holds only `brent_front` |
+| External | `v_cbr_bop`, `v_moex_market`, `v_minec_macro` | `cbr_bop_est` (monthly estimate, 2025 on) and `cbr_bop_standard` (quarterly since 1994), period in the series name: `Счет текущих операций (месяц)`; Brent — `v_moex_market` `brent_front` (daily, 2009 on); Urals — `v_minec_macro` `urals_avg_price` (monthly, 2018 on) |
+| Fuel prices | `v_rosstat_macro`, `v_fedstat_weekly_prices` | weekly retail petrol: `Бензин автомобильный марки АИ-92, л` (and АИ-95, АИ-98) in `v_rosstat_macro` from 2022, `Бензин автомобильный` from 2009; `v_fedstat_weekly_prices` from 2008 |
 | Liquidity, money market | `v_cbr_liquidity`, `v_cbr_mirac` | `kind = 'daily'`: `deficit`, `corr_accounts`; `kind = 'averaging'`: `structural_deficit`, `ruonia_spread_bp`; MIACR by `name` and `tenor` |
 | Market-implied rate | `v_keyrate_expectations` | `date, secid, series_name, decision_date, settle, close, volume, openposition, expected_change_bp` |
 | OFZ | `v_ofz_signal`, dashboard `market` rows | `ofz_1y, ofz_2y, ofz_10y, key_rate, slope_10y_1y_pp, real_yield_10y_pp`; `v_ofz_curve_compare` by `tenor` |
@@ -245,8 +246,13 @@ FROM h;
   seasonally adjusted CPI. For headline use `v_weekly_cpi_sa`
   (`weekly_cpi:saar`, with `partial`) and `v_weekly_cpi_rolling3m`, and say
   which was used. A partial month annualised from one or two weeks swings
-  wildly (0.6% in the first week of November 2026 against 6.5% over three
-  months) — quote the three-month figure next to it.
+  wildly — the first week can show under 1% against 6% over three months —
+  so quote the three-month figure next to it. `v_weekly_cpi_sa`
+  holds the last vintage only and `v_weekly_cpi_sa_vintage` starts on
+  2026-11-09, so a replay before that date cannot recover the SA value
+  known then: use raw weekly CPI levels (`Индекс потребительских цен
+  (недельная оценка)`) and compute the month-to-date change yourself, and
+  record the gap in `data_gaps.json`.
 - **Budget series exist in two sources.** `Доходы, всего` and the balance
   are in both `minfin` and `minfin_mesyats`; filter by `source` or every
   sum doubles. There is no cumulative series — sum the months of the year.
@@ -259,7 +265,37 @@ FROM h;
   under about 100 contracts as "no market price" and compare the path
   beyond it with the OFZ curve only in direction.
 - **`v_ofz_signal` can lag the dashboard's OFZ rows** by a week; take the
-  fresher of the two and give its date.
+  fresher of the two and give its date. Its `inflation_yoy` is stamped on
+  the CPI publication day (Rosstat's exact date where known, the Bank's
+  "Consumer price dynamics" release otherwise, end of M+1 as a fallback) —
+  the May 2025 CPI appears on 2025-06-11, not on the first yield days of
+  June. For an intraday as-of slice use `date < cutoff`: the row date is
+  the publication day. `v_ofz_curve` holds the G-curve back to 2010 (over
+  4 000 days); a result of a handful of rows means the filter was too
+  narrow.
+- **Provenance of event-calendar rows.** `category = 'cbr'` belongs to the
+  importer: analyst notes such as `СД ЦБ РФ: база — −25 б.п. до 13,75%`
+  were retired on 2026-11-16 and `v_events_calendar` hides them. Filter
+  meetings by the exact title or `source = 'canonical'`. `created_at` is
+  the row's first write, but for every row that existed before 2026-11-16
+  it is the migration moment, so `created_at <= as_of` is meaningful only
+  for replays after that date; before it, limit by `event_date`.
+- **Household-expectations publication date.** `v_series_publication`
+  dates each wave by the inFOM note from 2025-01 and by the later full
+  commentary before that (2024-07-14 → 2024-07-29); the Bank's calendar
+  starts on 2025-01-10. Use `published_at < cutoff` as the as-of filter and
+  cross-check the month against `v_cbr_publication_calendar` (query 10).
+  For a replay before 2025 a wave dated after the cutoff may in fact have
+  been out: do not rescue it with an assumed date — drop it, and record it
+  in `data_gaps.json`.
+- **Bank ranges are revised, not wrong.** A next-year `key_rate_avg` range
+  that looks impossible against today's rate is a real vintage the Bank may
+  later raise. Report it, run `bound` on it, and say it would need a
+  revision; that need is itself information about the next core meeting.
+- **Enterprise monitoring loads late.** The wave the Bank publishes around
+  the 14th–24th can be missing for weeks (October 2026 wave absent on
+  2026-11-16); list it as stale rather than using the previous wave as
+  current.
 - **Channel tags.** Eleven slugs; `kind` in (`prose`, `note`, `risk_pro`,
   `risk_dez`); `method` = `regex` or `llm`, and `llm` rows come from three
   different `model`s with different coverage (only `deepseek-chat` reaches

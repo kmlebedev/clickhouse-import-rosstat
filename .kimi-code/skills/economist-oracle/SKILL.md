@@ -83,7 +83,13 @@ Two consequences to handle:
   the `period` of the latest note in `v_cbr_publication_calendar` (query 10
   in the data map; the point is dated by the survey, the 14th, so the dates
   themselves never match). If the note is out but the wave is not loaded,
-  ask the owner to run the importer.
+  ask the owner to run the importer. `v_series_publication.published_at`
+  carries the inFOM note date itself for waves from 2025-01 (2026-07-14 →
+  2026-07-21, 2026-09-14 → 2026-09-22), so it works as an as-of filter
+  there. Before 2025-01 it still carries the later full commentary
+  (2024-07-14 → 2024-07-29): the Bank's calendar starts on 2025-01-10, the
+  note date for those years is unknown, and dropping the wave is the
+  conservative choice — say so instead of assuming a date.
 - **A run before the note is still a run.** When the user asks for the call
   before this month's note is out, do it — on last month's wave — and say
   so in the first line of the report, with the date the note is due. That
@@ -242,7 +248,7 @@ strongest single piece of evidence available.
 
 Check that the constraint actually binds before leaning on it. With one
 meeting left the current-year range has usually collapsed to a point that
-both a hold and a cut satisfy (December 2026: 14.6 either way) — then say
+both a hold and a cut satisfy (the same rounded average either way) — then say
 it is uninformative and move the same check to next year's range: run
 `bound` for the next year without `--ytd-*`, with `--rate` set to the rate
 each December outcome would leave in force on 1 January and all of next
@@ -258,12 +264,17 @@ why trying a few schedules by hand misleads.
 Combine the lenses into one distribution and one path. State the weights and
 the reason for them in a sentence each — as a default, lens A dominates the
 next decision, while B, C and D shape the path beyond two meetings and the
-tails. Then check three things:
+tails. Then check these:
 
 - the path is internally consistent (the annual average of the low, base
   and high paths, from `rate_math.py avg`, is stated for every year the
   path touches and compared with the Bank's range);
 - the distance from the base-rate prior is explained;
+- the mode follows the direction of the Board's last signal, or the report
+  names the condition from the last summary that the new data meet
+  (lenses.md §1; a hypothesis under test — say so in the report);
+- lenses B and C, which argue the same side, do not outweigh D by default
+  (lenses.md §5);
 - the single observation that would most change the call before the meeting
   is named, with its publication date from `v_cbr_publication_calendar`;
 - nothing that supports the call was made for a different meeting. Another
@@ -349,25 +360,26 @@ destroys the track record that gives the exercise its value.
 
 ```bash
 python3 .kimi-code/skills/economist-oracle/scripts/rate_math.py avg \
-  --year 2026 --ytd-avg 14.68 --ytd-through 2026-11-15 --rate 14.0 \
-  --meeting 2026-12-18:13.75 --range 14.6:14.6
+  --year 2031 --ytd-avg 9.68 --ytd-through 2031-11-15 --rate 9.0 \
+  --meeting 2031-12-19:8.75 --range 9.6:9.6
 # a year that has not started: no --ytd-*, --rate is the rate on 1 January
 python3 .kimi-code/skills/economist-oracle/scripts/rate_math.py avg \
-  --year 2027 --rate 13.75 --meeting 2027-02-12:13.5 --meeting 2027-03-19:13.25 \
-  --range 12.5:13.5
+  --year 2032 --rate 8.75 --meeting 2032-02-13:8.5 --meeting 2032-03-19:8.25 \
+  --range 7.5:8.5
 # every path over these meetings and step sizes: what the range really requires
 python3 .kimi-code/skills/economist-oracle/scripts/rate_math.py bound \
-  --year 2027 --rate 14.0 --meeting 2027-02-12 --meeting 2027-03-19 \
-  --meeting 2027-04-30 --steps=-50,-25,0 --range 12.5:13.5
+  --year 2032 --rate 9.0 --meeting 2032-02-13 --meeting 2032-03-19 \
+  --meeting 2032-04-30 --steps=-50,-25,0 --range 7.5:8.5
 # one contract: result per outcome, and the expectation, kept apart
 python3 .kimi-code/skills/economist-oracle/scripts/rate_math.py paper \
-  --entry 13.94 --rate 14.0 --probs '{"-25":20,"0":75,"25":5}'
+  --entry 8.94 --rate 9.0 --probs '{"-25":20,"0":75,"25":5}'
 python3 .kimi-code/skills/economist-oracle/scripts/rate_math.py score \
   --probs '{"-100":0.2,"-50":0.6,"0":0.2}' --market '{"-50":0.5,"0":0.5}' \
   --outcome -50
 ```
 
-The numbers in these examples show the argument format; take real values
+The numbers in these examples are invented on purpose — real ones would tell
+a replay of a past meeting how it ended. They show the argument format; take real values
 from the views (`--ytd-avg` from query 4 of the data map — a calendar-day
 average, not `avg()` over the working-day rows). `--meeting` takes the
 meeting date; the script applies the change three days later, when it takes
