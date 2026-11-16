@@ -145,16 +145,17 @@ func parseIpcPubdates(page []byte) (releases []ipcPubdate, cards int, err error)
 				ipcPubdatesContext, title, published.Format("2006-01-02"), period.Format("2006-01-02"))
 			return false
 		}
+		resolved := ipcPubdatesResolveURL(href)
 		key := period.Format("2006-01-02")
 		if old, ok := seen[key]; ok {
-			if !old.Publication.Equal(published) || old.URL != href {
+			if !old.Publication.Equal(published) || old.URL != resolved {
 				err = fmt.Errorf("%s: месяц %s пришёл дважды с разными датами (%s и %s)",
 					ipcPubdatesContext, period.Format("2006-01"), old.Publication.Format("2006-01-02"), published.Format("2006-01-02"))
 				return false
 			}
 			return true
 		}
-		row := ipcPubdate{Period: period, Publication: published, Title: title, URL: href}
+		row := ipcPubdate{Period: period, Publication: published, Title: title, URL: resolved}
 		seen[key] = row
 		releases = append(releases, row)
 		return true
@@ -168,6 +169,20 @@ func ipcPubdatesCyrillic(raw string) string {
 	return strings.NewReplacer(
 		"a", "а", "e", "е", "o", "о", "p", "р", "c", "с", "x", "х", "y", "у",
 	).Replace(raw)
+}
+
+// ipcPubdatesResolveURL достраивает относительную ссылку ленты до абсолютной:
+// карточки отдают и полный URL, и путь от корня.
+func ipcPubdatesResolveURL(href string) string {
+	href = strings.TrimSpace(href)
+	switch {
+	case strings.HasPrefix(href, "http://"), strings.HasPrefix(href, "https://"):
+		return href
+	case strings.HasPrefix(href, "/"):
+		return rosstatUrl + href
+	default:
+		return rosstatUrl + "/" + href
+	}
 }
 
 // ipcPubdatesPeriod — отчётный месяц из титула: «в мае 2025 года» → 2025-05-31.
@@ -240,11 +255,9 @@ func ipcPubdatesFileDate(href string) (time.Time, bool) {
 	return date, true
 }
 
-// fetchIpcPubdates обходит страницы ленты до первой без карточек. Пустая первая страница
-// — ошибка (вёрстка/доступ), пустая следующая — конец архива.
+// fetchIpcPubdates обходит страницы ленты до первой без карточек.
 func fetchIpcPubdates() ([]ipcPubdate, error) {
-	var releases []ipcPubdate
-	for page := 1; page <= ipcPubdatesMaxPages; page++ {
+	return fetchIpcPubdatesWith(func(page int) ([]byte, error) {
 		feedURL, err := ipcPubdatesFeedURL(page)
 		if err != nil {
 			return nil, err
@@ -252,6 +265,21 @@ func fetchIpcPubdates() ([]ipcPubdate, error) {
 		body, err := util.GetPage(feedURL)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %s: %w", ipcPubdatesContext, feedURL, err)
+		}
+		return body, nil
+	})
+}
+
+// fetchIpcPubdatesWith — обход с подменяемым источником страниц: пустая первая страница
+// — ошибка (вёрстка/доступ), пустая следующая — конец архива. Повторы месяца между
+// страницами отбрасываются: при игнорировании page источник отдал бы ту же строку.
+func fetchIpcPubdatesWith(readPage func(page int) ([]byte, error)) ([]ipcPubdate, error) {
+	var releases []ipcPubdate
+	seen := make(map[string]bool)
+	for page := 1; page <= ipcPubdatesMaxPages; page++ {
+		body, err := readPage(page)
+		if err != nil {
+			return nil, err
 		}
 		pageReleases, cards, err := parseIpcPubdates(body)
 		if err != nil {
@@ -263,12 +291,50 @@ func fetchIpcPubdates() ([]ipcPubdate, error) {
 			}
 			break
 		}
-		releases = append(releases, pageReleases...)
+		for _, row := range pageReleases {
+			key := ipcPubdateKey(row.Period)
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			releases = append(releases, row)
+		}
+		if page == ipcPubdatesMaxPages {
+			log.Warnf("%s: обход остановлен на %d страницах — проверьте глубину ленты", ipcPubdatesContext, ipcPubdatesMaxPages)
+		}
 	}
 	if len(releases) == 0 {
 		return nil, fmt.Errorf("%s: лента не дала ни одного месячного релиза ИПЦ", ipcPubdatesContext)
 	}
+	warnIpcPubdatesGaps(releases)
 	return releases, nil
+}
+
+// warnIpcPubdatesGaps — диагностика полноты: лента не гарантирует каждый месяц.
+// На 2026-11-16 в ней нет карточек за 2026-05 … 2026-08 (для этих месяцев витрина
+// берёт дату релиза ЦБ). Пропуск не ошибка, но каждый прогон пишет его списком.
+func warnIpcPubdatesGaps(releases []ipcPubdate) {
+	seen := make(map[string]bool, len(releases))
+	var oldest, newest time.Time
+	for _, row := range releases {
+		seen[row.Period.Format("2006-01")] = true
+		if oldest.IsZero() || row.Period.Before(oldest) {
+			oldest = row.Period
+		}
+		if newest.IsZero() || row.Period.After(newest) {
+			newest = row.Period
+		}
+	}
+	var gaps []string
+	for month := time.Date(oldest.Year(), oldest.Month(), 1, 0, 0, 0, 0, time.UTC); !month.After(newest); month = month.AddDate(0, 1, 0) {
+		if !seen[month.Format("2006-01")] {
+			gaps = append(gaps, month.Format("2006-01"))
+		}
+	}
+	if len(gaps) > 0 {
+		log.Warnf("%s: в ленте нет месячных релизов за %s — для этих месяцев дата берётся из релиза ЦБ",
+			ipcPubdatesContext, strings.Join(gaps, ", "))
+	}
 }
 
 // crawlIpcPubdates — полный цикл: DDL таблицы, обход ленты, дельта-запись.

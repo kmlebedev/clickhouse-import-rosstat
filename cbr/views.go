@@ -476,9 +476,13 @@ var cbrZcycCompareView = util.View{
 //
 // Дата доступности ИПЦ — не конец отчётного месяца, а публикация: точная дата
 // Росстата (series_publication, source='rosstat', 2022-05+), иначе дата релиза ЦБ
-// «Динамика потребительских цен» (source='cbr', с 2016), иначе конец M+1. ASOF идёт
-// по available_at: до публикации в строке стоит предыдущий известный ИПЦ, а не
-// будущий (дефект Ф2, #622/#626).
+// «Динамика потребительских цен» (source='cbr', с 2016), иначе конец M+1. Прокси-дата
+// принимается, только если она позже конца отчётного месяца: у части строк ЦБ
+// 2016–2018 привязка «файл → месяц» ошибочна и дата лежит внутри месяца (29 строк),
+// иначе витрина подставила бы ИПЦ несуществующего на ту дату месяца. При совпадении
+// available_at двух месяцев берётся более поздний. ASOF идёт по available_at: до
+// публикации в строке стоит предыдущий известный ИПЦ, а не будущий (дефект Ф2,
+// #622/#626).
 var cbrZcycSignalView = util.View{
 	Name:   "v_ofz_signal",
 	Tables: []string{cbrZcycTable, "cbr_key_rate", "rosstat_ipc_mes", util.SeriesPublicationTable},
@@ -503,11 +507,14 @@ var cbrZcycSignalView = util.View{
     ) AS k
       ON c._one = k._one AND c.date >= k.date
     ASOF LEFT JOIN (
-        SELECT available_at, toNullable(cpi_yoy) AS cpi_yoy, 1 AS _one FROM (
+        SELECT available_at, toNullable(argMax(cpi_yoy, period)) AS cpi_yoy, 1 AS _one FROM (
             SELECT w.date AS period,
                    w.cpi_yoy,
-                   coalesce(toDate(sp_r.published_at), toDate(sp_c.published_at),
-                            addMonths(toStartOfMonth(w.date), 2) - 1) AS available_at
+                   coalesce(
+                       if(toDate(sp_r.published_at) > w.date, toDate(sp_r.published_at), NULL),
+                       if(toDate(sp_c.published_at) > w.date, toDate(sp_c.published_at), NULL),
+                       addMonths(toStartOfMonth(w.date), 2) - 1
+                   ) AS available_at
             FROM (
                 SELECT date,
                        if(count() OVER (ORDER BY date ROWS BETWEEN 11 PRECEDING AND CURRENT ROW) = 12,
@@ -529,7 +536,7 @@ var cbrZcycSignalView = util.View{
                 FROM series_publication FINAL
                 WHERE source = 'cbr' AND series = 'Все товары и услуги'
             ) AS sp_c ON sp_c.period_date = w.date
-        ) ORDER BY available_at
+        ) GROUP BY available_at ORDER BY available_at
     ) AS i ON c._one = i._one AND c.date >= i.available_at`,
 	Comment: "Сигналы долгового рынка по КБД ЦБ: одна строка на дату публикации кривой " +
 		"(cbr_zcyc, торговый день). ofz_1y/ofz_2y/ofz_10y — доходность ОФЗ соответствующего " +
@@ -558,7 +565,7 @@ var cbrZcycSignalView = util.View{
 		"ofz_10y_minus_key_rate_pp": "Спред ofz_10y − key_rate, п.п.: положительный — «ОФЗ выше ключевой», отрицательный — ниже. NULL, если нет ставки или точки",
 		"ofz_2y_minus_key_rate_pp":  "Спред ofz_2y − key_rate, п.п.: короткий конец кривой против ключевой ставки. NULL, если нет ставки или точки",
 		"slope_10y_1y_pp":           "Наклон кривой 10y − 1y, п.п.: положительный — нормальная форма, отрицательный — инверсия. NULL, если нет одной из точек",
-		"inflation_yoy":             "ИПЦ Росстата г/г, %: произведение 12 месячных индексов rosstat_ipc_mes к отчётному месяцу; первые 11 строк ряда ИПЦ — NULL (незаконченный год не считается), но окно берёт 12 строк, а не 12 календарных месяцев — пропуск месяца в источнике оконная функция не ловит. Дата доступности — публикация ИПЦ: точная дата Росстата (series_publication, с 2022-05), иначе дата релиза ЦБ «Динамика потребительских цен» (с 2016), иначе конец M+1; до неё стоит предыдущий известный ИПЦ. NULL — нет точки ИПЦ, а не ноль",
+		"inflation_yoy":             "ИПЦ Росстата г/г, %: произведение 12 месячных индексов rosstat_ipc_mes к отчётному месяцу; первые 11 строк ряда ИПЦ — NULL (незаконченный год не считается), но окно берёт 12 строк, а не 12 календарных месяцев — пропуск месяца в источнике оконная функция не ловит. Дата доступности — публикация ИПЦ: точная дата Росстата (series_publication, с 2022-05), иначе дата релиза ЦБ «Динамика потребительских цен» (с 2016; принимается только позже конца отчётного месяца), иначе конец M+1; до неё стоит предыдущий известный ИПЦ. Дата считается днём публикации: для внутридневных срезов это мягче правила published_at < cutoff. NULL — нет точки ИПЦ, а не ноль",
 		"real_yield_10y_pp":         "Реальная доходность ofz_10y − inflation_yoy, п.п. (ex post, без инфляционных ожиданий). NULL, если нет точки или ИПЦ",
 	},
 }

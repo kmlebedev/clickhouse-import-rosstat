@@ -3337,9 +3337,19 @@ async def check(params, server_log):
             cpi_date_rows = result_rows(cpi_dates)
             cpi_by_date = {row.get("d"): row.get("cpi_yoy") for row in (cpi_date_rows or [])}
             failed += not expect("v_ofz_signal: до публикации ИПЦ — предыдущий месяц (2025-06-04 = 10,23)",
-                                 cpi_by_date.get("2025-06-04") == 10.23, cpi_dates[:200])
+                                 abs((cpi_by_date.get("2025-06-04") or 0) - 10.23) < 0.005, cpi_dates[:200])
             failed += not expect("v_ofz_signal: в день публикации — новый ИПЦ (2025-06-11 = 9,89)",
-                                 cpi_by_date.get("2025-06-11") == 9.89, cpi_dates[:200])
+                                 abs((cpi_by_date.get("2025-06-11") or 0) - 9.89) < 0.005, cpi_dates[:200])
+
+            # Прокси-дата ЦБ принимается только позже конца отчётного месяца: у части
+            # строк 2016–2018 привязка «файл → месяц» ошибочна (2018-08-31 → 2018-08-10),
+            # и без guard витрина подставила бы августовский ИПЦ 10 августа.
+            proxy_guard = text(await session.call_tool("run_query", {
+                "query": "SELECT round(inflation_yoy, 2) AS cpi_yoy FROM v_ofz_signal WHERE date = '2018-08-10'"}))
+            proxy_guard_rows = result_rows(proxy_guard)
+            proxy_guard_yoy = proxy_guard_rows[0].get("cpi_yoy") if proxy_guard_rows else None
+            failed += not expect("v_ofz_signal: прокси ЦБ не подставляет ИПЦ внутри месяца (2018-08-10 = 2,3)",
+                                 abs((proxy_guard_yoy or 0) - 2.3) < 0.005, proxy_guard[:200])
 
             rosstat_pubdates = text(await session.call_tool("run_query", {
                 "query": "SELECT count() AS n FROM v_series_publication "

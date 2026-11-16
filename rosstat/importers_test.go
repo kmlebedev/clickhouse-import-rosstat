@@ -21,7 +21,7 @@ const (
 	// v_model_inputs и агент MCP).
 	rosstatNamePrefix = "rosstat_"
 	// sharedMacroSeriesTable — общая таблица вне rosstat_-пространства. У пакета rosstat
-	// её нет (в отличие от cbr/macro_series): все двенадцать импортёров владеют своей таблицей,
+	// её нет (в отличие от cbr/macro_series): все пятнадцать импортёров владеют своей таблицей,
 	// поэтому исключение пусто и проверка (б) сводится к «таблица с префиксом» и
 	// «Name() совпадает с именем таблицы».
 	sharedMacroSeriesTable = ""
@@ -146,7 +146,7 @@ func TestRosstatImportersPrefixedAndRegistered(t *testing.T) {
 
 		// (б)
 		if imp.table == sharedMacroSeriesTable {
-			t.Errorf("импортёр %q не объявил таблицу: общей таблицы вне префикса %q у пакета нет — все двенадцать импортёров владеют своей", name, rosstatNamePrefix)
+			t.Errorf("импортёр %q не объявил таблицу: общей таблицы вне префикса %q у пакета нет — все пятнадцать импортёров владеют своей", name, rosstatNamePrefix)
 			continue
 		}
 		if !strings.HasPrefix(imp.table, rosstatNamePrefix) {

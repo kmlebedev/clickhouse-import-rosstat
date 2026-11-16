@@ -55,6 +55,9 @@ func TestParseIpcPubdates(t *testing.T) {
 	if got := september.Publication.Format("2006-01-02"); got != "2026-10-09" {
 		t.Errorf("сентябрь: публикация %s, ожидалась 2026-10-09", got)
 	}
+	if want := rosstatUrl + "/storage/mediabank/157_09-10-2026.pdf"; september.URL != want {
+		t.Errorf("сентябрь: ссылка %q, ожидалась абсолютная %q", september.URL, want)
+	}
 }
 
 func TestParseIpcPubdatesCardDateMismatch(t *testing.T) {
@@ -178,5 +181,45 @@ func TestIpcPubdateChangedDateZone(t *testing.T) {
 	desired.Publication = time.Date(2025, time.June, 10, 0, 0, 0, 0, time.UTC)
 	if !ipcPubdateChanged(existing, desired) {
 		t.Fatal("другая дата должна считаться изменением")
+	}
+}
+
+// TestFetchIpcPubdatesWithPages — обход идёт до пустой страницы; повтор месяца между
+// страницами отбрасывается, пустая первая страница — ошибка.
+func TestFetchIpcPubdatesWithPages(t *testing.T) {
+	fixture := readIpcPubdatesFixture(t, "ipc_pubdates_feed.html")
+	empty := []byte(`<html><body></body></html>`)
+	got, err := fetchIpcPubdatesWith(func(page int) ([]byte, error) {
+		switch page {
+		case 1:
+			return fixture, nil
+		case 2:
+			return fixture, nil // источник проигнорировал page — дубли не должны размножиться
+		default:
+			return empty, nil
+		}
+	})
+	if err != nil {
+		t.Fatalf("fetchIpcPubdatesWith: %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("релизов %d, ожидалось 3 без дублей: %+v", len(got), got)
+	}
+}
+
+func TestFetchIpcPubdatesEmptyFirstPage(t *testing.T) {
+	_, err := fetchIpcPubdatesWith(func(int) ([]byte, error) {
+		return []byte(`<html><body></body></html>`), nil
+	})
+	if err == nil || !strings.Contains(err.Error(), "первой странице") {
+		t.Fatalf("ожидалась ошибка пустой первой страницы, получено %v", err)
+	}
+}
+
+// TestIpcPubdatesSeriesMatchesCatalog — имя ряда в series_publication задано кодом и
+// обязано совпадать с каталогом (ipcMesSeriesNames), иначе join витрины молча пуст.
+func TestIpcPubdatesSeriesMatchesCatalog(t *testing.T) {
+	if ipcPubdatesSeries != ipcMesSeriesNames[1] {
+		t.Fatalf("ряд %q не совпадает с каталогом %q", ipcPubdatesSeries, ipcMesSeriesNames[1])
 	}
 }
