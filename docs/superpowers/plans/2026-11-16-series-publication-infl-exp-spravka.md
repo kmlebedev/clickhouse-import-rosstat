@@ -41,7 +41,7 @@
 
 1. `go test ./cbr/... -run 'Spravka|Publication'`.
 2. `make all`, `make docs-check`.
-3. `make import STAT=cbr_publication_calendar` — 42 строки; повтор — 0.
+3. `make import STAT=cbr_publication_calendar` — 178 строк: 42 справкой (21 месяц × 2 ряда) + догон точек, появившихся в источниках с прошлого backfill (история `cbr_infl_exp` 2017+ и ЦПД); повтор — 0.
 4. SQL-сверка на dev (три контрольные точки, все месяцы 2025+, неизменность 2023–2024,
    распределение `quality`).
 5. `make mcp-check`.
