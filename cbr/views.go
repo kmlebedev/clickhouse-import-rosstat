@@ -473,9 +473,19 @@ var cbrZcycCompareView = util.View{
 // а спред — самой доходностью ОФЗ. Совпавшая строка остаётся числом, промах —
 // NULL. count() = 12 в окне ИПЦ — та же защита от частичного г/г на первых 11
 // строках ряда.
+//
+// Дата доступности ИПЦ — не конец отчётного месяца, а публикация: точная дата
+// Росстата (series_publication, source='rosstat', 2022-05+), иначе дата релиза ЦБ
+// «Динамика потребительских цен» (source='cbr', с 2016), иначе конец M+1. Прокси-дата
+// принимается, только если она позже конца отчётного месяца: у части строк ЦБ
+// 2016–2018 привязка «файл → месяц» ошибочна и дата лежит внутри месяца (29 строк),
+// иначе витрина подставила бы ИПЦ несуществующего на ту дату месяца. При совпадении
+// available_at двух месяцев берётся более поздний. ASOF идёт по available_at: до
+// публикации в строке стоит предыдущий известный ИПЦ, а не будущий (дефект Ф2,
+// #622/#626).
 var cbrZcycSignalView = util.View{
 	Name:   "v_ofz_signal",
-	Tables: []string{cbrZcycTable, "cbr_key_rate", "rosstat_ipc_mes"},
+	Tables: []string{cbrZcycTable, "cbr_key_rate", "rosstat_ipc_mes", util.SeriesPublicationTable},
 	Select: `SELECT c.date AS date,
         c.ofz_1y, c.ofz_2y, c.ofz_10y,
         k.rate AS key_rate,
@@ -497,17 +507,37 @@ var cbrZcycSignalView = util.View{
     ) AS k
       ON c._one = k._one AND c.date >= k.date
     ASOF LEFT JOIN (
-        SELECT date, toNullable(cpi_yoy) AS cpi_yoy, 1 AS _one FROM (
-            SELECT date,
-                   if(count() OVER (ORDER BY date ROWS BETWEEN 11 PRECEDING AND CURRENT ROW) = 12,
-                      (exp(sum(log(toFloat64(percent) / 100)) OVER (
-                          ORDER BY date ROWS BETWEEN 11 PRECEDING AND CURRENT ROW)) - 1) * 100,
-                      NULL) AS cpi_yoy
-            FROM rosstat_ipc_mes FINAL
-            WHERE name = 'Индексы потребительских цен на товары и услуги по Российской Федерации'
-            ORDER BY date
-        ) ORDER BY date
-    ) AS i ON c._one = i._one AND c.date >= i.date`,
+        SELECT available_at, toNullable(argMax(cpi_yoy, period)) AS cpi_yoy, 1 AS _one FROM (
+            SELECT w.date AS period,
+                   w.cpi_yoy,
+                   coalesce(
+                       if(toDate(sp_r.published_at) > w.date, toDate(sp_r.published_at), NULL),
+                       if(toDate(sp_c.published_at) > w.date, toDate(sp_c.published_at), NULL),
+                       addMonths(toStartOfMonth(w.date), 2) - 1
+                   ) AS available_at
+            FROM (
+                SELECT date,
+                       if(count() OVER (ORDER BY date ROWS BETWEEN 11 PRECEDING AND CURRENT ROW) = 12,
+                          (exp(sum(log(toFloat64(percent) / 100)) OVER (
+                              ORDER BY date ROWS BETWEEN 11 PRECEDING AND CURRENT ROW)) - 1) * 100,
+                          NULL) AS cpi_yoy
+                FROM rosstat_ipc_mes FINAL
+                WHERE name = 'Индексы потребительских цен на товары и услуги по Российской Федерации'
+                ORDER BY date
+            ) AS w
+            LEFT JOIN (
+                SELECT period_date, toNullable(published_at) AS published_at
+                FROM series_publication FINAL
+                WHERE source = 'rosstat'
+                  AND series = 'Индексы потребительских цен на товары и услуги по Российской Федерации'
+            ) AS sp_r ON sp_r.period_date = w.date
+            LEFT JOIN (
+                SELECT period_date, toNullable(published_at) AS published_at
+                FROM series_publication FINAL
+                WHERE source = 'cbr' AND series = 'Все товары и услуги'
+            ) AS sp_c ON sp_c.period_date = w.date
+        ) GROUP BY available_at ORDER BY available_at
+    ) AS i ON c._one = i._one AND c.date >= i.available_at`,
 	Comment: "Сигналы долгового рынка по КБД ЦБ: одна строка на дату публикации кривой " +
 		"(cbr_zcyc, торговый день). ofz_1y/ofz_2y/ofz_10y — доходность ОФЗ соответствующего " +
 		"тенора, % годовых. key_rate — последняя действующая ключевая ставка на дату " +
@@ -518,9 +548,11 @@ var cbrZcycSignalView = util.View{
 		"10y − 1y, п.п. (отрицательный — инверсия). inflation_yoy — ИПЦ Росстата г/г, %: " +
 		"произведение 12 месячных индексов rosstat_ipc_mes к отчётному месяцу (первые 11 строк " +
 		"ряда ИПЦ — NULL, незаконченный год не считается; окно берёт 12 строк, а не 12 календарных " +
-		"месяцев, поэтому пропуск месяца в источнике оконная функция не ловит); дата ИПЦ — конец " +
-		"отчётного месяца, а лаг публикации ~2 недели не моделируется (для point-in-time " +
-		"расчётов дату ИПЦ сдвигать отдельно). real_yield_10y_pp = ofz_10y − inflation_yoy, п.п. " +
+		"месяцев, поэтому пропуск месяца в источнике оконная функция не ловит). Значение " +
+		"становится доступно с даты публикации: точная дата Росстата (series_publication, " +
+		"source='rosstat', с 2022-05), иначе дата релиза ЦБ «Динамика потребительских цен» " +
+		"(source='cbr', с 2016), иначе конец M+1; до этой даты в строке стоит предыдущий " +
+		"известный ИПЦ — будущее не подставляется. real_yield_10y_pp = ofz_10y − inflation_yoy, п.п. " +
 		"(ex post, без инфляционных ожиданий). Спреды, наклон и реальная доходность округлены " +
 		"до 0.01 п.п.; NULL в любой колонке означает отсутствие точки, ставки или ИПЦ на дату, " +
 		"а не ноль. Перед использованием читать v_series_catalog по (source, series)",
@@ -533,7 +565,7 @@ var cbrZcycSignalView = util.View{
 		"ofz_10y_minus_key_rate_pp": "Спред ofz_10y − key_rate, п.п.: положительный — «ОФЗ выше ключевой», отрицательный — ниже. NULL, если нет ставки или точки",
 		"ofz_2y_minus_key_rate_pp":  "Спред ofz_2y − key_rate, п.п.: короткий конец кривой против ключевой ставки. NULL, если нет ставки или точки",
 		"slope_10y_1y_pp":           "Наклон кривой 10y − 1y, п.п.: положительный — нормальная форма, отрицательный — инверсия. NULL, если нет одной из точек",
-		"inflation_yoy":             "ИПЦ Росстата г/г, %: произведение 12 месячных индексов rosstat_ipc_mes к отчётному месяцу; первые 11 строк ряда ИПЦ — NULL (незаконченный год не считается), но окно берёт 12 строк, а не 12 календарных месяцев — пропуск месяца в источнике оконная функция не ловит. Дата — конец отчётного месяца; лаг публикации ~2 недели не моделируется, для point-in-time расчётов сдвигать отдельно. NULL — нет точки ИПЦ, а не ноль",
+		"inflation_yoy":             "ИПЦ Росстата г/г, %: произведение 12 месячных индексов rosstat_ipc_mes к отчётному месяцу; первые 11 строк ряда ИПЦ — NULL (незаконченный год не считается), но окно берёт 12 строк, а не 12 календарных месяцев — пропуск месяца в источнике оконная функция не ловит. Дата доступности — публикация ИПЦ: точная дата Росстата (series_publication, с 2022-05), иначе дата релиза ЦБ «Динамика потребительских цен» (с 2016; принимается только позже конца отчётного месяца), иначе конец M+1; до неё стоит предыдущий известный ИПЦ. Дата считается днём публикации: для внутридневных срезов это мягче правила published_at < cutoff. NULL — нет точки ИПЦ, а не ноль",
 		"real_yield_10y_pp":         "Реальная доходность ofz_10y − inflation_yoy, п.п. (ex post, без инфляционных ожиданий). NULL, если нет точки или ИПЦ",
 	},
 }
@@ -861,7 +893,10 @@ FROM series_publication FINAL`,
 		"(source, series, period_date). source/series совпадают с v_series_catalog: " +
 		"source='cbr' — «наблюдаемая инфляция»/«ожидаемая инфляция» (cbr_infl_exp) и " +
 		"«Все товары и услуги»/«Базовый ИПЦ» (cbr_indicators_cpd); source='cbr_survey' — " +
-		"price_expectations и price_expectations_sa. period_date — дата точки в таблице " +
+		"price_expectations и price_expectations_sa; source='rosstat' — «Индексы " +
+		"потребительских цен на товары и услуги по Российской Федерации» с точными датами " +
+		"публикации Росстата (2022-05+; до 2016 и для месяцев без прокси резерв — дата " +
+		"релиза ЦБ и конец M+1 соответственно). period_date — дата точки в таблице " +
 		"источника (14-е у инфляционных ожиданий, последний день месяца у ИПЦ, 1-е у " +
 		"мониторинга), месяц для сопоставления — toStartOfMonth(period_date). Для " +
 		"инфляционных ожиданий с 2025-01 published_at — дата оперативной справки инФОМ из " +
@@ -876,7 +911,7 @@ FROM series_publication FINAL`,
 		"выглядеть как точная дата в отчётах. source_url — страница версии или строка " +
 		"календаря (date/exact_time) либо индекс релизного архива (fallback)",
 	Columns: map[string]string{
-		"source":      "Источник как в v_series_catalog: cbr — инфляционные ожидания и ИПЦ; cbr_survey — мониторинг предприятий",
+		"source":      "Источник как в v_series_catalog: cbr — инфляционные ожидания и ИПЦ; cbr_survey — мониторинг предприятий; rosstat — ряд ИПЦ с точными датами публикации",
 		"series":      "Имя ряда; совпадает с series в v_series_catalog",
 		"period_date": "Дата точки в таблице источника (14-е, конец месяца, 1-е); месяц — toStartOfMonth(period_date)",
 		"published_at": "Effective-момент публикации в MSK: точное время (exact_time), 23:59:59 даты релиза (date) или конец M+1 " +

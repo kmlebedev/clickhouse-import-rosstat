@@ -73,7 +73,13 @@ var cbrPublicationCalendarImporter = &publicationCalendarStat{ClickHouseImport: 
 		if _, err := util.CreateView(ctx, conn, cbrPublicationCalendarView); err != nil {
 			return err
 		}
-		_, err := util.CreateView(ctx, conn, cbrSeriesPublicationView)
+		if _, err := util.CreateView(ctx, conn, cbrSeriesPublicationView); err != nil {
+			return err
+		}
+		// v_ofz_signal ждёт series_publication: если cbr_zcyc прогнался раньше, чем
+		// появились публикационные даты, его AfterImport витрину пропустил. Создаём её
+		// здесь — порядок шагов dagu не должен оставлять витрину отсутствующей до утра.
+		_, err := util.CreateView(ctx, conn, cbrZcycSignalView)
 		return err
 	},
 }}
