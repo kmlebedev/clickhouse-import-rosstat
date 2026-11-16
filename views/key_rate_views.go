@@ -161,7 +161,7 @@ var keyRateDashboardView = util.View{
         SELECT
             minOrNull(event_date) AS next_date
         FROM events_calendar FINAL
-        WHERE category = 'cbr' AND event_date >= today()
+        WHERE category = 'cbr' AND retired = 0 AND event_date >= today()
     ),
     pe AS (
         SELECT
