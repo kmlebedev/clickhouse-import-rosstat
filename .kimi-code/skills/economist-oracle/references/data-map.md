@@ -47,7 +47,8 @@ Three mechanical things cost a run more time than any economics:
 | Weekly CPI, seasonally adjusted | `v_weekly_cpi_sa`, `v_weekly_cpi_rolling3m` | series `weekly_cpi:saar`, `weekly_cpi:sa_4w`, `weekly_cpi:sa_index`, one row per month (month-end date), `as_of` = last week included, `partial = 1` for the unfinished month; `saar_3m` in the rolling view |
 | Business surveys | `v_cbr_survey` | `price_expectations_sa`, `price_growth_expected_sa`, `business_climate_sa`, `capacity_utilization_sa`, `headcount_expectations_sa`, `staff_availability_sa`, `credit_conditions`; 80 more `industry_*` series |
 | Budget | `v_minfin_budget` | sources `minfin`, `minfin_mesyats`, `minfin_oil_gas`; `Доходы, всего`, `Расходы, всего`, `Дефицит (-)/Профицит (+)`, `Нефтегазовые доходы, всего`; defence closed since 2022 |
-| External | `v_cbr_bop`, `v_moex_market` | `cbr_bop_est` (monthly estimate, 2025 on) and `cbr_bop_standard` (quarterly since 1994), period in the series name: `Счет текущих операций (месяц)`; `v_moex_market` holds only `brent_front` |
+| External | `v_cbr_bop`, `v_moex_market`, `v_minec_macro` | `cbr_bop_est` (monthly estimate, 2025 on) and `cbr_bop_standard` (quarterly since 1994), period in the series name: `Счет текущих операций (месяц)`; Brent — `v_moex_market` `brent_front` (daily, 2009 on); Urals — `v_minec_macro` `urals_avg_price` (monthly, 2018 on) |
+| Fuel prices | `v_rosstat_macro`, `v_fedstat_weekly_prices` | weekly retail petrol: `Бензин автомобильный марки АИ-92, л` (and АИ-95, АИ-98) in `v_rosstat_macro` from 2022, `Бензин автомобильный` from 2009; `v_fedstat_weekly_prices` from 2008 |
 | Liquidity, money market | `v_cbr_liquidity`, `v_cbr_mirac` | `kind = 'daily'`: `deficit`, `corr_accounts`; `kind = 'averaging'`: `structural_deficit`, `ruonia_spread_bp`; MIACR by `name` and `tenor` |
 | Market-implied rate | `v_keyrate_expectations` | `date, secid, series_name, decision_date, settle, close, volume, openposition, expected_change_bp` |
 | OFZ | `v_ofz_signal`, dashboard `market` rows | `ofz_1y, ofz_2y, ofz_10y, key_rate, slope_10y_1y_pp, real_yield_10y_pp`; `v_ofz_curve_compare` by `tenor` |
@@ -259,7 +260,29 @@ FROM h;
   under about 100 contracts as "no market price" and compare the path
   beyond it with the OFZ curve only in direction.
 - **`v_ofz_signal` can lag the dashboard's OFZ rows** by a week; take the
-  fresher of the two and give its date.
+  fresher of the two and give its date. Its `inflation_yoy` is stamped on
+  the yield date, not on the CPI release (May 2025 CPI shows on 2–4 June,
+  published about 11 June): when dating evidence, take CPI from its own
+  series. `v_ofz_curve` holds the G-curve back to 2010 (over 4 000 days);
+  a result of a handful of rows means the filter was too narrow.
+- **Hand-written rows in the event calendar.** Besides the schedule rows
+  titled exactly `СД ЦБ РФ: заседание по ключевой ставке`, `category =
+  'cbr'` holds analyst notes such as `СД ЦБ РФ: база — −25 б.п. до 13,75%`
+  with no creation date. Filter meetings by the exact title; a note is
+  somebody's earlier view, not a fact, and in a replay of a past meeting it
+  can leak the outcome.
+- **Household-expectations publication date.** `v_series_publication`
+  dates each wave by the full commentary, about a week after the inFOM note
+  that the Board and the market actually use. For "was it out on the run
+  date" use `v_cbr_publication_calendar` (query 10).
+- **Bank ranges are revised, not wrong.** A next-year `key_rate_avg` range
+  that looks impossible against today's rate is a real vintage the Bank may
+  later raise. Report it, run `bound` on it, and say it would need a
+  revision; that need is itself information about the next core meeting.
+- **Enterprise monitoring loads late.** The wave the Bank publishes around
+  the 14th–24th can be missing for weeks (October 2026 wave absent on
+  2026-11-16); list it as stale rather than using the previous wave as
+  current.
 - **Channel tags.** Eleven slugs; `kind` in (`prose`, `note`, `risk_pro`,
   `risk_dez`); `method` = `regex` or `llm`, and `llm` rows come from three
   different `model`s with different coverage (only `deepseek-chat` reaches
