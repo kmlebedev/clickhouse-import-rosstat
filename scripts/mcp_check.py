@@ -3576,8 +3576,10 @@ async def check(params, server_log):
             # Календарь публикаций ЦБ и исторические published_at
             # (key-rate/phase-4-cbr-publication-calendar, #299). Витрины создаёт
             # импортёр cbr_publication_calendar; статистика и аналитика — две вкладки
-            # cbr.ru/calendar/, quality — точность published_at. Точные даты —
-            # проверенные research месяцы: 2026-09 инфляционных ожиданий и мониторинга.
+            # cbr.ru/calendar/, quality — точность published_at. У инфляционных ожиданий
+            # с 2025-01 дата — оперативная справка инФОМ из этого же календаря (#624),
+            # а не полный комментарий из релизного архива. Точные даты — проверенные
+            # research месяцы: 2026-07 и 2026-09 инфляционных ожиданий и мониторинга.
             for view in ("v_cbr_publication_calendar", "v_series_publication"):
                 failed += not expect(f"витрина {view} видна", view in tables, "list_tables default")
 
@@ -3597,13 +3599,17 @@ async def check(params, server_log):
                                  (quality.get("date") or 0) > 0 and (quality.get("fallback") or 0) > 0,
                                  qualities[:200])
 
-            exact = text(await session.call_tool("run_query", {
-                "query": "SELECT count() AS n FROM v_series_publication "
-                         "WHERE source='cbr' AND series='ожидаемая инфляция' AND period_date='2026-09-14' "
-                         "AND quality='date' AND toDate(published_at)='2026-09-29'"}))
-            exact_rows = result_rows(exact)
-            exact_n = exact_rows[0].get("n") if exact_rows else None
-            failed += not expect("cbr_infl_exp 2026-09 -> 2026-09-29", exact_n == 1, exact[:200])
+            for series_date, published, label in (
+                    ("2026-07-14", "2026-07-21", "cbr_infl_exp 2026-07 -> 2026-07-21 (справка инФОМ)"),
+                    ("2026-09-14", "2026-09-22", "cbr_infl_exp 2026-09 -> 2026-09-22 (справка инФОМ)")):
+                exact = text(await session.call_tool("run_query", {
+                    "query": "SELECT count() AS n FROM v_series_publication "
+                             "WHERE source='cbr' AND series='ожидаемая инфляция' "
+                             f"AND period_date='{series_date}' "
+                             f"AND quality='date' AND toDate(published_at)='{published}'"}))
+                exact_rows = result_rows(exact)
+                exact_n = exact_rows[0].get("n") if exact_rows else None
+                failed += not expect(label, exact_n == 1, exact[:200])
 
             survey = text(await session.call_tool("run_query", {
                 "query": "SELECT count() AS n FROM v_series_publication "
