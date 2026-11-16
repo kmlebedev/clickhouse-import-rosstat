@@ -141,3 +141,14 @@ steps:
     retry_policy:
       limit: 3
       interval_sec: 300
+
+  # Даты публикации месячного ИПЦ (дефект Ф2 бэктеста economist-oracle, #626): лента
+  # central-news, точные даты 2022-05+, backfill series_publication для v_ofz_signal.
+  # Источник — список карточек, поэтому префлайта нет: дельта по содержимому, повтор no-op.
+  - id: rosstat_ipc_pubdates
+    run: "$ROSSTAT_IMPORT_BIN"
+    env:
+      - CLICKHOUSE_IMPORT_STAT=rosstat_ipc_pubdates
+    retry_policy:
+      limit: 3
+      interval_sec: 300

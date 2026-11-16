@@ -73,6 +73,7 @@ var rosstatImporters = []rosstatImporter{
 	{ppiWeightsImporter, "rosstat_ppi_weights", "SELECT count() FROM rosstat_ppi_weights FINAL"},
 	{cpiSprImporter, "rosstat_cpi_spr", "SELECT count() FROM rosstat_cpi_spr FINAL"},
 	{cpiWeightsImporter, "rosstat_cpi_weights", "SELECT count() FROM rosstat_cpi_weights FINAL"},
+	{ipcPubdatesImporter, "rosstat_ipc_pubdates", ""},
 }
 
 // init — единственная регистрация импортёров Росстата в chimport.Stats. Порядок
