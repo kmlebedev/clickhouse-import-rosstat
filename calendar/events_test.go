@@ -4,6 +4,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 )
 
 // calMPFixture читает HTML-фикстуру календаря ЦБ calendar/testdata/cal_mp.html
@@ -403,5 +404,72 @@ func TestEventsCalendarEmergencyColumn(t *testing.T) {
 	}
 	if eventsView.Columns["emergency"] == "" {
 		t.Errorf("eventsView.Columns не описывает колонку emergency")
+	}
+}
+
+// TestEventsCalendarProvenanceContract — контракт провенанса (дефект Ф3, #628): колонки в
+// DDL, идемпотентные миграции, явный INSERT и витрина, которая не показывает retired-строки.
+func TestEventsCalendarProvenanceContract(t *testing.T) {
+	for _, fragment := range []string{
+		"source LowCardinality(String) DEFAULT 'manual'",
+		"created_at DateTime('Europe/Moscow') DEFAULT now()",
+		"retired UInt8 DEFAULT 0",
+	} {
+		if !strings.Contains(eventsDdl, fragment) {
+			t.Errorf("eventsDdl не содержит %q:\n%s", fragment, eventsDdl)
+		}
+	}
+	for _, stmt := range []string{eventsSourceAlter, eventsCreatedAlter, eventsRetiredAlter} {
+		if !strings.Contains(stmt, "ADD COLUMN IF NOT EXISTS") {
+			t.Errorf("миграция не идемпотентна: %q", stmt)
+		}
+	}
+	if !strings.Contains(eventsMarkCanonical, "UPDATE source='canonical'") {
+		t.Errorf("eventsMarkCanonical не помечает канонические строки: %q", eventsMarkCanonical)
+	}
+	if !strings.Contains(eventsRetireManualCBR, "UPDATE retired=1") {
+		t.Errorf("eventsRetireManualCBR не выводит рукописные заметки: %q", eventsRetireManualCBR)
+	}
+	for _, column := range []string{"source", "created_at", "retired"} {
+		if !strings.Contains(calMPInsert, column) {
+			t.Errorf("calMPInsert не перечисляет %q: %q", column, calMPInsert)
+		}
+	}
+	if !strings.Contains(eventsView.Select, "WHERE retired = 0") {
+		t.Errorf("витрина не скрывает retired-строки: %q", eventsView.Select)
+	}
+	for _, column := range []string{"source", "created_at"} {
+		if eventsView.Columns[column] == "" {
+			t.Errorf("eventsView.Columns не описывает колонку %q", column)
+		}
+	}
+}
+
+// TestCalMPPendingInserts — дельта вставки: новая дата, без изменений, смена emergency с
+// сохранением created_at.
+func TestCalMPPendingInserts(t *testing.T) {
+	day := func(y int, m time.Month, d int) time.Time { return time.Date(y, m, d, 0, 0, 0, 0, time.UTC) }
+	existing := map[string]calMPExistingRow{
+		"2026-07-24": {Emergency: 0, CreatedAt: day(2026, time.June, 1)},
+		"2026-09-11": {Emergency: 0, CreatedAt: day(2026, time.August, 1)},
+	}
+	meetings := []calMPMeeting{
+		{Date: day(2026, time.July, 24)},                       // уже есть, без изменений
+		{Date: day(2026, time.September, 11), Emergency: true}, // смена флага
+		{Date: day(2026, time.December, 18)},                   // новая дата
+	}
+	got := calMPPendingInserts(existing, meetings)
+	if len(got) != 2 {
+		t.Fatalf("вставок %d, ожидалось 2: %+v", len(got), got)
+	}
+	byDate := make(map[string]calMPInsertRow, len(got))
+	for _, row := range got {
+		byDate[row.Date.Format("2006-01-02")] = row
+	}
+	if row, ok := byDate["2026-09-11"]; !ok || row.Emergency != 1 || !row.CreatedAt.Equal(day(2026, time.August, 1)) {
+		t.Errorf("смена emergency: %+v, ожидался emergency=1 и сохранённый created_at", row)
+	}
+	if row, ok := byDate["2026-12-18"]; !ok || row.CreatedAt.IsZero() {
+		t.Errorf("новая дата без created_at: %+v", row)
 	}
 }

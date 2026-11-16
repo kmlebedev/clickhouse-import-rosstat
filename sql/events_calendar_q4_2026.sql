@@ -8,21 +8,23 @@ CREATE TABLE IF NOT EXISTS events_calendar (
     category LowCardinality(String), -- 'fomc','cpi','nfp','eia','wgc','cbr','polyus_ir','moex_rebalance','gov_rf','bank_results'
     title String,
     threshold String,                -- JSON, напр. '{"crack":">50"}'
-    status LowCardinality(String) DEFAULT 'pending'  -- pending|done|verified
+    status LowCardinality(String) DEFAULT 'pending',  -- pending|done|verified
+    emergency UInt8 DEFAULT 0,       -- 1 — внеочередное заседание СД ЦБ, 0 — плановое
+    source LowCardinality(String) DEFAULT 'manual',   -- canonical — импортёр ЦБ; manual — сид
+    created_at DateTime('Europe/Moscow') DEFAULT now(), -- дата первой записи строки в БД
+    retired UInt8 DEFAULT 0          -- 1 — строка выведена из календаря
 ) ENGINE = ReplacingMergeTree ORDER BY (event_date, category, title);
 
 INSERT INTO events_calendar (event_date, event_time, category, title, threshold, status) VALUES
     ('2026-10-14', NULL, 'eia',  'EIA дистилляты: недельный запас (ср еженед.; порог crack >$50 — медведь / <$30 — снято)',        '{"crack":">50","crack_bull":"<30"}', 'pending'),
     ('2026-10-14', '15:30', 'cpi', 'CPI США за сентябрь 2026',                                                                        '{"hot_yoy":">3.5"}',                 'pending'),
-    ('2026-10-23', NULL, 'cbr',  'СД ЦБ РФ: ставка (14%) — снижение → флаг перетока ликвидности',                                     '{"cut_bp":">=25"}',                  'pending'),
     ('2026-10-30', NULL, 'wgc',  'WGC GDT: спрос на золото, ETF-потоки + покупки ЦБ (~конец октября; норма 40–60 т/мес)',              '{"cb_purchase_t":">=40"}',           'pending'),
     ('2026-11-01', NULL, 'gov_rf','Истечение запрета РФ на экспорт дизеля: продление → bear; отмена → bull',                            '{"extended":"bear","lifted":"bull"}', 'pending'),
     ('2026-11-06', '15:30', 'nfp', 'NFP США за октябрь 2026',                                                                          '{"nfp_k":">100"}',                   'pending'),
     ('2026-11-10', '15:30', 'cpi', 'CPI США за октябрь 2026: горячий → FOMC-hike 85–90%',                                              '{"hot_yoy":">3.5"}',                 'pending'),
     ('2026-12-04', '15:30', 'nfp', 'NFP США за ноябрь 2026 (перенос: релиз 2026-12-04)',                                               '{"nfp_k":">100"}',                   'pending'),
     ('2026-12-09', '21:00', 'fomc','FOMC + dot plot: 2-е повышение → пробой $4,000 → $3,750–3,800',                                    '{"hike_count":">=2"}',               'pending'),
-    ('2026-12-10', '15:30', 'cpi', 'CPI США за ноябрь 2026',                                                                            '{"hot_yoy":">3.5"}',                 'pending'),
-    ('2026-12-18', NULL, 'cbr',  'СД ЦБ РФ: база — −25 б.п. до 13,75% + ребалансировка индекса MOEX (один день)',                      '{"cut_bp":">=25"}',                  'pending');
+    ('2026-12-10', '15:30', 'cpi', 'CPI США за ноябрь 2026',                                                                            '{"hot_yoy":">3.5"}',                 'pending');
 
 -- Триггеры DCF-контура: публикации по проекту Сухой Лог (категория polyus_ir).
 -- Зачем: график запуска ЗИФ — прямой вход модели выпуска (docs/plans/POLYUS_OUTPUT_MODEL_PLAN.md §6.3).

@@ -2531,6 +2531,32 @@ async def check(params, server_log):
                                        "make ch-sql FILE=sql/events_calendar_bank_results_q4_2026.sql")
             failed += not expect("календарь bank_results засеян", (bank_results_n or 0) >= 7, bank_results_detail)
 
+            # Провенанс календаря (дефект Ф3 бэктеста economist-oracle, #622/#628): рукописные
+            # заметки category='cbr' без даты создания выведены retired=1; канонические строки
+            # помечены source='canonical', ручные триггеры — 'manual', created_at заполнен.
+            cbr_notes = text(await session.call_tool("run_query", {
+                "query": "SELECT count() AS n FROM v_events_calendar WHERE category='cbr' AND source != 'canonical'"}))
+            cbr_notes_rows = result_rows(cbr_notes)
+            cbr_notes_n = cbr_notes_rows[0].get("n") if cbr_notes_rows else None
+            failed += not expect("v_events_calendar: нет рукописных cbr-заметок", cbr_notes_n == 0, cbr_notes[:200])
+
+            provenance = text(await session.call_tool("run_query", {
+                "query": "SELECT countIf(source='canonical' AND title='СД ЦБ РФ: заседание по ключевой ставке') AS canonical_n, "
+                         "countIf(source='manual') AS manual_n, countIf(created_at > toDateTime('2000-01-01')) AS created_n "
+                         "FROM v_events_calendar"}))
+            provenance_rows = result_rows(provenance)
+            canonical_n = provenance_rows[0].get("canonical_n") if provenance_rows else None
+            manual_n = provenance_rows[0].get("manual_n") if provenance_rows else None
+            created_n = provenance_rows[0].get("created_n") if provenance_rows else None
+            failed += not expect("v_events_calendar: провенанс (canonical/manual/created_at)",
+                                 (canonical_n or 0) >= 118 and (manual_n or 0) > 0
+                                 and created_n == (canonical_n or 0) + (manual_n or 0),
+                                 provenance[:200])
+            raw = text(await session.call_tool("run_query", {"query": "SELECT count() FROM events_calendar"}))
+            denied = "ACCESS_DENIED" in raw or "Not enough privileges" in raw
+            failed += not expect("сырая events_calendar закрыта", denied,
+                                 "отказ ClickHouse 497 на events_calendar (ожидаемо)" if denied else raw[:200])
+
             # Второй эмитент витрины: у VTBR (МСФО) ряд длиннее и содержит пропуски
             # месяцев, поэтому он же — точка поведенческой проверки ниже.
             vtb_point = text(await session.call_tool("run_query", {"query":

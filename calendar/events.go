@@ -27,7 +27,10 @@ const (
 	    title String,
 	    threshold String,                -- JSON, напр. '{"crack":">50"}'
 	    status LowCardinality(String) DEFAULT 'pending',  -- pending|done|verified
-	    emergency UInt8 DEFAULT 0        -- 1 — внеочередное заседание СД ЦБ, 0 — плановое
+	    emergency UInt8 DEFAULT 0,       -- 1 — внеочередное заседание СД ЦБ, 0 — плановое
+	    source LowCardinality(String) DEFAULT 'manual',   -- canonical — импортёр ЦБ; manual — сид
+	    created_at DateTime('Europe/Moscow') DEFAULT now(), -- дата первой записи строки в БД
+	    retired UInt8 DEFAULT 0          -- 1 — строка выведена из календаря (рукописная заметка)
 	) ENGINE = ReplacingMergeTree ORDER BY (event_date, category, title);
 	`
 
@@ -35,11 +38,35 @@ const (
 	// выполняется с IF NOT EXISTS и колонку в живой таблице не добавляет.
 	eventsEmergencyAlter = "ALTER TABLE " + eventsTable + " ADD COLUMN IF NOT EXISTS emergency UInt8 DEFAULT 0"
 
+	// events*Alter — идемпотентные миграции провенанса (дефект Ф3 бэктеста economist-oracle,
+	// #622/#628). source отделяет каноническое расписание ЦБ от ручных триггеров; created_at
+	// даёт дату первой записи строки; retired выводит из витрины рукописные заметки, не удаляя
+	// данные из сырого стола.
+	eventsSourceAlter  = "ALTER TABLE " + eventsTable + " ADD COLUMN IF NOT EXISTS source LowCardinality(String) DEFAULT 'manual'"
+	eventsCreatedAlter = "ALTER TABLE " + eventsTable + " ADD COLUMN IF NOT EXISTS created_at DateTime('Europe/Moscow') DEFAULT now()"
+	eventsRetiredAlter = "ALTER TABLE " + eventsTable + " ADD COLUMN IF NOT EXISTS retired UInt8 DEFAULT 0"
+
+	// eventsCreatedMaterialize — у строк, существовавших до ALTER, DEFAULT считается при
+	// чтении, и created_at показывал бы время запроса. Материализация фиксирует реальный
+	// момент бэкфилла; выполняется один раз — когда колонки ещё не было.
+	eventsCreatedMaterialize = "ALTER TABLE " + eventsTable + " MATERIALIZE COLUMN created_at SETTINGS mutations_sync=2"
+
+	// eventsMarkCanonical — однократная пометка канонических заседаний ЦБ среди старых строк
+	// (после первого прогона условие не находит строк). Заголовок — константа, поэтому
+	// литерал безопасен.
+	eventsMarkCanonical = "ALTER TABLE " + eventsTable + " UPDATE source='canonical' WHERE category='cbr' AND title='" + calMPTitle + "' AND source='manual' SETTINGS mutations_sync=2"
+	// eventsRetireManualCBR — рукописные заметки в категории cbr выводятся из календаря:
+	// категория принадлежит импортёру, заметка — не событие. Строки остаются в сыром столе.
+	eventsRetireManualCBR = "ALTER TABLE " + eventsTable + " UPDATE retired=1 WHERE category='cbr' AND title!='" + calMPTitle + "' AND retired=0 SETTINGS mutations_sync=2"
+
+	// calMPSourceCanonical — source канонических строк; сид пишет DEFAULT 'manual'.
+	calMPSourceCanonical = "canonical"
+
 	// calMPUrl — страница календаря заседаний Совета директоров ЦБ по ключевой ставке.
 	calMPUrl = "https://www.cbr.ru/dkp/cal_mp/"
 	// calMPInsert — колонки перечислены явно: так строка батча не зависит от порядка
 	// и DEFAULT-ов DDL.
-	calMPInsert = "INSERT INTO " + eventsTable + " (event_date, event_time, category, title, threshold, status, emergency)"
+	calMPInsert = "INSERT INTO " + eventsTable + " (event_date, event_time, category, title, threshold, status, emergency, source, created_at, retired)"
 	// Канонические значения строк-заседаний: время публикации пресс-релиза — 13:30 МСК
 	// (в карточках календаря указано дословно), порог не задан.
 	calMPCategory  = "cbr"
@@ -53,11 +80,14 @@ const (
 // и даты заседаний СД ЦБ по ключевой ставке. Сид триггеров живёт в sql/events_calendar_q4_2026.sql
 // (идемпотентен за счёт ReplacingMergeTree), канонические строки заседаний ЦБ (category='cbr',
 // из cbr.ru/dkp/cal_mp/) импортёр заводит сам — именно их читает агент контура ключевой ставки.
+// Рукописные заметки category='cbr' в витрину не попадают: они выведены retired=1 (дефект Ф3
+// бэктеста economist-oracle, #622/#628).
 var eventsView = util.View{
-	Name:    "v_events_calendar",
-	Tables:  []string{eventsTable},
-	Select:  `SELECT * FROM ` + eventsTable + ` FINAL`,
-	Comment: "Календарь событий-триггеров прогноза золота/NAV, дат заседаний СД ЦБ по ключевой ставке (category='cbr', канонические строки — из cbr.ru/dkp/cal_mp/, их читает агент контура ставки; рядом ручные строки-триггеры с другим title) и дат раскрытия банковских результатов (category='bank_results', подтверждённые/ожидаемые даты публикаций Сбера и ВТБ); status: pending|done|verified; emergency: 1 — внеочередное заседание Совета директоров ЦБ, 0 — плановое",
+	Name:   "v_events_calendar",
+	Tables: []string{eventsTable},
+	Select: `SELECT event_date, event_time, category, title, threshold, status, emergency, source, created_at
+FROM ` + eventsTable + ` FINAL WHERE retired = 0`,
+	Comment: "Календарь событий-триггеров прогноза золота/NAV, дат заседаний СД ЦБ по ключевой ставке (category='cbr', канонические строки — из cbr.ru/dkp/cal_mp/, title ровно «СД ЦБ РФ: заседание по ключевой ставке», source='canonical') и дат раскрытия банковских результатов (category='bank_results', подтверждённые/ожидаемые даты публикаций Сбера и ВТБ, source='manual'); status: pending|done|verified; emergency: 1 — внеочередное заседание Совета директоров ЦБ, 0 — плановое; source: canonical — импортёр ЦБ, manual — ручной сид; created_at — дата первой записи строки в БД (для as-of реплеев фильтровать created_at <= as_of); строки retired=1 в витрину не входят — рукописные заметки об исходе заседаний выведены из календаря",
 	Columns: map[string]string{
 		"event_date": "Дата события (Date)",
 		"event_time": "Время события (местное/UTC, строка; NULL — время не фиксировано)",
@@ -66,6 +96,8 @@ var eventsView = util.View{
 		"threshold":  "Пороги срабатывания в формате JSON, напр. '{\"crack\":\">50\"}'",
 		"status":     "Статус отработки: pending — ожидается, done — обработано, verified — сверено с фактом",
 		"emergency":  "1 — внеочередное заседание Совета директоров ЦБ, 0 — плановое",
+		"source":     "Провенанс строки: canonical — импортёр календаря ЦБ; manual — ручной сид (триггеры, bank_results)",
+		"created_at": "Дата и время первой записи строки в БД (Europe/Moscow); для as-of реплея фильтр created_at <= as_of",
 	},
 }
 
@@ -81,6 +113,9 @@ func (s *eventsCalendar) Import(ctx context.Context, conn driver.Conn) (count in
 		return count, err
 	}
 	if err = conn.Exec(ctx, eventsEmergencyAlter); err != nil {
+		return count, err
+	}
+	if err = ensureEventsProvenance(ctx, conn); err != nil {
 		return count, err
 	}
 	created, err := util.CreateView(ctx, conn, eventsView)
@@ -103,16 +138,23 @@ func (s *eventsCalendar) Import(ctx context.Context, conn driver.Conn) (count in
 		return count, err
 	}
 
+	existing, err := loadCalMPExisting(ctx, conn)
+	if err != nil {
+		return count, err
+	}
+	pending := calMPPendingInserts(existing, meetings)
+	if len(pending) == 0 {
+		log.Infof("Cal_mp: все даты заседаний уже в %s", eventsTable)
+		return 0, nil
+	}
+
 	batch, err := conn.PrepareBatch(ctx, calMPInsert)
 	if err != nil {
 		return count, err
 	}
-	for _, meeting := range meetings {
-		emergency := uint8(0)
-		if meeting.Emergency {
-			emergency = 1
-		}
-		if err = batch.Append(meeting.Date, calMPEventTime, calMPCategory, calMPTitle, calMPThreshold, calMPStatus, emergency); err != nil {
+	for _, row := range pending {
+		if err = batch.Append(row.Date, calMPEventTime, calMPCategory, calMPTitle, calMPThreshold,
+			calMPStatus, row.Emergency, calMPSourceCanonical, row.CreatedAt, uint8(0)); err != nil {
 			_ = batch.Abort()
 			return count, err
 		}
@@ -123,6 +165,115 @@ func (s *eventsCalendar) Import(ctx context.Context, conn driver.Conn) (count in
 	}
 	log.Infof("Cal_mp: %d meeting dates inserted into %s", count, eventsTable)
 	return count, nil
+}
+
+// ensureEventsProvenance приводит живой стол к DDL провенанса и делает две однократные
+// пометки: канонические заседания ЦБ получают source='canonical', рукописные заметки в
+// category='cbr' — retired=1. Мутации запускаются только когда есть что менять, поэтому
+// повторный прогон не пишет ничего.
+func ensureEventsProvenance(ctx context.Context, conn driver.Conn) error {
+	var hasCreated uint64
+	if err := conn.QueryRow(ctx, "SELECT count() FROM system.columns WHERE database = currentDatabase() AND table = '"+eventsTable+"' AND name = 'created_at'").Scan(&hasCreated); err != nil {
+		return err
+	}
+	for _, stmt := range []string{eventsSourceAlter, eventsCreatedAlter, eventsRetiredAlter} {
+		if err := conn.Exec(ctx, stmt); err != nil {
+			return err
+		}
+	}
+	if hasCreated == 0 {
+		// У строк, существовавших до ALTER, DEFAULT считается при чтении: без материализации
+		// created_at показывал бы время каждого запроса.
+		if err := conn.Exec(ctx, eventsCreatedMaterialize); err != nil {
+			return err
+		}
+	}
+	var unmarked uint64
+	if err := conn.QueryRow(ctx, "SELECT count() FROM "+eventsTable+" WHERE category='"+calMPCategory+
+		"' AND title='"+calMPTitle+"' AND source='manual'").Scan(&unmarked); err != nil {
+		return err
+	}
+	if unmarked > 0 {
+		if err := conn.Exec(ctx, eventsMarkCanonical); err != nil {
+			return err
+		}
+		log.Infof("events_calendar: помечено канонических строк %d", unmarked)
+	}
+	var active uint64
+	if err := conn.QueryRow(ctx, "SELECT count() FROM "+eventsTable+" WHERE category='"+calMPCategory+
+		"' AND title!='"+calMPTitle+"' AND retired=0").Scan(&active); err != nil {
+		return err
+	}
+	if active > 0 {
+		if err := conn.Exec(ctx, eventsRetireManualCBR); err != nil {
+			return err
+		}
+		log.Infof("events_calendar: выведено рукописных cbr-заметок %d", active)
+	}
+	return nil
+}
+
+// calMPExistingRow — существующая каноническая строка: флаг внеочередного заседания и дата
+// первой записи.
+type calMPExistingRow struct {
+	Emergency uint8
+	CreatedAt time.Time
+}
+
+// calMPInsertRow — строка дельты вставки.
+type calMPInsertRow struct {
+	Date      time.Time
+	Emergency uint8
+	CreatedAt time.Time
+}
+
+// loadCalMPExisting читает канонические строки FINAL по дате события.
+func loadCalMPExisting(ctx context.Context, conn driver.Conn) (map[string]calMPExistingRow, error) {
+	rows, err := conn.Query(ctx, "SELECT event_date, emergency, created_at FROM "+eventsTable+
+		" FINAL WHERE category='"+calMPCategory+"' AND title='"+calMPTitle+"'")
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	result := make(map[string]calMPExistingRow)
+	for rows.Next() {
+		var (
+			date time.Time
+			row  calMPExistingRow
+		)
+		if err = rows.Scan(&date, &row.Emergency, &row.CreatedAt); err != nil {
+			return nil, err
+		}
+		result[date.Format("2006-01-02")] = row
+	}
+	if err = rows.Err(); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+// calMPPendingInserts — что вставить: новые даты и смену флага внеочередного заседания.
+// У обновления created_at берётся из существующей строки: дата первой записи не
+// переписывается повторными прогонами.
+func calMPPendingInserts(existing map[string]calMPExistingRow, meetings []calMPMeeting) []calMPInsertRow {
+	now := time.Now()
+	var pending []calMPInsertRow
+	for _, meeting := range meetings {
+		emergency := uint8(0)
+		if meeting.Emergency {
+			emergency = 1
+		}
+		previous, ok := existing[meeting.Date.Format("2006-01-02")]
+		if ok && previous.Emergency == emergency {
+			continue
+		}
+		createdAt := now
+		if ok {
+			createdAt = previous.CreatedAt
+		}
+		pending = append(pending, calMPInsertRow{Date: meeting.Date, Emergency: emergency, CreatedAt: createdAt})
+	}
+	return pending
 }
 
 // fetchCalMPPage скачивает страницу календаря заседаний. Читатель закрывается всегда,
