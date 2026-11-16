@@ -44,6 +44,8 @@
 - `ARCHITECTURE.md` §6.2 (DDL-копия), §6.3 (`v_events_calendar`), §7 (описание контура);
   `docs/IMPORTERS.md`/`README.md` — где упоминается витрина; `docs/ROADMAP_KEY_RATE.md` §4.2.
 
+**Частичная миграция.** Если прогон умрёт между `ADD COLUMN created_at` и `MATERIALIZE COLUMN`, следующий не повторит материализацию (gate — по наличию колонки): выполнить `ALTER TABLE events_calendar MATERIALIZE COLUMN created_at` вручную и проверить, что `created_at` не меняется между запросами.
+
 ## Шаг 6. Проверка
 
 1. `go test ./calendar/ -run 'Events|CalMP'`.

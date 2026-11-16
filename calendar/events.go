@@ -27,9 +27,9 @@ const (
 	    title String,
 	    threshold String,                -- JSON, напр. '{"crack":">50"}'
 	    status LowCardinality(String) DEFAULT 'pending',  -- pending|done|verified
-	    emergency UInt8 DEFAULT 0,       -- 1 — внеочередное заседание СД ЦБ, 0 — плановое
+	    emergency UInt8 DEFAULT 0,       -- 1 — внеочередное заседание Совета директоров ЦБ, 0 — плановое
 	    source LowCardinality(String) DEFAULT 'manual',   -- canonical — импортёр ЦБ; manual — сид
-	    created_at DateTime('Europe/Moscow') DEFAULT now(), -- дата первой записи строки в БД
+	    created_at DateTime('Europe/Moscow') DEFAULT now(), -- дата записи строки; у мигрированных — момент миграции
 	    retired UInt8 DEFAULT 0          -- 1 — строка выведена из календаря (рукописная заметка)
 	) ENGINE = ReplacingMergeTree ORDER BY (event_date, category, title);
 	`
@@ -87,7 +87,7 @@ var eventsView = util.View{
 	Tables: []string{eventsTable},
 	Select: `SELECT event_date, event_time, category, title, threshold, status, emergency, source, created_at
 FROM ` + eventsTable + ` FINAL WHERE retired = 0`,
-	Comment: "Календарь событий-триггеров прогноза золота/NAV, дат заседаний СД ЦБ по ключевой ставке (category='cbr', канонические строки — из cbr.ru/dkp/cal_mp/, title ровно «СД ЦБ РФ: заседание по ключевой ставке», source='canonical') и дат раскрытия банковских результатов (category='bank_results', подтверждённые/ожидаемые даты публикаций Сбера и ВТБ, source='manual'); status: pending|done|verified; emergency: 1 — внеочередное заседание Совета директоров ЦБ, 0 — плановое; source: canonical — импортёр ЦБ, manual — ручной сид; created_at — дата первой записи строки в БД (для as-of реплеев фильтровать created_at <= as_of); строки retired=1 в витрину не входят — рукописные заметки об исходе заседаний выведены из календаря",
+	Comment: "Календарь событий-триггеров прогноза золота/NAV, дат заседаний СД ЦБ по ключевой ставке (category='cbr', канонические строки — из cbr.ru/dkp/cal_mp/, title ровно «СД ЦБ РФ: заседание по ключевой ставке», source='canonical') и дат раскрытия банковских результатов (category='bank_results', подтверждённые/ожидаемые даты публикаций Сбера и ВТБ, source='manual'); status: pending|done|verified; emergency: 1 — внеочередное заседание Совета директоров ЦБ, 0 — плановое; source: canonical — импортёр ЦБ, manual — ручной сид; created_at — дата записи строки, но у строк, существовавших до миграции 2026-11-16, это момент миграции (MATERIALIZE): created_at — признак свежести, а не PIT-граница; для as-of реплея до 2026-11-16 ограничивайте по event_date, фильтр created_at <= as_of корректен только позже этой даты; строки retired=1 в витрину не входят — рукописные заметки об исходе заседаний выведены из календаря",
 	Columns: map[string]string{
 		"event_date": "Дата события (Date)",
 		"event_time": "Время события (местное/UTC, строка; NULL — время не фиксировано)",
@@ -97,7 +97,7 @@ FROM ` + eventsTable + ` FINAL WHERE retired = 0`,
 		"status":     "Статус отработки: pending — ожидается, done — обработано, verified — сверено с фактом",
 		"emergency":  "1 — внеочередное заседание Совета директоров ЦБ, 0 — плановое",
 		"source":     "Провенанс строки: canonical — импортёр календаря ЦБ; manual — ручной сид (триггеры, bank_results)",
-		"created_at": "Дата и время первой записи строки в БД (Europe/Moscow); для as-of реплея фильтр created_at <= as_of",
+		"created_at": "Дата и время записи строки (Europe/Moscow); у строк, существовавших до миграции 2026-11-16, — момент миграции (MATERIALIZE). Для as-of реплея до этой даты ограничивайте по event_date; created_at <= as_of корректен только позже 2026-11-16",
 	},
 }
 

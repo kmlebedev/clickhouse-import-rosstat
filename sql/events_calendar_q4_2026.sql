@@ -9,9 +9,9 @@ CREATE TABLE IF NOT EXISTS events_calendar (
     title String,
     threshold String,                -- JSON, напр. '{"crack":">50"}'
     status LowCardinality(String) DEFAULT 'pending',  -- pending|done|verified
-    emergency UInt8 DEFAULT 0,       -- 1 — внеочередное заседание СД ЦБ, 0 — плановое
+    emergency UInt8 DEFAULT 0,       -- 1 — внеочередное заседание Совета директоров ЦБ, 0 — плановое
     source LowCardinality(String) DEFAULT 'manual',   -- canonical — импортёр ЦБ; manual — сид
-    created_at DateTime('Europe/Moscow') DEFAULT now(), -- дата первой записи строки в БД
+    created_at DateTime('Europe/Moscow') DEFAULT now(), -- дата записи строки; у мигрированных — момент миграции
     retired UInt8 DEFAULT 0          -- 1 — строка выведена из календаря
 ) ENGINE = ReplacingMergeTree ORDER BY (event_date, category, title);
 

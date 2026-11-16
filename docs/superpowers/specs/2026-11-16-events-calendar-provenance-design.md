@@ -28,12 +28,14 @@ created_at DateTime('Europe/Moscow') DEFAULT now(),
 retired UInt8 DEFAULT 0                           -- 1 — выведена из календаря
 ```
 
-Миграции живого стола (идемпотентны, `ARCHITECTURE.md` §8 п. 13):
+Миграции живого стола (идемпотентны, прецедент — `ARCHITECTURE.md` §6.1/§6.2):
 
 1. `ADD COLUMN IF NOT EXISTS` ×3.
 2. Если `created_at` только что добавлена — `MATERIALIZE COLUMN created_at`: у старых строк
    DEFAULT считается при чтении, и `created_at` показывал бы время запроса; материализация
    фиксирует реальный момент бэкфилла.
+Частичная миграция: если прогон прервётся между `ADD COLUMN created_at` и `MATERIALIZE COLUMN`, следующий прогон материализацию не повторит (gate — по наличию колонки); восстановление — вручную `ALTER TABLE events_calendar MATERIALIZE COLUMN created_at`.
+
 3. Один раз пометить канонические строки: `UPDATE source='canonical' WHERE category='cbr'
    AND title='<канонический>' AND source='manual'` (после первого прогона — 0 строк).
 4. Один раз вывести рукописные `cbr`-заметки: `UPDATE retired=1 WHERE category='cbr'

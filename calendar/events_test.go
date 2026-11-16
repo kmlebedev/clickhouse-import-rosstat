@@ -2,6 +2,7 @@ package calendar
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -391,7 +392,7 @@ func TestCalMPEmergencyFlag(t *testing.T) {
 
 // TestEventsCalendarEmergencyColumn — контракт схемы и витрины: колонка есть в DDL,
 // миграция живой таблицы идемпотентна, INSERT перечисляет колонку явно, витрина
-// (SELECT *) описывает её для MCP-агента.
+// (явные колонки) описывает её для MCP-агента.
 func TestEventsCalendarEmergencyColumn(t *testing.T) {
 	if !strings.Contains(eventsDdl, "emergency UInt8 DEFAULT 0") {
 		t.Errorf("eventsDdl не содержит колонку emergency UInt8 DEFAULT 0:\n%s", eventsDdl)
@@ -437,6 +438,24 @@ func TestEventsCalendarProvenanceContract(t *testing.T) {
 	}
 	if !strings.Contains(eventsView.Select, "WHERE retired = 0") {
 		t.Errorf("витрина не скрывает retired-строки: %q", eventsView.Select)
+	}
+	projection, _, ok := strings.Cut(eventsView.Select, "\nFROM")
+	wantProjection := "SELECT event_date, event_time, category, title, threshold, status, emergency, source, created_at"
+	if !ok || projection != wantProjection {
+		t.Errorf("проекция витрины %q, ожидалась %q", projection, wantProjection)
+	}
+	if strings.Contains(projection, "retired") {
+		t.Errorf("retired не должен входить в проекцию витрины: %q", projection)
+	}
+	// Третья копия DDL — сид: колонки провенанса обязаны совпадать с кодом по фрагментам.
+	seed, err := os.ReadFile(filepath.Join("..", "sql", "events_calendar_q4_2026.sql"))
+	if err != nil {
+		t.Fatalf("чтение сида: %v", err)
+	}
+	for _, fragment := range []string{"source LowCardinality(String) DEFAULT 'manual'", "created_at DateTime('Europe/Moscow') DEFAULT now()", "retired UInt8 DEFAULT 0"} {
+		if !strings.Contains(string(seed), fragment) {
+			t.Errorf("сид не содержит %q", fragment)
+		}
 	}
 	for _, column := range []string{"source", "created_at"} {
 		if eventsView.Columns[column] == "" {
