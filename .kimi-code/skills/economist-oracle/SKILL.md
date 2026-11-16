@@ -83,11 +83,13 @@ Two consequences to handle:
   the `period` of the latest note in `v_cbr_publication_calendar` (query 10
   in the data map; the point is dated by the survey, the 14th, so the dates
   themselves never match). If the note is out but the wave is not loaded,
-  ask the owner to run the importer. Do not decide "not yet published" from
-  `v_series_publication.published_at`: for household expectations it
-  carries the later full commentary, about a week after the inFOM note
-  (2026-07-21 → 2026-07-28), and would throw away the very wave this run is
-  anchored on.
+  ask the owner to run the importer. `v_series_publication.published_at`
+  carries the inFOM note date itself for waves from 2025-01 (2026-07-14 →
+  2026-07-21, 2026-09-14 → 2026-09-22), so it works as an as-of filter
+  there. Before 2025-01 it still carries the later full commentary
+  (2024-07-14 → 2024-07-29): the Bank's calendar starts on 2025-01-10, the
+  note date for those years is unknown, and dropping the wave is the
+  conservative choice — say so instead of assuming a date.
 - **A run before the note is still a run.** When the user asks for the call
   before this month's note is out, do it — on last month's wave — and say
   so in the first line of the report, with the date the note is due. That
