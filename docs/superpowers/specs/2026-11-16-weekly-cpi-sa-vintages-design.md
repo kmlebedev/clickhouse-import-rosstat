@@ -20,9 +20,12 @@
 - `computed_at DateTime('Europe/Moscow')` — момент расчёта: различает ревизии одного и того же
   последнего воскресенья (источник правит прошлые недели, хвост не двигается).
 
-Ключ `ReplacingMergeTree` — `(date, series, method, spec_version, vintage, computed_at)`:
-каждый новый вход даёт полный винтаж (≈211 строк), гейт по SHA-256 входа не меняется —
-повтор с тем же входом остаётся no-op и новых строк не пишет.
+История винтажей — отдельная append-only таблица `weekly_cpi_sa_vintage` с ключом
+`(date, series, method, spec_version, vintage, computed_at)`: каждый новый вход даёт полный
+винтаж (≈211 строк), ревизия источника не затирает прежний расчёт. Основная `weekly_cpi_sa`
+остаётся «последней» и не меняет ключ: `MODIFY ORDER BY` существующей таблицы ClickHouse для
+уже добавленных колонок запрещает. Гейт по SHA-256 входа не меняется — повтор с тем же входом
+остаётся no-op и новых строк не пишет.
 
 ## Схема и миграция
 
@@ -47,7 +50,9 @@ ORDER BY (date, series, method, spec_version, vintage, computed_at);
 
 Миграция живой таблицы идемпотентна: `ADD COLUMN IF NOT EXISTS` для `vintage`/`computed_at`;
 бэкфилл старых строк — `vintage = as_of, computed_at = loaded_at` (у них `vintage='1970-01-01'`),
-однократный `ALTER TABLE … UPDATE … SETTINGS mutations_sync=2` под guard-запросом.
+однократный `ALTER TABLE … UPDATE … SETTINGS mutations_sync=2` под guard-запросом. Пустая
+таблица истории при первом прогоне заполняется копией текущих строк (`INSERT … SELECT …
+FROM weekly_cpi_sa FINAL`) под guard-запросом `count() = 0`.
 `weeklySAFeatureVersion` поднимается (`weekly-cpi-sa-vintage-v2`): первый прогон после фикса
 обязан пересчитать и записать винтаж, а не стать no-op на старом отпечатке.
 

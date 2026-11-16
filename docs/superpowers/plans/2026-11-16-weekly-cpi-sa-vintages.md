@@ -7,9 +7,12 @@
 
 `weeklysa/schema.go`:
 
-- `weeklySADdl` += `vintage Date`, `computed_at DateTime('Europe/Moscow')`;
-  `ORDER BY (date, series, method, spec_version, vintage, computed_at)`.
-- `weeklySAAlters` += два `ADD COLUMN IF NOT EXISTS`.
+- `weeklySADdl` += `vintage Date`, `computed_at DateTime('Europe/Moscow')` (колонки; ключ
+  основной таблицы не меняется — `MODIFY ORDER BY` уже добавленных колонок ClickHouse запрещает).
+- Новый `weeklySAVintageDdl` — append-only `weekly_cpi_sa_vintage` с ключом
+  `(date, series, method, spec_version, vintage, computed_at)`.
+- `weeklySAAlters` += два `ADD COLUMN IF NOT EXISTS`; `weeklySAVintageBackfillInsert` — копия
+  текущих строк в историю при первом прогоне.
 - `weeklySAVintageBackfill` — `UPDATE vintage = as_of, computed_at = loaded_at WHERE
   vintage='1970-01-01'` + guard-запрос (однократно).
 - `weeklySAFeatureVersion` → `weekly-cpi-sa-vintage-v2`.
@@ -20,7 +23,8 @@
 
 - `weeklySARow` += `Vintage`, `ComputedAt`; `buildRows(..., vintage, computedAt)`.
 - Перед `buildRows`: `vintage = lastGridDate`, `computedAt = time.Now()`.
-- `INSERT` += `vintage, computed_at`.
+- `INSERT` основной таблицы += `vintage, computed_at`; второй батч — `insertVintageRows` в
+  `weekly_cpi_sa_vintage`.
 - Миграция/бэкфилл — в начале `Import` после DDL.
 - Гейт по отпечатку не меняется; счётчик `weeklySACountPoints` теперь считает все винтажи —
   при повторе он совпадает с записанным.
