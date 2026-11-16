@@ -32,6 +32,10 @@ GRANT SELECT ON default.v_rosstat_cpi_weights TO kimi_reader;
 -- Недельный SA-агрегат ИПЦ (пункт key-rate/phase-4-weekly-sa-aggregate, #353):
 -- производный ряд weekly_cpi_sa; сырая таблица агенту не выдана — только витрина.
 GRANT SELECT ON default.v_weekly_cpi_sa TO kimi_reader;
+-- Винтажи недельного SA-агрегата (пункт key-rate/phase-4-weekly-cpi-sa-vintages, #630):
+-- полная история и срез «как было известно на дату»; сырая weekly_cpi_sa закрыта.
+GRANT SELECT ON default.v_weekly_cpi_sa_vintage TO kimi_reader;
+GRANT SELECT ON default.v_weekly_cpi_sa_asof TO kimi_reader;
 -- Квартальные метрики ЦБ по ИПЦ (пункт key-rate/phase-4-cpi-quarterly-metrics, #542):
 -- производные витрины над cbr_dip_bulletin, cbr_indicators_cpd и weekly_cpi_sa — квартальный
 -- SAAR ДИП по выпускам, квартальный SAAR базовой инфляции, квартал к дате недельного агрегата и
