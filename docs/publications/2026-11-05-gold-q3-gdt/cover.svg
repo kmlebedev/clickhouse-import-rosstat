@@ -1,0 +1,131 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" role="img" aria-labelledby="title desc">
+  <title id="title">Пол из 321 тонны</title>
+  <desc id="desc">Светлая газетная обложка к пост-апдейту о золоте от 5 ноября 2026 года. Справа на стопке слитков с подписью «321 т — центробанки, III квартал» расходятся «ножницы»: золото с 30 октября по утро 4 ноября растёт до индекса 101,9 (около $4 020), Brent за 4 ноября падает до 91,3 (3 ноября = 100). Внизу пять объяснений отскока с вердиктами: выборы — через нефть, доллар — малая часть, нефть и Иран — подтверждается лучше всего, разворот продаж — не доказано, отчёт WGC — не повлиял.</desc>
+  <defs>
+    <pattern id="paper" width="6" height="6" patternUnits="userSpaceOnUse">
+      <rect width="6" height="6" fill="#f3ede1"/>
+      <circle cx="1" cy="1" r="0.6" fill="#e6dccb"/>
+    </pattern>
+    <linearGradient id="gold" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f6d77a"/>
+      <stop offset="0.5" stop-color="#d9a531"/>
+      <stop offset="1" stop-color="#a8721a"/>
+    </linearGradient>
+    <linearGradient id="barTop" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fbe7a3"/>
+      <stop offset="1" stop-color="#e3b54a"/>
+    </linearGradient>
+    <linearGradient id="barFront" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#d9a531"/>
+      <stop offset="1" stop-color="#9c6a17"/>
+    </linearGradient>
+    <linearGradient id="goldText" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#d9a531"/>
+      <stop offset="1" stop-color="#9c6a17"/>
+    </linearGradient>
+    <g id="bar">
+      <polygon points="14,0 106,0 120,22 0,22" fill="url(#barTop)" stroke="#8a5d14" stroke-width="1.5"/>
+      <rect x="0" y="22" width="120" height="30" fill="url(#barFront)" stroke="#8a5d14" stroke-width="1.5"/>
+    </g>
+  </defs>
+
+  <rect width="1600" height="900" fill="url(#paper)"/>
+
+  <!-- рамка-линейки газетной полосы -->
+  <line x1="96" y1="58" x2="1504" y2="58" stroke="#1c1a17" stroke-width="3"/>
+  <line x1="96" y1="66" x2="1504" y2="66" stroke="#1c1a17" stroke-width="1"/>
+  <text x="96" y="100" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="20" font-weight="700" letter-spacing="4" fill="#9c6a17">ЗОЛОТО · ПОСТ-АПДЕЙТ</text>
+  <text x="1504" y="100" text-anchor="end" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="20" font-weight="600" letter-spacing="4" fill="#5b5448">5 НОЯБРЯ 2026</text>
+
+  <!-- заголовок -->
+  <text x="96" y="232" font-family="Georgia, 'Times New Roman', serif" font-size="86" font-weight="700" fill="#1c1a17">Пол из</text>
+  <text x="92" y="360" font-family="Georgia, 'Times New Roman', serif" font-size="126" font-weight="700" fill="url(#goldText)">321 тонны</text>
+  <line x1="96" y1="398" x2="200" y2="398" stroke="#1c1a17" stroke-width="3"/>
+  <text font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="30" fill="#2e2a24">
+    <tspan x="96" y="452">Центробанки купили за III квартал</tspan>
+    <tspan x="96" y="494">вдвое больше порога в 150 т.</tspan>
+    <tspan x="96" y="554">Отскок к $4 000 совпал</tspan>
+    <tspan x="96" y="596">с падением Brent на 8,7%.</tspan>
+  </text>
+
+  <!-- «ножницы»: индекс, 3 ноября = 100 -->
+  <g font-family="Inter, 'Helvetica Neue', Arial, sans-serif">
+    <text x="900" y="150" font-size="17" font-weight="600" letter-spacing="2" fill="#5b5448">ИНДЕКС, 3 НОЯБРЯ = 100</text>
+    <line x1="900" y1="274.3" x2="1460" y2="274.3" stroke="#1c1a17" stroke-width="1" stroke-dasharray="4 6" opacity="0.45"/>
+    <text x="1466" y="279" font-size="16" fill="#5b5448">100</text>
+
+    <!-- вертикаль дня 4 ноября -->
+    <line x1="1420" y1="170" x2="1420" y2="560" stroke="#1c1a17" stroke-width="1" opacity="0.25"/>
+
+    <!-- Brent -->
+    <polyline points="1220,274.3 1420,522.9" fill="none" stroke="#1c1a17" stroke-width="7" stroke-linecap="round"/>
+    <circle cx="1420" cy="522.9" r="9" fill="#1c1a17"/>
+    <text x="1380" y="500" text-anchor="end" font-size="26" font-weight="800" fill="#1c1a17">Brent −8,7%</text>
+    <text x="1380" y="526" text-anchor="end" font-size="17" fill="#5b5448">до $94,62</text>
+
+    <!-- золото -->
+    <polyline points="900,309.4 1060,280.3 1220,274.3 1420,220.6" fill="none" stroke="url(#gold)" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="900" cy="309.4" r="6" fill="#a8721a"/>
+    <circle cx="1060" cy="280.3" r="6" fill="#a8721a"/>
+    <circle cx="1220" cy="274.3" r="6" fill="#a8721a"/>
+    <circle cx="1420" cy="220.6" r="12" fill="#f3ede1" stroke="#a8721a" stroke-width="5"/>
+    <text x="1400" y="200" text-anchor="end" font-size="26" font-weight="800" fill="#9c6a17">золото ≈ $4 020</text>
+    <text x="1400" y="174" text-anchor="end" font-size="17" fill="#5b5448">+2,4% к утру 4 ноября, Reuters</text>
+
+    <text x="900" y="336" text-anchor="middle" font-size="16" fill="#5b5448">$3 899</text>
+    <text x="900" y="560" text-anchor="middle" font-size="16" font-weight="600" fill="#5b5448">30.10</text>
+    <text x="1060" y="560" text-anchor="middle" font-size="16" font-weight="600" fill="#5b5448">2.11</text>
+    <text x="1220" y="560" text-anchor="middle" font-size="16" font-weight="600" fill="#5b5448">3.11</text>
+    <text x="1420" y="560" text-anchor="middle" font-size="16" font-weight="600" fill="#5b5448">4.11</text>
+  </g>
+
+  <!-- пьедестал из слитков -->
+  <g>
+    <use href="#bar" x="1000" y="618"/>
+    <use href="#bar" x="1124" y="618"/>
+    <use href="#bar" x="1248" y="618"/>
+    <use href="#bar" x="1062" y="588"/>
+    <use href="#bar" x="1186" y="588"/>
+    <line x1="980" y1="671" x2="1388" y2="671" stroke="#1c1a17" stroke-width="2"/>
+    <text x="1184" y="660" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif" font-size="24" font-weight="700" fill="#fff4cf">321 т</text>
+    <text x="1404" y="634" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="17" fill="#5b5448">центробанки,</text>
+    <text x="1404" y="656" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="17" fill="#5b5448">III квартал</text>
+  </g>
+
+  <!-- пять объяснений и вердикты -->
+  <line x1="96" y1="706" x2="1504" y2="706" stroke="#1c1a17" stroke-width="1"/>
+  <text x="96" y="736" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="17" font-weight="700" letter-spacing="3" fill="#1c1a17">ПЯТЬ ОБЪЯСНЕНИЙ ОТСКОКА — ПРОВЕРКА ДАННЫМИ</text>
+
+  <g font-family="Inter, 'Helvetica Neue', Arial, sans-serif">
+    <g transform="translate(96 756)">
+      <rect width="264" height="88" rx="6" fill="none" stroke="#1c1a17" stroke-width="1.5"/>
+      <text x="18" y="34" font-size="21" font-weight="700" fill="#1c1a17">Выборы</text>
+      <text x="18" y="66" font-size="18" fill="#5b5448">через нефть, не бюджет</text>
+      <text x="240" y="40" text-anchor="end" font-size="30" font-weight="700" fill="#8a8170">≈</text>
+    </g>
+    <g transform="translate(382 756)">
+      <rect width="264" height="88" rx="6" fill="none" stroke="#1c1a17" stroke-width="1.5"/>
+      <text x="18" y="34" font-size="21" font-weight="700" fill="#1c1a17">Доллар</text>
+      <text x="18" y="66" font-size="18" fill="#5b5448">объясняет малую часть</text>
+      <text x="240" y="40" text-anchor="end" font-size="30" font-weight="700" fill="#8a8170">≈</text>
+    </g>
+    <g transform="translate(668 756)">
+      <rect width="264" height="88" rx="6" fill="#1c1a17"/>
+      <text x="18" y="34" font-size="21" font-weight="700" fill="#f6d77a">Нефть и Иран</text>
+      <text x="18" y="66" font-size="18" fill="#e9e1d0">подтверждается лучше</text>
+      <text x="240" y="40" text-anchor="end" font-size="30" font-weight="700" fill="#f6d77a">✓</text>
+    </g>
+    <g transform="translate(954 756)">
+      <rect width="264" height="88" rx="6" fill="none" stroke="#1c1a17" stroke-width="1.5" stroke-dasharray="6 5"/>
+      <text x="18" y="34" font-size="21" font-weight="700" fill="#1c1a17">Разворот продаж</text>
+      <text x="18" y="66" font-size="18" fill="#5b5448">не доказан</text>
+      <text x="240" y="40" text-anchor="end" font-size="30" font-weight="700" fill="#8a8170">?</text>
+    </g>
+    <g transform="translate(1240 756)">
+      <rect width="264" height="88" rx="6" fill="none" stroke="#1c1a17" stroke-width="1.5"/>
+      <text x="18" y="34" font-size="21" font-weight="700" fill="#1c1a17">Отчёт WGC</text>
+      <text x="18" y="66" font-size="18" fill="#5b5448">на скачок не повлиял</text>
+      <text x="240" y="40" text-anchor="end" font-size="30" font-weight="700" fill="#a23b2a">×</text>
+    </g>
+  </g>
+</svg>
